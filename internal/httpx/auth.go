@@ -1,0 +1,104 @@
+package httpx
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/Abraxas-365/iamkit/sdk/authclient"
+	"github.com/Abraxas-365/iamkit/sdk/authclient/fiberauth"
+	"github.com/Abraxas-365/odyssey/internal/config"
+	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/gofiber/fiber/v2"
+)
+
+// Introspector is the IAMKit call used to validate access tokens online
+// (live revocation). *authclient.Client satisfies it.
+type Introspector interface {
+	Introspect(ctx context.Context, token, issuer, audience, environment, application, resource string) (*authclient.Claims, error)
+}
+
+// Authenticate validates the bearer token against IAMKit using the trusted
+// boundaries from configuration. Fails closed if IAMKit is unreachable.
+//
+// The SDK middleware writes its own error JSON; its responses are replaced by
+// the one error shape of docs/api.md §3 (401 UNAUTHORIZED).
+func Authenticate(iam Introspector, b config.IAM) fiber.Handler {
+	return typed(fiberauth.Authenticate(func(ctx context.Context, token string) (*authclient.Claims, error) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return iam.Introspect(ctx, token, b.Issuer, b.Audience, b.Environment, b.Application, b.Resource)
+	}))
+}
+
+// RequirePermissions rejects requests whose token lacks any permission.
+// Pass permission.X constants, never string literals.
+func RequirePermissions(permissions ...string) fiber.Handler {
+	return typed(fiberauth.RequirePermissions(permissions...))
+}
+
+// typed runs an SDK middleware and, when it answered with its own error body
+// instead of passing the request on, replaces that response with an errx
+// error. A handler never writes a 401/403 itself (it returns an error), so a
+// nil return with such a status on the response means the SDK wrote it.
+func typed(next fiber.Handler) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if err := next(c); err != nil {
+			return err
+		}
+		status := c.Response().StatusCode()
+		if status != fiber.StatusUnauthorized && status != fiber.StatusForbidden {
+			return nil
+		}
+		var sdk struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(c.Response().Body(), &sdk)
+		c.Response().ResetBody()
+		c.Response().Header.Del(fiber.HeaderCacheControl)
+		if status == fiber.StatusUnauthorized {
+			return errx.Unauthorized(or(sdk.Error.Message, "missing or invalid bearer token"))
+		}
+		return errx.Forbidden(or(sdk.Error.Message, "insufficient permissions"))
+	}
+}
+
+func or(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
+}
+
+// Organization returns the tenant of the authenticated user. Every tenant
+// query must be constrained by this value — never by a request parameter.
+func Organization(c *fiber.Ctx) (identity.OrganizationID, error) {
+	claims := fiberauth.Claims(c)
+	if claims == nil {
+		return identity.OrganizationID{}, errx.Unauthorized("missing or invalid bearer token")
+	}
+	if claims.Purpose != "application" || claims.OrganizationID == "" {
+		return identity.OrganizationID{}, errx.Forbidden("token is not bound to an organization")
+	}
+	org, err := identity.ParseOrganizationID(claims.OrganizationID)
+	if err != nil {
+		return identity.OrganizationID{}, errx.Forbidden("token organization is invalid")
+	}
+	return org, nil
+}
+
+// User returns the authenticated IAMKit user (the token subject).
+func User(c *fiber.Ctx) (identity.UserID, error) {
+	claims := fiberauth.Claims(c)
+	if claims == nil || claims.Subject == "" {
+		return identity.UserID{}, errx.Unauthorized("missing or invalid bearer token")
+	}
+	user, err := identity.ParseUserID(claims.Subject)
+	if err != nil {
+		return identity.UserID{}, errx.Forbidden("token subject is invalid")
+	}
+	return user, nil
+}

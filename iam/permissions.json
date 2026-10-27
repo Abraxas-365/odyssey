@@ -1,0 +1,12 @@
+{
+  "resource": { "name": "Odyssey API", "prefix": "odyssey" },
+  "permissions": [
+    { "name": "odyssey:projects:read", "label": "Ver proyectos, sus entornos y servicios" },
+    { "name": "odyssey:projects:write", "label": "Crear, editar y archivar proyectos" }
+  ],
+  "roles": [
+    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write"] },
+    { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write"] },
+    { "name": "Lector", "permissions": ["odyssey:projects:read"] }
+  ]
+}

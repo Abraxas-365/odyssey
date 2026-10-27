@@ -1,0 +1,13 @@
+bin/
+.env
+.env.*
+!.env.example
+secrets/
+.dev-secrets/
+.data/
+*.bak
+.DS_Store
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/*.tsbuildinfo

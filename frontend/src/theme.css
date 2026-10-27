@@ -1,0 +1,107 @@
+/*
+ * Odyssey design tokens. Source: the Odicea v3 mockup
+ * (~/.rness/plans/Personal/odicea-mockup.html), which inherits IAMKit's
+ * palette so the console, the IAMKit login and the apps feel like one product.
+ *
+ * Dark is the default theme (:root); `.light` overrides. Keep this file
+ * framework-independent: plain CSS custom properties, no Tailwind.
+ */
+:root {
+  --font-body-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-code-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --background: #0c0c0a;
+  --foreground: #d4d0c8;
+  --card: #131311;
+  --card-foreground: #d4d0c8;
+  --popover: #131311;
+  --popover-foreground: #d4d0c8;
+  --primary: #7b9bae;
+  --primary-foreground: #0c0c0a;
+  --secondary: #1c1c18;
+  --secondary-foreground: #a8a49a;
+  --muted: #1a1a16;
+  --muted-foreground: #888377;
+  --accent: #1a1a16;
+  --accent-foreground: #d4d0c8;
+  --destructive: #c69186;
+  --destructive-foreground: #0c0c0a;
+  --success: #82a86f;
+  --success-foreground: #0c0c0a;
+  --warning: #b8a06a;
+  --warning-foreground: #0c0c0a;
+  /* "Tu asistente" / IA: everything an agent did or proposes. */
+  --ai: #8a7b9b;
+  --ai-foreground: #0c0c0a;
+  --info: #7b9bae;
+  --border: #222220;
+  --input: #1c1c18;
+  --ring: #7b9bae;
+  --chart-1: #7b9bae;
+  --chart-2: #5a7a4a;
+  --chart-3: #b8a06a;
+  --chart-4: #a65d4e;
+  --chart-5: #8a7b9b;
+  /* Insets: code blocks, logs, prompts, app thumbnails, table heads. */
+  --inset: #0a0a08;
+  --sidebar: #0a0a08;
+  --sidebar-foreground: #888377;
+  --sidebar-primary: #7b9bae;
+  --sidebar-primary-foreground: #0c0c0a;
+  --sidebar-accent: #1a1a16;
+  --sidebar-accent-foreground: #d4d0c8;
+  --sidebar-border: #222220;
+  --sidebar-ring: #7b9bae;
+  /* Inverted button (mockup .btn): foreground on background. */
+  --strong: #d4d0c8;
+  --strong-foreground: #0c0c0a;
+  --overlay-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
+
+  --radius: 0.5rem;
+}
+
+.light {
+  --background: #f2efe8;
+  --foreground: #1a1a16;
+  --card: #faf8f4;
+  --card-foreground: #1a1a16;
+  --popover: #faf8f4;
+  --popover-foreground: #1a1a16;
+  --primary: #495f6d;
+  --primary-foreground: #faf8f4;
+  --secondary: #e8e4dc;
+  --secondary-foreground: #2a2a24;
+  --muted: #e8e4dc;
+  --muted-foreground: #68645c;
+  --accent: #e8e4dc;
+  --accent-foreground: #2a2a24;
+  --destructive: #874337;
+  --destructive-foreground: #faf8f4;
+  --success: #435f34;
+  --success-foreground: #faf8f4;
+  --warning: #695b36;
+  --warning-foreground: #faf8f4;
+  --ai: #7a6b8a;
+  --ai-foreground: #faf8f4;
+  --info: #495f6d;
+  --border: #d8d4ca;
+  --input: #d8d4ca;
+  --ring: #495f6d;
+  --chart-1: #567080;
+  --chart-2: #4a6a3a;
+  --chart-3: #a08a52;
+  --chart-4: #944a3c;
+  --chart-5: #7a6b8a;
+  --inset: #eae7e0;
+  --sidebar: #eae7e0;
+  --sidebar-foreground: #68645c;
+  --sidebar-primary: #495f6d;
+  --sidebar-primary-foreground: #faf8f4;
+  --sidebar-accent: #e0dcd4;
+  --sidebar-accent-foreground: #2a2a24;
+  --sidebar-border: #d8d4ca;
+  --sidebar-ring: #495f6d;
+  --strong: #1a1a16;
+  --strong-foreground: #faf8f4;
+  --overlay-shadow: 0 12px 32px rgb(26 26 22 / 0.14);
+}

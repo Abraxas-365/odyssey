@@ -1,0 +1,22 @@
+// Odyssey design system: product-level components built on shadcn
+// (base-nova) primitives in @/components/ui. Pages import from here.
+// Showcase: /design (src/pages/design-system.tsx).
+export * from './app-card'
+export * from './approval'
+export * from './attention'
+export * from './callout'
+export * from './code'
+export * from './controls'
+export * from './feedback'
+export * from './icon-badge'
+export * from './identity'
+export * from './logo'
+export * from './page-header'
+export * from './panel'
+export * from './progress'
+export * from './resources'
+export * from './shell'
+export * from './stat'
+export * from './status'
+export * from './tone'
+export * from './versions'

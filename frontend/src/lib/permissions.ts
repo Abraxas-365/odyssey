@@ -1,0 +1,8 @@
+// Generated permission names mirror iam/permissions.json (the backend's
+// internal/permission is generated from the same file). A test keeps them in sync.
+export const permissions = {
+  projectsRead: 'odyssey:projects:read',
+  projectsWrite: 'odyssey:projects:write',
+} as const
+
+export type Permission = (typeof permissions)[keyof typeof permissions]
