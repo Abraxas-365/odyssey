@@ -6,6 +6,7 @@ package releasefake
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -25,7 +26,7 @@ type Outcome struct {
 
 // Options configure the fake; zero values take the defaults.
 type Options struct {
-	// Behavior decides each applied app's outcome (default: ready after 1 poll).
+	// Behavior decides each applied app's outcome (default: DefaultBehavior).
 	Behavior func(release.DesiredApp) Outcome
 	// Domain is the base of the simulated URLs (default "apps.odyssey.localhost").
 	Domain string
@@ -53,7 +54,7 @@ type Cluster struct {
 
 func New(opts Options) *Cluster {
 	if opts.Behavior == nil {
-		opts.Behavior = func(release.DesiredApp) Outcome { return Outcome{ReadyAfter: 1} }
+		opts.Behavior = DefaultBehavior
 	}
 	if opts.Domain == "" {
 		opts.Domain = "apps.odyssey.localhost"
@@ -131,6 +132,21 @@ func (c *Cluster) Running(t release.Target, name string) string {
 		return a.desired.Image
 	}
 	return ""
+}
+
+// DefaultBehavior makes an app ready after a few polls, so the console shows
+// its progress. To try failures in a running stack, name the image's
+// repository after them: one containing "unhealthy" fails its health check,
+// one containing "reject" is refused by the cluster.
+func DefaultBehavior(d release.DesiredApp) Outcome {
+	repo, _, _ := strings.Cut(d.Image, "@")
+	switch {
+	case strings.Contains(repo, "reject"):
+		return Outcome{Reject: true}
+	case strings.Contains(repo, "unhealthy"):
+		return Outcome{ReadyAfter: 3, Unhealthy: true}
+	}
+	return Outcome{ReadyAfter: 3}
 }
 
 // ErrDown is a convenient error for SetDown.

@@ -10,8 +10,9 @@ This repo holds the **control-plane API** (`cmd/odyssey-api`), the **worker**
 **web console** (`frontend/`). Domain modules today: `project` (the golden
 sample; apps and their environments), `release` (releases, deployments and
 the `release.deploy` workflow behind the `Cluster` port; `releasefake` stands
-in for real clusters until the fleet agent exists) and `audit` (an event
-subscriber). The full
+in for real clusters until the fleet agent exists; an image repository
+containing `unhealthy` / `reject` simulates a failed health check / a refused
+apply) and `audit` (an event subscriber). The full
 design (binaries, domains, build order) lives outside the repo, in
 `~/.rness/plans/Personal/odicea-architecture.md`. The UI design is in
 `odicea-mockup.html` and `odicea-product-ux-v3.md` there.
@@ -29,7 +30,7 @@ design (binaries, domains, build order) lives outside the repo, in
 | Regenerate console wire types | `make api-types` (after editing `api/openapi.yaml`) | 2s |
 | First local run (secrets, IAMKit, seed, API) | `make dev` | 2-4m |
 | Push manifest changes to local IAMKit | `make iam-sync` (`DRY_RUN=1`, `PRUNE=1`) | 5s |
-| Token / end-to-end check | `make token` / `make smoke` | 5s |
+| Token / end-to-end check (projects + publish, auto-restore, "Volver a esta", audit; needs API + worker) | `make token` / `make smoke` | 60s |
 | Console dev server (needs API + IAMKit) | `make web` → http://localhost:5178 | 2s |
 | Console gate (types, oxlint, vitest, build) | `make web-check` | 15s |
 
