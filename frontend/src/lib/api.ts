@@ -1,8 +1,10 @@
 import { accessToken, loadConfig, refresh } from './session'
+import type { ApiErrorType, ErrorBody } from './types'
 
 // docs/api.md §3: clients branch on `type` (closed set) and `code`; `message`
 // is for humans and is never parsed.
-export type ErrorType = 'VALIDATION' | 'AUTHORIZATION' | 'NOT_FOUND' | 'CONFLICT' | 'BUSINESS' | 'INTERNAL' | 'EXTERNAL' | 'NETWORK'
+// NETWORK is the client's own: the request never reached the API.
+export type ErrorType = ApiErrorType | 'NETWORK'
 
 export class ApiError extends Error {
   constructor(
@@ -59,7 +61,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
   }
   if (res.status === 401) window.dispatchEvent(new Event('session-expired'))
   if (!res.ok) {
-    const data = await res.json().catch(() => null)
+    const data = (await res.json().catch(() => null)) as Partial<ErrorBody> | null
     const e = data?.error
     throw new ApiError(e?.message ?? 'No se pudo completar la operación.', res.status, e?.type ?? 'INTERNAL', e?.code ?? '', e?.details ?? {}, e?.request_id)
   }

@@ -3,6 +3,14 @@
 The rules every endpoint of `odyssey-api` follows. Code comments cite these
 sections (`docs/api.md §N`); keep the numbering stable.
 
+The exact shapes live in [`api/openapi.yaml`](../api/openapi.yaml) (OpenAPI
+3.1, written by hand). It is enforced, not just documented:
+`internal/bootstrap/openapi_test.go` fails when a mounted route is missing
+from it (or vice versa), when an operation's `x-permissions` differ from what
+the route enforces, or when a real response does not validate. The console's
+types are generated from it (`make api-types`; `make web-check` fails while
+they are stale). Change an endpoint → edit the spec in the same change.
+
 ## 1. Basics
 
 - Base path `/api/v1`. JSON only. Fields are `snake_case`. Paths are plural,
@@ -158,3 +166,21 @@ Rules:
 - **List filters**: `status` (`active` | `archived`, repeatable, default
   `active`) and `search` (name or slug).
 - **List order**: `lower(name)`, then `id`.
+
+### Audit (`odyssey:audit:read`)
+
+The organization's activity trail: one entry per domain event, written by the
+`audit` subscriber, append-only and hash-chained per organization (each
+entry's `hash` covers its content and the previous entry's `hash`).
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/audit` | read | 200 `{items, page}`, newest first |
+| `GET` | `/api/v1/audit/verify` | read | 200 `{valid, entries, broken_at}` |
+
+- **List filters**: `subject` (`project/<id>`), `type` (repeatable),
+  `actor_id`, `correlation_id`, `from` / `to` (a `YYYY-MM-DD` date in UTC —
+  `to` includes that whole day — or an RFC 3339 instant, `to` exclusive) and
+  `search` (summary).
+- **Verify** re-hashes the whole chain; `broken_at` is the `seq` of the first
+  entry that does not match (`null` when `valid`).

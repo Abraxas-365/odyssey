@@ -5,6 +5,7 @@ package projectmodule
 import (
 	"io/fs"
 
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projecthttp"
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projectpg"
@@ -14,7 +15,8 @@ import (
 )
 
 type Deps struct {
-	DB *sqlx.DB
+	DB     *sqlx.DB
+	Events event.Publisher
 }
 
 type Module struct {
@@ -24,7 +26,7 @@ type Module struct {
 }
 
 func New(deps Deps) Module {
-	svc := projectsvc.New(projectpg.New(deps.DB), txn.Postgres{DB: deps.DB})
+	svc := projectsvc.New(projectpg.New(deps.DB), txn.Postgres{DB: deps.DB}, deps.Events)
 	return Module{Commands: svc, Queries: svc, HTTP: projecthttp.New(svc, svc)}
 }
 

@@ -1,26 +1,31 @@
-// Wire types for /api/v1 (docs/api.md). snake_case on purpose: these are the
-// exact JSON shapes; don't remap them.
+// Wire types for /api/v1, generated from api/openapi.yaml (`make api-types`
+// → openapi.gen.ts; `npm run check` fails while it is stale). snake_case on
+// purpose: these are the exact JSON shapes; don't remap them. Add aliases
+// here, never hand-written shapes.
+import type { components, operations } from './openapi.gen'
 
-export interface Page { total: number; limit: number; offset: number }
+type Schemas = components['schemas']
+
+export type Page = Schemas['Page']
 export interface List<T> { items: T[]; page: Page }
 
-export type ProjectStatus = 'active' | 'archived'
+export type ErrorBody = Schemas['ErrorBody']
+export type ApiErrorType = Schemas['ErrorType']
 
 /** docs/api.md §11. The UI calls a project an "app". */
-export interface Project {
-  id: string
-  organization_id: string
-  name: string
-  slug: string
-  description: string
-  status: ProjectStatus
-  created_by: string
-  updated_by: string
-  created_at: string
-  updated_at: string
-  archived_at?: string | null
-}
+export type Project = Schemas['Project']
+export type ProjectStatus = Schemas['ProjectStatus']
+export type ProjectCreate = Schemas['ProjectCreate']
+export type ProjectPatch = Schemas['ProjectPatch']
+export type ProjectList = Schemas['ProjectList']
 
-export interface ProjectCreate { name: string; slug?: string; description?: string }
-export interface ProjectPatch { name?: string; description?: string }
-export interface ProjectFilter { status?: ProjectStatus; search?: string; limit?: number; offset?: number }
+/** Query of GET /projects (the console filters one status at a time). */
+type ListProjectsQuery = NonNullable<operations['listProjects']['parameters']['query']>
+export type ProjectFilter = Omit<ListProjectsQuery, 'status'> & { status?: ProjectStatus }
+
+export type AuditEntry = Schemas['AuditEntry']
+export type AuditEntryList = Schemas['AuditEntryList']
+export type AuditVerification = Schemas['AuditVerification']
+export type AuditQuery = NonNullable<operations['listAuditEntries']['parameters']['query']>
+
+export type PublicConfig = Schemas['PublicConfig']

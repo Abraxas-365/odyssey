@@ -1,7 +1,8 @@
-.PHONY: build run test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check
+.PHONY: build run worker test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
 
 build:
 	go build -o bin/odyssey-api ./cmd/odyssey-api
+	go build -o bin/odyssey-worker ./cmd/odyssey-worker
 
 test:
 	go test ./...
@@ -17,7 +18,7 @@ vet:
 	go vet ./...
 
 fmt:
-	gofmt -w cmd internal
+	gofmt -w api cmd internal
 
 tidy:
 	go mod tidy
@@ -26,9 +27,14 @@ tidy:
 gen:
 	go generate ./internal/permission/...
 
+# Regenerate the console's wire types from api/openapi.yaml (web-check fails while stale).
+api-types:
+	@[ -d frontend/node_modules ] || $(MAKE) web-install
+	cd frontend && npm run api:types
+
 # What CI runs.
 check:
-	@test -z "$$(gofmt -l cmd internal)" || (gofmt -l cmd internal && exit 1)
+	@test -z "$$(gofmt -l api cmd internal)" || (gofmt -l api cmd internal && exit 1)
 	go vet ./...
 	go test ./...
 
@@ -38,6 +44,12 @@ run:
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
 	IAMKIT_URL=http://localhost:$${IAMKIT_PORT:-8085} PORT=$${ODYSSEY_PORT:-8095} \
 	go run ./cmd/odyssey-api
+
+# Run the worker on the host (outbox delivery, workflows, scheduled tasks).
+worker:
+	set -a && . ./.env && set +a && \
+	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
+	go run ./cmd/odyssey-worker
 
 # One-time: signing key + .env with random secrets.
 setup:
@@ -74,7 +86,7 @@ reset:
 	@[ ! -f .env ] || sed -i.bak '/written by scripts\/seed-iam.sh/,$$d' .env && rm -f .env.bak
 
 logs:
-	docker compose logs -f api iamkit
+	docker compose logs -f api worker iamkit
 
 # Provision the local IAMKit from iam/permissions.json and write IAMKIT_* to .env.
 seed:

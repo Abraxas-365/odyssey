@@ -9,6 +9,7 @@ import (
 	"github.com/Abraxas-365/iamkit/sdk/authclient/fiberauth"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/gofiber/fiber/v2"
 )
@@ -25,11 +26,18 @@ type Introspector interface {
 // The SDK middleware writes its own error JSON; its responses are replaced by
 // the one error shape of docs/api.md §3 (401 UNAUTHORIZED).
 func Authenticate(iam Introspector, b config.IAM) fiber.Handler {
-	return typed(fiberauth.Authenticate(func(ctx context.Context, token string) (*authclient.Claims, error) {
+	return AuthenticateWith(func(ctx context.Context, token string) (*authclient.Claims, error) {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		return iam.Introspect(ctx, token, b.Issuer, b.Audience, b.Environment, b.Application, b.Resource)
-	}))
+	})
+}
+
+// AuthenticateWith authenticates bearer tokens with verify, answering
+// failures with the standard error body (docs/api.md §3). Authenticate uses
+// it with IAMKit; tests use it with a fake verifier.
+func AuthenticateWith(verify func(ctx context.Context, token string) (*authclient.Claims, error)) fiber.Handler {
+	return typed(fiberauth.Authenticate(verify))
 }
 
 // RequirePermissions rejects requests whose token lacks any permission.
@@ -101,4 +109,16 @@ func User(c *fiber.Ctx) (identity.UserID, error) {
 		return identity.UserID{}, errx.Forbidden("token subject is invalid")
 	}
 	return user, nil
+}
+
+// Provenance puts the request's event provenance in the user context (after
+// Authenticate): every event a handler publishes correlates to the
+// X-Request-ID and names the OAuth client used (console, an MCP agent).
+func Provenance(c *fiber.Ctx) error {
+	meta := event.Meta{CorrelationID: ensureRequestID(c)}
+	if claims := fiberauth.Claims(c); claims != nil {
+		meta.Client = claims.OAuthClientID
+	}
+	c.SetUserContext(event.WithMeta(c.UserContext(), meta))
+	return c.Next()
 }

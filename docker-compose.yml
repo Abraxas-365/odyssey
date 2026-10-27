@@ -1,4 +1,4 @@
-# ODYSSEY — local stack: Postgres + IAMKit (users, auth, permissions) + API.
+# ODYSSEY — local stack: Postgres + IAMKit (users, auth, permissions) + API + worker.
 #
 #   make dev     # first run: secrets, IAMKit, seed, API
 #   make up      # build and start everything
@@ -66,6 +66,22 @@ services:
       db:
         condition: service_healthy
       iamkit:
+        condition: service_healthy
+
+  # Outbox delivery (audit trail, reactions), workflows and scheduled tasks.
+  worker:
+    image: odyssey-api:dev
+    entrypoint: ["odyssey-worker"]
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/odyssey?sslmode=disable
+      WORKER_HEALTH_PORT: "8096"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8096/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      api:
         condition: service_healthy
 
 volumes:

@@ -12,18 +12,21 @@ const ResourceName = "Odyssey API"
 const (
 	ProjectsRead  = "odyssey:projects:read"  // Ver proyectos, sus entornos y servicios
 	ProjectsWrite = "odyssey:projects:write" // Crear, editar y archivar proyectos
+	AuditRead     = "odyssey:audit:read"     // Ver el historial de actividad de la organización
 )
 
 // All is the whole catalog, in manifest order.
 var All = []string{
 	ProjectsRead,
 	ProjectsWrite,
+	AuditRead,
 }
 
 // Labels describe each permission for role editors.
 var Labels = map[string]string{
 	ProjectsRead:  "Ver proyectos, sus entornos y servicios",
 	ProjectsWrite: "Crear, editar y archivar proyectos",
+	AuditRead:     "Ver el historial de actividad de la organización",
 }
 
 // Names maps each constant's Go name to its permission (used by the
@@ -31,11 +34,12 @@ var Labels = map[string]string{
 var Names = map[string]string{
 	"ProjectsRead":  ProjectsRead,
 	"ProjectsWrite": ProjectsWrite,
+	"AuditRead":     AuditRead,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, AuditRead}},
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite}},
 	{Name: "Lector", Permissions: []string{ProjectsRead}},
 }

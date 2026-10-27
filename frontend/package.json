@@ -10,7 +10,9 @@
     "lint": "oxlint",
     "test": "vitest run",
     "preview": "vite preview",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "api:types": "openapi-typescript ../api/openapi.yaml -o src/lib/openapi.gen.ts",
+    "api:check": "openapi-typescript ../api/openapi.yaml -o src/lib/openapi.gen.ts --check",
+    "check": "npm run api:check && npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -41,11 +43,17 @@
     "@vitejs/plugin-react": "^6.1.1",
     "axe-core": "^4.13.0",
     "jsdom": "^29.1.1",
+    "openapi-typescript": "^7.13.0",
     "oxlint": "^1.79.0",
     "shadcn": "^4.19.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "vite": "^8.3.0",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    }
   }
 }

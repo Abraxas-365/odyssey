@@ -72,6 +72,23 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// Worker is the configuration of odyssey-worker: it needs the database only
+// (it never sees a user's token).
+type Worker struct {
+	DatabaseURL string
+	// HealthPort serves GET /health for liveness probes ("" disables it).
+	HealthPort string
+}
+
+// LoadWorker reads the worker's environment.
+func LoadWorker() (Worker, error) {
+	cfg := Worker{DatabaseURL: os.Getenv("DATABASE_URL"), HealthPort: env("WORKER_HEALTH_PORT", "8096")}
+	if cfg.DatabaseURL == "" {
+		return Worker{}, errx.Validation("missing required environment: DATABASE_URL")
+	}
+	return cfg, nil
+}
+
 func env(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
 		return v

@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
-	"github.com/Abraxas-365/iamkit/sdk/authclient/fiberauth"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/gofiber/fiber/v2"
@@ -35,7 +34,7 @@ func App() *fiber.App {
 // organization and permissions; the subject is always User. Pass it to
 // bootstrap.NewServer to exercise the real wiring without an IAMKit.
 func Auth() fiber.Handler {
-	return fiberauth.Authenticate(func(_ context.Context, token string) (*authclient.Claims, error) {
+	return httpx.AuthenticateWith(func(_ context.Context, token string) (*authclient.Claims, error) {
 		org, perms, _ := strings.Cut(token, "|")
 		c := &authclient.Claims{Purpose: "application", OrganizationID: org}
 		c.Subject = User

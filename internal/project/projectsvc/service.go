@@ -4,19 +4,22 @@ package projectsvc
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
+	"github.com/Abraxas-365/odyssey/internal/text"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 )
 
 type Service struct {
-	repo project.Repository
-	tx   txn.Runner
+	repo   project.Repository
+	tx     txn.Runner
+	events event.Publisher
 }
 
-func New(repo project.Repository, tx txn.Runner) *Service {
-	return &Service{repo: repo, tx: tx}
+func New(repo project.Repository, tx txn.Runner, events event.Publisher) *Service {
+	return &Service{repo: repo, tx: tx, events: events}
 }
 
 var (
@@ -30,14 +33,20 @@ func (s *Service) Create(ctx context.Context, organization identity.Organization
 		return project.ID{}, err
 	}
 	id := project.NewID()
-	if err := s.repo.Create(ctx, organization, id, input); err != nil {
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.Create(ctx, organization, id, input); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, project.NewCreated(organization, input.CreatedBy, id, text.Clean(input.Name), input.Slug))
+	})
+	if err != nil {
 		return project.ID{}, err
 	}
 	return id, nil
 }
 
 // Update changes name/description. A patch equal to the current values is a
-// no-op (no write); an archived project refuses changes.
+// no-op (no write, no event); an archived project refuses changes.
 func (s *Service) Update(ctx context.Context, organization identity.OrganizationID, id project.ID, input project.Update) error {
 	if err := input.Validate(); err != nil {
 		return err
@@ -54,7 +63,10 @@ func (s *Service) Update(ctx context.Context, organization identity.Organization
 		if changes.Empty() {
 			return nil
 		}
-		return s.repo.Update(ctx, organization, id, changes)
+		if err := s.repo.Update(ctx, organization, id, changes); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, project.NewUpdated(organization, input.UpdatedBy, current, changes))
 	})
 }
 
@@ -68,7 +80,10 @@ func (s *Service) Archive(ctx context.Context, organization identity.Organizatio
 		if err != nil || current.Archived() {
 			return err
 		}
-		return s.repo.Archive(ctx, organization, id, input)
+		if err := s.repo.Archive(ctx, organization, id, input); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, project.NewArchived(organization, input.ArchivedBy, current))
 	})
 }
 

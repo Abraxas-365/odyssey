@@ -2,7 +2,9 @@
 // GET /api/config tells the SPA where IAMKit is and which public client to
 // use (docs/api.md §1). JWT payloads are display-only: the API verifies
 // identity, permissions and tenant on every request.
-export interface PublicConfig { iam_url: string; client_id: string; environment_id: string }
+import type { PublicConfig } from './types'
+
+export type { PublicConfig }
 export interface Tokens { access_token: string; refresh_token?: string; id_token?: string; expires_at: number }
 export interface Claims { sub?: string; organization_id?: string; permissions?: string[]; nonce?: string; name?: string; email?: string }
 interface Pending { state: string; nonce: string; verifier: string; redirect: string; client: string; iam: string; back: string }

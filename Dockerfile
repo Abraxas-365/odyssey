@@ -7,7 +7,7 @@ RUN go mod download
 
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /odyssey-api ./cmd/odyssey-api
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/odyssey-api ./cmd/odyssey-worker
 
 # ---- Runtime stage ----
 FROM alpine:3.21
@@ -16,7 +16,9 @@ RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S odyssey && adduser -S odyssey -G odyssey
 
 ENV TZ=UTC
-COPY --from=build /odyssey-api /usr/local/bin/odyssey-api
+# One image, two processes: odyssey-api (default) and odyssey-worker
+# (override the entrypoint; its health is on :8096).
+COPY --from=build /out/odyssey-api /out/odyssey-worker /usr/local/bin/
 
 USER odyssey
 EXPOSE 8095

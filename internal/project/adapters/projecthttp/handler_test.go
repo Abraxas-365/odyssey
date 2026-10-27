@@ -1,91 +1,23 @@
 package projecthttp_test
 
 import (
-	"context"
 	"net/http"
 	"testing"
-	"time"
 
-	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projecthttp"
 	"github.com/Abraxas-365/odyssey/internal/project/projectsvc"
+	"github.com/Abraxas-365/odyssey/internal/project/projecttest"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 )
 
-// memRepo is an in-memory project.Repository, scoped by organization.
-type memRepo struct {
-	rows map[project.ID]project.Project
-}
-
-func (m *memRepo) Create(_ context.Context, org identity.OrganizationID, id project.ID, in project.Create) error {
-	for _, p := range m.rows {
-		if p.Organization == org && p.Slug == in.Slug {
-			return errx.Conflict("a project with this slug already exists")
-		}
-	}
-	now := time.Now()
-	m.rows[id] = project.Project{ID: id, Organization: org, Name: in.Name, Slug: in.Slug, Description: in.Description,
-		Status: project.StatusActive, CreatedBy: in.CreatedBy, UpdatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now}
-	return nil
-}
-
-func (m *memRepo) Find(_ context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
-	p, ok := m.rows[id]
-	if !ok || p.Organization != org {
-		return project.Project{}, errx.NotFound("project not found")
-	}
-	return p, nil
-}
-
-func (m *memRepo) FindForUpdate(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
-	return m.Find(ctx, org, id)
-}
-
-func (m *memRepo) List(_ context.Context, org identity.OrganizationID, f project.Filter, p query.Pagination) (query.Paginated[project.Project], error) {
-	var items []project.Project
-	for _, r := range m.rows {
-		for _, s := range f.Status {
-			if r.Organization == org && r.Status == s {
-				items = append(items, r)
-			}
-		}
-	}
-	return query.NewPaginated(items, len(items), p), nil
-}
-
-func (m *memRepo) Update(ctx context.Context, org identity.OrganizationID, id project.ID, in project.Update) error {
-	p, err := m.Find(ctx, org, id)
-	if err != nil {
-		return err
-	}
-	if in.Name != nil {
-		p.Name = *in.Name
-	}
-	if in.Description != nil {
-		p.Description = *in.Description
-	}
-	m.rows[id] = p
-	return nil
-}
-
-func (m *memRepo) Archive(ctx context.Context, org identity.OrganizationID, id project.ID, _ project.Archive) error {
-	p, err := m.Find(ctx, org, id)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	p.Status, p.ArchivedAt = project.StatusArchived, &now
-	m.rows[id] = p
-	return nil
-}
-
 func TestProjectRoutes(t *testing.T) {
-	svc := projectsvc.New(&memRepo{rows: map[project.ID]project.Project{}}, txn.Passthrough{})
+	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
 	app := httpxtest.App()
 	projecthttp.New(svc, svc).Register(app.Group("/api/v1"))
 	org := identity.NewOrganizationID()

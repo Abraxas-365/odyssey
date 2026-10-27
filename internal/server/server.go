@@ -66,7 +66,7 @@ func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler,
 		return c.JSON(public)
 	})
 
-	api := app.Group("/api/v1", auth...)
+	api := app.Group("/api/v1", append(append([]fiber.Handler{}, auth...), httpx.Provenance)...)
 	for _, r := range routes {
 		r.Register(api)
 	}

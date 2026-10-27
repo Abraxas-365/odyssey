@@ -1,0 +1,470 @@
+openapi: 3.1.0
+info:
+  title: Odyssey API
+  version: 0.1.0
+  summary: Control plane of Odyssey (Odicea), the governed platform to ship internal apps.
+  description: |
+    The HTTP contract of `odyssey-api`. Written by hand; `docs/api.md` holds the
+    rules every endpoint follows (statuses, errors, lists, PATCH semantics) and
+    this file the exact shapes.
+
+    Guarded by `internal/bootstrap/openapi_test.go`:
+    - every route the server mounts is documented here and every operation here
+      is mounted (no undocumented or phantom endpoints);
+    - every operation's `x-permissions` is exactly what the route enforces;
+    - real responses (successes and errors) validate against these schemas.
+
+    The console's TypeScript types are generated from this file
+    (`make api-types` → `frontend/src/lib/openapi.gen.ts`).
+
+    Compatibility (docs/api.md §8): additive changes only within `/api/v1`.
+servers:
+  - url: /
+security:
+  - bearer: []
+tags:
+  - name: platform
+    description: Health and public configuration (no token).
+  - name: projects
+    description: A project groups everything a team ships. The console calls it an "app".
+  - name: audit
+    description: The organization's tamper-evident activity trail.
+
+paths:
+  /health:
+    get:
+      tags: [platform]
+      operationId: health
+      summary: Liveness and database reachability
+      security: []
+      responses:
+        "200":
+          description: The API and its database are up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/config:
+    get:
+      tags: [platform]
+      operationId: getPublicConfig
+      summary: Sign-in settings for the console
+      description: Holds no secrets; the console reads it before signing in.
+      security: []
+      responses:
+        "200":
+          description: Public configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicConfig" }
+
+  /api/v1/projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: List projects
+      description: "Order: `lower(name)`, then `id`."
+      x-permissions: [odyssey:projects:read]
+      parameters:
+        - name: status
+          in: query
+          description: Repeatable (OR). Default `active`.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ProjectStatus" }
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: Create a project
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectCreate" }
+      responses:
+        "201":
+          description: Created. `Location` points at the new project.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Get a project
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+    patch:
+      tags: [projects]
+      operationId: updateProject
+      summary: Change a project's name or description
+      description: Absent fields are unchanged; a patch that changes nothing writes nothing. The slug is immutable.
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectPatch" }
+      responses:
+        "200":
+          description: The project after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/archive:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [projects]
+      operationId: archiveProject
+      summary: Archive a project (idempotent)
+      x-permissions: [odyssey:projects:write]
+      responses:
+        "200":
+          description: The archived project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      operationId: listAuditEntries
+      summary: List the activity trail
+      description: "Newest first (`seq` descending)."
+      x-permissions: [odyssey:audit:read]
+      parameters:
+        - name: subject
+          in: query
+          description: One entity, `<kind>/<id>` (e.g. `project/…`).
+          schema: { type: string }
+        - name: type
+          in: query
+          description: Exact event types (repeatable, OR), e.g. `project.created`.
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+        - name: actor_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: correlation_id
+          in: query
+          description: Everything one request or workflow caused.
+          schema: { type: string }
+        - name: from
+          in: query
+          description: Inclusive. A date (`YYYY-MM-DD`, UTC) or an RFC 3339 instant.
+          schema: { type: string }
+        - name: to
+          in: query
+          description: A date includes the whole day; an instant is exclusive.
+          schema: { type: string }
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditEntryList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/audit/verify:
+    get:
+      tags: [audit]
+      operationId: verifyAuditTrail
+      summary: Re-hash the organization's whole chain
+      x-permissions: [odyssey:audit:read]
+      responses:
+        "200":
+          description: Whether the trail is intact.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditVerification" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: IAMKit access token
+      description: The organization comes only from the token (docs/api.md §1).
+
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Search:
+      name: search
+      in: query
+      schema: { type: string, maxLength: 200 }
+    Limit:
+      name: limit
+      in: query
+      description: 1–100 (larger values are clamped), default 20.
+      schema: { type: integer, minimum: 1, default: 20 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+
+  responses:
+    Validation:
+      description: Malformed input (also 405, 413, 415).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Unauthorized:
+      description: No valid token.
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Forbidden:
+      description: Valid token without the required permission.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    NotFound:
+      description: Missing, or another organization's.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Conflict:
+      description: Unique conflict (e.g. the slug) or a serialization failure (retry).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Business:
+      description: Valid input that breaks a rule (`code` says which, e.g. `PROJECT_ARCHIVED`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    Internal:
+      description: Unexpected failure; the message is generic, the cause is logged with `request_id`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+
+    PublicConfig:
+      type: object
+      additionalProperties: false
+      required: [iam_url, client_id, environment_id]
+      properties:
+        iam_url: { type: string, description: "IAMKit's browser-facing base URL." }
+        client_id: { type: string, description: 'Public OAuth client (code + PKCE); "" when not configured.' }
+        environment_id: { type: string }
+
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { $ref: "#/components/schemas/Error" }
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [type, code, message, status_code, request_id]
+      description: docs/api.md §3. Branch on `type` (closed set) and `code` (additive); never parse `message`.
+      properties:
+        type: { $ref: "#/components/schemas/ErrorType" }
+        code: { type: string, examples: [VALIDATION, FORBIDDEN, PROJECT_ARCHIVED] }
+        message: { type: string }
+        status_code: { type: integer }
+        details:
+          type: object
+          description: Present on some 4xx (e.g. `field`); never on 5xx.
+          properties:
+            field: { type: string }
+          additionalProperties: true
+        request_id: { type: string }
+
+    ErrorType:
+      type: string
+      enum: [VALIDATION, AUTHORIZATION, NOT_FOUND, CONFLICT, BUSINESS, INTERNAL, EXTERNAL]
+
+    Page:
+      type: object
+      additionalProperties: false
+      required: [total, limit, offset]
+      properties:
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        offset: { type: integer, minimum: 0 }
+
+    ProjectStatus:
+      type: string
+      enum: [active, archived]
+
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, organization_id, name, slug, description, status, created_by, updated_by, created_at, updated_at, archived_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        name: { type: string, maxLength: 200 }
+        slug:
+          type: string
+          description: DNS label (no `--`), unique per organization forever; part of hostnames.
+          pattern: "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
+        description: { type: string, maxLength: 2000 }
+        status: { $ref: "#/components/schemas/ProjectStatus" }
+        created_by: { type: string, format: uuid }
+        updated_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        archived_at: { type: [string, "null"], format: date-time }
+
+    ProjectCreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        slug:
+          type: string
+          description: Derived from `name` when absent (accents folded).
+        description: { type: string, maxLength: 2000 }
+
+    ProjectPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+
+    ProjectList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Project" }
+        page: { $ref: "#/components/schemas/Page" }
+
+    AuditEntry:
+      type: object
+      additionalProperties: false
+      description: One domain event, hash-chained to the previous entry of the organization.
+      required: [id, organization_id, seq, type, version, actor_id, client, subject, summary, payload,
+                 correlation_id, causation_id, occurred_at, recorded_at, prev_hash, hash]
+      properties:
+        id: { type: string, format: uuid, description: The event's id. }
+        organization_id: { type: string, format: uuid }
+        seq: { type: integer, minimum: 1, description: Position in the organization's chain. }
+        type: { type: string, examples: [project.created] }
+        version: { type: integer, minimum: 1 }
+        actor_id: { type: string, description: 'The user who caused it; "" for the system.' }
+        client: { type: string, description: 'Channel: "web", "mcp:<client>", "cli", "" for the system.' }
+        subject: { type: string, examples: ["project/00000000-0000-4000-8000-000000000000"] }
+        summary: { type: string, description: Plain Spanish, for people. }
+        payload: { type: object, description: The event's versioned payload (golden contracts per type). }
+        correlation_id: { type: string }
+        causation_id: { type: [string, "null"], format: uuid }
+        occurred_at: { type: string, format: date-time }
+        recorded_at: { type: string, format: date-time }
+        prev_hash: { type: string }
+        hash: { type: string }
+
+    AuditEntryList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEntry" }
+        page: { $ref: "#/components/schemas/Page" }
+
+    AuditVerification:
+      type: object
+      additionalProperties: false
+      required: [valid, entries, broken_at]
+      properties:
+        valid: { type: boolean }
+        entries: { type: integer, minimum: 0 }
+        broken_at:
+          type: [integer, "null"]
+          description: The first entry whose hash or link does not match; null when valid.
