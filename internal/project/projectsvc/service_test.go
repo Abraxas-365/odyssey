@@ -41,12 +41,17 @@ func TestEveryWritePublishesItsEvent(t *testing.T) {
 	}
 
 	got := events.Events()
-	want := []string{project.EventCreated, project.EventUpdated, project.EventArchived}
+	want := []string{project.EventCreated, project.EventEnvironmentCreated, project.EventUpdated, project.EventArchived}
 	if len(got) != len(want) {
 		t.Fatalf("published %v, want %v (no-ops publish nothing)", events.Types(), want)
 	}
 	for i, e := range got {
-		if e.Type != want[i] || e.Organization != org || e.Actor != user || e.Subject != "project/"+id.String() ||
+		subject := "project/" + id.String()
+		if e.Type == project.EventEnvironmentCreated {
+			env, _ := event.Decode[project.EnvironmentCreated](e)
+			subject = "environment/" + env.Environment.String()
+		}
+		if e.Type != want[i] || e.Organization != org || e.Actor != user || e.Subject != subject ||
 			e.CorrelationID != "req-1" || e.Client != "console" {
 			t.Fatalf("event %d: %+v", i, e)
 		}
@@ -55,8 +60,31 @@ func TestEveryWritePublishesItsEvent(t *testing.T) {
 	if created.Name != "Visitas a clientes" || created.Slug != "visitas-a-clientes" || created.Project != id {
 		t.Fatalf("created payload %+v", created)
 	}
-	if got[0].Summary != "Creó la app Visitas a clientes" || got[2].Summary != "Archivó la app Visitas" {
-		t.Fatalf("summaries %q / %q", got[0].Summary, got[2].Summary)
+	if got[0].Summary != "Creó la app Visitas a clientes" || got[3].Summary != "Archivó la app Visitas" {
+		t.Fatalf("summaries %q / %q", got[0].Summary, got[3].Summary)
+	}
+}
+
+func TestEveryProjectIsBornWithProduction(t *testing.T) {
+	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
+	ctx := context.Background()
+	org := identity.NewOrganizationID()
+	id, err := svc.Create(ctx, org, project.Create{Name: "Portal", CreatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envs, err := svc.ListEnvironments(ctx, org, id, project.EnvironmentFilter{})
+	if err != nil || len(envs) != 1 || envs[0].Slug != project.ProductionSlug || envs[0].Kind != project.KindProduction {
+		t.Fatalf("environments %+v %v", envs, err)
+	}
+	if prod, err := svc.FindEnvironmentBySlug(ctx, org, id, project.ProductionSlug); err != nil || prod.ID != envs[0].ID {
+		t.Fatalf("production %+v %v", prod, err)
+	}
+	if _, err := svc.ListEnvironments(ctx, identity.NewOrganizationID(), id, project.EnvironmentFilter{}); err == nil {
+		t.Fatal("another organization lists the environments")
+	}
+	if _, err := svc.ListEnvironments(ctx, org, id, project.EnvironmentFilter{Kind: []project.EnvironmentKind{"qa"}}); err == nil {
+		t.Fatal("unknown kind accepted")
 	}
 }
 

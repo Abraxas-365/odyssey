@@ -1,0 +1,12 @@
+{
+  "release_id": "00000000-0000-4000-8000-0000000000c1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "image": "registry.local/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "port": 8080,
+  "health_path": "/health",
+  "replicas": 2,
+  "env_keys": [
+    "LOG",
+    "TZ"
+  ]
+}

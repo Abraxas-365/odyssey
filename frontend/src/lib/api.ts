@@ -76,6 +76,8 @@ export async function api<T>(path: string, options?: RequestOptions): Promise<T>
 // Plain-Spanish messages per error code (UX v3 §4: consequences, not codes).
 const messages: Record<string, string> = {
   PROJECT_ARCHIVED: 'Esta app está archivada. Restáurala antes de hacer cambios.',
+  ALREADY_CURRENT: 'Esa versión ya es la que está en línea.',
+  NOT_ROLLBACKABLE: 'Solo puedes volver a una versión que llegó a estar en línea.',
   FORBIDDEN: 'No tienes permiso para hacer esto. Si lo necesitas, pídeselo a TI.',
   UNAUTHORIZED: 'Tu sesión expiró. Vuelve a ingresar.',
   PAYLOAD_TOO_LARGE: 'Lo que enviaste es demasiado grande.',

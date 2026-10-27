@@ -32,6 +32,7 @@ they are stale). Change an endpoint → edit the spec in the same change.
 | `PATCH /things/:id` | **200** | full resource after the change |
 | `DELETE /things/:id` | 204 | none |
 | `POST /things/:id/<verb>` | 200, or 201 if it creates a resource | result |
+| Starts background work (a deployment) | **202** + `Location` of the thing to poll | that thing, pending |
 
 ## 2. Statuses and error types
 
@@ -166,6 +167,55 @@ Rules:
 - **List filters**: `status` (`active` | `archived`, repeatable, default
   `active`) and `search` (name or slug).
 - **List order**: `lower(name)`, then `id`.
+
+### Environments (`odyssey:projects:read`)
+
+Every app is born with one environment, `production` (kind `production`),
+created in the same transaction. `staging` and `preview` kinds arrive with
+GitHub sources.
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/projects/:id/environments` | read | 200 `{items}` (filter `kind`, repeatable) |
+| `GET` | `/api/v1/projects/:id/environments/:environment` | read | 200 environment |
+
+### Deployments (`odyssey:deployments:read` / `:create` / `:rollback`)
+
+A **release** is an image pinned by digest plus its configuration; it never
+changes. A **deployment** is one attempt to make a release the one an
+environment serves. The console calls both "versión".
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/deployments` | read | 200 `{items, page}`, newest first (filter `status`) |
+| `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
+| `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
+| `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
+| `GET` | `/api/v1/projects/:id/releases/:release` | read | 200 release |
+
+- **Deploy** takes `{image, port, health_path?, replicas?, env?}`. `image` must
+  be `registry/repository@sha256:<64 hex>`: tags are refused (400, field
+  `image`). Defaults: `health_path` `/`, `replicas` 1. `env` holds non-secret
+  values; `ODYSSEY_*` names are reserved. Its values never reach events or
+  the audit trail (only the names do).
+- **Lifecycle**: `pending → applying → verifying → ready | failed | cancelled`,
+  through the steps `apply`, `wait_ready` (≤ 5 min for the health check) and
+  `promote`. Only `promote` changes what the environment serves, so a version
+  that fails never replaces the one online.
+- **One at a time**: a new deployment cancels the one in progress
+  (`cancelled`, event `deployment.cancelled`).
+- **Automatic restore**: when a deployment fails and another release was
+  online, the platform starts a deployment of it with reason `auto_rollback`
+  (`rollback_of` = the failed one). A failed `auto_rollback` is not retried.
+- **Errors** (`error.code`): `HEALTH_CHECK_FAILED`, `NOT_READY` (timeout),
+  `APPLY_FAILED`, `PROMOTE_FAILED`, each with a plain-Spanish `message`.
+- **Rollback** ("Volver a esta") takes no body. It deploys the release of a
+  deployment that went live (`ready`); otherwise 422 `NOT_ROLLBACKABLE`. 422
+  `ALREADY_CURRENT` if that release is the one online and nothing is in
+  progress. Archived apps refuse both with 422 `PROJECT_ARCHIVED`.
+- **Events**: `release.created`, `deployment.started`, `deployment.ready`,
+  `deployment.failed`, `deployment.cancelled` (subject `deployment/<id>`).
 
 ### Audit (`odyssey:audit:read`)
 

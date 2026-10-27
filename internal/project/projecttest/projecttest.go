@@ -4,6 +4,7 @@ package projecttest
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,9 +19,54 @@ import (
 type Repo struct {
 	mu   sync.Mutex
 	rows map[project.ID]project.Project
+	envs []project.Environment
 }
 
 func NewRepo() *Repo { return &Repo{rows: map[project.ID]project.Project{}} }
+
+func (m *Repo) CreateEnvironment(_ context.Context, e project.Environment) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, x := range m.envs {
+		if x.Project == e.Project && x.Slug == e.Slug {
+			return errx.Conflict("an environment with this slug already exists in the project")
+		}
+	}
+	e.CreatedAt = time.Now()
+	m.envs = append(m.envs, e)
+	return nil
+}
+
+func (m *Repo) FindEnvironment(_ context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID) (project.Environment, error) {
+	return m.findEnvironment(func(e project.Environment) bool { return e.Organization == org && e.Project == id && e.ID == env })
+}
+
+func (m *Repo) FindEnvironmentBySlug(_ context.Context, org identity.OrganizationID, id project.ID, slug string) (project.Environment, error) {
+	return m.findEnvironment(func(e project.Environment) bool { return e.Organization == org && e.Project == id && e.Slug == slug })
+}
+
+func (m *Repo) findEnvironment(match func(project.Environment) bool) (project.Environment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.envs {
+		if match(e) {
+			return e, nil
+		}
+	}
+	return project.Environment{}, errx.NotFound("environment not found")
+}
+
+func (m *Repo) ListEnvironments(_ context.Context, org identity.OrganizationID, id project.ID, f project.EnvironmentFilter) ([]project.Environment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []project.Environment{}
+	for _, e := range m.envs {
+		if e.Organization == org && e.Project == id && (len(f.Kind) == 0 || slices.Contains(f.Kind, e.Kind)) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
 
 var _ project.Repository = (*Repo)(nil)
 

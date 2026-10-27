@@ -8,7 +8,10 @@ and uses IAMKit for platform and app auth.
 This repo holds the **control-plane API** (`cmd/odyssey-api`), the **worker**
 (`cmd/odyssey-worker`: outbox delivery, workflows, scheduled tasks) and the
 **web console** (`frontend/`). Domain modules today: `project` (the golden
-sample) and `audit` (an event subscriber). The full
+sample; apps and their environments), `release` (releases, deployments and
+the `release.deploy` workflow behind the `Cluster` port; `releasefake` stands
+in for real clusters until the fleet agent exists) and `audit` (an event
+subscriber). The full
 design (binaries, domains, build order) lives outside the repo, in
 `~/.rness/plans/Personal/odicea-architecture.md`. The UI design is in
 `odicea-mockup.html` and `odicea-product-ux-v3.md` there.
@@ -94,6 +97,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | `permission_gen.go` matches `iam/permissions.json` | `TestGeneratedFilesAreFresh` |
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
+| What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
 
 When you adopt a new pattern (blob, telemetry, …), add an arch rule
@@ -120,7 +124,15 @@ Other rules:
   never `time.Sleep`. Delays are precise to ~5s. One `Signal` wakes one
   `WaitFor`; extra signals stay pending. `Engine.Start` must run inside
   `tx.Do`. `OnFailure` runs in the failing transaction; if it errors, only it
-  is retried (the step isn't), so make it idempotent.
+  is retried (the step isn't), so make it idempotent. A `Fail(err)` cause
+  unwraps to `err` (`errors.As` sees its `errx` code). A module that defines
+  **and** starts workflows gets a `workflow.Deferred` engine from bootstrap
+  (the engine is built after the registry is sealed).
+- **Deployments** (`release`): one at a time per environment (a new one
+  cancels the one in progress); each carries a `revision` the cluster uses to
+  ignore older ones. A failure with another release online starts an
+  `auto_rollback` deployment of it, never a loop. Releases are immutable:
+  "Volver a esta" redeploys an old release.
 - **New permission**: add it to `iam/permissions.json`, run `make gen`, use
   `permission.X`, then run `make iam-sync`.
 - **Endpoint change**: update `api/openapi.yaml` (shapes + `x-permissions`)

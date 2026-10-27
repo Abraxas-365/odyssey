@@ -218,6 +218,10 @@ func (c *Control) Error() string {
 	}
 }
 
+// Unwrap exposes a Fail's error, so OnFailure can inspect the cause with
+// errors.Is / errors.As.
+func (c *Control) Unwrap() error { return c.Failure }
+
 // WaitFor parks the run until signal arrives; its payload becomes the
 // step's output. With timeout > 0 the run fails if it does not arrive in time.
 func WaitFor(signal string, timeout time.Duration) error {
@@ -332,4 +336,66 @@ func (r *Registry) Schedules() []Schedule {
 		out = append(out, s)
 	}
 	return out
+}
+
+// Deferred is an Engine filled in after construction. A module that both
+// defines workflows and starts them is built before the engine (which needs
+// its definitions); the composition root hands it a Deferred and Sets the
+// engine once built. Using it before Set is a wiring bug.
+type Deferred struct {
+	mu sync.RWMutex
+	e  Engine
+}
+
+var _ Engine = (*Deferred)(nil)
+
+// Set installs the engine; it may be called once.
+func (d *Deferred) Set(e Engine) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.e != nil {
+		panic("workflow: Deferred engine set twice")
+	}
+	d.e = e
+}
+
+func (d *Deferred) engine() (Engine, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.e == nil {
+		return nil, errx.Internal("workflow: engine used before it was set")
+	}
+	return d.e, nil
+}
+
+func (d *Deferred) Start(ctx context.Context, s Start) (RunID, error) {
+	e, err := d.engine()
+	if err != nil {
+		return RunID{}, err
+	}
+	return e.Start(ctx, s)
+}
+
+func (d *Deferred) Signal(ctx context.Context, org identity.OrganizationID, run RunID, signal string, payload any) error {
+	e, err := d.engine()
+	if err != nil {
+		return err
+	}
+	return e.Signal(ctx, org, run, signal, payload)
+}
+
+func (d *Deferred) Cancel(ctx context.Context, org identity.OrganizationID, run RunID, reason string) error {
+	e, err := d.engine()
+	if err != nil {
+		return err
+	}
+	return e.Cancel(ctx, org, run, reason)
+}
+
+func (d *Deferred) Find(ctx context.Context, org identity.OrganizationID, run RunID) (Run, error) {
+	e, err := d.engine()
+	if err != nil {
+		return Run{}, err
+	}
+	return e.Find(ctx, org, run)
 }

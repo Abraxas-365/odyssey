@@ -23,6 +23,18 @@ export type ProjectList = Schemas['ProjectList']
 type ListProjectsQuery = NonNullable<operations['listProjects']['parameters']['query']>
 export type ProjectFilter = Omit<ListProjectsQuery, 'status'> & { status?: ProjectStatus }
 
+/** An app's place to run; every app is born with `production`. */
+export type Environment = Schemas['Environment']
+export type EnvironmentList = Schemas['EnvironmentList']
+
+/** A release is an image + config; a deployment, one attempt to put it online (UI: "versión"). */
+export type Release = Schemas['Release']
+export type Deployment = Schemas['Deployment']
+export type DeploymentStatus = Schemas['DeploymentStatus']
+export type DeploymentStep = Schemas['DeploymentStep']
+export type CurrentRelease = Schemas['CurrentRelease']
+export type DeployRequest = Schemas['DeployRequest']
+
 export type AuditEntry = Schemas['AuditEntry']
 export type AuditEntryList = Schemas['AuditEntryList']
 export type AuditVerification = Schemas['AuditVerification']

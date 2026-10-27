@@ -33,11 +33,21 @@ func (s *Service) Create(ctx context.Context, organization identity.Organization
 		return project.ID{}, err
 	}
 	id := project.NewID()
+	// Every project is born with its production environment: there is always
+	// somewhere to deploy, and its ID is stable from the first minute.
+	production := project.Environment{ID: project.NewEnvironmentID(), Organization: organization, Project: id,
+		Slug: project.ProductionSlug, Kind: project.KindProduction}
+	name := text.Clean(input.Name)
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.Create(ctx, organization, id, input); err != nil {
 			return err
 		}
-		return s.events.Publish(ctx, project.NewCreated(organization, input.CreatedBy, id, text.Clean(input.Name), input.Slug))
+		if err := s.repo.CreateEnvironment(ctx, production); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx,
+			project.NewCreated(organization, input.CreatedBy, id, name, input.Slug),
+			project.NewEnvironmentCreated(organization, input.CreatedBy, production, name))
 	})
 	if err != nil {
 		return project.ID{}, err
@@ -89,6 +99,26 @@ func (s *Service) Archive(ctx context.Context, organization identity.Organizatio
 
 func (s *Service) Find(ctx context.Context, organization identity.OrganizationID, id project.ID) (project.Project, error) {
 	return s.repo.Find(ctx, organization, id)
+}
+
+func (s *Service) FindEnvironment(ctx context.Context, organization identity.OrganizationID, id project.ID, environment project.EnvironmentID) (project.Environment, error) {
+	return s.repo.FindEnvironment(ctx, organization, id, environment)
+}
+
+func (s *Service) FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, id project.ID, slug string) (project.Environment, error) {
+	return s.repo.FindEnvironmentBySlug(ctx, organization, id, slug)
+}
+
+// ListEnvironments answers NotFound for an unknown project (an empty list
+// would hide a wrong ID).
+func (s *Service) ListEnvironments(ctx context.Context, organization identity.OrganizationID, id project.ID, filter project.EnvironmentFilter) ([]project.Environment, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.Find(ctx, organization, id); err != nil {
+		return nil, err
+	}
+	return s.repo.ListEnvironments(ctx, organization, id, filter)
 }
 
 func (s *Service) List(ctx context.Context, organization identity.OrganizationID, filter project.Filter, page query.Pagination) (query.Paginated[project.Project], error) {

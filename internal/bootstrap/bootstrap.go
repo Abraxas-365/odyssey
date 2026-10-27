@@ -26,6 +26,9 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
+	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/release/releasemodule"
+	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
 	"github.com/Abraxas-365/odyssey/internal/server"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
@@ -218,6 +221,7 @@ func Migrations() []migrate.Set {
 	return []migrate.Set{
 		{Owner: outboxpg.Schema, Files: outboxpg.Migrations()},
 		{Owner: projectmodule.Schema, Files: projectmodule.Migrations()},
+		{Owner: releasemodule.Schema, Files: releasemodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
 	}
@@ -242,6 +246,7 @@ type Platform struct {
 	Events    event.Publisher
 	Workflows *workflowpg.Engine
 	Projects  projectmodule.Module
+	Releases  releasemodule.Module
 	Audit     auditmodule.Module
 }
 
@@ -255,6 +260,11 @@ type Options struct {
 	// Register adds workflows after the platform's own (tests use it to run
 	// a workflow through the real worker). Production leaves it nil.
 	Register func(*workflow.Registry)
+	// Cluster runs the apps; nil uses the in-memory fake until the fleet
+	// adapter exists (phase 1a-a3). Tests pass a configured fake.
+	Cluster release.Cluster
+	// Release tunes the deploy workflow (tests shorten its waits).
+	Release releasesvc.Options
 }
 
 // Assemble builds the modules and wires who reacts to what. This is the only
@@ -267,15 +277,20 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	bus := event.NewBus()
 	events := outboxpg.New(bus)
 	registry := workflow.NewRegistry()
+	engine := &workflow.Deferred{}
+	projects := projectmodule.New(projectmodule.Deps{DB: db, Events: events})
 	p := &Platform{
 		DB:       db,
 		Bus:      bus,
 		Events:   events,
-		Projects: projectmodule.New(projectmodule.Deps{DB: db, Events: events}),
-		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
+		Projects: projects,
+		Releases: releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
+			Engine: engine, Cluster: opts.Cluster, Options: opts.Release}),
+		Audit: auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
 	bus.Seal()
+	p.Releases.Register(registry)
 
 	registry.Every(workflow.Schedule{Name: "event.purge", Every: 6 * time.Hour, Run: func(ctx context.Context) error {
 		n, err := p.Dispatcher(outboxpg.Options{}).Purge(ctx, time.Now().Add(-opts.EventRetention))
@@ -297,11 +312,12 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	if opts.Register != nil {
 		opts.Register(registry)
 	}
-	engine, err := workflowpg.New(ctx, db, registry, opts.Workflow)
+	wf, err := workflowpg.New(ctx, db, registry, opts.Workflow)
 	if err != nil {
 		return nil, err
 	}
-	p.Workflows = engine
+	engine.Set(wf)
+	p.Workflows = wf
 	return p, nil
 }
 
@@ -347,6 +363,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler) *fiber.App {
 		server.Options{CORSOrigins: cfg.CORSOrigins},
 		[]fiber.Handler{auth},
 		p.Projects.HTTP,
+		p.Releases.HTTP,
 		p.Audit.HTTP,
 	)
 }

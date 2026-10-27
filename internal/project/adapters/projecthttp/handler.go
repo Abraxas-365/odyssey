@@ -25,6 +25,50 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Get("/:id", httpx.RequirePermissions(permission.ProjectsRead), h.find)
 	g.Patch("/:id", httpx.RequirePermissions(permission.ProjectsWrite), h.update)
 	g.Post("/:id/archive", httpx.RequirePermissions(permission.ProjectsWrite), h.archive)
+	g.Get("/:id/environments", httpx.RequirePermissions(permission.ProjectsRead), h.listEnvironments)
+	g.Get("/:id/environments/:environment", httpx.RequirePermissions(permission.ProjectsRead), h.findEnvironment)
+}
+
+// listEnvironments is not paginated: a project has a handful (production,
+// staging, open PR previews). Production first.
+func (h *Handler) listEnvironments(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := project.ParseID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	var filter project.EnvironmentFilter
+	if filter.Kind, err = httpx.EnumFilter(c, "kind", project.EnvironmentKind.Valid, project.EnvironmentKindMessage); err != nil {
+		return err
+	}
+	items, err := h.queries.ListEnvironments(c.UserContext(), org, id, filter)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"items": items})
+}
+
+func (h *Handler) findEnvironment(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := project.ParseID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	env, err := project.ParseEnvironmentID(c.Params("environment"))
+	if err != nil {
+		return err
+	}
+	found, err := h.queries.FindEnvironment(c.UserContext(), org, id, env)
+	if err != nil {
+		return err
+	}
+	return c.JSON(found)
 }
 
 func (h *Handler) create(c *fiber.Ctx) error {

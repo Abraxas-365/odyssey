@@ -22,6 +22,11 @@ type Commands interface {
 type Queries interface {
 	Find(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Project], error)
+	FindEnvironment(ctx context.Context, organization identity.OrganizationID, project ID, environment EnvironmentID) (Environment, error)
+	// FindEnvironmentBySlug resolves "production" (or another slug) of a project.
+	FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, project ID, slug string) (Environment, error)
+	// ListEnvironments returns the project's environments, production first.
+	ListEnvironments(ctx context.Context, organization identity.OrganizationID, project ID, filter EnvironmentFilter) ([]Environment, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -36,4 +41,8 @@ type Repository interface {
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Project], error)
 	Update(ctx context.Context, organization identity.OrganizationID, project ID, input Update) error
 	Archive(ctx context.Context, organization identity.OrganizationID, project ID, input Archive) error
+	CreateEnvironment(ctx context.Context, environment Environment) error
+	FindEnvironment(ctx context.Context, organization identity.OrganizationID, project ID, environment EnvironmentID) (Environment, error)
+	FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, project ID, slug string) (Environment, error)
+	ListEnvironments(ctx context.Context, organization identity.OrganizationID, project ID, filter EnvironmentFilter) ([]Environment, error)
 }

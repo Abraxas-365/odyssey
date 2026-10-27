@@ -1,0 +1,10 @@
+{
+  "deployment_id": "00000000-0000-4000-8000-0000000000d1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "environment_id": "00000000-0000-4000-8000-0000000000bb",
+  "release_id": "00000000-0000-4000-8000-0000000000c1",
+  "step": "wait_ready",
+  "code": "HEALTH_CHECK_FAILED",
+  "message": "La app arrancó pero no responde en su ruta de salud.",
+  "auto_rollback_id": "00000000-0000-4000-8000-0000000000d2"
+}

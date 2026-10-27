@@ -27,6 +27,8 @@ tags:
     description: Health and public configuration (no token).
   - name: projects
     description: A project groups everything a team ships. The console calls it an "app".
+  - name: deployments
+    description: What runs in each environment - publishing, progress, history and going back.
   - name: audit
     description: The organization's tamper-evident activity trail.
 
@@ -184,6 +186,220 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/environments:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [projects]
+      operationId: listEnvironments
+      summary: List a project's environments
+      description: "Not paginated (a project has a handful). Order: production, staging, previews, then `slug`."
+      x-permissions: [odyssey:projects:read]
+      parameters:
+        - name: kind
+          in: query
+          description: Repeatable (OR).
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/EnvironmentKind" }
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: The environments.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [projects]
+      operationId: getEnvironment
+      summary: Get an environment
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/current:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [deployments]
+      operationId: getCurrentRelease
+      summary: What an environment serves
+      description: The release online, the deployment that put it there and the one in progress. Before the first deployment every field but `environment_id` is empty.
+      x-permissions: [odyssey:deployments:read]
+      responses:
+        "200":
+          description: The environment's current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CurrentRelease" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/deployments:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [deployments]
+      operationId: listDeployments
+      summary: List an environment's deployments
+      description: "Order: newest first."
+      x-permissions: [odyssey:deployments:read]
+      parameters:
+        - name: status
+          in: query
+          description: Repeatable (OR).
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/DeploymentStatus" }
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of deployments.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      tags: [deployments]
+      operationId: deploy
+      summary: Publish an image
+      description: |
+        Creates a release (the image pinned by digest plus its configuration)
+        and starts deploying it. Answers 202: the worker applies it, waits for
+        its health check and only then makes it the environment's current
+        release; poll the deployment (`Location`). A deployment in progress in
+        the environment is cancelled. If the new version fails while another
+        was online, the platform restores that one (a deployment with reason
+        `auto_rollback`).
+      x-permissions: [odyssey:deployments:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeployRequest" }
+      responses:
+        "202":
+          description: The deployment, pending. `Location` is its URL.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/deployments/{deployment}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - $ref: "#/components/parameters/Deployment"
+    get:
+      tags: [deployments]
+      operationId: getDeployment
+      summary: Get a deployment and its progress
+      x-permissions: [odyssey:deployments:read]
+      responses:
+        "200":
+          description: The deployment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/deployments/{deployment}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - $ref: "#/components/parameters/Deployment"
+    post:
+      tags: [deployments]
+      operationId: rollbackDeployment
+      summary: Go back to this version
+      description: |
+        Deploys again the release of `deployment`, which must have gone live
+        (`ready`). It creates a new deployment (reason `rollback`), not a new
+        release. No body.
+      x-permissions: [odyssey:deployments:rollback]
+      responses:
+        "202":
+          description: The new deployment, pending. `Location` is its URL.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/releases/{release}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - name: release
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getRelease
+      summary: Get a release
+      x-permissions: [odyssey:deployments:read]
+      responses:
+        "200":
+          description: The release.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Release" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/audit:
     get:
       tags: [audit]
@@ -260,6 +476,16 @@ components:
   parameters:
     ID:
       name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Environment:
+      name: environment
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Deployment:
+      name: deployment
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -423,6 +649,167 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Project" }
         page: { $ref: "#/components/schemas/Page" }
+
+    EnvironmentKind:
+      type: string
+      enum: [production, staging, preview]
+
+    Environment:
+      type: object
+      additionalProperties: false
+      description: Where a project runs. Every project is born with `production`.
+      required: [id, organization_id, project_id, slug, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        slug:
+          type: string
+          description: DNS label, unique in the project; part of hostnames.
+          pattern: "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
+        kind: { $ref: "#/components/schemas/EnvironmentKind" }
+        created_at: { type: string, format: date-time }
+
+    EnvironmentList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Environment" }
+
+    ReleaseConfig:
+      type: object
+      additionalProperties: false
+      required: [port, health_path, replicas, env]
+      properties:
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        health_path: { type: string }
+        replicas: { type: integer, minimum: 1, maximum: 10 }
+        env:
+          type: object
+          additionalProperties: { type: string }
+
+    Release:
+      type: object
+      additionalProperties: false
+      description: An image pinned by digest plus the configuration it runs with. Immutable.
+      required: [id, organization_id, project_id, image, config, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        image: { type: string }
+        config: { $ref: "#/components/schemas/ReleaseConfig" }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+
+    DeployRequest:
+      type: object
+      additionalProperties: false
+      required: [image, port]
+      properties:
+        image:
+          type: string
+          maxLength: 512
+          description: "`registry/repository@sha256:<64 hex>`. Tags are refused: a release names one image forever."
+          example: ghcr.io/inedge/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        port: { type: integer, minimum: 1, maximum: 65535, description: The port the app listens on. }
+        health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
+        replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
+        env:
+          type: object
+          maxProperties: 100
+          description: Non-secret variables. Names starting with `ODYSSEY_` are reserved.
+          additionalProperties: { type: string, maxLength: 4096 }
+
+    DeploymentStatus:
+      type: string
+      enum: [pending, applying, verifying, ready, failed, cancelled]
+
+    DeploymentStep:
+      type: object
+      additionalProperties: false
+      required: [name, status]
+      properties:
+        name: { type: string, enum: [apply, wait_ready, promote] }
+        status: { type: string, enum: [pending, running, done, failed, skipped] }
+
+    Deployment:
+      type: object
+      additionalProperties: false
+      description: One attempt to make a release the one an environment serves. A finished one never changes.
+      required: [id, organization_id, project_id, environment_id, release_id, image, status, reason, step, steps,
+                 revision, previous_release_id, rollback_of, error, run_id, requested_by, created_at, updated_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        image: { type: string }
+        status: { $ref: "#/components/schemas/DeploymentStatus" }
+        reason:
+          type: string
+          enum: [deploy, rollback, auto_rollback]
+          description: "`auto_rollback`: the platform restored the version online after a failed deployment."
+        step: { type: string, enum: [apply, wait_ready, promote] }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/DeploymentStep" }
+        revision: { type: integer }
+        previous_release_id: { type: [string, "null"], format: uuid }
+        rollback_of:
+          type: [string, "null"]
+          format: uuid
+          description: The deployment this one undoes.
+        error:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [code, message]
+              properties:
+                code: { type: string, enum: [HEALTH_CHECK_FAILED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED] }
+                message: { type: string }
+        run_id: { type: string, format: uuid }
+        requested_by: { type: string, description: '"" when the platform started it.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+
+    DeploymentList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Deployment" }
+        page: { $ref: "#/components/schemas/Page" }
+
+    CurrentRelease:
+      type: object
+      additionalProperties: false
+      required: [environment_id, url, release, deployment, active]
+      properties:
+        environment_id: { type: string, format: uuid }
+        url: { type: string, description: '"" before the first deployment.' }
+        release:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Release"
+        deployment:
+          description: The deployment that put the current release online.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Deployment"
+        active:
+          description: The deployment in progress.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Deployment"
 
     AuditEntry:
       type: object

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Archive, Bot, Database, ExternalLink, GitBranch, Lock, Pencil } from 'lucide-react'
+import { Archive, Bot, Database, ExternalLink, Lock, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -26,9 +26,12 @@ import { formatDateTime, formatRelative } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
 import { useArchiveProject, useProject, useUpdateProject } from '@/lib/projects'
+import { useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
 import type { Project } from '@/lib/types'
+import { PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
+import { appStatus, failureText, lastProblem, versions } from '@/features/apps/versions'
 
-/** App → Resumen (UX v3 §8). Versions/resources/sharing land with their APIs. */
+/** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
 export function AppOverviewPage() {
   const { id } = useParams()
   const project = useProject(id)
@@ -39,19 +42,31 @@ export function AppOverviewPage() {
 
 function Overview({ project: p }: { project: Project }) {
   const { technical } = usePreferences()
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const archived = p.status === 'archived'
   const canWrite = can(permissions.projectsWrite) && !archived
+  const canRead = can(permissions.deploymentsRead)
   const [editing, setEditing] = useState(false)
   const [confirmArchive, setConfirmArchive] = useState(false)
   const archive = useArchiveProject(p.id)
+
+  // Phase 1 publishes to production only; staging/previews come with GitHub.
+  const environments = useEnvironments(p.id)
+  const production = canRead ? environments.data?.items.find(e => e.kind === 'production') : undefined
+  const current = useCurrent(p.id, production?.id)
+  const publishing = !!current.data?.active
+  const deployments = useDeployments(p.id, production?.id, publishing)
+  const history = deployments.data?.items ?? []
+  const problem = publishing ? undefined : lastProblem(history)
+  const status = appStatus(archived, current.data, problem)
+  const live = current.data?.release ? current.data : undefined
 
   return (
     <>
       <PageHeader
         breadcrumb={<Link to="/" className="hover:text-foreground">Apps</Link>}
         title={p.name}
-        status={<AppStatus status={archived ? 'archived' : 'paused'} label={archived ? undefined : 'Sin publicar'} />}
+        status={<AppStatus status={status.status} label={status.label} />}
         description={p.description || 'Sin descripción'}
         actions={
           canWrite && (
@@ -77,17 +92,39 @@ function Overview({ project: p }: { project: Project }) {
 
       {editing && <EditPanel project={p} onDone={() => setEditing(false)} />}
 
+      {current.error && <ErrorNotice error={current.error} onRetry={() => current.refetch()} />}
+      {current.data?.active && <PublishingPanel deployment={current.data.active} technical={technical} />}
+      {problem && (
+        <Callout tone={live ? 'warn' : 'bad'} title={live ? 'Tu app sigue funcionando con la versión anterior.' : 'La nueva versión no se publicó.'}>
+          {failureText(problem)} {live ? 'Nadie se vio afectado.' : 'Revisa los cambios y vuelve a intentarlo.'}
+        </Callout>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <Panel>
           <div className="p-4">
-            <AppThumbnail off className="aspect-[16/8]" />
+            <AppThumbnail off={!live} className="aspect-[16/8]" />
           </div>
           <PanelFooter>
-            <span>Aún no tiene una versión publicada.</span>
-            <Button variant="outline" size="sm" disabled title="Disponible cuando la app esté publicada">
-              <ExternalLink />
-              Abrir app
-            </Button>
+            {live ? (
+              <span className="min-w-0 truncate">
+                En línea {live.deployment?.finished_at && <>desde {formatRelative(live.deployment.finished_at)}</>}
+                {technical && <> · <span className="font-mono text-xs">{live.url}</span></>}
+              </span>
+            ) : (
+              <span>Aún no tiene una versión publicada.</span>
+            )}
+            {live ? (
+              <Button variant="outline" size="sm" nativeButton={false} render={<a href={live.url} target="_blank" rel="noreferrer" />}>
+                <ExternalLink />
+                Abrir app
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled title="Disponible cuando la app esté publicada">
+                <ExternalLink />
+                Abrir app
+              </Button>
+            )}
           </PanelFooter>
         </Panel>
 
@@ -100,14 +137,30 @@ function Overview({ project: p }: { project: Project }) {
                 ['Creada', formatDateTime(p.created_at)],
                 ['Último cambio', formatRelative(p.updated_at)],
                 ...(technical ? ([['ID', <span className="font-mono text-xs break-all">{p.id}</span>], ['Organización', <span className="font-mono text-xs break-all">{p.organization_id}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
+                ...(technical && live?.release ? ([['Imagen', <span className="font-mono text-xs break-all">{live.release.image}</span>], ['Puerto', live.release.config.port], ['Ruta de salud', <span className="font-mono text-xs">{live.release.config.health_path}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
               ]}
             />
           </PanelBody>
         </Panel>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <EmptyState icon={GitBranch} title="Versiones">Cada vez que publiques aparecerá aquí, y podrás volver a cualquiera.</EmptyState>
+      {canRead && production && (
+        <VersionsPanel
+          items={versions(history, current.data, user.id)}
+          loading={deployments.isPending}
+          error={deployments.error}
+          onRetry={() => deployments.refetch()}
+          technical={technical}
+          project={p.id}
+          env={production.id}
+          canRestore={can(permissions.deploymentsRollback) && !archived}
+        />
+      )}
+      {environments.error && <ErrorNotice error={environments.error} onRetry={() => environments.refetch()} />}
+
+      {technical && production && can(permissions.deploymentsCreate) && !archived && <PublishImagePanel project={p.id} env={production.id} busy={publishing} />}
+
+      <div className="grid gap-4 md:grid-cols-2">
         <EmptyState icon={Database} title="Lo que usa">Base de datos, archivos o IA. Tu asistente los pide cuando la app los necesita.</EmptyState>
         <EmptyState icon={Lock} title="Quién puede abrirla">Por ahora, solo tu equipo.</EmptyState>
       </div>

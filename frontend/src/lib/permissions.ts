@@ -3,6 +3,9 @@
 export const permissions = {
   projectsRead: 'odyssey:projects:read',
   projectsWrite: 'odyssey:projects:write',
+  deploymentsRead: 'odyssey:deployments:read',
+  deploymentsCreate: 'odyssey:deployments:create',
+  deploymentsRollback: 'odyssey:deployments:rollback',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]

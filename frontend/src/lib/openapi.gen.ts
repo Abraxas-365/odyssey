@@ -104,6 +104,171 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List a project's environments
+         * @description Not paginated (a project has a handful). Order: production, staging, previews, then `slug`.
+         */
+        get: operations["listEnvironments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /** Get an environment */
+        get: operations["getEnvironment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * What an environment serves
+         * @description The release online, the deployment that put it there and the one in progress. Before the first deployment every field but `environment_id` is empty.
+         */
+        get: operations["getCurrentRelease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List an environment's deployments
+         * @description Order: newest first.
+         */
+        get: operations["listDeployments"];
+        put?: never;
+        /**
+         * Publish an image
+         * @description Creates a release (the image pinned by digest plus its configuration)
+         *     and starts deploying it. Answers 202: the worker applies it, waits for
+         *     its health check and only then makes it the environment's current
+         *     release; poll the deployment (`Location`). A deployment in progress in
+         *     the environment is cancelled. If the new version fails while another
+         *     was online, the platform restores that one (a deployment with reason
+         *     `auto_rollback`).
+         */
+        post: operations["deploy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/deployments/{deployment}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                deployment: components["parameters"]["Deployment"];
+            };
+            cookie?: never;
+        };
+        /** Get a deployment and its progress */
+        get: operations["getDeployment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/deployments/{deployment}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                deployment: components["parameters"]["Deployment"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Go back to this version
+         * @description Deploys again the release of `deployment`, which must have gone live
+         *     (`ready`). It creates a new deployment (reason `rollback`), not a new
+         *     release. No body.
+         */
+        post: operations["rollbackDeployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/releases/{release}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                release: string;
+            };
+            cookie?: never;
+        };
+        /** Get a release */
+        get: operations["getRelease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -222,6 +387,133 @@ export interface components {
             items: components["schemas"]["Project"][];
             page: components["schemas"]["Page"];
         };
+        /** @enum {string} */
+        EnvironmentKind: "production" | "staging" | "preview";
+        /** @description Where a project runs. Every project is born with `production`. */
+        Environment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @description DNS label, unique in the project; part of hostnames. */
+            slug: string;
+            kind: components["schemas"]["EnvironmentKind"];
+            /** Format: date-time */
+            created_at: string;
+        };
+        EnvironmentList: {
+            items: components["schemas"]["Environment"][];
+        };
+        ReleaseConfig: {
+            port: number;
+            health_path: string;
+            replicas: number;
+            env: {
+                [key: string]: string;
+            };
+        };
+        /** @description An image pinned by digest plus the configuration it runs with. Immutable. */
+        Release: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            image: string;
+            config: components["schemas"]["ReleaseConfig"];
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DeployRequest: {
+            /**
+             * @description `registry/repository@sha256:<64 hex>`. Tags are refused: a release names one image forever.
+             * @example ghcr.io/inedge/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+             */
+            image: string;
+            /** @description The port the app listens on. */
+            port: number;
+            /** @description Answers 2xx when the app is healthy. Default `/`. */
+            health_path?: string;
+            /** @description Default 1. */
+            replicas?: number;
+            /** @description Non-secret variables. Names starting with `ODYSSEY_` are reserved. */
+            env?: {
+                [key: string]: string;
+            };
+        };
+        /** @enum {string} */
+        DeploymentStatus: "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
+        DeploymentStep: {
+            /** @enum {string} */
+            name: "apply" | "wait_ready" | "promote";
+            /** @enum {string} */
+            status: "pending" | "running" | "done" | "failed" | "skipped";
+        };
+        /** @description One attempt to make a release the one an environment serves. A finished one never changes. */
+        Deployment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            environment_id: string;
+            /** Format: uuid */
+            release_id: string;
+            image: string;
+            status: components["schemas"]["DeploymentStatus"];
+            /**
+             * @description `auto_rollback`: the platform restored the version online after a failed deployment.
+             * @enum {string}
+             */
+            reason: "deploy" | "rollback" | "auto_rollback";
+            /** @enum {string} */
+            step: "apply" | "wait_ready" | "promote";
+            steps: components["schemas"]["DeploymentStep"][];
+            revision: number;
+            /** Format: uuid */
+            previous_release_id: string | null;
+            /**
+             * Format: uuid
+             * @description The deployment this one undoes.
+             */
+            rollback_of: string | null;
+            error: null | {
+                /** @enum {string} */
+                code: "HEALTH_CHECK_FAILED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED";
+                message: string;
+            };
+            /** Format: uuid */
+            run_id: string;
+            /** @description "" when the platform started it. */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        DeploymentList: {
+            items: components["schemas"]["Deployment"][];
+            page: components["schemas"]["Page"];
+        };
+        CurrentRelease: {
+            /** Format: uuid */
+            environment_id: string;
+            /** @description "" before the first deployment. */
+            url: string;
+            release: null | components["schemas"]["Release"];
+            /** @description The deployment that put the current release online. */
+            deployment: null | components["schemas"]["Deployment"];
+            /** @description The deployment in progress. */
+            active: null | components["schemas"]["Deployment"];
+        };
         /** @description One domain event, hash-chained to the previous entry of the organization. */
         AuditEntry: {
             /**
@@ -335,6 +627,8 @@ export interface components {
     };
     parameters: {
         ID: string;
+        Environment: string;
+        Deployment: string;
         Search: string;
         /** @description 1–100 (larger values are clamped), default 20. */
         Limit: number;
@@ -537,6 +831,249 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listEnvironments: {
+        parameters: {
+            query?: {
+                /** @description Repeatable (OR). */
+                kind?: components["schemas"]["EnvironmentKind"][];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The environments. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getEnvironment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The environment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Environment"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getCurrentRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The environment's current state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentRelease"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listDeployments: {
+        parameters: {
+            query?: {
+                /** @description Repeatable (OR). */
+                status?: components["schemas"]["DeploymentStatus"][];
+                /** @description 1–100 (larger values are clamped), default 20. */
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of deployments. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deploy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeployRequest"];
+            };
+        };
+        responses: {
+            /** @description The deployment, pending. `Location` is its URL. */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                deployment: components["parameters"]["Deployment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deployment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    rollbackDeployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                deployment: components["parameters"]["Deployment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new deployment, pending. `Location` is its URL. */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                release: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The release. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Release"];
                 };
             };
             400: components["responses"]["Validation"];

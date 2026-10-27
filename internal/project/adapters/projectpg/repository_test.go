@@ -101,3 +101,47 @@ func TestRepository(t *testing.T) {
 		t.Fatalf("archived still listed as active: %+v", page.Page)
 	}
 }
+
+func TestEnvironments(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: projectpg.Schema, Files: projectpg.Migrations()})
+	repo := projectpg.New(db)
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	user := identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
+	id := project.NewID()
+	if err := repo.Create(ctx, org, id, project.Create{Name: "Portal", Slug: "portal", CreatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	prod := project.Environment{ID: project.NewEnvironmentID(), Organization: org, Project: id, Slug: "production", Kind: project.KindProduction}
+	stg := project.Environment{ID: project.NewEnvironmentID(), Organization: org, Project: id, Slug: "staging", Kind: project.KindStaging}
+	for _, e := range []project.Environment{stg, prod} {
+		if err := repo.CreateEnvironment(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dup := prod
+	dup.ID, dup.Slug = project.NewEnvironmentID(), "prod-2"
+	if err := repo.CreateEnvironment(ctx, dup); errType(err) != errx.TypeConflict {
+		t.Fatalf("second production: %v", err)
+	}
+	envs, err := repo.ListEnvironments(ctx, org, id, project.EnvironmentFilter{})
+	if err != nil || len(envs) != 2 || envs[0].ID != prod.ID || envs[1].ID != stg.ID {
+		t.Fatalf("list %+v %v (production first)", envs, err)
+	}
+	envs, err = repo.ListEnvironments(ctx, org, id, project.EnvironmentFilter{Kind: []project.EnvironmentKind{project.KindStaging}})
+	if err != nil || len(envs) != 1 || envs[0].ID != stg.ID {
+		t.Fatalf("filtered %+v %v", envs, err)
+	}
+	if e, err := repo.FindEnvironmentBySlug(ctx, org, id, "production"); err != nil || e.ID != prod.ID || e.CreatedAt.IsZero() {
+		t.Fatalf("by slug %+v %v", e, err)
+	}
+	if _, err := repo.FindEnvironment(ctx, other, id, prod.ID); errType(err) != errx.TypeNotFound {
+		t.Fatalf("cross-tenant: %v", err)
+	}
+	if _, err := repo.FindEnvironment(ctx, org, project.NewID(), prod.ID); errType(err) != errx.TypeNotFound {
+		t.Fatalf("other project: %v", err)
+	}
+	if envs, err := repo.ListEnvironments(ctx, other, id, project.EnvironmentFilter{}); err != nil || len(envs) != 0 {
+		t.Fatalf("cross-tenant list %+v %v", envs, err)
+	}
+}

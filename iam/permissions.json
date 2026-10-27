@@ -3,11 +3,14 @@
   "permissions": [
     { "name": "odyssey:projects:read", "label": "Ver proyectos, sus entornos y servicios" },
     { "name": "odyssey:projects:write", "label": "Crear, editar y archivar proyectos" },
+    { "name": "odyssey:deployments:read", "label": "Ver qué versión está en línea y el historial de publicaciones" },
+    { "name": "odyssey:deployments:create", "label": "Publicar una versión nueva de una app" },
+    { "name": "odyssey:deployments:rollback", "label": "Volver a una versión anterior de una app" },
     { "name": "odyssey:audit:read", "label": "Ver el historial de actividad de la organización" }
   ],
   "roles": [
-    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:audit:read"] },
-    { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write"] },
-    { "name": "Lector", "permissions": ["odyssey:projects:read"] }
+    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:audit:read"] },
+    { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback"] },
+    { "name": "Lector", "permissions": ["odyssey:projects:read", "odyssey:deployments:read"] }
   ]
 }

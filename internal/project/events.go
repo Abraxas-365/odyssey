@@ -12,16 +12,29 @@ const (
 	EventCreated  = "project.created"
 	EventUpdated  = "project.updated"
 	EventArchived = "project.archived"
+
+	EventEnvironmentCreated = "environment.created"
 )
 
 // SubjectKind prefixes the project's event subjects ("project/<id>").
 const SubjectKind = "project"
+
+// EnvironmentSubjectKind prefixes environment subjects ("environment/<id>").
+const EnvironmentSubjectKind = "environment"
 
 // Created v1.
 type Created struct {
 	Project ID     `json:"project_id"`
 	Name    string `json:"name"`
 	Slug    string `json:"slug"`
+}
+
+// EnvironmentCreated v1.
+type EnvironmentCreated struct {
+	Environment EnvironmentID   `json:"environment_id"`
+	Project     ID              `json:"project_id"`
+	Slug        string          `json:"slug"`
+	Kind        EnvironmentKind `json:"kind"`
 }
 
 // Updated v1: only the fields that changed are set.
@@ -57,6 +70,12 @@ func NewUpdated(org identity.OrganizationID, actor identity.UserID, current Proj
 		name = *p.Name
 	}
 	return event.New(EventUpdated, 1, org, actor, event.Subject(SubjectKind, current.ID), "Editó la app "+name, p)
+}
+
+func NewEnvironmentCreated(org identity.OrganizationID, actor identity.UserID, e Environment, projectName string) event.Event {
+	return event.New(EventEnvironmentCreated, 1, org, actor, event.Subject(EnvironmentSubjectKind, e.ID),
+		"Creó el entorno "+e.Slug+" de "+projectName,
+		EnvironmentCreated{Environment: e.ID, Project: e.Project, Slug: e.Slug, Kind: e.Kind})
 }
 
 func NewArchived(org identity.OrganizationID, actor identity.UserID, p Project) event.Event {

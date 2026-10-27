@@ -21,6 +21,10 @@ func TestEventContracts(t *testing.T) {
 		project.NewCreated(org, user, id, p.Name, p.Slug),
 		project.NewUpdated(org, user, p, project.Update{Name: &name, Description: &desc}),
 		project.NewArchived(org, user, p),
+		project.NewEnvironmentCreated(org, user, project.Environment{
+			ID: project.MustParseEnvironmentID("00000000-0000-4000-8000-0000000000bb"), Project: id,
+			Slug: project.ProductionSlug, Kind: project.KindProduction,
+		}, p.Name),
 	} {
 		eventtest.Golden(t, e)
 	}

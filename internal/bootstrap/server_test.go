@@ -97,7 +97,7 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Fatalf("trail %+v", trail)
 	}
 	res = checked(t, app, http.MethodGet, "/api/v1/audit/verify", token, nil)
-	if v := httpxtest.JSON[audit.Verification](t, res); !v.Valid || v.Entries != 2 {
+	if v := httpxtest.JSON[audit.Verification](t, res); !v.Valid || v.Entries != 3 { // + environment.created
 		t.Fatalf("verify %+v", v)
 	}
 	// the trail is its own permission, and per organization
