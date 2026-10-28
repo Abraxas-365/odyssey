@@ -39,4 +39,22 @@ func FailureOf(step string, cause error) Failure {
 }
 
 // stepCodes are the failures a step reports itself (the rest are inferred).
-var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true}
+var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true, CodeImagePull: true, CodeCrashed: true}
+
+// Unready explains, for the person deploying, why the cluster reports the
+// app failed: plain consequence first, then the cluster's own detail.
+func Unready(s AppStatus) error {
+	code, msg := CodeUnhealthy, "La app arrancó pero no responde en su ruta de salud."
+	switch s.Reason {
+	case FailureImagePull:
+		code, msg = CodeImagePull, "El clúster no pudo descargar la imagen. Revisa que exista y que el clúster tenga acceso al registro."
+	case FailureCrash:
+		code, msg = CodeCrashed, "La app se cierra al arrancar."
+	case FailureConfig:
+		code, msg = CodeApplyFailed, "El clúster no pudo aplicar la configuración de la app."
+	}
+	if s.Message != "" {
+		msg += " " + s.Message
+	}
+	return Failed(code, msg)
+}

@@ -1,0 +1,20 @@
+# Installs the Odyssey agent in a cluster: the CRDs, the odyssey-system
+# namespace, its RBAC and the agent's Deployment.
+#
+#   kubectl apply -k agent/install                (in-cluster agent)
+#   kubectl apply -f agent/install/crd            (CRDs only: run the agent on the host, `make agent`)
+#
+# crd/ and rbac/role.yaml are generated (make gen). The image is set with
+# `kustomize edit set image odyssey-agent=…` or `make agent-image`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - crd/odyssey.dev_odysseyapps.yaml
+  - namespace.yaml
+  - rbac/role.yaml
+  - rbac.yaml
+  - deployment.yaml
+images:
+  - name: odyssey-agent
+    newName: odyssey-agent
+    newTag: dev

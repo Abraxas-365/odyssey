@@ -1,0 +1,156 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: odysseyapps.odyssey.dev
+spec:
+  group: odyssey.dev
+  names:
+    categories:
+    - odyssey
+    kind: OdysseyApp
+    listKind: OdysseyAppList
+    plural: odysseyapps
+    shortNames:
+    - oapp
+    singular: odysseyapp
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.revision
+      name: Revision
+      type: integer
+    - jsonPath: .status.observedRevision
+      name: Observed
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .status.url
+      name: URL
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          OdysseyApp is one app in one environment: the agent turns it into a
+          Deployment, a Service and an Ingress in the same namespace.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              OdysseyAppSpec is what the cluster must run for one app in one environment.
+              It mirrors the control plane's release.DesiredApp (field for field).
+            properties:
+              env:
+                additionalProperties:
+                  type: string
+                description: Env holds non-secret configuration.
+                type: object
+              healthPath:
+                description: HealthPath must answer 2xx/3xx once the app is ready
+                  to serve.
+                pattern: ^/
+                type: string
+              image:
+                description: 'Image is pinned by digest: registry/repository@sha256:<64
+                  hex>.'
+                pattern: ^[^\s@]+@sha256:[a-f0-9]{64}$
+                type: string
+              labels:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Labels identify the app's objects (project, environment, release,
+                  deployment); they are copied to everything the agent creates.
+                type: object
+              port:
+                description: Port the app listens on (PORT is set to it unless env
+                  says otherwise).
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              replicas:
+                format: int32
+                maximum: 20
+                minimum: 1
+                type: integer
+              revision:
+                description: |-
+                  Revision increases with every deployment of the environment. Whoever
+                  applies the spec never lowers it, so a superseded deployment cannot win
+                  late; status.observedRevision says which revision the status describes.
+                format: int64
+                minimum: 1
+                type: integer
+            required:
+            - healthPath
+            - image
+            - port
+            - replicas
+            - revision
+            type: object
+          status:
+            description: OdysseyAppStatus is what the agent observed.
+            properties:
+              message:
+                description: Message is the cluster's detail for people (in English,
+                  as Kubernetes says it).
+                type: string
+              observedRevision:
+                description: ObservedRevision is the spec revision this status describes.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is how the cluster sees the app at status.observedRevision.
+                enum:
+                - progressing
+                - ready
+                - failed
+                type: string
+              readyReplicas:
+                format: int32
+                type: integer
+              reason:
+                description: Reason explains a failed phase.
+                enum:
+                - ""
+                - image_pull
+                - crash
+                - unhealthy
+                - config
+                type: string
+              url:
+                description: URL is where the app answers.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

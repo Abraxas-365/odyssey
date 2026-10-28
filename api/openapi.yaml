@@ -771,7 +771,7 @@ components:
               additionalProperties: false
               required: [code, message]
               properties:
-                code: { type: string, enum: [HEALTH_CHECK_FAILED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED] }
+                code: { type: string, enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED] }
                 message: { type: string }
         run_id: { type: string, format: uuid }
         requested_by: { type: string, description: '"" when the platform started it.' }

@@ -110,7 +110,7 @@ func (c *Cluster) Status(_ context.Context, t release.Target, name string) (rele
 		return s, nil
 	}
 	if a.outcome.Unhealthy {
-		s.Phase, s.Message = release.PhaseFailed, "GET "+a.desired.HealthPath+" respondió 503."
+		s.Phase, s.Reason, s.Message = release.PhaseFailed, release.FailureUnhealthy, "GET "+a.desired.HealthPath+" respondió 503."
 		return s, nil
 	}
 	s.Phase, s.ReadyReplicas = release.PhaseReady, a.desired.Replicas

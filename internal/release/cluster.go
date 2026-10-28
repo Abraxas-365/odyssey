@@ -41,14 +41,25 @@ const (
 	PhaseFailed      Phase = "failed"      // it cannot start or its health check keeps failing
 )
 
+// FailureReason explains a failed phase.
+type FailureReason string
+
+const (
+	FailureUnhealthy FailureReason = "unhealthy"  // it runs but its health check fails (also the default)
+	FailureImagePull FailureReason = "image_pull" // the image cannot be downloaded
+	FailureCrash     FailureReason = "crash"      // it keeps exiting on start
+	FailureConfig    FailureReason = "config"     // the cluster cannot apply it (e.g. its host is taken)
+)
+
 // AppStatus is what the cluster reports of an app.
 type AppStatus struct {
 	// ObservedRevision is the desired revision the status describes.
-	ObservedRevision int64  `json:"observed_revision"`
-	Phase            Phase  `json:"phase"`
-	Message          string `json:"message"`
-	ReadyReplicas    int    `json:"ready_replicas"`
-	URL              string `json:"url"`
+	ObservedRevision int64         `json:"observed_revision"`
+	Phase            Phase         `json:"phase"`
+	Reason           FailureReason `json:"reason"`
+	Message          string        `json:"message"`
+	ReadyReplicas    int           `json:"ready_replicas"`
+	URL              string        `json:"url"`
 }
 
 // Desired builds what the cluster must run for deployment d of release r.

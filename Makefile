@@ -1,14 +1,16 @@
-.PHONY: build run worker test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
+.PHONY: build run worker agent agent-image cluster cluster-down test-kube test-kube-k3d test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
 
 build:
 	go build -o bin/odyssey-api ./cmd/odyssey-api
 	go build -o bin/odyssey-worker ./cmd/odyssey-worker
+	go build -o bin/odyssey-agent ./cmd/odyssey-agent
 
 test:
 	go test ./...
 
 # Unit tests plus Postgres tests (pgtest) against the compose database: each
-# test creates and drops its own throwaway database.
+# test creates and drops its own throwaway database. Without it, plain
+# `go test` starts a Postgres container per package (testcontainers).
 test-db:
 	@set -a && . ./.env && set +a && \
 	ODYSSEY_TEST_DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/postgres?sslmode=disable \
@@ -18,14 +20,18 @@ vet:
 	go vet ./...
 
 fmt:
-	gofmt -w api cmd internal
+	gofmt -w agent api cmd internal
 
 tidy:
 	go mod tidy
 
-# Regenerate internal/permission from iam/permissions.json (a test fails while stale).
+# Regenerate internal/permission from iam/permissions.json, and the agent's
+# deepcopy code + CRD manifests from agent/api (tests fail while stale).
 gen:
 	go generate ./internal/permission/...
+	go tool controller-gen object paths=./agent/api/...
+	go tool controller-gen crd:crdVersions=v1 rbac:roleName=odyssey-agent paths=./agent/... \
+		output:crd:artifacts:config=agent/install/crd output:rbac:artifacts:config=agent/install/rbac
 
 # Regenerate the console's wire types from api/openapi.yaml (web-check fails while stale).
 api-types:
@@ -34,7 +40,7 @@ api-types:
 
 # What CI runs.
 check:
-	@test -z "$$(gofmt -l api cmd internal)" || (gofmt -l api cmd internal && exit 1)
+	@test -z "$$(gofmt -l agent api cmd internal)" || (gofmt -l agent api cmd internal && exit 1)
 	go vet ./...
 	go test ./...
 
@@ -46,10 +52,58 @@ run:
 	go run ./cmd/odyssey-api
 
 # Run the worker on the host (outbox delivery, workflows, scheduled tasks).
+# CLUSTER=kubernetes deploys to the local k3d cluster (make cluster) instead
+# of the in-memory fake.
 worker:
 	set -a && . ./.env && set +a && \
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
+	ODYSSEY_CLUSTER=$(or $(CLUSTER),fake) ODYSSEY_KUBECONFIG=$(KUBECONFIG_LOCAL) \
 	go run ./cmd/odyssey-worker
+
+# ---- Local data plane: a k3d cluster with the agent ----
+# The cluster's kubeconfig is written to .dev-secrets/ (your ~/.kube/config is
+# not touched). Apps answer at http://<app>.apps.odyssey.localhost:8088.
+K3D_CLUSTER      ?= odyssey
+KUBECONFIG_LOCAL := $(CURDIR)/.dev-secrets/kubeconfig
+APPS_PORT        ?= 8088
+
+cluster:
+	@mkdir -p .dev-secrets && chmod 700 .dev-secrets
+	@k3d cluster list $(K3D_CLUSTER) >/dev/null 2>&1 || \
+		k3d cluster create $(K3D_CLUSTER) --agents 0 -p "$(APPS_PORT):80@loadbalancer" \
+			--kubeconfig-update-default=false --kubeconfig-switch-context=false --wait
+	@k3d kubeconfig get $(K3D_CLUSTER) > $(KUBECONFIG_LOCAL) && chmod 600 $(KUBECONFIG_LOCAL)
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -f agent/install/crd
+	@echo "cluster ready: KUBECONFIG=$(KUBECONFIG_LOCAL); run the agent with 'make agent' (or 'make agent-image' for in-cluster)"
+
+cluster-down:
+	k3d cluster delete $(K3D_CLUSTER)
+	rm -f $(KUBECONFIG_LOCAL)
+
+# The agent on the host against the k3d cluster, with your credentials
+# (restart after Go changes). A single copy, no leader election: scale the
+# in-cluster one to 0 first if you ran agent-image.
+agent:
+	KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_APPS_URL_PORT=$(APPS_PORT) \
+	go run ./cmd/odyssey-agent
+
+# The agent inside the cluster instead (as it is installed in a customer's).
+agent-image:
+	docker build --target agent -t odyssey-agent:dev .
+	k3d image import odyssey-agent:dev -c $(K3D_CLUSTER)
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -k agent/install
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n odyssey-system rollout restart deployment/odyssey-agent
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n odyssey-system rollout status deployment/odyssey-agent --timeout=120s
+
+# End-to-end test of releasekube + the agent's controller against the k3d cluster.
+# Adapter + controller e2e in a throwaway k3s (testcontainers; needs Docker).
+test-kube:
+	ODYSSEY_TEST_KUBE=1 go test -count=1 -timeout 15m -run TestKube -v ./internal/release/adapters/releasekube/
+
+# The same e2e against the long-lived k3d cluster (stop other agents first).
+test-kube-k3d:
+	ODYSSEY_TEST_KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_TEST_APPS_PORT=$(APPS_PORT) \
+	go test -count=1 -run TestKube -v ./internal/release/adapters/releasekube/
 
 # One-time: signing key + .env with random secrets.
 setup:

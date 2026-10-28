@@ -78,13 +78,38 @@ type Worker struct {
 	DatabaseURL string
 	// HealthPort serves GET /health for liveness probes ("" disables it).
 	HealthPort string
+	// Cluster is where the deploy workflow runs apps (only the worker talks
+	// to clusters).
+	Cluster Cluster
+}
+
+// Cluster kinds.
+const (
+	ClusterFake       = "fake"       // in memory: apps "run" without a cluster (development, tests)
+	ClusterKubernetes = "kubernetes" // one Kubernetes API with the odyssey-agent installed
+)
+
+// Cluster selects the release.Cluster adapter.
+type Cluster struct {
+	// Kind is ODYSSEY_CLUSTER: fake (default) or kubernetes.
+	Kind string
+	// Kubeconfig is ODYSSEY_KUBECONFIG: the kubeconfig file of the cluster
+	// ("" = in-cluster credentials).
+	Kubeconfig string
 }
 
 // LoadWorker reads the worker's environment.
 func LoadWorker() (Worker, error) {
-	cfg := Worker{DatabaseURL: os.Getenv("DATABASE_URL"), HealthPort: env("WORKER_HEALTH_PORT", "8096")}
+	cfg := Worker{
+		DatabaseURL: os.Getenv("DATABASE_URL"),
+		HealthPort:  env("WORKER_HEALTH_PORT", "8096"),
+		Cluster:     Cluster{Kind: env("ODYSSEY_CLUSTER", ClusterFake), Kubeconfig: os.Getenv("ODYSSEY_KUBECONFIG")},
+	}
 	if cfg.DatabaseURL == "" {
 		return Worker{}, errx.Validation("missing required environment: DATABASE_URL")
+	}
+	if cfg.Cluster.Kind != ClusterFake && cfg.Cluster.Kind != ClusterKubernetes {
+		return Worker{}, errx.Validation("ODYSSEY_CLUSTER must be fake or kubernetes")
 	}
 	return cfg, nil
 }

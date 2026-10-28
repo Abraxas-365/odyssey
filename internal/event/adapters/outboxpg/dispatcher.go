@@ -157,8 +157,10 @@ type row struct {
 	Causation    uuid.NullUUID           `db:"causation_id"`
 	Client       string                  `db:"client"`
 	Status       string                  `db:"status"`
-	NextAt       time.Time               `db:"next_at"`
-	Attempts     int                     `db:"attempts"`
+	// Due is next_at <= now() by the database's clock: never compare its
+	// timestamps with this process's clock (they drift apart).
+	Due      bool `db:"due"`
+	Attempts int  `db:"attempts"`
 }
 
 func (r row) event() event.Event {
@@ -170,7 +172,7 @@ func (r row) event() event.Event {
 }
 
 const selectDelivery = `SELECT o.id, o.organization_id, o.type, o.version, o.actor_id, o.subject, o.summary,
-       o.payload, o.occurred_at, o.correlation_id, o.causation_id, o.client, d.status, d.next_at, d.attempts
+       o.payload, o.occurred_at, o.correlation_id, o.causation_id, o.client, d.status, d.next_at <= now() AS due, d.attempts
   FROM event.deliveries d JOIN event.outbox o ON o.id = d.event_id`
 
 // drainUnordered delivers due deliveries oldest first; replicas skip the
@@ -239,7 +241,7 @@ func (d *Dispatcher) drainOrdered(ctx context.Context, s event.Subscription) (in
 				if err != nil {
 					return errx.Wrap(err, "claim delivery", errx.TypeInternal)
 				}
-				if r.Status != "pending" || r.NextAt.After(time.Now()) {
+				if r.Status != "pending" || !r.Due {
 					return nil // the head is dead or backing off: the organization waits
 				}
 				out, err = d.deliver(ctx, s, r)

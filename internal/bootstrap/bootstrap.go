@@ -85,7 +85,7 @@ func RunWorker() error {
 	if err := Migrate(ctx, db); err != nil {
 		return err
 	}
-	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}})
+	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster})
 	if err != nil {
 		return err
 	}
@@ -260,9 +260,11 @@ type Options struct {
 	// Register adds workflows after the platform's own (tests use it to run
 	// a workflow through the real worker). Production leaves it nil.
 	Register func(*workflow.Registry)
-	// Cluster runs the apps; nil uses the in-memory fake until the fleet
-	// adapter exists (phase 1a-a3). Tests pass a configured fake.
-	Cluster release.Cluster
+	// Cluster runs the apps; tests pass a configured fake. Nil picks the
+	// adapter from ClusterConfig (the worker's ODYSSEY_CLUSTER; the API never
+	// calls the cluster and leaves it as the in-memory fake).
+	Cluster       release.Cluster
+	ClusterConfig config.Cluster
 	// Release tunes the deploy workflow (tests shorten its waits).
 	Release releasesvc.Options
 }
@@ -279,14 +281,18 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	registry := workflow.NewRegistry()
 	engine := &workflow.Deferred{}
 	projects := projectmodule.New(projectmodule.Deps{DB: db, Events: events})
+	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
+		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Options: opts.Release})
+	if err != nil {
+		return nil, err
+	}
 	p := &Platform{
 		DB:       db,
 		Bus:      bus,
 		Events:   events,
 		Projects: projects,
-		Releases: releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
-			Engine: engine, Cluster: opts.Cluster, Options: opts.Release}),
-		Audit: auditmodule.New(auditmodule.Deps{DB: db}),
+		Releases: releases,
+		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
 	bus.Seal()

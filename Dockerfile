@@ -7,9 +7,19 @@ RUN go mod download
 
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/odyssey-api ./cmd/odyssey-worker
+COPY agent/ agent/
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/odyssey-api ./cmd/odyssey-worker ./cmd/odyssey-agent
 
-# ---- Runtime stage ----
+# ---- Agent (data plane): docker build --target agent -t odyssey-agent:dev . ----
+FROM alpine:3.21 AS agent
+RUN apk add --no-cache ca-certificates
+COPY --from=build /out/odyssey-agent /usr/local/bin/
+# Numeric, so Kubernetes can verify runAsNonRoot.
+USER 65532:65532
+EXPOSE 8097
+ENTRYPOINT ["odyssey-agent"]
+
+# ---- Control plane (default target) ----
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata \

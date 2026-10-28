@@ -208,8 +208,11 @@ environment serves. The console calls both "versión".
 - **Automatic restore**: when a deployment fails and another release was
   online, the platform starts a deployment of it with reason `auto_rollback`
   (`rollback_of` = the failed one). A failed `auto_rollback` is not retried.
-- **Errors** (`error.code`): `HEALTH_CHECK_FAILED`, `NOT_READY` (timeout),
-  `APPLY_FAILED`, `PROMOTE_FAILED`, each with a plain-Spanish `message`.
+- **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
+  path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
+  image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),
+  `APPLY_FAILED` (the cluster refused it), `PROMOTE_FAILED`, each with a
+  plain-Spanish `message` followed by the cluster's own detail.
 - **Rollback** ("Volver a esta") takes no body. It deploys the release of a
   deployment that went live (`ready`); otherwise 422 `NOT_ROLLBACKABLE`. 422
   `ALREADY_CURRENT` if that release is the one online and nothing is in

@@ -485,7 +485,7 @@ export interface components {
             rollback_of: string | null;
             error: null | {
                 /** @enum {string} */
-                code: "HEALTH_CHECK_FAILED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED";
+                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED";
                 message: string;
             };
             /** Format: uuid */

@@ -140,3 +140,24 @@ func TestFailureOf(t *testing.T) {
 		}
 	}
 }
+
+func TestUnready(t *testing.T) {
+	for _, c := range []struct {
+		reason release.FailureReason
+		code   string
+		msg    string
+	}{
+		{release.FailureUnhealthy, release.CodeUnhealthy, "no responde en su ruta de salud. GET /x 404"},
+		{"", release.CodeUnhealthy, "no responde en su ruta de salud"},
+		{release.FailureImagePull, release.CodeImagePull, "no pudo descargar la imagen"},
+		{release.FailureCrash, release.CodeCrashed, "se cierra al arrancar. GET /x 404"},
+		{release.FailureConfig, release.CodeApplyFailed, "no pudo aplicar la configuración"},
+	} {
+		err := release.Unready(release.AppStatus{Phase: release.PhaseFailed, Reason: c.reason, Message: "GET /x 404"})
+		// The code survives the trip through the engine (the cause as text).
+		f := release.FailureOf(release.StepWaitReady, errors.New(err.Error()))
+		if f.Code != c.code || !strings.Contains(f.Message, c.msg) || !strings.HasSuffix(f.Message, "GET /x 404") {
+			t.Errorf("%q: %+v", c.reason, f)
+		}
+	}
+}

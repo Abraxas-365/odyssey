@@ -6,13 +6,17 @@ and deploy, with security set by IT. Odyssey offers one MCP for coding agents
 and uses IAMKit for platform and app auth.
 
 This repo holds the **control-plane API** (`cmd/odyssey-api`), the **worker**
-(`cmd/odyssey-worker`: outbox delivery, workflows, scheduled tasks) and the
-**web console** (`frontend/`). Domain modules today: `project` (the golden
-sample; apps and their environments), `release` (releases, deployments and
-the `release.deploy` workflow behind the `Cluster` port; `releasefake` stands
-in for real clusters until the fleet agent exists; an image repository
-containing `unhealthy` / `reject` simulates a failed health check / a refused
-apply) and `audit` (an event subscriber). The full
+(`cmd/odyssey-worker`: outbox delivery, workflows, scheduled tasks), the
+**data-plane agent** (`cmd/odyssey-agent`, `agent/`: the operator that runs in
+each cluster and turns `OdysseyApp` resources into Deployment + Service +
+Ingress) and the **web console** (`frontend/`). Domain modules today: `project`
+(the golden sample; apps and their environments), `release` (releases,
+deployments and the `release.deploy` workflow behind the `Cluster` port) and
+`audit` (an event subscriber). The worker's `ODYSSEY_CLUSTER` picks the
+`Cluster` adapter: `fake` (default, in memory; an image repository containing
+`unhealthy` / `reject` simulates a failed health check / a refused apply) or
+`kubernetes` (`releasekube`: writes `OdysseyApp`s through `ODYSSEY_KUBECONFIG`;
+the fleet tunnel replaces it in phase 1a-a3). The full
 design (binaries, domains, build order) lives outside the repo, in
 `~/.rness/plans/Personal/odicea-architecture.md`. The UI design is in
 `odicea-mockup.html` and `odicea-product-ux-v3.md` there.
@@ -21,26 +25,36 @@ design (binaries, domains, build order) lives outside the repo, in
 
 | Task | Command | ~Time |
 |---|---|---|
-| Build | `make build` (→ `bin/odyssey-api`, `bin/odyssey-worker`) | 5s |
+| Build | `make build` (→ `bin/odyssey-api`, `bin/odyssey-worker`, `bin/odyssey-agent`) | 5s |
 | Unit + arch tests (DB tests skip) | `make test` | 5s |
 | All tests vs compose Postgres | `make test-db` (`PKG=./internal/project/...`) | 10s |
 | Local CI gate (gofmt, vet, test) | `make check` (CI also runs `-race` vs Postgres: `.github/workflows/ci.yml`) | 10s |
-| Run the worker on the host | `make worker` (health on 8096) | 2s |
-| Regenerate permissions | `make gen` (after editing `iam/permissions.json`) | 1s |
+| Run the worker on the host | `make worker` (health on 8096; `CLUSTER=kubernetes` deploys to k3d) | 2s |
+| Local cluster (k3d `odyssey`, CRDs; kubeconfig in `.dev-secrets/`) | `make cluster` / `make cluster-down` | 30s |
+| Agent on the host / inside the cluster (pick one) | `make agent` / `make agent-image` | 2s / 2-5m |
+| Adapter + controller e2e vs k3d (stop other agents first) | `make test-kube` | 45s |
+| Regenerate permissions, agent deepcopy, CRD + RBAC | `make gen` (after editing `iam/permissions.json` or `agent/api`, `+kubebuilder` markers) | 5s |
 | Regenerate console wire types | `make api-types` (after editing `api/openapi.yaml`) | 2s |
 | First local run (secrets, IAMKit, seed, API) | `make dev` | 2-4m |
 | Push manifest changes to local IAMKit | `make iam-sync` (`DRY_RUN=1`, `PRUNE=1`) | 5s |
-| Token / end-to-end check (projects + publish, auto-restore, "Volver a esta", audit; needs API + worker) | `make token` / `make smoke` | 60s |
+| Token / end-to-end check (projects + publish, auto-restore, "Volver a esta", audit; needs API + worker) | `make token` / `make smoke` (`SMOKE_CLUSTER=kubernetes` with the worker on k3d + an agent: real whoami, the URL must answer) | 60s / 90s |
 | Console dev server (needs API + IAMKit) | `make web` → http://localhost:5178 | 2s |
 | Console gate (types, oxlint, vitest, build) | `make web-check` | 15s |
 
-Local ports: API 8095, worker health 8096, IAMKit 8085, Postgres 5438, web 5178.
+Local ports: API 8095, worker health 8096, agent health 8097, IAMKit 8085,
+Postgres 5438, web 5178, apps (k3d ingress) 8088 →
+`http://<app>.apps.odyssey.localhost:8088`.
 
 ## File map
 
 ```
 cmd/odyssey-api/          entry point → bootstrap.Run
 cmd/odyssey-worker/       entry point → bootstrap.RunWorker
+cmd/odyssey-agent/        entry point → agent.Run
+agent/                    DATA PLANE (never imports internal/): manager (agent.go)
+agent/api/v1alpha1/       OdysseyApp CRD types (+ generated deepcopy) — shared with releasekube
+agent/controllers/app/    OdysseyApp → Deployment/Service/Ingress; Observe = the pure phase function
+agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, deployment
 internal/bootstrap/       composition root, migrations list, ARCHITECTURE TESTS
 internal/server/          Fiber app: middleware, /health, /api/config, /api/v1
 internal/<domain>/        domain types + ports.go; <domain>svc, <domain>module, adapters/<domain>{http,pg}
@@ -98,6 +112,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | `permission_gen.go` matches `iam/permissions.json` | `TestGeneratedFilesAreFresh` |
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
+| `agent/` and `cmd/odyssey-agent` never import `internal/`; in `internal/`, `k8s.io/*`, `sigs.k8s.io/*` and `agent/api` only in adapters | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
 
@@ -134,6 +149,16 @@ Other rules:
   ignore older ones. A failure with another release online starts an
   `auto_rollback` deployment of it, never a loop. Releases are immutable:
   "Volver a esta" redeploys an old release.
+- **Agent** (`agent/`): `status.observedRevision` says which spec revision the
+  status describes. The status judges the rollout: once `ready` or `failed`
+  it is final for that revision (the control plane already acted on it).
+  The agent's cache sees only objects labelled managed-by `odyssey-agent`;
+  read anything else (host owners, objects in the way) through
+  `Reconciler.API`. A host belongs to the oldest ingress serving it. Rollouts keep the previous version serving (`maxUnavailable
+  0`). Failure reasons (`image_pull`, `crash`, `unhealthy`, `config`) map to
+  `IMAGE_PULL_FAILED`, `APP_CRASHED`, `HEALTH_CHECK_FAILED`, `APPLY_FAILED` in
+  `release.Unready`. A CRD change is additive within `v1alpha1`; run
+  `make gen` and re-apply `agent/install/crd`.
 - **New permission**: add it to `iam/permissions.json`, run `make gen`, use
   `permission.X`, then run `make iam-sync`.
 - **Endpoint change**: update `api/openapi.yaml` (shapes + `x-permissions`)

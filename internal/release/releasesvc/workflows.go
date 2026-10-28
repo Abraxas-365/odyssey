@@ -119,11 +119,7 @@ func (s *Service) waitReady(ctx context.Context, st *workflow.State) (any, error
 	case status.Phase == release.PhaseReady:
 		return status.URL, nil
 	case status.Phase == release.PhaseFailed:
-		msg := "La app arrancó pero no responde en su ruta de salud."
-		if status.Message != "" {
-			msg += " " + status.Message
-		}
-		return nil, workflow.Fail(release.Failed(release.CodeUnhealthy, msg))
+		return nil, workflow.Fail(release.Unready(status))
 	}
 	return nil, workflow.Poll(s.opts.PollEvery)
 }

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odyssey-agent
+  namespace: odyssey-system
+  labels:
+    app.kubernetes.io/name: odyssey-agent
+    app.kubernetes.io/part-of: odyssey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: odyssey-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: odyssey-agent
+    spec:
+      serviceAccountName: odyssey-agent
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: odyssey-agent
+          imagePullPolicy: IfNotPresent
+          args: ["--leader-elect"]
+          env:
+            # Where apps answer (k3d maps the ingress to localhost:8088).
+            - name: ODYSSEY_APPS_DOMAIN
+              value: apps.odyssey.localhost
+            - name: ODYSSEY_APPS_URL_PORT
+              value: "8088"
+          ports:
+            - name: health
+              containerPort: 8097
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

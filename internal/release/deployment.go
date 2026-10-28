@@ -60,6 +60,8 @@ const (
 	CodeUnhealthy       = "HEALTH_CHECK_FAILED" // the app started but its health check fails
 	CodeNotReady        = "NOT_READY"           // it did not become ready in time
 	CodeApplyFailed     = "APPLY_FAILED"        // the cluster could not run it
+	CodeImagePull       = "IMAGE_PULL_FAILED"   // the cluster cannot download the image
+	CodeCrashed         = "APP_CRASHED"         // the app keeps exiting on start
 	CodePromoteFailed   = "PROMOTE_FAILED"      // it ran, but recording it as current failed
 	CodeAlreadyCurrent  = "ALREADY_CURRENT"     // rollback to what is already serving
 	CodeNotRollbackable = "NOT_ROLLBACKABLE"    // rollback to a version that never went live

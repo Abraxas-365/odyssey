@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: odyssey-system
+  labels:
+    app.kubernetes.io/part-of: odyssey
+    pod-security.kubernetes.io/enforce: restricted
