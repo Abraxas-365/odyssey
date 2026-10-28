@@ -336,9 +336,22 @@ func TestDesiredApps(t *testing.T) {
 	// (what the old cluster reported is gone; the apps are signalled there)
 	next := e.create(org, "lima-b")
 	e.enrol(next, "s9")
-	notFound(t, "cross-tenant move", repo.MovePlacement(ctx, other, environment, c.ID, next.ID))
-	if err := repo.MovePlacement(ctx, org, environment, c.ID, next.ID); err != nil {
-		t.Fatal(err)
+	_, err = repo.MovePlacement(ctx, other, environment, c.ID, next.ID)
+	notFound(t, "cross-tenant move", err)
+	if places, err := repo.ListPlacements(ctx, org, c.ID); err != nil || len(places) != 1 || places[0] != environment {
+		t.Fatalf("placements before move %v %v", places, err)
+	}
+	if places, _ := repo.ListPlacements(ctx, other, c.ID); len(places) != 0 {
+		t.Fatalf("cross-tenant placements %v", places)
+	}
+	if found, _ := repo.FindCluster(ctx, org, c.ID); found.Apps != 1 {
+		t.Fatalf("apps on the cluster before move: %d", found.Apps)
+	}
+	if n, err := repo.MovePlacement(ctx, org, environment, c.ID, next.ID); err != nil || n != 1 {
+		t.Fatalf("move %d %v", n, err)
+	}
+	if found, _ := repo.FindCluster(ctx, org, next.ID); found.Apps != 1 {
+		t.Fatalf("apps on the new cluster after move: %d", found.Apps)
 	}
 	if got, err := repo.FindPlacement(ctx, org, environment); err != nil || got != next.ID {
 		t.Fatalf("placement after move %v %v", got, err)

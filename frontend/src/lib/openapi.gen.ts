@@ -347,9 +347,31 @@ export interface paths {
         put?: never;
         /**
          * Disconnect a cluster for good (idempotent)
-         * @description Its certificate stops being accepted and its tunnel closes at once; no app is placed there again. Apps already running there keep running without changes.
+         * @description Its certificate stops being accepted and its tunnel closes at once; no app is placed there again. Apps already running there keep running without changes (`apps` counts them; their deployments fail with `CLUSTER_REVOKED` until they move) unless `move_to` names another active cluster: then they are moved there in the same transaction (`cluster.apps_moved`). Nothing moves on its own: the other cluster may be on another network or far from the apps' data. `INVALID_MOVE_TARGET` (422) refuses the whole request, revocation included. Revoking a revoked cluster records nothing, except the move if `move_to` is given.
          */
         post: operations["revokeCluster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move the apps of a revoked cluster to another
+         * @description Pins every environment of the revoked cluster to `to` (an active cluster of the organization), whose agent deploys their apps from scratch; what the old cluster reported is dropped. Moving an empty cluster changes nothing. `CLUSTER_NOT_REVOKED` (422) for a cluster still running them, `INVALID_MOVE_TARGET` (422) for a `to` that is not another active cluster.
+         */
+        post: operations["moveClusterApps"];
         delete?: never;
         options?: never;
         head?: never;
@@ -636,6 +658,8 @@ export interface components {
             };
             /** @description Its agent's tunnel is up and was heard from in the last 90 s. */
             connected: boolean;
+            /** @description Apps placed on it (a revocation leaves them running there unless moved). */
+            apps: number;
             /**
              * Format: date-time
              * @description When the pending enrolment token stops working; null when none is pending.
@@ -655,6 +679,24 @@ export interface components {
         ClusterCreate: {
             /** @description Unique among the organization's clusters not revoked. */
             name: string;
+        };
+        ClusterRevoke: {
+            /**
+             * Format: uuid
+             * @description Another active cluster to move the apps to; absent or null leaves them where they run.
+             */
+            move_to?: string | null;
+        };
+        ClusterMove: {
+            /**
+             * Format: uuid
+             * @description The active cluster the apps go to.
+             */
+            to: string;
+        };
+        ClusterMoved: {
+            environment_ids: string[];
+            apps: number;
         };
         /** @description Everything the agent needs to enrol, shown once. */
         EnrollmentToken: {
@@ -1372,7 +1414,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ClusterRevoke"];
+            };
+        };
         responses: {
             /** @description The revoked cluster. */
             200: {
@@ -1387,6 +1433,41 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    moveClusterApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterMove"];
+            };
+        };
+        responses: {
+            /** @description What moved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterMoved"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };
     };

@@ -18,6 +18,8 @@ type Commands interface {
 	// IssueToken replaces the cluster's enrolment token.
 	IssueToken(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input IssueToken) (Token, error)
 	Revoke(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input Revoke) error
+	// Move sends every app of a revoked cluster to an active one.
+	Move(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input Move) (Moved, error)
 }
 
 // Queries are the read operations, implemented by fleetsvc.Service.
@@ -52,6 +54,10 @@ type Agents interface {
 	// previous certificate too: an agent whose last renewal answer was lost
 	// still holds it and must be able to retry.
 	Renew(ctx context.Context, agent AgentRef, csr *x509.CertificateRequest) (Issued, error)
+	// Recover returns the cluster's current certificate to the holder of
+	// its key (csr is signed with it): an agent whose Enroll or Renew
+	// answer was lost. It signs and changes nothing.
+	Recover(ctx context.Context, input Recover, csr *x509.CertificateRequest) (Enrollment, error)
 	// Connect records a new tunnel (it supersedes any other of the cluster).
 	Connect(ctx context.Context, agent AgentRef, session Session, info Agent, address string) error
 	// Heartbeat keeps the tunnel's cluster online; it fails with Rejected
@@ -94,6 +100,10 @@ type Repository interface {
 	FindCluster(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (Cluster, error)
 	// FindClusterForUpdate locks the row until the transaction ends.
 	FindClusterForUpdate(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (Cluster, error)
+	// FindClusterForShare holds the row against FindClusterForUpdate (a
+	// revocation or a move) until the transaction ends; heartbeats are not
+	// held up.
+	FindClusterForShare(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (Cluster, error)
 	ListClusters(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Cluster], error)
 	// FindDefaultCluster is the active cluster new environments go to (the
 	// oldest enrolled); NotFound when there is none.
@@ -111,6 +121,9 @@ type Repository interface {
 	// FindAcceptedSerials are the serials an active cluster may present
 	// (current first).
 	FindAcceptedSerials(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]string, error)
+	// FindCertificate is the PEM of an active cluster's current certificate
+	// (NotFound when there is none).
+	FindCertificate(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]byte, error)
 	Revoke(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, revokedBy identity.UserID) error
 	SetSession(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, info Agent) error
 
@@ -134,8 +147,11 @@ type Repository interface {
 	Place(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, cluster ClusterID) (ClusterID, error)
 	// MovePlacement re-pins an environment from a revoked cluster to
 	// another: its desired apps move with it (and are signalled there);
-	// what the old cluster reported is dropped.
-	MovePlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, from, to ClusterID) error
+	// what the old cluster reported is dropped. It returns how many apps
+	// moved (NotFound when the environment is not on from).
+	MovePlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, from, to ClusterID) (int, error)
+	// ListPlacements are the environments pinned to a cluster.
+	ListPlacements(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]project.EnvironmentID, error)
 	// PutApp stores the desired app unless the stored revision is the same
 	// or newer, and signals the gateways in the same transaction. It
 	// reports whether it changed anything.

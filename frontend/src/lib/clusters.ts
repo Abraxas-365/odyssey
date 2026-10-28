@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, params } from './api'
-import type { Cluster, ClusterCreate, ClusterCreated, ClusterList, ClusterStatus, EnrollmentToken } from './types'
+import type { Cluster, ClusterCreate, ClusterCreated, ClusterList, ClusterMoved, ClusterStatus, EnrollmentToken } from './types'
 
 const enc = encodeURIComponent
 
@@ -68,12 +68,34 @@ export function useIssueToken() {
   })
 }
 
+/** Revokes a cluster; `moveTo` also sends its apps there, in the same step. */
 export function useRevokeCluster() {
   const invalidate = useInvalidate()
   return useMutation({
-    mutationFn: (id: string) => api<Cluster>(`/clusters/${enc(id)}/revoke`, { method: 'POST' }),
+    mutationFn: ({ id, moveTo }: { id: string; moveTo?: string }) =>
+      api<Cluster>(`/clusters/${enc(id)}/revoke`, { method: 'POST', body: moveTo ? { move_to: moveTo } : undefined }),
     onSuccess: cluster => invalidate(cluster),
   })
+}
+
+/** Sends the apps left on a revoked cluster to an active one. */
+export function useMoveClusterApps() {
+  const invalidate = useInvalidate()
+  return useMutation({
+    mutationFn: ({ id, to }: { id: string; to: string }) =>
+      api<ClusterMoved>(`/clusters/${enc(id)}/move`, { method: 'POST', body: { to } }),
+    onSuccess: () => invalidate(),
+  })
+}
+
+/** Where the apps of `from` can go: the other active clusters. */
+export function moveTargets(from: Pick<Cluster, 'id'>, clusters: Cluster[]) {
+  return clusters.filter(c => c.id !== from.id && c.status === 'active')
+}
+
+/** "1 app" / "3 apps". */
+export function appCount(n: number) {
+  return n === 1 ? '1 app' : `${n} apps`
 }
 
 /** The four states TI sees (plan 1a-a3 §Consola). */

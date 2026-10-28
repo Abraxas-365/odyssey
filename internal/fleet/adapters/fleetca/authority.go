@@ -163,7 +163,9 @@ func (a *Authority) issue(tmpl *x509.Certificate, pub any, now time.Time, ttl ti
 		return fleet.Issued{}, errx.Wrap(err, "certificate serial", errx.TypeInternal)
 	}
 	tmpl.SerialNumber = serial
-	tmpl.NotBefore = now.Add(-time.Minute).UTC()
+	// tolerate clock skew with the cluster, but by at most a tenth of a short
+	// lifetime (the agent renews at two thirds of NotBefore..NotAfter)
+	tmpl.NotBefore = now.Add(-min(time.Minute, ttl/10)).UTC()
 	tmpl.NotAfter = now.Add(ttl).UTC()
 	if tmpl.NotAfter.After(a.cert.NotAfter) {
 		tmpl.NotAfter = a.cert.NotAfter

@@ -5,10 +5,12 @@ package fleetsvc
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/x509"
+	"encoding/pem"
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -26,6 +28,10 @@ type Options struct {
 	Gateway string
 	// Now is the clock (tests pin it).
 	Now func() time.Time
+	// CertificateTTL is the agents' certificate lifetime (default
+	// fleet.CertificateTTL; tests shorten it to see real renewals). A
+	// renewal is refused before half of it has passed.
+	CertificateTTL time.Duration
 }
 
 type Service struct {
@@ -39,6 +45,9 @@ type Service struct {
 func New(repo fleet.Repository, ca fleet.Authority, tx txn.Runner, events event.Publisher, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
+	}
+	if opts.CertificateTTL <= 0 {
+		opts.CertificateTTL = fleet.CertificateTTL
 	}
 	return &Service{repo: repo, ca: ca, tx: tx, events: events, opts: opts}
 }
@@ -111,18 +120,99 @@ func (s *Service) Revoke(ctx context.Context, organization identity.Organization
 		return err
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.lockTargetFirst(ctx, organization, id, input.MoveTo); err != nil {
+			return err
+		}
 		c, err := s.repo.FindClusterForUpdate(ctx, organization, id)
 		if err != nil {
 			return err
 		}
-		if c.Status == fleet.StatusRevoked {
-			return nil // already revoked: nothing changes, nothing to record
+		if c.Status != fleet.StatusRevoked { // already revoked: nothing to record
+			if err := s.repo.Revoke(ctx, organization, id, input.RevokedBy); err != nil {
+				return err
+			}
+			if err := s.events.Publish(ctx, fleet.NewRevoked(organization, input.RevokedBy, c)); err != nil {
+				return err
+			}
+			c.Status = fleet.StatusRevoked
 		}
-		if err := s.repo.Revoke(ctx, organization, id, input.RevokedBy); err != nil {
+		if input.MoveTo == nil {
+			return nil
+		}
+		_, err = s.move(ctx, c, *input.MoveTo, input.RevokedBy, "move_to")
+		return err
+	})
+}
+
+// Move sends every app of a revoked cluster to an active one.
+func (s *Service) Move(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID, input fleet.Move) (fleet.Moved, error) {
+	if err := input.Validate(); err != nil {
+		return fleet.Moved{}, err
+	}
+	var moved fleet.Moved
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.lockTargetFirst(ctx, organization, id, &input.To); err != nil {
 			return err
 		}
-		return s.events.Publish(ctx, fleet.NewRevoked(organization, input.RevokedBy, c))
+		c, err := s.repo.FindClusterForUpdate(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		if c.Status != fleet.StatusRevoked {
+			return errx.Business("Solo se mueven las apps de un clúster revocado: revócalo primero.").WithCode(fleet.CodeClusterNotRevoked)
+		}
+		moved, err = s.move(ctx, c, input.To, input.MovedBy, "to")
+		return err
 	})
+	return moved, err
+}
+
+// lockTargetFirst locks the target of a move before its source when its id
+// sorts first: both clusters are always locked in id order, so two crossed
+// moves (A to B, B to A) wait for each other instead of deadlocking. A
+// missing target is move's to report.
+func (s *Service) lockTargetFirst(ctx context.Context, organization identity.OrganizationID, from fleet.ClusterID, to *fleet.ClusterID) error {
+	if to == nil || to.String() >= from.String() {
+		return nil
+	}
+	if _, err := s.repo.FindClusterForUpdate(ctx, organization, *to); err != nil && !errx.IsType(err, errx.TypeNotFound) {
+		return err
+	}
+	return nil
+}
+
+// move pins every environment of the revoked cluster from to the active
+// cluster to (locked, so it cannot be revoked meanwhile) and records it.
+// An environment a concurrent deployment already moved is skipped. field
+// names the request field that carried to.
+func (s *Service) move(ctx context.Context, from fleet.Cluster, to fleet.ClusterID, actor identity.UserID, field string) (fleet.Moved, error) {
+	target, err := s.repo.FindClusterForUpdate(ctx, from.Organization, to)
+	if err != nil && !errx.IsType(err, errx.TypeNotFound) {
+		return fleet.Moved{}, err
+	}
+	if err != nil || target.ID == from.ID || target.Status != fleet.StatusActive {
+		return fleet.Moved{}, errx.Business("Las apps solo pueden ir a otro clúster conectado de tu organización.").
+			WithCode(fleet.CodeInvalidMoveTarget).WithField(field)
+	}
+	envs, err := s.repo.ListPlacements(ctx, from.Organization, from.ID)
+	if err != nil {
+		return fleet.Moved{}, err
+	}
+	moved := fleet.Moved{Environments: []project.EnvironmentID{}}
+	for _, env := range envs {
+		n, err := s.repo.MovePlacement(ctx, from.Organization, env, from.ID, target.ID)
+		if errx.IsType(err, errx.TypeNotFound) {
+			continue
+		}
+		if err != nil {
+			return fleet.Moved{}, err
+		}
+		moved.Environments, moved.Apps = append(moved.Environments, env), moved.Apps+n
+	}
+	if len(moved.Environments) == 0 {
+		return moved, nil // nothing was there: nothing changed
+	}
+	return moved, s.events.Publish(ctx, fleet.NewAppsMoved(from.Organization, actor, from, target, moved))
 }
 
 // token builds an enrolment token with what the agent needs to reach and
@@ -153,7 +243,12 @@ func (s *Service) List(ctx context.Context, organization identity.OrganizationID
 // ---- Dispatch ---------------------------------------------------------
 
 // Apply places the environment on first use, then stores the app and
-// signals its cluster's gateway, all in one transaction.
+// signals its cluster's gateway, all in one transaction. The cluster is
+// locked against revocation and moves (FOR KEY SHARE) until it commits, so
+// an app is never stored for a cluster its environment just left. An
+// environment on a revoked cluster stays there until TI moves its apps:
+// nothing moves on its own (the other cluster may be on another network or
+// far from the apps' data).
 func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 	if err := app.Validate(); err != nil {
 		return err
@@ -177,28 +272,22 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		} else if err != nil {
 			return err
 		}
-		c, err := s.repo.FindCluster(ctx, app.Organization, cluster)
+		c, err := s.repo.FindClusterForShare(ctx, app.Organization, cluster)
 		if err != nil {
 			return err
 		}
+		// moved between the read and the lock: the retry finds it there
+		if now, err := s.repo.FindPlacement(ctx, app.Organization, app.Environment); err != nil {
+			return err
+		} else if now != cluster {
+			return errx.Conflict("this environment was just moved to another cluster; retry").WithCode(fleet.CodePlacementMoved)
+		}
 		if c.Status == fleet.StatusRevoked {
-			// Revoked is final: the environment moves to the organization's
-			// current default cluster (its apps are sent there from scratch).
-			def, err := s.repo.FindDefaultCluster(ctx, app.Organization)
-			if errx.IsType(err, errx.TypeNotFound) {
-				return errx.Business("El clúster de este entorno fue desconectado y tu organización no tiene otro conectado. Pide a TI que conecte uno en Infraestructura → Clústeres.").
-					WithCode(fleet.CodeClusterRevoked)
+			if placed { // placed this instant on a cluster revoked meanwhile: the retry picks another
+				return errx.Conflict("this environment's cluster was just revoked; retry").WithCode(fleet.CodePlacementMoved)
 			}
-			if err != nil {
-				return err
-			}
-			if err := s.repo.MovePlacement(ctx, app.Organization, app.Environment, c.ID, def.ID); errx.IsType(err, errx.TypeNotFound) {
-				// a concurrent deployment moved it first (the retry finds it there)
-				return errx.Conflict("this environment was just moved to another cluster; retry").WithCode(fleet.CodePlacementMoved)
-			} else if err != nil {
-				return err
-			}
-			c, cluster, placed = def, def.ID, true
+			return errx.Business("El clúster de este entorno fue desconectado. Pide a TI que mueva sus apps a otro clúster en Infraestructura → Clústeres.").
+				WithCode(fleet.CodeClusterRevoked)
 		}
 		app.Cluster = cluster
 		changed, err := s.repo.PutApp(ctx, app)
@@ -239,7 +328,7 @@ func (s *Service) Enroll(ctx context.Context, token string, csr *x509.Certificat
 		if err != nil {
 			return err
 		}
-		cert, err := s.ca.Sign(csr, fleet.AgentURI(org, id), s.opts.Now(), fleet.CertificateTTL)
+		cert, err := s.ca.Sign(csr, fleet.AgentURI(org, id), s.opts.Now(), s.opts.CertificateTTL)
 		if err != nil {
 			return err
 		}
@@ -295,15 +384,15 @@ func (s *Service) Renew(ctx context.Context, agent fleet.AgentRef, csr *x509.Cer
 		if !contains(serials, agent.Serial) {
 			return fleet.Rejected()
 		}
-		now := s.opts.Now()
-		minAge := fleet.RenewAfter // renewing the current certificate
+		now, ttl := s.opts.Now(), s.opts.CertificateTTL
+		minAge := ttl / 2 // renewing the current certificate (fleet.RenewAfter by default)
 		if agent.Serial != c.Certificate.Serial {
-			minAge = fleet.RenewRetryAfter // retrying with the previous one
+			minAge = min(fleet.RenewRetryAfter, ttl/10) // retrying with the previous one
 		}
-		if c.Certificate.ExpiresAt != nil && now.Before(c.Certificate.ExpiresAt.Add(-fleet.CertificateTTL+minAge)) {
+		if c.Certificate.ExpiresAt != nil && now.Before(c.Certificate.ExpiresAt.Add(-ttl+minAge)) {
 			return errx.Business("this certificate is too young to renew").WithCode(fleet.CodeRenewTooEarly)
 		}
-		if out, err = s.ca.Sign(csr, fleet.AgentURI(agent.Organization, agent.Cluster), now, fleet.CertificateTTL); err != nil {
+		if out, err = s.ca.Sign(csr, fleet.AgentURI(agent.Organization, agent.Cluster), now, ttl); err != nil {
 			return err
 		}
 		if err := s.repo.RenewCertificate(ctx, agent.Organization, agent.Cluster, out, agent.Serial, now.Add(fleet.RenewalOverlap)); err != nil {
@@ -312,6 +401,45 @@ func (s *Service) Renew(ctx context.Context, agent fleet.AgentRef, csr *x509.Cer
 		return s.events.Publish(ctx, fleet.NewCertificateRenewed(agent.Organization, c, out))
 	})
 	return out, err
+}
+
+// Recover hands back the cluster's current certificate when it is for the
+// key that signed csr. A certificate is public; the proof only keeps the
+// answer (serials, expiry) from whoever merely names a cluster. Nothing is
+// signed or changed, so there is nothing to record either.
+func (s *Service) Recover(ctx context.Context, input fleet.Recover, csr *x509.CertificateRequest) (fleet.Enrollment, error) {
+	if err := input.Validate(); err != nil {
+		return fleet.Enrollment{}, err
+	}
+	if err := checkCSR(csr); err != nil {
+		return fleet.Enrollment{}, err
+	}
+	org, id, _ := input.Target()
+	raw, err := s.repo.FindCertificate(ctx, org, id)
+	if errx.IsType(err, errx.TypeNotFound) {
+		return fleet.Enrollment{}, fleet.NothingToRecover()
+	}
+	if err != nil {
+		return fleet.Enrollment{}, err
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return fleet.Enrollment{}, errx.Internal("the stored cluster certificate is not PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fleet.Enrollment{}, errx.Wrap(err, "parse the stored cluster certificate", errx.TypeInternal)
+	}
+	pub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !pub.Equal(csr.PublicKey) || !s.opts.Now().Before(cert.NotAfter) {
+		return fleet.Enrollment{}, fleet.NothingToRecover()
+	}
+	trust, err := s.ca.Trust()
+	if err != nil {
+		return fleet.Enrollment{}, err
+	}
+	return fleet.Enrollment{Organization: org, Cluster: id, Certificate: fleet.Issued{
+		PEM: raw, CAPEM: trust.CAPEM, Serial: fleet.Serial(cert.SerialNumber), ExpiresAt: cert.NotAfter}}, nil
 }
 
 func contains(list []string, s string) bool {

@@ -82,6 +82,8 @@ const messages: Record<string, string> = {
   UNAUTHORIZED: 'Tu sesión expiró. Vuelve a ingresar.',
   PAYLOAD_TOO_LARGE: 'Lo que enviaste es demasiado grande.',
   CLUSTER_REVOKED: 'Ese clúster fue revocado. Conecta uno nuevo.',
+  INVALID_MOVE_TARGET: 'Las apps solo pueden ir a otro clúster conectado. Elige otro.',
+  CLUSTER_NOT_REVOKED: 'Solo se mueven las apps de un clúster revocado.',
   FLEET_DISABLED: 'Esta instalación de Odyssey todavía no puede conectar clústeres. Pídele a TI que configure el gateway.',
 }
 

@@ -31,14 +31,49 @@ type Identity struct {
 	CAPin   string
 }
 
-// Enrollment is what an operator hands the agent once.
+// Enrollment is what an operator hands the agent once, and the key of an
+// Enroll or Renew whose answer has not been kept yet.
 type Enrollment struct {
 	Token   string
 	Gateway string
 	CAPin   string
+	// PendingKey is set from just before an Enroll or Renew is sent until
+	// its answer is saved: if that answer was lost, Recover returns the
+	// certificate issued for it.
+	PendingKey []byte
 }
 
 func (e Enrollment) complete() bool { return e.Token != "" && e.Gateway != "" && e.CAPin != "" }
+
+// newKey generates a key and a certificate request for it. The subject is
+// ignored by the gateway: the certificate names the cluster of the token.
+func newKey() (keyPEM, csrDER []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	csrDER, err = csrFor(keyPEM)
+	return keyPEM, csrDER, err
+}
+
+// csrFor is a certificate request signed with the key (PEM, PKCS#8): the
+// proof of holding it.
+func csrFor(keyPEM []byte) ([]byte, error) {
+	b, _ := pem.Decode(keyPEM)
+	if b == nil {
+		return nil, errors.New("the pending key is not PEM")
+	}
+	key, err := x509.ParsePKCS8PrivateKey(b.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("the pending key: %w", err)
+	}
+	return x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "odyssey-agent"}}, key)
+}
 
 // keyPair parses the identity's certificate and key.
 func (id Identity) keyPair() (tls.Certificate, error) {
@@ -52,24 +87,6 @@ func (id Identity) keyPair() (tls.Certificate, error) {
 // renewAt is when the certificate has lived 2/3 of its life.
 func renewAt(c *x509.Certificate) time.Time {
 	return c.NotBefore.Add(c.NotAfter.Sub(c.NotBefore) * 2 / 3)
-}
-
-// newKey generates a key and a certificate request for it. The subject is
-// ignored by the gateway: the certificate names the cluster of the token.
-func newKey() (keyPEM, csrDER []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	csrDER, err = x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "odyssey-agent"}}, key)
-	if err != nil {
-		return nil, nil, err
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, nil, err
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), csrDER, nil
 }
 
 // Pin is "sha256:<hex>" of a certificate's public key (SubjectPublicKeyInfo).

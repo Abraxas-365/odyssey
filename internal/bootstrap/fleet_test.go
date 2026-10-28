@@ -115,7 +115,7 @@ type fleetHarness struct {
 	done     chan error
 }
 
-func startFleet(t *testing.T) *fleetHarness {
+func startFleet(t *testing.T, tune ...func(*bootstrap.Options)) *fleetHarness {
 	t.Helper()
 	db := pgtest.DB(t)
 	ctx := context.Background()
@@ -135,7 +135,11 @@ func startFleet(t *testing.T) *fleetHarness {
 		t.Fatal(err)
 	}
 	gw := "localhost:" + strings.TrimPrefix(lis.Addr().String(), "127.0.0.1:")
-	p, err := bootstrap.Assemble(ctx, db, bootstrap.Options{Authority: ca, Gateway: gw, Workflow: workflowpg.Options{}})
+	opts := bootstrap.Options{Authority: ca, Gateway: gw, Workflow: workflowpg.Options{}}
+	for _, f := range tune {
+		f(&opts)
+	}
+	p, err := bootstrap.Assemble(ctx, db, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +172,7 @@ func (h *fleetHarness) agent(t *testing.T, store tunnel.Store, cluster *fakeClus
 			return &fleetv1.AppStatus{EnvironmentId: a.GetEnvironmentId(), Name: a.GetName(), ObservedRevision: a.GetRevision(),
 				Phase: "failed", Reason: "config", Message: "refused: " + err.Error()}
 		},
-		Log: logr.Discard(), MinBackoff: 50 * time.Millisecond, MaxBackoff: 200 * time.Millisecond,
+		Log: logr.Discard(), MinBackoff: 50 * time.Millisecond, MaxBackoff: 200 * time.Millisecond, SaveRetry: 10 * time.Millisecond,
 	})
 	cluster.mu.Lock()
 	cluster.notify = c.Changed
@@ -383,10 +387,47 @@ func TestClustersOverHTTP(t *testing.T) {
 	}
 	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/clusters?status=nope", read, nil), http.StatusBadRequest)
 
+	// an app runs there; the dialog's count, then an explicit move on revoke
+	environment := project.NewEnvironmentID()
+	if err := h.platform.Fleet.Dispatch.Apply(context.Background(), fleet.App{Organization: org, Project: project.NewID(),
+		Environment: environment, Name: "web", Revision: 1, Image: "r.local/web@sha256:00", Port: 8080, HealthPath: "/health", Replicas: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if c := httpxtest.JSON[fleet.Cluster](t, checked(t, app, http.MethodGet, "/api/v1/clusters/"+id, read, nil)); c.Apps != 1 {
+		t.Fatalf("apps on the cluster: %d", c.Apps)
+	}
+	other, err := h.platform.Fleet.Commands.Create(context.Background(), org, fleet.Create{Name: "lima-2", CreatedBy: identity.MustParseUserID(uuid.NewString())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/revoke", manage, map[string]any{"move_to": other.Cluster.ID.String()})
+	if httpxtest.Want(t, res, http.StatusUnprocessableEntity); httpxtest.ErrorCode(res) != fleet.CodeInvalidMoveTarget || httpxtest.ErrorField(res) != "move_to" {
+		t.Fatalf("move to a pending cluster: %s", res.Body)
+	}
+	httpxtest.Want(t, checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/revoke", manage, map[string]any{"move_to": "nope"}), http.StatusBadRequest)
+	res = checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/move", manage, map[string]any{"to": other.Cluster.ID.String()})
+	if httpxtest.Want(t, res, http.StatusUnprocessableEntity); httpxtest.ErrorCode(res) != fleet.CodeClusterNotRevoked {
+		t.Fatalf("move off an active cluster: %s", res.Body)
+	}
+
 	res = checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/revoke", manage, nil)
 	httpxtest.Want(t, res, http.StatusOK)
-	if c := httpxtest.JSON[fleet.Cluster](t, res); c.Status != fleet.StatusRevoked || c.Connected {
+	if c := httpxtest.JSON[fleet.Cluster](t, res); c.Status != fleet.StatusRevoked || c.Connected || c.Apps != 1 {
 		t.Fatalf("revoked %+v", c)
+	}
+	// moved afterwards, to a cluster enrolled since
+	second := tunnel.NewMemoryStore(tunnel.Enrollment{Token: other.Token.Value, Gateway: other.Token.Gateway, CAPin: other.Token.CAPin})
+	h.agent(t, second, newFakeCluster())
+	eventually(t, "the second agent to enrol", func() bool { return second.Identity().Cluster != "" })
+	res = checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/move", read, map[string]any{"to": other.Cluster.ID.String()})
+	httpxtest.Want(t, res, http.StatusForbidden)
+	res = checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/move", manage, map[string]any{"to": other.Cluster.ID.String()})
+	httpxtest.Want(t, res, http.StatusOK)
+	if m := httpxtest.JSON[fleet.Moved](t, res); m.Apps != 1 || len(m.Environments) != 1 || m.Environments[0] != environment {
+		t.Fatalf("moved %+v", m)
+	}
+	if c := httpxtest.JSON[fleet.Cluster](t, checked(t, app, http.MethodGet, "/api/v1/clusters/"+other.Cluster.ID.String(), read, nil)); c.Apps != 1 {
+		t.Fatalf("apps on the new cluster: %d", c.Apps)
 	}
 	httpxtest.Want(t, checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/revoke", manage, nil), http.StatusOK)
 	res = checked(t, app, http.MethodPost, "/api/v1/clusters/"+id+"/enrollment-token", manage, nil)
@@ -423,6 +464,101 @@ func TestFleetReenrolmentReplacesTheCertificate(t *testing.T) {
 	_, err = fleetv1.NewFleetClient(conn).Renew(ctx, &fleetv1.RenewRequest{Csr: csrDER(t)})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("the replaced certificate still works: %v", err)
+	}
+}
+
+// The real agent renews its certificate inside a live tunnel and reconnects
+// with the new one, again and again, without losing the cluster (the
+// certificates live 3 s here instead of 30 days).
+func TestFleetAgentRenewsAndReconnects(t *testing.T) {
+	h := startFleet(t, func(o *bootstrap.Options) { o.CertificateTTL = 3 * time.Second })
+	ctx := context.Background()
+	f := h.platform.Fleet
+	org, user := identity.NewOrganizationID(), identity.MustParseUserID(uuid.NewString())
+	created, err := f.Commands.Create(ctx, org, fleet.Create{Name: "lima-1", CreatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := tunnel.NewMemoryStore(tunnel.Enrollment{Token: created.Token.Value, Gateway: h.gateway, CAPin: created.Token.CAPin})
+	cluster := newFakeCluster()
+	h.agent(t, store, cluster)
+
+	serial := func() string {
+		id := store.Identity()
+		if len(id.CertPEM) == 0 {
+			return ""
+		}
+		block, _ := pem.Decode(id.CertPEM)
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fleet.Serial(c.SerialNumber)
+	}
+	seen := map[string]bool{}
+	deadline := time.Now().Add(20 * time.Second)
+	for len(seen) < 4 && time.Now().Before(deadline) { // the enrolment and three renewals
+		if s := serial(); s != "" && !seen[s] {
+			seen[s] = true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(seen) < 4 {
+		t.Fatalf("the agent held %d certificates in 20 s; want the enrolment and three renewals", len(seen))
+	}
+	// the tunnel is up with the newest certificate, and it outlives the
+	// lifetime of every certificate the agent held before
+	eventually(t, "the tunnel on the renewed certificate", func() bool {
+		c, err := f.Queries.Find(ctx, org, created.Cluster.ID)
+		return err == nil && c.Connected && c.Certificate.Serial == serial()
+	})
+	var n int
+	if err := h.platform.DB.Get(&n, `SELECT count(*) FROM event.outbox WHERE organization_id = $1 AND type = $2`,
+		org, fleet.EventCertificateRenewed); err != nil {
+		t.Fatal(err)
+	}
+	if n < 3 {
+		t.Fatalf("%d renewals in the audit trail; want at least 3", n)
+	}
+}
+
+// An agent that cannot keep the answer to its Enroll (the token is spent
+// by then) or to a Renew (the old certificate stops being accepted soon)
+// recovers the certificate with the key it kept before asking.
+func TestFleetAgentRecoversLostAnswers(t *testing.T) {
+	h := startFleet(t, func(o *bootstrap.Options) { o.CertificateTTL = 3 * time.Second })
+	ctx := context.Background()
+	f := h.platform.Fleet
+	org, user := identity.NewOrganizationID(), identity.MustParseUserID(uuid.NewString())
+	created, err := f.Commands.Create(ctx, org, fleet.Create{Name: "lima-1", CreatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := tunnel.NewMemoryStore(tunnel.Enrollment{Token: created.Token.Value, Gateway: h.gateway, CAPin: created.Token.CAPin})
+	store.Lose(5) // the enrolment answer: every save retry of it fails
+	h.agent(t, store, newFakeCluster())
+	eventually(t, "the enrolment to be recovered", func() bool {
+		c, err := f.Queries.Find(ctx, org, created.Cluster.ID)
+		return err == nil && c.Connected && store.Identity().Cluster != "" && store.Pending() == nil
+	})
+	if store.Lost() != 5 {
+		t.Fatalf("%d saves failed; the test lost no answer", store.Lost())
+	}
+	enrolledWith := store.Identity().CertPEM
+
+	store.Lose(5) // the next renewal answer
+	eventually(t, "a renewal to be recovered", func() bool {
+		id := store.Identity()
+		c, err := f.Queries.Find(ctx, org, created.Cluster.ID)
+		return err == nil && c.Connected && string(id.CertPEM) != string(enrolledWith) && store.Pending() == nil
+	})
+	if store.Lost() != 10 {
+		t.Fatalf("%d saves failed; the test lost no renewal answer", store.Lost())
+	}
+	var renewals int
+	if err := h.platform.DB.Get(&renewals, `SELECT count(*) FROM event.outbox WHERE organization_id = $1 AND type = $2`,
+		org, fleet.EventEnrolled); err != nil || renewals != 1 {
+		t.Fatalf("%d enrolments recorded (%v); recovering must not enrol again", renewals, err)
 	}
 }
 

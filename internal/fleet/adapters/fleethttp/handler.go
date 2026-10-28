@@ -26,6 +26,7 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Get("/:id", httpx.RequirePermissions(permission.ClustersRead), h.find)
 	g.Post("/:id/enrollment-token", httpx.RequirePermissions(permission.ClustersManage), h.issueToken)
 	g.Post("/:id/revoke", httpx.RequirePermissions(permission.ClustersManage), h.revoke)
+	g.Post("/:id/move", httpx.RequirePermissions(permission.ClustersManage), h.move)
 }
 
 func (h *Handler) list(c *fiber.Ctx) error {
@@ -112,7 +113,8 @@ func (h *Handler) issueToken(c *fiber.Ctx) error {
 }
 
 // revoke is an action, not a DELETE: the cluster and its history stay
-// readable. Answers 200 with the revoked cluster.
+// readable. The body is optional ({"move_to": id} also moves its apps, in
+// the same transaction). Answers 200 with the revoked cluster.
 func (h *Handler) revoke(c *fiber.Ctx) error {
 	org, err := httpx.Organization(c)
 	if err != nil {
@@ -126,7 +128,14 @@ func (h *Handler) revoke(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if err := h.commands.Revoke(c.UserContext(), org, id, fleet.Revoke{RevokedBy: user}); err != nil {
+	var input fleet.Revoke
+	if len(c.Body()) > 0 {
+		if err := httpx.DecodeJSON(c, &input); err != nil {
+			return err
+		}
+	}
+	input.RevokedBy = user
+	if err := h.commands.Revoke(c.UserContext(), org, id, input); err != nil {
 		return err
 	}
 	revoked, err := h.queries.Find(c.UserContext(), org, id)
@@ -134,4 +143,31 @@ func (h *Handler) revoke(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(revoked)
+}
+
+// move sends the apps of a revoked cluster to an active one. Answers 200
+// with what moved.
+func (h *Handler) move(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := fleet.ParseClusterID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	user, err := httpx.User(c)
+	if err != nil {
+		return err
+	}
+	var input fleet.Move
+	if err := httpx.DecodeJSON(c, &input); err != nil {
+		return err
+	}
+	input.MovedBy = user
+	moved, err := h.commands.Move(c.UserContext(), org, id, input)
+	if err != nil {
+		return err
+	}
+	return c.JSON(moved)
 }

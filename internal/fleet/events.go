@@ -19,6 +19,7 @@ const (
 	EventCertificateRenewed = "cluster.certificate_renewed"
 	EventConnected          = "cluster.connected"
 	EventRevoked            = "cluster.revoked"
+	EventAppsMoved          = "cluster.apps_moved"
 	EventAppApplied         = "cluster.app_applied"
 )
 
@@ -65,6 +66,16 @@ type Connected struct {
 type Revoked struct {
 	Cluster ClusterID `json:"cluster_id"`
 	Name    string    `json:"name"`
+}
+
+// AppsMoved v1: TI sent the apps of a revoked cluster to another (subject:
+// the cluster they left).
+type AppsMoved struct {
+	Cluster      ClusterID `json:"cluster_id"`
+	To           ClusterID `json:"to_cluster_id"`
+	ToName       string    `json:"to_name"`
+	Environments []string  `json:"environment_ids"`
+	Apps         int       `json:"apps"`
 }
 
 // AppApplied v1: a new desired revision of an app went to its cluster.
@@ -115,6 +126,23 @@ func NewConnected(org identity.OrganizationID, c Cluster, info Agent, address st
 func NewRevoked(org identity.OrganizationID, actor identity.UserID, c Cluster) event.Event {
 	return event.New(EventRevoked, 1, org, actor, event.Subject(SubjectKind, c.ID), "Desconectó el clúster "+c.Name,
 		Revoked{Cluster: c.ID, Name: c.Name})
+}
+
+func NewAppsMoved(org identity.OrganizationID, actor identity.UserID, from, to Cluster, moved Moved) event.Event {
+	envs := make([]string, len(moved.Environments))
+	for i, e := range moved.Environments {
+		envs[i] = e.String()
+	}
+	return event.New(EventAppsMoved, 1, org, actor, event.Subject(SubjectKind, from.ID),
+		"Movió "+appCount(moved.Apps)+" del clúster "+from.Name+" a "+to.Name,
+		AppsMoved{Cluster: from.ID, To: to.ID, ToName: to.Name, Environments: envs, Apps: moved.Apps})
+}
+
+func appCount(n int) string {
+	if n == 1 {
+		return "1 app"
+	}
+	return strconv.Itoa(n) + " apps"
 }
 
 func NewAppApplied(org identity.OrganizationID, c Cluster, a App, placed bool) event.Event {

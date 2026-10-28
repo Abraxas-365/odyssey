@@ -39,6 +39,8 @@ func TestEventContracts(t *testing.T) {
 		fleet.NewConnected(org, c, fleet.Agent{Version: "0.3.0",
 			Capabilities: fleet.Capabilities{KubernetesVersion: "v1.31.4+k3s1"}}, "203.0.113.7"),
 		fleet.NewRevoked(org, user, c),
+		fleet.NewAppsMoved(org, user, c, fleet.Cluster{ID: fleet.MustParseClusterID("00000000-0000-4000-8000-0000000000c2"), Name: "Producción Arequipa"},
+			fleet.Moved{Environments: []project.EnvironmentID{env}, Apps: 2}),
 		fleet.NewAppApplied(org, c, app, true),
 	} {
 		eventtest.Golden(t, e)

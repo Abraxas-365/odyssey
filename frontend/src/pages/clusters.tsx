@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Plus, RefreshCw, Server, Unplug } from 'lucide-react'
+import { ArrowRightLeft, Plus, RefreshCw, Server, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { EmptyState, ErrorNotice, KeyValue, ListSkeleton, PageHeader, Panel, PanelHeader, PanelList, PanelRow, StatusDot, TechnicalDetails, type AppStatusKind } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
-import { clusterState, useClusters, useIssueToken, useRevokeCluster, type ClusterState } from '@/lib/clusters'
+import { appCount, clusterState, moveTargets, useClusters, useIssueToken, useMoveClusterApps, useRevokeCluster, type ClusterState } from '@/lib/clusters'
 import { formatDateTime, formatRelative } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
@@ -42,8 +43,11 @@ export function ClustersPage() {
   const [connecting, setConnecting] = useState(false)
   const [issued, setIssued] = useState<Issued>()
   const [revoking, setRevoking] = useState<Cluster>()
+  const [moving, setMoving] = useState<Cluster>()
+  const [moveTo, setMoveTo] = useState('')
   const issue = useIssueToken()
   const revoke = useRevokeCluster()
+  const move = useMoveClusterApps()
   const items = clusters.data?.items ?? []
   const live = items.filter(c => c.status !== 'revoked')
 
@@ -83,7 +87,8 @@ export function ClustersPage() {
                 key={c.id}
                 cluster={c}
                 onReconnect={canManage && c.status !== 'revoked' ? () => reconnect(c) : undefined}
-                onRevoke={canManage && c.status !== 'revoked' ? () => setRevoking(c) : undefined}
+                onRevoke={canManage && c.status !== 'revoked' ? () => { setMoveTo(''); setRevoking(c) } : undefined}
+                onMove={canManage && c.status === 'revoked' && c.apps > 0 ? () => { setMoveTo(''); setMoving(c) } : undefined}
                 busy={issue.isPending && issue.variables === c.id}
               />
             ))}
@@ -100,19 +105,57 @@ export function ClustersPage() {
             <AlertDialogTitle>¿Revocar {revoking?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               Se desconecta para siempre: su agente deja de recibir cambios y no podrás volver a conectarlo (tendrías que registrarlo de nuevo).
-              Las apps que ya corren ahí siguen corriendo, pero no podrás publicar versiones nuevas en ellas.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {revoking && revoking.apps > 0 && (
+            <AppsChoice cluster={revoking} targets={moveTargets(revoking, items)} value={moveTo} onChange={setMoveTo} revoking />
+          )}
           <ErrorNotice error={revoke.error} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               disabled={revoke.isPending}
-              onClick={() => revoking && revoke.mutate(revoking.id, { onSuccess: c => { setRevoking(undefined); toast.success(`${c.name} quedó revocado`) } })}
+              onClick={() => revoking && revoke.mutate({ id: revoking.id, moveTo: moveTo || undefined }, {
+                onSuccess: c => {
+                  const to = items.find(t => t.id === moveTo)
+                  setRevoking(undefined)
+                  toast.success(to ? `${c.name} quedó revocado y sus apps van a ${to.name}` : `${c.name} quedó revocado`)
+                },
+              })}
             >
               <Unplug />
-              {revoke.isPending ? 'Revocando…' : 'Revocar'}
+              {revoke.isPending ? 'Revocando…' : moveTo ? 'Revocar y mover' : 'Revocar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!moving} onOpenChange={open => { if (!open) { setMoving(undefined); move.reset() } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mover las apps de {moving?.name}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Este clúster está revocado: sus apps siguen corriendo ahí, pero no reciben versiones nuevas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {moving && <AppsChoice cluster={moving} targets={moveTargets(moving, items)} value={moveTo} onChange={setMoveTo} />}
+          <ErrorNotice error={move.error} />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={move.isPending || !moveTo}
+              onClick={() => moving && moveTo && move.mutate({ id: moving.id, to: moveTo }, {
+                onSuccess: m => {
+                  const to = items.find(t => t.id === moveTo)
+                  setMoving(undefined)
+                  toast.success(m.apps === 0 ? 'No quedaban apps por mover'
+                    : `${appCount(m.apps)} ${m.apps === 1 ? 'va' : 'van'} a ${to?.name ?? 'el otro clúster'}`)
+                },
+              })}
+            >
+              <ArrowRightLeft />
+              {move.isPending ? 'Moviendo…' : 'Mover'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -121,7 +164,45 @@ export function ClustersPage() {
   )
 }
 
-function ClusterRow({ cluster: c, onReconnect, onRevoke, busy }: { cluster: Cluster; onReconnect?: () => void; onRevoke?: () => void; busy?: boolean }) {
+/**
+ * What happens to the apps of a cluster: TI decides (nothing moves on its
+ * own: the other cluster may be on another network or far from the data).
+ */
+function AppsChoice({ cluster, targets, value, onChange, revoking }: {
+  cluster: Cluster; targets: Cluster[]; value: string; onChange: (id: string) => void; revoking?: boolean
+}) {
+  const n = appCount(cluster.apps)
+  const one = cluster.apps === 1
+  if (targets.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {n} {one ? 'corre ahí y seguirá' : 'corren ahí y seguirán'} corriendo, sin versiones nuevas.
+        {one ? ' Para moverla' : ' Para moverlas'}, conecta otro clúster{revoking ? (one ? ' y muévela después desde esta lista' : ' y muévelas después desde esta lista') : ''}.
+      </p>
+    )
+  }
+  const items: Record<string, string> = Object.fromEntries(targets.map(t => [t.id, `Mover a ${t.name}`]))
+  if (revoking) items[''] = one ? 'Dejarla donde está' : 'Dejarlas donde están'
+  return (
+    <div className="space-y-2">
+      <p className="text-sm">
+        <span className="font-semibold">{n}</span> {one ? 'corre ahí. Al moverla, el otro clúster la publica' : 'corren ahí. Al moverlas, el otro clúster las publica'} desde cero;
+        revisa que llegue a los mismos datos y redes.
+      </p>
+      <Select value={value} onValueChange={v => onChange((v as string | null) ?? '')} items={items}>
+        <SelectTrigger className="w-full" aria-label="Qué hacer con las apps"><SelectValue placeholder="Elige a dónde moverlas" /></SelectTrigger>
+        <SelectContent>
+          {revoking && <SelectItem value="">{items['']}</SelectItem>}
+          {targets.map(t => <SelectItem key={t.id} value={t.id}>Mover a {t.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+function ClusterRow({ cluster: c, onReconnect, onRevoke, onMove, busy }: {
+  cluster: Cluster; onReconnect?: () => void; onRevoke?: () => void; onMove?: () => void; busy?: boolean
+}) {
   const { technical } = usePreferences()
   const state = clusterState(c)
   const seen = c.last_seen_at ? `Última conexión ${formatRelative(c.last_seen_at)}` : 'Nunca se conectó'
@@ -139,12 +220,19 @@ function ClusterRow({ cluster: c, onReconnect, onRevoke, busy }: { cluster: Clus
             {state === 'revoked' && c.revoked_at ? `Revocado ${formatRelative(c.revoked_at)}`
               : state === 'waiting' ? (c.token_expires_at ? `El código vence ${formatRelative(c.token_expires_at)}` : 'Sin código vigente: genera uno nuevo')
               : seen}
+            {c.apps > 0 && ` · ${appCount(c.apps)}${state === 'revoked' ? ' sin versiones nuevas' : ''}`}
             {technical && c.agent.version && ` · agente ${c.agent.version}`}
             {technical && caps.kubernetes_version && ` · Kubernetes ${caps.kubernetes_version}`}
           </p>
         </div>
-        {(onReconnect || onRevoke) && (
+        {(onReconnect || onRevoke || onMove) && (
           <div className="ml-auto flex items-center gap-2">
+            {onMove && (
+              <Button variant="outline" size="sm" onClick={onMove}>
+                <ArrowRightLeft />
+                Mover apps
+              </Button>
+            )}
             {onReconnect && (
               <Button variant="outline" size="sm" disabled={busy} onClick={onReconnect}>
                 <RefreshCw />

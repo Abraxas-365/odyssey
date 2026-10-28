@@ -109,6 +109,43 @@ type Enrollment struct {
 	Certificate  Issued
 }
 
+// Recover names the cluster whose certificate an agent lost the answer
+// for: by its enrolment token (spent or not: it only names the cluster) or
+// by its ids.
+type Recover struct {
+	Token        string
+	Organization string
+	Cluster      string
+}
+
+// Validate checks the input and resolves the cluster it names.
+func (r Recover) Validate() error {
+	_, _, err := r.Target()
+	return err
+}
+
+// Target is the cluster the input names.
+func (r Recover) Target() (identity.OrganizationID, ClusterID, error) {
+	if r.Token != "" {
+		return ParseToken(r.Token)
+	}
+	org, err := identity.ParseOrganizationID(r.Organization)
+	if err != nil {
+		return identity.OrganizationID{}, ClusterID{}, errx.Validation("organization_id is not valid")
+	}
+	id, err := ParseClusterID(r.Cluster)
+	if err != nil {
+		return identity.OrganizationID{}, ClusterID{}, errx.Validation("cluster_id is not valid")
+	}
+	return org, id, nil
+}
+
+// NothingToRecover is the answer when no current certificate of the
+// cluster is for the key (one answer for every case: probing teaches nothing).
+func NothingToRecover() error {
+	return errx.NotFound("there is no current certificate of this cluster for this key").WithCode(CodeNothingToRecover)
+}
+
 // Trust is the public side of the fleet CA.
 type Trust struct {
 	CAPEM []byte

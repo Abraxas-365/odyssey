@@ -42,6 +42,7 @@ export type ClusterCreate = Schemas['ClusterCreate']
 export type ClusterCreated = Schemas['ClusterCreated']
 export type EnrollmentToken = Schemas['EnrollmentToken']
 export type ClusterList = Schemas['ClusterList']
+export type ClusterMoved = Schemas['ClusterMoved']
 
 export type AuditEntry = Schemas['AuditEntry']
 export type AuditEntryList = Schemas['AuditEntryList']

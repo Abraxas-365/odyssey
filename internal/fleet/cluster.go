@@ -18,6 +18,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/text"
 )
 
@@ -82,8 +83,9 @@ const (
 	CodeNoCluster = "NO_CLUSTER"
 	// CodeClusterRevoked: the app's cluster was revoked.
 	CodeClusterRevoked = "CLUSTER_REVOKED"
-	// CodePlacementMoved: a concurrent deployment moved the environment off
-	// its revoked cluster first (transient: the workflow retries the apply).
+	// CodePlacementMoved: the environment's cluster changed while the app
+	// was being stored (a move, or a revocation of the cluster it was just
+	// placed on). Transient: the workflow retries the apply.
 	CodePlacementMoved = "PLACEMENT_MOVED"
 	// CodeInvalidToken: an enrolment token that is unknown, used or expired.
 	CodeInvalidToken = "INVALID_ENROLLMENT_TOKEN"
@@ -95,6 +97,14 @@ const (
 	CodeFleetDisabled = "FLEET_DISABLED"
 	// CodeRenewTooEarly: a renewal of a certificate that is still young.
 	CodeRenewTooEarly = "CERTIFICATE_RENEWAL_TOO_EARLY"
+	// CodeNothingToRecover: no current certificate of the cluster is for the
+	// key an agent asked to recover with.
+	CodeNothingToRecover = "NOTHING_TO_RECOVER"
+	// CodeClusterNotRevoked: moving the apps of a cluster that still runs them.
+	CodeClusterNotRevoked = "CLUSTER_NOT_REVOKED"
+	// CodeInvalidMoveTarget: apps sent to a cluster that is not another
+	// active one of the organization.
+	CodeInvalidMoveTarget = "INVALID_MOVE_TARGET"
 )
 
 // Cluster is one Kubernetes cluster of an organization.
@@ -110,6 +120,9 @@ type Cluster struct {
 	// Connected is true while a gateway holds its tunnel and has heard from
 	// it within OnlineWithin (computed with the database clock).
 	Connected bool `json:"connected" db:"connected"`
+	// Apps is how many apps are placed on it (what a revocation leaves
+	// running there unless they are moved).
+	Apps int `json:"apps" db:"apps"`
 	// TokenExpiresAt is when the pending enrolment token stops working (nil
 	// when none is pending).
 	TokenExpiresAt *time.Time      `json:"token_expires_at" db:"token_expires_at"`
@@ -202,8 +215,11 @@ func (i IssueToken) Validate() error {
 
 // Revoke stops accepting the cluster's certificate: its tunnel is closed and
 // no app is placed there again. Apps already running there keep running
-// (the agent no longer gets changes); moving them is a later step.
+// (the agent no longer gets changes) unless MoveTo names an active cluster
+// to send them to, in the same transaction. Nothing moves on its own: the
+// other cluster may be on another network or far from the app's data.
 type Revoke struct {
+	MoveTo    *ClusterID      `json:"move_to"`
 	RevokedBy identity.UserID `json:"-"`
 }
 
@@ -211,7 +227,34 @@ func (r Revoke) Validate() error {
 	if r.RevokedBy.IsZero() {
 		return errx.Validation("revoked_by is required")
 	}
+	if r.MoveTo != nil && r.MoveTo.IsZero() {
+		return errx.Validation("move_to must be a cluster id").WithField("move_to")
+	}
 	return nil
+}
+
+// Move sends the apps of a revoked cluster to an active one: their
+// environments are pinned there and its agent deploys them from scratch.
+// Only from a revoked cluster (an active one would keep running them too).
+type Move struct {
+	To      ClusterID       `json:"to"`
+	MovedBy identity.UserID `json:"-"`
+}
+
+func (m Move) Validate() error {
+	if m.MovedBy.IsZero() {
+		return errx.Validation("moved_by is required")
+	}
+	if m.To.IsZero() {
+		return errx.Validation("to is required").WithField("to")
+	}
+	return nil
+}
+
+// Moved is what a move sent: the environments and how many apps.
+type Moved struct {
+	Environments []project.EnvironmentID `json:"environment_ids"`
+	Apps         int                     `json:"apps"`
 }
 
 // Filter narrows a list of clusters.

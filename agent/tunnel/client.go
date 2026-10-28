@@ -59,6 +59,9 @@ type Options struct {
 	// own (the certificate is still checked against the gateway's name): an
 	// agent run outside the cluster reaches it by another route.
 	Dial string
+	// SaveRetry is the first wait before retrying to keep a certificate the
+	// control plane issued (default 1 s, doubling, five attempts).
+	SaveRetry time.Duration
 }
 
 type key struct{ environment, name string }
@@ -90,6 +93,9 @@ func New(o Options) *Client {
 	}
 	if o.Workers <= 0 {
 		o.Workers = 2
+	}
+	if o.SaveRetry <= 0 {
+		o.SaveRetry = time.Second
 	}
 	if o.IsRejected == nil {
 		o.IsRejected = func(error) bool { return false }
@@ -176,6 +182,10 @@ func (c *Client) session(ctx context.Context) error {
 	}
 	if en.complete() {
 		enrolled, err := c.enroll(ctx, en)
+		if status.Code(err) == codes.Unauthenticated && len(en.PendingKey) > 0 {
+			// the token may be spent by this very key, its answer lost
+			enrolled, err = c.recoverOr(ctx, id, en, err)
+		}
 		switch {
 		case err == nil:
 			id = enrolled
@@ -184,6 +194,14 @@ func (c *Client) session(ctx context.Context) error {
 		default:
 			// A stale token next to a working identity: keep the identity.
 			c.o.Log.Error(err, "ignoring the enrolment token in the agent's secret (not valid); using the current identity")
+		}
+	} else if len(en.PendingKey) > 0 && len(id.CertPEM) > 0 {
+		// a renewal whose answer was not kept: its certificate may exist
+		switch recovered, err := c.recover(ctx, id, en); {
+		case err == nil:
+			id = recovered
+		case status.Code(err) != codes.NotFound:
+			return err // try again later (the gateway may be unreachable)
 		}
 	}
 	if len(id.CertPEM) == 0 {
@@ -247,16 +265,12 @@ func (c *Client) dial(id Identity) (*grpc.ClientConn, error) {
 }
 
 func (c *Client) enroll(ctx context.Context, en Enrollment) (Identity, error) {
-	cfg, err := tlsConfig(en.Gateway, en.CAPin, nil)
-	if err != nil {
-		return Identity{}, err
-	}
-	conn, err := grpc.NewClient("passthrough:///"+c.target(en.Gateway), grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
+	conn, err := c.publicConn(en.Gateway, en.CAPin)
 	if err != nil {
 		return Identity{}, err
 	}
 	defer conn.Close()
-	keyPEM, csr, err := newKey()
+	keyPEM, csr, err := c.pendingKey(ctx, en.PendingKey)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -276,20 +290,98 @@ func (c *Client) enroll(ctx context.Context, en Enrollment) (Identity, error) {
 	if _, err := id.keyPair(); err != nil {
 		return Identity{}, err
 	}
-	// The token is spent now: losing this identity means a new token from
-	// the console, so the save is retried before giving up.
 	if err := c.saveSpent(ctx, id); err != nil {
-		c.o.Log.Error(err, "enrolled, but the identity could not be stored; the token is spent: generate a new one in the console")
+		c.o.Log.Error(err, "enrolled, but the identity could not be stored; it is recovered on the next attempt (the key was kept)")
 		return Identity{}, err
 	}
 	c.o.Log.Info("cluster enrolled", "organization", id.Organization, "cluster", id.Cluster)
 	return id, nil
 }
 
+func (c *Client) publicConn(gateway, pin string) (*grpc.ClientConn, error) {
+	cfg, err := tlsConfig(gateway, pin, nil)
+	if err != nil {
+		return nil, err
+	}
+	return grpc.NewClient("passthrough:///"+c.target(gateway), grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
+}
+
+// pendingKey is the key for an Enroll or Renew, kept before it is sent: if
+// the answer is lost, Recover gets the certificate issued for it. A key
+// still pending (its answer never kept) is reused, so whatever was issued
+// for it stays recoverable; Save drops it once an answer is kept.
+func (c *Client) pendingKey(ctx context.Context, pending []byte) (keyPEM, csr []byte, err error) {
+	if len(pending) > 0 {
+		if csr, err := csrFor(pending); err == nil {
+			return pending, csr, nil
+		}
+		c.o.Log.Info("the pending key is not usable; generating a new one")
+	}
+	if keyPEM, csr, err = newKey(); err != nil {
+		return nil, nil, err
+	}
+	if err := c.o.Store.SavePending(ctx, keyPEM); err != nil {
+		return nil, nil, fmt.Errorf("keep the new key before using it: %w", err)
+	}
+	return keyPEM, csr, nil
+}
+
+// recoverOr recovers an enrolment whose token was refused, or returns the
+// refusal when nothing was issued for the pending key.
+func (c *Client) recoverOr(ctx context.Context, id Identity, en Enrollment, refused error) (Identity, error) {
+	recovered, err := c.recover(ctx, id, en)
+	if status.Code(err) == codes.NotFound {
+		return Identity{}, refused
+	}
+	return recovered, err
+}
+
+// recover asks for the certificate issued for the pending key: by the
+// token after an enrolment (from), by the cluster's ids after a renewal.
+// NotFound means none was (the next attempt reuses the key).
+func (c *Client) recover(ctx context.Context, from Identity, en Enrollment) (Identity, error) {
+	csr, err := csrFor(en.PendingKey)
+	if err != nil {
+		return Identity{}, err
+	}
+	gateway, pin := en.Gateway, en.CAPin
+	req := &fleetv1.RecoverRequest{Token: en.Token, Csr: csr}
+	if en.Token == "" {
+		req.OrganizationId, req.ClusterId = from.Organization, from.Cluster
+		gateway, pin = from.Gateway, from.CAPin
+	}
+	conn, err := c.publicConn(gateway, pin)
+	if err != nil {
+		return Identity{}, err
+	}
+	defer conn.Close()
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res, err := fleetv1.NewFleetClient(conn).Recover(cctx, req)
+	if err != nil {
+		return Identity{}, err
+	}
+	if err := checkCA(res.GetCertificate().GetCaPem(), pin); err != nil {
+		return Identity{}, err
+	}
+	next := Identity{
+		Organization: res.GetOrganizationId(), Cluster: res.GetClusterId(), KeyPEM: en.PendingKey,
+		CertPEM: res.GetCertificate().GetPem(), CAPEM: res.GetCertificate().GetCaPem(), Gateway: gateway, CAPin: pin,
+	}
+	if _, err := next.keyPair(); err != nil {
+		return Identity{}, err
+	}
+	if err := c.saveSpent(ctx, next); err != nil {
+		return Identity{}, err
+	}
+	c.o.Log.Info("recovered the certificate of an answer that was lost", "organization", next.Organization, "cluster", next.Cluster)
+	return next, nil
+}
+
 // saveSpent stores an identity the control plane already counts as issued.
 func (c *Client) saveSpent(ctx context.Context, id Identity) error {
 	var err error
-	for wait := time.Second; wait <= 16*time.Second; wait *= 2 {
+	for i, wait := 0, c.o.SaveRetry; i < 5; i, wait = i+1, wait*2 {
 		if err = c.o.Store.Save(ctx, id); err == nil {
 			return nil
 		}
@@ -303,11 +395,15 @@ func (c *Client) saveSpent(ctx context.Context, id Identity) error {
 	return err
 }
 
-// renew trades the current certificate for a new one with a new key, and
-// keeps it before using it (a crash in between leaves the old one, accepted
-// for fleet's renewal overlap: the next renewal retries with it).
+// renew trades the current certificate for a new one with a new key. The
+// key is kept (pending) before the request is sent and the answer before it
+// is used: an answer lost on the way is recovered by the next session.
 func (c *Client) renew(ctx context.Context, api fleetv1.FleetClient, id Identity) (Identity, error) {
-	keyPEM, csr, err := newKey()
+	_, en, err := c.o.Store.Load(ctx)
+	if err != nil {
+		return id, err
+	}
+	keyPEM, csr, err := c.pendingKey(ctx, en.PendingKey)
 	if err != nil {
 		return id, err
 	}
@@ -326,7 +422,7 @@ func (c *Client) renew(ctx context.Context, api fleetv1.FleetClient, id Identity
 	if err != nil {
 		return id, err
 	}
-	if err := c.o.Store.Save(ctx, next); err != nil {
+	if err := c.saveSpent(ctx, next); err != nil {
 		return id, err
 	}
 	c.setCert(&pair)

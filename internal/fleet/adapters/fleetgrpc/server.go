@@ -47,10 +47,14 @@ type Options struct {
 	// (default 5/s, burst 20): a looping agent cannot flood the database.
 	ReportsPerSecond float64
 	ReportBurst      int
-	// EnrollsPerSecond and EnrollBurst bound enrolments across the gateway
-	// (default 2/s, burst 10): the only call without a client certificate.
+	// EnrollsPerSecond and EnrollBurst bound the calls without a client
+	// certificate (Enroll, Recover) across the gateway (default 2/s, burst
+	// 10); AddressPerSecond and AddressBurst bound them per client address
+	// (default one every 5 s, burst 5), so one source cannot starve the rest.
 	EnrollsPerSecond float64
 	EnrollBurst      int
+	AddressPerSecond float64
+	AddressBurst     int
 }
 
 // Server implements fleetv1.FleetServer.
@@ -59,7 +63,7 @@ type Server struct {
 	agents  fleet.Agents
 	signals fleet.Signals
 	opts    Options
-	enrolls *rate.Limiter
+	public  *perAddress
 
 	mu      sync.Mutex
 	tunnels map[fleet.ClusterID]*tunnel
@@ -85,22 +89,27 @@ func New(agents fleet.Agents, signals fleet.Signals, opts Options) *Server {
 	if opts.EnrollsPerSecond <= 0 {
 		opts.EnrollsPerSecond, opts.EnrollBurst = 2, 10
 	}
+	if opts.AddressPerSecond <= 0 {
+		opts.AddressPerSecond, opts.AddressBurst = 0.2, 5
+	}
 	return &Server{agents: agents, signals: signals, opts: opts, tunnels: map[fleet.ClusterID]*tunnel{},
-		enrolls: rate.NewLimiter(rate.Limit(opts.EnrollsPerSecond), opts.EnrollBurst)}
+		public: newPerAddress(rate.Limit(opts.AddressPerSecond), opts.AddressBurst,
+			rate.NewLimiter(rate.Limit(opts.EnrollsPerSecond), opts.EnrollBurst))}
 }
 
 // Register adds the service and its authentication to g. The server's TLS
-// config must request (not require) client certificates: Enroll has none.
+// config must request (not require) client certificates: Enroll and
+// Recover have none.
 func (s *Server) Register(g *grpc.Server) { fleetv1.RegisterFleetServer(g, s) }
 
-// ServerOptions are the interceptors that authenticate every call but Enroll
-// (rate limited instead).
+// ServerOptions are the interceptors that authenticate every call but
+// Enroll and Recover (rate limited per client address instead).
 func (s *Server) ServerOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
-			if info.FullMethod == fleetv1.Fleet_Enroll_FullMethodName {
-				if !s.enrolls.Allow() {
-					return nil, status.Error(codes.ResourceExhausted, "too many enrolments; retry shortly")
+			if info.FullMethod == fleetv1.Fleet_Enroll_FullMethodName || info.FullMethod == fleetv1.Fleet_Recover_FullMethodName {
+				if !s.public.allow(address(ctx), time.Now()) {
+					return nil, status.Error(codes.ResourceExhausted, "too many requests from this address; retry shortly")
 				}
 				return next(ctx, req)
 			}
@@ -181,6 +190,20 @@ func (s *Server) Renew(ctx context.Context, req *fleetv1.RenewRequest) (*fleetv1
 		return nil, toStatus(err)
 	}
 	return &fleetv1.RenewResponse{Certificate: &fleetv1.Certificate{Pem: issued.PEM, CaPem: issued.CAPEM}}, nil
+}
+
+func (s *Server) Recover(ctx context.Context, req *fleetv1.RecoverRequest) (*fleetv1.RecoverResponse, error) {
+	csr, err := parseCSR(req.GetCsr())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	e, err := s.agents.Recover(ctx, fleet.Recover{Token: req.GetToken(), Organization: req.GetOrganizationId(), Cluster: req.GetClusterId()}, csr)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	slog.Info("agent recovered its certificate", "organization", e.Organization, "cluster", e.Cluster, "address", address(ctx))
+	return &fleetv1.RecoverResponse{ClusterId: e.Cluster.String(), OrganizationId: e.Organization.String(),
+		Certificate: &fleetv1.Certificate{Pem: e.Certificate.PEM, CaPem: e.Certificate.CAPEM}}, nil
 }
 
 // ---- the tunnel -------------------------------------------------------

@@ -5,6 +5,7 @@ package fleetmodule
 
 import (
 	"io/fs"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
@@ -25,6 +26,8 @@ type Deps struct {
 	Authority fleet.Authority
 	// Gateway is the host:port agents dial (in enrolment tokens).
 	Gateway string
+	// CertificateTTL overrides the agents' certificate lifetime (tests).
+	CertificateTTL time.Duration
 }
 
 type Module struct {
@@ -41,7 +44,7 @@ func New(deps Deps) Module {
 		ca = fleetca.Disabled{}
 	}
 	svc := fleetsvc.New(fleetpg.New(deps.DB), ca, txn.Postgres{DB: deps.DB}, deps.Events,
-		fleetsvc.Options{Gateway: deps.Gateway})
+		fleetsvc.Options{Gateway: deps.Gateway, CertificateTTL: deps.CertificateTTL})
 	return Module{Commands: svc, Queries: svc, Dispatch: svc, Agents: svc, HTTP: fleethttp.New(svc, svc)}
 }
 

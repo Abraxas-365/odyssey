@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -12,12 +13,16 @@ import (
 
 // Store keeps the agent's enrolment input and identity.
 type Store interface {
-	// Load returns the identity (zero before enrolling) and a pending
-	// enrolment (zero when there is none).
+	// Load returns the identity (zero before enrolling) and the pending
+	// enrolment: its token (when there is one) and the pending key (when an
+	// answer may have been lost).
 	Load(ctx context.Context) (Identity, Enrollment, error)
-	// Save keeps the identity and drops the pending enrolment's token (it is
-	// spent).
+	// Save keeps the identity and drops the token (it is spent) and the
+	// pending key (it is the identity's now, or moot).
 	Save(ctx context.Context, id Identity) error
+	// SavePending keeps the key of an Enroll or Renew about to be sent (nil
+	// drops it): if the answer is lost, Recover gets its certificate back.
+	SavePending(ctx context.Context, keyPEM []byte) error
 }
 
 // Keys of the agent's Secret. An operator creates it with token, gateway
@@ -32,6 +37,7 @@ const (
 	KeyCA           = "ca.crt"
 	KeyOrganization = "organization"
 	KeyCluster      = "cluster"
+	KeyPending      = "pending.key"
 )
 
 // +kubebuilder:rbac:groups="",namespace=odyssey-system,resources=secrets,resourceNames=odyssey-agent,verbs=get;update
@@ -63,10 +69,30 @@ func (s *SecretStore) Load(ctx context.Context) (Identity, Enrollment, error) {
 	if len(id.CertPEM) == 0 || len(id.KeyPEM) == 0 {
 		id = Identity{}
 	}
-	return id, Enrollment{Token: str(KeyToken), Gateway: str(KeyGateway), CAPin: str(KeyCAPin)}, nil
+	return id, Enrollment{Token: str(KeyToken), Gateway: str(KeyGateway), CAPin: str(KeyCAPin), PendingKey: d[KeyPending]}, nil
 }
 
 func (s *SecretStore) Save(ctx context.Context, id Identity) error {
+	return s.update(ctx, "save the agent identity", func(data map[string][]byte) {
+		delete(data, KeyToken)
+		delete(data, KeyPending)
+		data[KeyKey], data[KeyCert], data[KeyCA] = id.KeyPEM, id.CertPEM, id.CAPEM
+		data[KeyOrganization], data[KeyCluster] = []byte(id.Organization), []byte(id.Cluster)
+		data[KeyGateway], data[KeyCAPin] = []byte(id.Gateway), []byte(id.CAPin)
+	})
+}
+
+func (s *SecretStore) SavePending(ctx context.Context, keyPEM []byte) error {
+	return s.update(ctx, "save the pending key", func(data map[string][]byte) {
+		if keyPEM == nil {
+			delete(data, KeyPending)
+		} else {
+			data[KeyPending] = keyPEM
+		}
+	})
+}
+
+func (s *SecretStore) update(ctx context.Context, what string, change func(map[string][]byte)) error {
 	var sec corev1.Secret
 	if err := s.Reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Name}, &sec); err != nil {
 		return fmt.Errorf("read secret %s/%s: %w", s.Namespace, s.Name, err)
@@ -74,13 +100,9 @@ func (s *SecretStore) Save(ctx context.Context, id Identity) error {
 	if sec.Data == nil {
 		sec.Data = map[string][]byte{}
 	}
-	delete(sec.Data, KeyToken)
-	delete(sec.StringData, KeyToken)
-	sec.Data[KeyKey], sec.Data[KeyCert], sec.Data[KeyCA] = id.KeyPEM, id.CertPEM, id.CAPEM
-	sec.Data[KeyOrganization], sec.Data[KeyCluster] = []byte(id.Organization), []byte(id.Cluster)
-	sec.Data[KeyGateway], sec.Data[KeyCAPin] = []byte(id.Gateway), []byte(id.CAPin)
+	change(sec.Data)
 	if err := s.Writer.Update(ctx, &sec); err != nil {
-		return fmt.Errorf("save the agent identity in secret %s/%s: %w", s.Namespace, s.Name, err)
+		return fmt.Errorf("%s in secret %s/%s: %w", what, s.Namespace, s.Name, err)
 	}
 	return nil
 }
@@ -90,6 +112,10 @@ type MemoryStore struct {
 	mu         sync.Mutex
 	identity   Identity
 	enrollment Enrollment
+	// LoseAnswers makes the next n Save calls fail (tests: an answer the
+	// agent got but could not keep is as good as lost).
+	LoseAnswers int
+	lost        int
 }
 
 // NewMemoryStore starts with a pending enrolment.
@@ -104,8 +130,41 @@ func (m *MemoryStore) Load(context.Context) (Identity, Enrollment, error) {
 func (m *MemoryStore) Save(_ context.Context, id Identity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.identity, m.enrollment.Token = id, ""
+	if m.LoseAnswers > 0 {
+		m.LoseAnswers--
+		m.lost++
+		return errors.New("lost (test)")
+	}
+	m.identity, m.enrollment.Token, m.enrollment.PendingKey = id, "", nil
 	return nil
+}
+
+func (m *MemoryStore) SavePending(_ context.Context, keyPEM []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.enrollment.PendingKey = keyPEM
+	return nil
+}
+
+// Lose makes the next n Save calls fail.
+func (m *MemoryStore) Lose(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.LoseAnswers = n
+}
+
+// Lost is how many Save calls failed on purpose.
+func (m *MemoryStore) Lost() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lost
+}
+
+// Pending is the pending key (nil when there is none).
+func (m *MemoryStore) Pending() []byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.enrollment.PendingKey
 }
 
 // Enroll sets a new pending enrolment (an operator writing a new token).

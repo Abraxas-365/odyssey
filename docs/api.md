@@ -223,7 +223,8 @@ environment serves. The console calls both "versión".
 - **Where it runs** (`ODYSSEY_CLUSTER=fleet`): an environment's first
   deployment pins it to the organization's first-enrolled active cluster; it stays
   there. With none, the deployment fails with `APPLY_FAILED` and a message
-  that tells TI to connect one; a revoked cluster fails the same way.
+  that tells TI to connect one; a revoked cluster fails the same way (until
+  TI moves its apps: see Clusters).
 
 ### Clusters (`odyssey:clusters:read` / `odyssey:clusters:manage`)
 
@@ -238,11 +239,12 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
 | `GET` | `/api/v1/clusters/:id` | read | 200 cluster |
 | `POST` | `/api/v1/clusters/:id/enrollment-token` | manage | 200 enrollment token |
 | `POST` | `/api/v1/clusters/:id/revoke` | manage | 200 cluster (`revoked`) |
+| `POST` | `/api/v1/clusters/:id/move` | manage | 200 `{environment_ids, apps}` |
 
 - **Statuses**: `pending` (registered, waiting for its agent) → `active`
   (enrolled) → `revoked` (for good: its certificate stops working at once and
   its tunnel closes). `connected` is separate: the agent was heard from in
-  the last 90 s.
+  the last 90 s. `apps` counts the apps placed on it.
 - **Enrolment token** (`{token, expires_at, gateway, ca_pin}`): shown only in
   the response that creates it (`Cache-Control: no-store`; only its hash is
   kept). One use, 24 h. A new one replaces the pending one; issuing one for an
@@ -251,14 +253,37 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
   `CLUSTER_REVOKED`. `ca_pin` (`sha256:<hex>` of the fleet CA's public key)
   is the only CA the agent trusts.
 - **Names** are unique among the organization's clusters not revoked (409).
-- **Revoke** takes no body and is idempotent (revoking a revoked cluster
-  answers 200 and records nothing). The cluster and its history stay readable.
+- **Revoke** is idempotent (revoking a revoked cluster answers 200 and
+  records nothing, except a move if `move_to` is given). The cluster and its
+  history stay readable. Its apps keep running there, but their deployments
+  fail (`CLUSTER_REVOKED`) until TI moves them: nothing moves on
+  its own, because the other cluster may be on another network or far from
+  the apps' data. The body is optional: `{"move_to": id}` (another active
+  cluster) also moves them, in the same transaction; a bad target (422
+  `INVALID_MOVE_TARGET`) refuses the revocation too.
+- **Move** (`{"to": id}`) sends the apps of a revoked cluster to another
+  active one, whose agent deploys them from scratch (what the old cluster
+  reported is dropped). 422 `CLUSTER_NOT_REVOKED` for a cluster still
+  running them, `INVALID_MOVE_TARGET` for a `to` that is not another active
+  cluster. Moving an empty cluster changes nothing and records nothing.
 - Without a fleet CA configured (`FLEET_CA_CERT`), creating a cluster or a
   token answers 422 `FLEET_DISABLED`.
 - **Events**: `cluster.created`, `cluster.token_issued`, `cluster.enrolled`,
   `cluster.certificate_renewed`, `cluster.connected`, `cluster.revoked`,
-  `cluster.app_applied` (subject `cluster/<id>`). Heartbeats and app status
-  reports are observations: they update the cluster but record no event.
+  `cluster.apps_moved`, `cluster.app_applied` (subject `cluster/<id>`).
+  Heartbeats and app status reports are observations: they update the
+  cluster but record no event; neither does an agent recovering a
+  certificate whose answer it lost (gRPC `Recover`: same key, nothing new is
+  signed; certificates issued before this existed become recoverable at
+  their next renewal).
+- **Gateway (agents' side)**: certificates live 30 days and are renewed
+  inside the tunnel at two thirds of their life. The calls without a
+  certificate (`Enroll`, `Recover`) are rate-limited per client IP (a burst
+  of 5, then one every 5 s) and then globally. **A load balancer in front of
+  the gateway must pass TCP through (TLS ends at the gateway: it checks the
+  client certificate) and preserve the client IP** (no SNAT; e.g. a network
+  LB with client IP preservation): otherwise every agent shares one IP and
+  one per-IP budget.
 
 ### Audit (`odyssey:audit:read`)
 

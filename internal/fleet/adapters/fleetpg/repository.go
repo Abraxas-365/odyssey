@@ -53,10 +53,11 @@ var _ fleet.Repository = (*Repository)(nil)
 var messages = pgerr.Messages{Unique: "a cluster with this name already exists"}
 
 // clusterColumns: connected is computed with the database clock (one clock
-// for every replica).
+// for every replica); apps counts its desired apps (by its index).
 var clusterColumns = `id, organization_id, name, status, token_expires_at, certificate_serial,
 	certificate_expires_at, agent, created_by, created_at, enrolled_at, last_seen_at, revoked_at,
-	(status = 'active' AND session_id IS NOT NULL AND last_seen_at > now() - make_interval(secs => ` + onlineSecs + `)) AS connected`
+	(status = 'active' AND session_id IS NOT NULL AND last_seen_at > now() - make_interval(secs => ` + onlineSecs + `)) AS connected,
+	(SELECT count(*) FROM fleet.desired_apps d WHERE d.organization_id = clusters.organization_id AND d.cluster_id = clusters.id) AS apps`
 
 var onlineSecs = strconv.Itoa(int(fleet.OnlineWithin.Seconds()))
 
@@ -110,6 +111,15 @@ func (r *Repository) FindClusterForUpdate(ctx context.Context, organization iden
 		return fleet.Cluster{}, errx.Internal("FindClusterForUpdate needs a transaction")
 	}
 	return r.findCluster(ctx, `organization_id = $1 AND id = $2`, " FOR UPDATE", organization, id)
+}
+
+func (r *Repository) FindClusterForShare(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID) (fleet.Cluster, error) {
+	if _, ok := txn.Tx(ctx); !ok {
+		return fleet.Cluster{}, errx.Internal("FindClusterForShare needs a transaction")
+	}
+	// KEY SHARE conflicts with FOR UPDATE but not with the heartbeats' plain
+	// updates
+	return r.findCluster(ctx, `organization_id = $1 AND id = $2`, " FOR KEY SHARE", organization, id)
 }
 
 func (r *Repository) FindDefaultCluster(ctx context.Context, organization identity.OrganizationID) (fleet.Cluster, error) {
@@ -189,9 +199,9 @@ func (r *Repository) SetCertificate(ctx context.Context, organization identity.O
 	// of the old key (if any) is superseded
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`UPDATE fleet.clusters SET previous_serial = '', previous_expires_at = NULL,
-		 certificate_serial = $3, certificate_expires_at = $4, status = 'active',
+		 certificate_serial = $3, certificate_expires_at = $4, certificate_pem = $5, status = 'active',
 		 enrolled_at = coalesce(enrolled_at, now()), session_id = NULL
-		 WHERE organization_id = $1 AND id = $2 AND status <> 'revoked'`, organization, id, cert.Serial, cert.ExpiresAt)
+		 WHERE organization_id = $1 AND id = $2 AND status <> 'revoked'`, organization, id, cert.Serial, cert.ExpiresAt, cert.PEM)
 	if err := affected(res, err, "set cluster certificate"); err != nil {
 		return err
 	}
@@ -202,10 +212,24 @@ func (r *Repository) RenewCertificate(ctx context.Context, organization identity
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`UPDATE fleet.clusters SET previous_serial = $5,
 		 previous_expires_at = CASE WHEN $5 = certificate_serial THEN least(certificate_expires_at, $6) ELSE least(previous_expires_at, $6) END,
-		 certificate_serial = $3, certificate_expires_at = $4
+		 certificate_serial = $3, certificate_expires_at = $4, certificate_pem = $7
 		 WHERE organization_id = $1 AND id = $2 AND status = 'active'`,
-		organization, id, cert.Serial, cert.ExpiresAt, presented, previousUntil)
+		organization, id, cert.Serial, cert.ExpiresAt, presented, previousUntil, cert.PEM)
 	return affected(res, err, "renew cluster certificate")
+}
+
+func (r *Repository) FindCertificate(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID) ([]byte, error) {
+	var pemBytes []byte
+	err := txn.Q(ctx, r.db).GetContext(ctx, &pemBytes,
+		`SELECT certificate_pem FROM fleet.clusters
+		 WHERE organization_id = $1 AND id = $2 AND status = 'active' AND certificate_pem IS NOT NULL`, organization, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errx.NotFound("cluster not found")
+	}
+	if err != nil {
+		return nil, pgerr.Map(err, "find cluster certificate")
+	}
+	return pemBytes, nil
 }
 
 func (r *Repository) FindAcceptedSerials(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID) ([]string, error) {
@@ -346,33 +370,41 @@ func (r *Repository) Place(ctx context.Context, organization identity.Organizati
 	return r.FindPlacement(ctx, organization, environment)
 }
 
-func (r *Repository) MovePlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, from, to fleet.ClusterID) error {
+func (r *Repository) MovePlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, from, to fleet.ClusterID) (int, error) {
 	q := txn.Q(ctx, r.db)
 	// what the old cluster reported no longer describes anything
 	if _, err := q.ExecContext(ctx,
 		`DELETE FROM fleet.app_status WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3`,
 		organization, environment, from); err != nil {
-		return pgerr.Map(err, "move placement")
+		return 0, pgerr.Map(err, "move placement")
 	}
 	res, err := q.ExecContext(ctx,
 		`UPDATE fleet.placements SET cluster_id = $4, created_at = now()
 		 WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3`, organization, environment, from, to)
 	if err := affected(res, err, "move placement"); err != nil {
-		return err
+		return 0, err
 	}
 	var names []string
 	if err := q.SelectContext(ctx, &names,
 		`UPDATE fleet.desired_apps SET cluster_id = $4, updated_at = now()
 		 WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3 RETURNING name`,
 		organization, environment, from, to); err != nil {
-		return pgerr.Map(err, "move placement")
+		return 0, pgerr.Map(err, "move placement")
 	}
 	for _, name := range names { // the new cluster's gateway sends them
 		if err := r.notify(ctx, fleet.Signal{Organization: organization, Cluster: to, Environment: environment, Name: name}); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return len(names), nil
+}
+
+func (r *Repository) ListPlacements(ctx context.Context, organization identity.OrganizationID, cluster fleet.ClusterID) ([]project.EnvironmentID, error) {
+	ids := []project.EnvironmentID{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &ids,
+		`SELECT environment_id FROM fleet.placements WHERE organization_id = $1 AND cluster_id = $2 ORDER BY environment_id`,
+		organization, cluster)
+	return ids, pgerr.Map(err, "list placements")
 }
 
 // spec is the stored form of an app's desired state.

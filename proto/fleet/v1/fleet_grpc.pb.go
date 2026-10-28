@@ -29,6 +29,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Fleet_Enroll_FullMethodName  = "/fleet.v1.Fleet/Enroll"
 	Fleet_Renew_FullMethodName   = "/fleet.v1.Fleet/Renew"
+	Fleet_Recover_FullMethodName = "/fleet.v1.Fleet/Recover"
 	Fleet_Connect_FullMethodName = "/fleet.v1.Fleet/Connect"
 )
 
@@ -43,6 +44,12 @@ type FleetClient interface {
 	// Renew issues a new certificate for a fresh key before the current one
 	// expires (mutual TLS with the current certificate).
 	Renew(ctx context.Context, in *RenewRequest, opts ...grpc.CallOption) (*RenewResponse, error)
+	// Recover hands the cluster's current certificate back to the holder of
+	// its key, proven by a certificate request signed with it: an agent whose
+	// Enroll or Renew answer was lost (the token spent, or the old certificate
+	// no longer accepted) gets what was issued. Nothing is signed or changed.
+	// No client certificate is needed.
+	Recover(ctx context.Context, in *RecoverRequest, opts ...grpc.CallOption) (*RecoverResponse, error)
 	// Connect is the tunnel: the agent says Hello and reports what it
 	// observes; the control plane sends the desired state. Either side may
 	// close it; the agent reconnects with backoff.
@@ -77,6 +84,16 @@ func (c *fleetClient) Renew(ctx context.Context, in *RenewRequest, opts ...grpc.
 	return out, nil
 }
 
+func (c *fleetClient) Recover(ctx context.Context, in *RecoverRequest, opts ...grpc.CallOption) (*RecoverResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecoverResponse)
+	err := c.cc.Invoke(ctx, Fleet_Recover_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fleetClient) Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentMessage, ControlMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Fleet_ServiceDesc.Streams[0], Fleet_Connect_FullMethodName, cOpts...)
@@ -101,6 +118,12 @@ type FleetServer interface {
 	// Renew issues a new certificate for a fresh key before the current one
 	// expires (mutual TLS with the current certificate).
 	Renew(context.Context, *RenewRequest) (*RenewResponse, error)
+	// Recover hands the cluster's current certificate back to the holder of
+	// its key, proven by a certificate request signed with it: an agent whose
+	// Enroll or Renew answer was lost (the token spent, or the old certificate
+	// no longer accepted) gets what was issued. Nothing is signed or changed.
+	// No client certificate is needed.
+	Recover(context.Context, *RecoverRequest) (*RecoverResponse, error)
 	// Connect is the tunnel: the agent says Hello and reports what it
 	// observes; the control plane sends the desired state. Either side may
 	// close it; the agent reconnects with backoff.
@@ -120,6 +143,9 @@ func (UnimplementedFleetServer) Enroll(context.Context, *EnrollRequest) (*Enroll
 }
 func (UnimplementedFleetServer) Renew(context.Context, *RenewRequest) (*RenewResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Renew not implemented")
+}
+func (UnimplementedFleetServer) Recover(context.Context, *RecoverRequest) (*RecoverResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Recover not implemented")
 }
 func (UnimplementedFleetServer) Connect(grpc.BidiStreamingServer[AgentMessage, ControlMessage]) error {
 	return status.Error(codes.Unimplemented, "method Connect not implemented")
@@ -181,6 +207,24 @@ func _Fleet_Renew_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_Recover_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecoverRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).Recover(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_Recover_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).Recover(ctx, req.(*RecoverRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fleet_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(FleetServer).Connect(&grpc.GenericServerStream[AgentMessage, ControlMessage]{ServerStream: stream})
 }
@@ -202,6 +246,10 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Renew",
 			Handler:    _Fleet_Renew_Handler,
+		},
+		{
+			MethodName: "Recover",
+			Handler:    _Fleet_Recover_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

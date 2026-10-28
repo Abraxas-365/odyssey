@@ -274,6 +274,9 @@ type Options struct {
 	Authority fleet.Authority
 	// Gateway is the host:port agents dial (the API puts it in tokens).
 	Gateway string
+	// CertificateTTL shortens the agents' certificates (tests watch real
+	// renewals); zero is fleet.CertificateTTL.
+	CertificateTTL time.Duration
 	// Release tunes the deploy workflow (tests shorten its waits).
 	Release releasesvc.Options
 }
@@ -290,7 +293,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	registry := workflow.NewRegistry()
 	engine := &workflow.Deferred{}
 	projects := projectmodule.New(projectmodule.Deps{DB: db, Events: events})
-	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway})
+	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
+		CertificateTTL: opts.CertificateTTL})
 	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
 		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch, Options: opts.Release})
 	if err != nil {

@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { AGENT_INSTALL, awaitingAgent, clusterState, secretCommand } from './clusters'
+import { AGENT_INSTALL, appCount, awaitingAgent, clusterState, moveTargets, secretCommand } from './clusters'
+import type { Cluster } from './types'
+
+describe('moveTargets', () => {
+  const c = (id: string, status: Cluster['status']) => ({ id, status }) as Cluster
+  it('offers only the other active clusters', () => {
+    const all = [c('a', 'active'), c('b', 'active'), c('p', 'pending'), c('r', 'revoked')]
+    expect(moveTargets({ id: 'a' }, all).map(t => t.id)).toEqual(['b'])
+    expect(moveTargets({ id: 'r' }, all).map(t => t.id)).toEqual(['a', 'b'])
+  })
+  it('counts apps in plain words', () => {
+    expect(appCount(1)).toBe('1 app')
+    expect(appCount(3)).toBe('3 apps')
+  })
+})
 
 describe('clusterState', () => {
   it('maps status and connection to the four states TI sees', () => {

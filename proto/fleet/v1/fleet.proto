@@ -19,6 +19,12 @@ service Fleet {
   // Renew issues a new certificate for a fresh key before the current one
   // expires (mutual TLS with the current certificate).
   rpc Renew(RenewRequest) returns (RenewResponse);
+  // Recover hands the cluster's current certificate back to the holder of
+  // its key, proven by a certificate request signed with it: an agent whose
+  // Enroll or Renew answer was lost (the token spent, or the old certificate
+  // no longer accepted) gets what was issued. Nothing is signed or changed.
+  // No client certificate is needed.
+  rpc Recover(RecoverRequest) returns (RecoverResponse);
   // Connect is the tunnel: the agent says Hello and reports what it
   // observes; the control plane sends the desired state. Either side may
   // close it; the agent reconnects with backoff.
@@ -44,6 +50,23 @@ message RenewRequest {
 
 message RenewResponse {
   Certificate certificate = 1;
+}
+
+message RecoverRequest {
+  // Which cluster: the enrolment token after a lost Enroll answer (it names
+  // the cluster; spent is fine), or the ids after a lost Renew answer.
+  string token = 1;
+  string organization_id = 2;
+  string cluster_id = 3;
+  // csr is a PKCS#10 request (DER) signed with the key the certificate was
+  // issued for: the proof of holding it.
+  bytes csr = 4;
+}
+
+message RecoverResponse {
+  string cluster_id = 1;
+  string organization_id = 2;
+  Certificate certificate = 3;
 }
 
 message Certificate {
