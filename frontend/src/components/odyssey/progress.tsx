@@ -57,11 +57,11 @@ export function ProgressSteps({ steps, technical }: { steps: ProgressStepItem[];
   return (
     <ol className="divide-y" aria-label="Progreso">
       {steps.map(s => (
-        <li key={s.title} aria-current={s.state === 'running' ? 'step' : undefined} className={cn('flex items-center gap-3.5 px-5 py-4', s.state === 'pending' && 'opacity-45')}>
+        <li key={s.title} aria-current={s.state === 'running' ? 'step' : undefined} className={cn('flex items-center gap-3.5 px-5 py-4', s.state === 'pending' && 'text-muted-foreground')}>
           <IconBadge
             icon={s.state === 'done' ? CheckCircle2 : s.state === 'failed' ? X : s.state === 'running' ? Loader : s.icon}
             tone={s.state === 'done' ? 'ok' : s.state === 'failed' ? 'bad' : s.state === 'running' ? 'info' : 'neutral'}
-            className={s.state === 'running' ? '[&_svg]:animate-spin [&_svg]:[animation-duration:2.4s]' : undefined}
+            className={s.state === 'running' ? '[&_svg]:animate-spin [&_svg]:[animation-duration:2.4s]' : s.state === 'pending' ? 'opacity-45' : undefined}
           />
           <div className="min-w-0 flex-1">
             <div className="font-semibold">{s.title}</div>

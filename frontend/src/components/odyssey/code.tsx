@@ -33,7 +33,7 @@ export function CodeLine({ code, className }: { code: string; className?: string
   const { copied, onCopy } = useCopy(code)
   return (
     <div className={cn('flex items-center justify-between gap-2 rounded-md border bg-inset py-1.5 pr-1.5 pl-3 font-mono text-[13px] leading-relaxed', className)}>
-      <code className="min-w-0 overflow-x-auto whitespace-pre">{code}</code>
+      <code tabIndex={0} className="min-w-0 overflow-x-auto rounded-sm whitespace-pre outline-none focus-visible:ring-2 focus-visible:ring-ring/50">{code}</code>
       <Button variant="ghost" size="icon-sm" onClick={onCopy} aria-label={copied ? 'Copiado' : 'Copiar'}>
         {copied ? <Check className="text-success" /> : <Copy />}
       </Button>

@@ -14,13 +14,18 @@ import {
   Callout,
   ChipGroup,
   CodeLine,
+  EmptyState,
   ErrorNotice,
+  Panel,
+  PanelHeader,
   ProgressSteps,
   RequestTracker,
   requestSteps,
+  ResourceIcons,
   ResourceRow,
   RuleRow,
   UsageMeter,
+  UserMenu,
   VersionRow,
 } from '.'
 import { ApiError } from '@/lib/api'
@@ -141,5 +146,22 @@ describe('accessibility (axe)', () => {
       </main>,
     )
     await expectAccessible(container)
+  })
+
+  it('page furniture: user menu, resource icons, panel and 404 headings', async () => {
+    const { container } = wrap(
+      <main>
+        <UserMenu name="Demo TI" technical={false} onTechnicalChange={() => {}} onLogout={() => {}} />
+        <ResourceIcons resources={[{ kind: 'postgres', detail: '' }, { kind: 'ai', detail: '', usage: 95 }]} />
+        <EmptyState level={1} icon={AlertTriangle} title="No encontramos esta página" />
+        <Panel><PanelHeader title="Versiones" /></Panel>
+      </main>,
+    )
+    await expectAccessible(container)
+    // Named by sr-only text, not aria-label: an aria-label would contradict the visible initials.
+    expect(screen.getByRole('button', { name: 'Cuenta de Demo TI' })).not.toHaveAttribute('aria-label')
+    expect(screen.getByRole('heading', { level: 1, name: 'No encontramos esta página' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Versiones' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Base de datos' })).toBeInTheDocument()
   })
 })

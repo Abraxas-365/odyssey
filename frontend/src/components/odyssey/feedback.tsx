@@ -9,14 +9,15 @@ import { cn } from '@/lib/utils'
 import { IconBadge } from './icon-badge'
 
 /** Empty state: what this is, why it's empty, and the one next step. */
-export function EmptyState({ icon, title, children, action, className }: { icon: LucideIcon; title: ReactNode; children?: ReactNode; action?: ReactNode; className?: string }) {
+/** `level`: when the empty state is the page itself (404), its title is the page heading. */
+export function EmptyState({ icon, title, children, action, level, className }: { icon: LucideIcon; title: ReactNode; children?: ReactNode; action?: ReactNode; level?: 1 | 2; className?: string }) {
   return (
     <Empty className={cn('rounded-xl border border-dashed bg-card', className)}>
       <EmptyHeader>
         <EmptyMedia>
           <IconBadge icon={icon} size="lg" />
         </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyTitle {...(level && { role: 'heading', 'aria-level': level })}>{title}</EmptyTitle>
         {children && <EmptyDescription>{children}</EmptyDescription>}
       </EmptyHeader>
       {action && <EmptyContent>{action}</EmptyContent>}

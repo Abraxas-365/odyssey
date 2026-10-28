@@ -31,7 +31,7 @@
   --warning: #b8a06a;
   --warning-foreground: #0c0c0a;
   /* "Tu asistente" / IA: everything an agent did or proposes. */
-  --ai: #8a7b9b;
+  --ai: #a294b4;
   --ai-foreground: #0c0c0a;
   --info: #7b9bae;
   --border: #222220;
@@ -81,7 +81,7 @@
   --success-foreground: #faf8f4;
   --warning: #695b36;
   --warning-foreground: #faf8f4;
-  --ai: #7a6b8a;
+  --ai: #5e5072;
   --ai-foreground: #faf8f4;
   --info: #495f6d;
   --border: #d8d4ca;

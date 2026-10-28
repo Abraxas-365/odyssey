@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AppWindow, Bot, Plus } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button, ButtonLink } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AppCard, ChipGroup, CreateAppTile, EmptyState, ErrorNotice, PageHeader, SectionHeader } from '@/components/odyssey'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -37,10 +37,10 @@ export function HomePage() {
         description={projects.data ? `${projects.data.page.total} ${projects.data.page.total === 1 ? 'app' : 'apps'}` : ' '}
         actions={
           <>
-            <Button variant="outline" nativeButton={false} render={<Link to="/asistente" />}>
+            <ButtonLink variant="outline" render={<Link to="/asistente" />}>
               <Bot />
               Conectar mi asistente
-            </Button>
+            </ButtonLink>
             {canWrite && (
               <Button onClick={() => setCreating(true)}>
                 <Plus />

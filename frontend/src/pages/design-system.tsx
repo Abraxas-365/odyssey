@@ -197,7 +197,7 @@ function Actions() {
           <Input placeholder="Nombre de la app" />
           <Input aria-invalid placeholder="Con error" />
           <Select defaultValue="viewer" items={{ viewer: 'Lector', approver: 'Aprobador', admin: 'Admin' }}>
-            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full" aria-label="Rol"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="viewer">Lector</SelectItem>
               <SelectItem value="approver">Aprobador</SelectItem>
@@ -264,6 +264,7 @@ function AppsAndVersions({ technical }: { technical: boolean }) {
   return (
     <Section id="apps" title="Apps y versiones" description="“App” y “Versión”, nunca proyecto o deployment. Lo técnico aparece solo con el interruptor.">
       <PageHeader title="Visitas a clientes" status={<AppStatus status="live" />} description="Los vendedores registran visitas con fotos y ubicación" actions={<><Button variant="outline">Compartir</Button><Button>Abrir app</Button></>} />
+      <SectionHeader title="Tus apps" />
       <div className="grid gap-4 md:grid-cols-3">
         <AppCard technical={technical} resources={<ResourceIcons resources={resources} />} app={{ name: 'Visitas a clientes', description: 'Registro de visitas de ventas', status: 'live', updated: 'hace 2 h', audience: 'Ventas', people: 12, git: { sha: 'a1b2c3d4', message: 'Agrega fotos a la visita' } }} />
         <AppCard technical={technical} app={{ name: 'Inventario', status: 'attention', updated: 'ayer', audience: 'Solo tú', people: 1, thumbnail: 'form', git: { sha: 'f00ba12', message: 'Filtro por almacén' } }} />

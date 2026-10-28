@@ -1,4 +1,6 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
+import { mergeProps } from "@base-ui/react/merge-props"
+import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 
@@ -57,4 +59,24 @@ function Button({
   )
 }
 
-export { Button, buttonVariants }
+/**
+ * Navigation that looks like a button. Use it (not `<Button render={<a/>}>`)
+ * for anything that goes somewhere: Base UI gives a rendered anchor
+ * role="button", and assistive tech would announce a link as a button.
+ */
+function ButtonLink({
+  className,
+  variant = "default",
+  size = "default",
+  block,
+  render,
+  ...props
+}: Omit<useRender.ComponentProps<"a">, "className"> & { className?: string } & VariantProps<typeof buttonVariants>) {
+  return useRender({
+    defaultTagName: "a",
+    render,
+    props: mergeProps<"a">({ "data-slot": "button", className: cn(buttonVariants({ variant, size, block, className })) } as React.ComponentProps<"a">, props),
+  })
+}
+
+export { Button, ButtonLink, buttonVariants }

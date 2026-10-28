@@ -19,11 +19,11 @@ export function colorFor(key: string) {
  * `muted` is used for people that aren't the current subject; `group` shows
  * the users icon for IAM groups.
  */
-export function Avatar({ name, color, muted, group, size = 'md', className }: { name: string; color?: string; muted?: boolean; group?: boolean; size?: 'md' | 'lg'; className?: string }) {
+/** `decorative`: inside a control that already names the person (the user menu). */
+export function Avatar({ name, color, muted, group, size = 'md', decorative, className }: { name: string; color?: string; muted?: boolean; group?: boolean; size?: 'md' | 'lg'; decorative?: boolean; className?: string }) {
   return (
     <span
-      role="img"
-      aria-label={name}
+      {...(decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': name })}
       className={cn(
         'grid shrink-0 place-items-center rounded-full font-mono font-semibold text-primary-foreground',
         size === 'md' ? 'size-[22px] text-[10px]' : 'size-8 text-[11px]',

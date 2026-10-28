@@ -3,7 +3,7 @@ import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useTheme } from 'next-themes'
 import { Bell, Bot, ChevronsUpDown, CircleHelp, LogOut, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, ButtonLink } from '@/components/ui/button'
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from '@/components/ui/command'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
@@ -27,7 +27,7 @@ export function NavTabs({ tabs, label = 'Secciones' }: { tabs: NavTab[]; label?:
           end={t.end}
           className={({ isActive }) =>
             cn(
-              'flex items-center gap-1.5 border-b-2 border-transparent px-2.5 pt-2.5 pb-3 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground',
+              'flex items-center gap-1.5 border-b-2 border-transparent px-2.5 pt-2.5 pb-3 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:rounded-sm focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
               isActive && 'border-foreground text-foreground',
             )
           }
@@ -100,8 +100,10 @@ export function UserMenu({ name, email, technical, onTechnicalChange, onSwitchOr
   const { theme, setTheme } = useTheme()
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="cursor-pointer rounded-full p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50" aria-label={`Cuenta de ${name}`}>
-        <Avatar name={name} size="lg" />
+      <DropdownMenuTrigger className="cursor-pointer rounded-full p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+        {/* Named by text, not aria-label: the visible initials must not contradict the name (WCAG 2.5.3). */}
+        <span className="sr-only">Cuenta de {name}</span>
+        <Avatar name={name} size="lg" decorative />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-[280px]">
         <DropdownMenuGroup>
@@ -212,9 +214,9 @@ export function AppShell({ team, project, tabs, search, notifications, user, chi
           <div className="flex-1" />
           {search}
           {notifications}
-          <Button variant="ghost" size="icon" aria-label="Ayuda" nativeButton={false} render={<a href="https://github.com/Abraxas-365/odyssey" target="_blank" rel="noreferrer" />}>
+          <ButtonLink variant="ghost" size="icon" aria-label="Ayuda" href="https://github.com/Abraxas-365/odyssey" target="_blank" rel="noreferrer">
             <CircleHelp />
-          </Button>
+          </ButtonLink>
           {user}
         </div>
         {tabs && tabs.length > 0 && <NavTabs tabs={tabs} />}

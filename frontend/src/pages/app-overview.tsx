@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { Archive, Bot, Database, ExternalLink, Lock, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
+import { Button, ButtonLink } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -75,10 +75,10 @@ function Overview({ project: p }: { project: Project }) {
                 <Pencil />
                 Editar
               </Button>
-              <Button nativeButton={false} render={<Link to="/asistente" />}>
+              <ButtonLink render={<Link to="/asistente" />}>
                 <Bot />
                 Publicar con mi asistente
-              </Button>
+              </ButtonLink>
             </>
           )
         }
@@ -115,10 +115,10 @@ function Overview({ project: p }: { project: Project }) {
               <span>Aún no tiene una versión publicada.</span>
             )}
             {live ? (
-              <Button variant="outline" size="sm" nativeButton={false} render={<a href={live.url} target="_blank" rel="noreferrer" />}>
+              <ButtonLink variant="outline" size="sm" href={live.url} target="_blank" rel="noreferrer">
                 <ExternalLink />
                 Abrir app
-              </Button>
+              </ButtonLink>
             ) : (
               <Button variant="outline" size="sm" disabled title="Disponible cuando la app esté publicada">
                 <ExternalLink />

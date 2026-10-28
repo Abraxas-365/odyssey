@@ -26,7 +26,7 @@ export function PanelHeader({ icon: Icon, title, description, meta, actions, cla
     <header className={cn('flex items-center gap-2.5 border-b px-5 py-3.5', className)}>
       {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
       <div className="min-w-0 flex-1">
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <h2 className="text-sm font-semibold">{title}</h2>
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
       {meta && <span className="text-xs text-muted-foreground">{meta}</span>}

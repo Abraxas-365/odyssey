@@ -84,7 +84,7 @@ export function ResourceIcons({ resources, className }: { resources: ResourceUse
           const { icon: Icon, label } = resourceKinds[r.kind]
           return (
             <Tooltip key={`${r.kind}-${i}`}>
-              <TooltipTrigger render={<span className={cn('flex', needsCare(r) && 'text-warning')} />} aria-label={label}>
+              <TooltipTrigger render={<span role="img" className={cn('flex', needsCare(r) && 'text-warning')} />} aria-label={label}>
                 <Icon className="size-3.5" aria-hidden />
               </TooltipTrigger>
               <TooltipContent>{label}</TooltipContent>
