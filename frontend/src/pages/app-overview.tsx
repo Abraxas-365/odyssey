@@ -22,7 +22,7 @@ import {
   Term,
 } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
-import { formatDateTime, formatRelative } from '@/lib/format'
+import { formatDateTime, formatRelative, safeAppUrl } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
 import { useArchiveProject, useProject, useUpdateProject } from '@/lib/projects'
@@ -60,6 +60,7 @@ function Overview({ project: p }: { project: Project }) {
   const problem = publishing ? undefined : lastProblem(history)
   const status = appStatus(archived, current.data, problem)
   const live = current.data?.release ? current.data : undefined
+  const liveUrl = safeAppUrl(live?.url)
 
   return (
     <>
@@ -115,8 +116,8 @@ function Overview({ project: p }: { project: Project }) {
             ) : (
               <span>Aún no tiene una versión publicada.</span>
             )}
-            {live ? (
-              <ButtonLink variant="outline" size="sm" href={live.url} target="_blank" rel="noreferrer">
+            {live && liveUrl ? (
+              <ButtonLink variant="outline" size="sm" href={liveUrl} target="_blank" rel="noreferrer">
                 <ExternalLink />
                 Abrir app
               </ButtonLink>

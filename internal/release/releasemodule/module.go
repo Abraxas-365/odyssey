@@ -9,11 +9,12 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefake"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefleet"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasehttp"
-	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasekube"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasepg"
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
 	"github.com/Abraxas-365/odyssey/internal/txn"
@@ -35,7 +36,10 @@ type Deps struct {
 	// ClusterConfig selects the adapter when Cluster is nil (the zero value
 	// is the in-memory fake: the API, which never calls the cluster).
 	ClusterConfig config.Cluster
-	Options       releasesvc.Options
+	// Fleet runs apps on the organization's enrolled clusters (the fleet
+	// adapter).
+	Fleet   fleet.Dispatch
+	Options releasesvc.Options
 }
 
 type Module struct {
@@ -55,8 +59,7 @@ func New(deps Deps) (Module, error) {
 	return Module{Commands: svc, Queries: svc, HTTP: releasehttp.New(svc, svc), workflows: svc}, nil
 }
 
-// clusterOf picks the Cluster adapter. Phase 1a-a3 adds the fleet adapter
-// (enrolled clusters through the agent's tunnel).
+// clusterOf picks the Cluster adapter.
 func clusterOf(deps Deps) (release.Cluster, error) {
 	if deps.Cluster != nil {
 		return deps.Cluster, nil
@@ -64,8 +67,11 @@ func clusterOf(deps Deps) (release.Cluster, error) {
 	switch deps.ClusterConfig.Kind {
 	case "", config.ClusterFake:
 		return releasefake.New(releasefake.Options{}), nil
-	case config.ClusterKubernetes:
-		return releasekube.Connect(deps.ClusterConfig.Kubeconfig)
+	case config.ClusterFleet:
+		if deps.Fleet == nil {
+			return nil, fmt.Errorf("the fleet cluster adapter needs the fleet module")
+		}
+		return releasefleet.New(deps.Fleet), nil
 	}
 	return nil, fmt.Errorf("unknown cluster kind %q", deps.ClusterConfig.Kind)
 }

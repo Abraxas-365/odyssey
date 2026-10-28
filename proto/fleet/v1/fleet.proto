@@ -1,0 +1,125 @@
+// Package fleet.v1 is the protocol between the control plane (odyssey-gateway)
+// and the agent installed in each cluster. The agent always dials out: a
+// cluster behind a firewall needs no inbound port. Every call but Enroll
+// runs over mutual TLS with the certificate the cluster got at enrolment.
+//
+// Compatibility: fields are only added. A renamed or removed field is a new
+// package (fleet.v2), served side by side while agents upgrade.
+syntax = "proto3";
+
+package fleet.v1;
+
+option go_package = "github.com/Abraxas-365/odyssey/proto/fleet/v1;fleetv1";
+
+service Fleet {
+  // Enroll trades a one-time enrolment token and a certificate signing
+  // request for the cluster's client certificate. The private key never
+  // leaves the cluster. No client certificate is needed.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  // Renew issues a new certificate for a fresh key before the current one
+  // expires (mutual TLS with the current certificate).
+  rpc Renew(RenewRequest) returns (RenewResponse);
+  // Connect is the tunnel: the agent says Hello and reports what it
+  // observes; the control plane sends the desired state. Either side may
+  // close it; the agent reconnects with backoff.
+  rpc Connect(stream AgentMessage) returns (stream ControlMessage);
+}
+
+message EnrollRequest {
+  // token is the one-time token shown when the cluster was created.
+  string token = 1;
+  // csr is a PKCS#10 certificate request (DER) for the cluster's key.
+  bytes csr = 2;
+}
+
+message EnrollResponse {
+  string cluster_id = 1;
+  string organization_id = 2;
+  Certificate certificate = 3;
+}
+
+message RenewRequest {
+  bytes csr = 1;
+}
+
+message RenewResponse {
+  Certificate certificate = 1;
+}
+
+message Certificate {
+  // pem is the client certificate (PEM).
+  bytes pem = 1;
+  // ca_pem is the fleet CA that issued it (PEM).
+  bytes ca_pem = 2;
+}
+
+message AgentMessage {
+  oneof message {
+    // hello is the first message of every stream.
+    Hello hello = 1;
+    AppReport report = 2;
+  }
+}
+
+message ControlMessage {
+  oneof message {
+    // apply hands the agent the desired state of one app. Applying it twice,
+    // or a revision older than the one the cluster has, changes nothing.
+    App apply = 1;
+  }
+}
+
+message Hello {
+  string agent_version = 1;
+  Capabilities capabilities = 2;
+}
+
+// Capabilities are what the cluster offers apps (placement and blueprints
+// read them).
+message Capabilities {
+  string kubernetes_version = 1;
+  // apis are the optional platform APIs installed, by API group
+  // (e.g. "postgresql.cnpg.io", "kyverno.io", "gateway.networking.k8s.io").
+  repeated string apis = 2;
+  repeated string ingress_classes = 3;
+  repeated string storage_classes = 4;
+}
+
+// App is the desired state of one app: the spec of its OdysseyApp.
+message App {
+  string organization_id = 1;
+  string project_id = 2;
+  string environment_id = 3;
+  // name is the app's DNS-label name in the cluster.
+  string name = 4;
+  // revision grows with every deployment of the environment.
+  int64 revision = 5;
+  string image = 6;
+  int32 port = 7;
+  string health_path = 8;
+  int32 replicas = 9;
+  map<string, string> env = 10;
+  map<string, string> labels = 11;
+}
+
+// AppReport carries what the agent observes. A full report (sent once per
+// stream, right after Hello) lists every app; the rest carry only changes.
+message AppReport {
+  bool full = 1;
+  repeated AppStatus apps = 2;
+}
+
+message AppStatus {
+  string environment_id = 1;
+  string name = 2;
+  // observed_revision is the desired revision the status describes
+  // (0: the agent has not acted on the app yet).
+  int64 observed_revision = 3;
+  // phase is "progressing", "ready" or "failed".
+  string phase = 4;
+  // reason explains a failed phase: "unhealthy", "image_pull", "crash", "config".
+  string reason = 5;
+  string message = 6;
+  int32 ready_replicas = 7;
+  string url = 8;
+}

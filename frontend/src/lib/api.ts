@@ -81,6 +81,8 @@ const messages: Record<string, string> = {
   FORBIDDEN: 'No tienes permiso para hacer esto. Si lo necesitas, pídeselo a TI.',
   UNAUTHORIZED: 'Tu sesión expiró. Vuelve a ingresar.',
   PAYLOAD_TOO_LARGE: 'Lo que enviaste es demasiado grande.',
+  CLUSTER_REVOKED: 'Ese clúster fue revocado. Conecta uno nuevo.',
+  FLEET_DISABLED: 'Esta instalación de Odyssey todavía no puede conectar clústeres. Pídele a TI que configure el gateway.',
 }
 
 export function errorMessage(error: unknown): string {
@@ -88,7 +90,10 @@ export function errorMessage(error: unknown): string {
     if (messages[error.code]) return messages[error.code]
     switch (error.type) {
       case 'NOT_FOUND': return 'No encontramos lo que buscas. Puede que se haya borrado o que no tengas acceso.'
-      case 'CONFLICT': return error.field === 'slug' ? 'Ya existe una app con esa dirección. Elige otra.' : 'Alguien cambió esto al mismo tiempo. Recarga e intenta de nuevo.'
+      case 'CONFLICT':
+        if (error.field === 'slug') return 'Ya existe una app con esa dirección. Elige otra.'
+        if (error.field === 'name') return 'Ya existe uno con ese nombre. Elige otro.'
+        return 'Alguien cambió esto al mismo tiempo. Recarga e intenta de nuevo.'
       case 'INTERNAL': return 'Algo falló de nuestro lado. Intenta de nuevo; si sigue pasando, avísale a TI.'
       case 'EXTERNAL': return 'Un servicio del que dependemos no responde. Intenta de nuevo en unos minutos.'
       default: return error.message

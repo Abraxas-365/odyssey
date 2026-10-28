@@ -5,6 +5,7 @@ import { AuthGate } from '@/lib/auth'
 import { AppOverviewPage } from '@/pages/app-overview'
 import { AssistantPage } from '@/pages/assistant'
 import { AuthCallbackPage } from '@/pages/auth-callback'
+import { ClustersPage } from '@/pages/clusters'
 import { ConsoleLayout } from '@/pages/console-layout'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
@@ -22,6 +23,7 @@ export function App() {
           <Route index element={<HomePage />} />
           <Route path="asistente" element={<AssistantPage />} />
           <Route path="apps/:id" element={<AppOverviewPage />} />
+          <Route path="infraestructura/clusteres" element={<ClustersPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

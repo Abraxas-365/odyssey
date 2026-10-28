@@ -7,6 +7,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - get
@@ -37,6 +43,12 @@ rules:
 - apiGroups:
   - networking.k8s.io
   resources:
+  - ingressclasses
+  verbs:
+  - list
+- apiGroups:
+  - networking.k8s.io
+  resources:
   - ingresses
   verbs:
   - create
@@ -51,8 +63,10 @@ rules:
   resources:
   - odysseyapps
   verbs:
+  - create
   - get
   - list
+  - update
   - watch
 - apiGroups:
   - odyssey.dev
@@ -62,6 +76,12 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - list
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -76,6 +96,15 @@ rules:
   verbs:
   - create
   - patch
+- apiGroups:
+  - ""
+  resourceNames:
+  - odyssey-agent
+  resources:
+  - secrets
+  verbs:
+  - get
+  - update
 - apiGroups:
   - coordination.k8s.io
   resources:

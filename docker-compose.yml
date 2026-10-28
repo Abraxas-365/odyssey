@@ -1,4 +1,4 @@
-# ODYSSEY — local stack: Postgres + IAMKit (users, auth, permissions) + API + worker.
+# ODYSSEY — local stack: Postgres + IAMKit (users, auth, permissions) + API + worker + gateway.
 #
 #   make dev     # first run: secrets, IAMKit, seed, API
 #   make up      # build and start everything
@@ -62,19 +62,52 @@ services:
       IAMKIT_RESOURCE_ID: ${IAMKIT_RESOURCE_ID:-}
       IAMKIT_WEB_CLIENT_ID: ${IAMKIT_WEB_CLIENT_ID:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Registers clusters: tokens name the gateway as a k3d cluster sees it.
+      FLEET_CA_CERT: /secrets/fleet/ca.crt
+      FLEET_GATEWAY_URL: ${FLEET_GATEWAY_URL:-host.k3d.internal:8443}
+    volumes:
+      - ./secrets/fleet/ca.crt:/secrets/fleet/ca.crt:ro
     depends_on:
       db:
         condition: service_healthy
       iamkit:
         condition: service_healthy
 
+  # Where agents connect (mTLS); the only process with the fleet CA key.
+  gateway:
+    image: odyssey-api:dev
+    entrypoint: ["odyssey-gateway"]
+    ports:
+      - "${GATEWAY_PORT:-8443}:8443"
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/odyssey?sslmode=disable
+      FLEET_CA_CERT: /secrets/fleet/ca.crt
+      FLEET_CA_KEY: /secrets/fleet/ca.key
+      FLEET_GATEWAY_HOSTS: host.k3d.internal,localhost
+    # The CA key stays 0600, owned by whoever ran `make setup`: the gateway
+    # runs as that uid to read it (make setup writes ODYSSEY_UID/GID to .env;
+    # never loosen the key's mode instead).
+    user: "${ODYSSEY_UID:-100}:${ODYSSEY_GID:-101}"
+    volumes:
+      - ./secrets/fleet:/secrets/fleet:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8098/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+
   # Outbox delivery (audit trail, reactions), workflows and scheduled tasks.
+  # ODYSSEY_CLUSTER=fleet deploys to the enrolled clusters.
   worker:
     image: odyssey-api:dev
     entrypoint: ["odyssey-worker"]
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/odyssey?sslmode=disable
       WORKER_HEALTH_PORT: "8096"
+      ODYSSEY_CLUSTER: ${ODYSSEY_CLUSTER:-fake}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8096/health"]
       interval: 10s

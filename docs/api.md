@@ -220,6 +220,45 @@ environment serves. The console calls both "versión".
   progress. Archived apps refuse both with 422 `PROJECT_ARCHIVED`.
 - **Events**: `release.created`, `deployment.started`, `deployment.ready`,
   `deployment.failed`, `deployment.cancelled` (subject `deployment/<id>`).
+- **Where it runs** (`ODYSSEY_CLUSTER=fleet`): an environment's first
+  deployment pins it to the organization's first-enrolled active cluster; it stays
+  there. With none, the deployment fails with `APPLY_FAILED` and a message
+  that tells TI to connect one; a revoked cluster fails the same way.
+
+### Clusters (`odyssey:clusters:read` / `odyssey:clusters:manage`)
+
+The organization's Kubernetes clusters (console: Infraestructura →
+Clústeres). The platform never holds cluster credentials: each cluster's
+agent dials out to the gateway over mutual TLS, so it needs no inbound port.
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/clusters` | read | 200 `{items, page}` by name, revoked last (filter `status`) |
+| `POST` | `/api/v1/clusters` | manage | **201** + `Location`, `{cluster, enrollment}` |
+| `GET` | `/api/v1/clusters/:id` | read | 200 cluster |
+| `POST` | `/api/v1/clusters/:id/enrollment-token` | manage | 200 enrollment token |
+| `POST` | `/api/v1/clusters/:id/revoke` | manage | 200 cluster (`revoked`) |
+
+- **Statuses**: `pending` (registered, waiting for its agent) → `active`
+  (enrolled) → `revoked` (for good: its certificate stops working at once and
+  its tunnel closes). `connected` is separate: the agent was heard from in
+  the last 90 s.
+- **Enrolment token** (`{token, expires_at, gateway, ca_pin}`): shown only in
+  the response that creates it (`Cache-Control: no-store`; only its hash is
+  kept). One use, 24 h. A new one replaces the pending one; issuing one for an
+  active cluster lets its agent enrol again (lost key), after which its
+  previous certificate stops working. A revoked cluster refuses with 422
+  `CLUSTER_REVOKED`. `ca_pin` (`sha256:<hex>` of the fleet CA's public key)
+  is the only CA the agent trusts.
+- **Names** are unique among the organization's clusters not revoked (409).
+- **Revoke** takes no body and is idempotent (revoking a revoked cluster
+  answers 200 and records nothing). The cluster and its history stay readable.
+- Without a fleet CA configured (`FLEET_CA_CERT`), creating a cluster or a
+  token answers 422 `FLEET_DISABLED`.
+- **Events**: `cluster.created`, `cluster.token_issued`, `cluster.enrolled`,
+  `cluster.certificate_renewed`, `cluster.connected`, `cluster.revoked`,
+  `cluster.app_applied` (subject `cluster/<id>`). Heartbeats and app status
+  reports are observations: they update the cluster but record no event.
 
 ### Audit (`odyssey:audit:read`)
 

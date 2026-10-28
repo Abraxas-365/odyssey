@@ -1,0 +1,144 @@
+package fleet_test
+
+import (
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
+	"github.com/Abraxas-365/odyssey/internal/fleet"
+	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
+)
+
+var (
+	org     = identity.MustParseOrganizationID("00000000-0000-4000-8000-000000000001")
+	user    = identity.MustParseUserID("00000000-0000-4000-8000-000000000002")
+	cluster = fleet.MustParseClusterID("00000000-0000-4000-8000-0000000000c1")
+	env     = project.MustParseEnvironmentID("00000000-0000-4000-8000-0000000000bb")
+	proj    = project.MustParseID("00000000-0000-4000-8000-0000000000aa")
+	at      = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+)
+
+// TestEventContracts pins each payload's JSON (testdata/events).
+func TestEventContracts(t *testing.T) {
+	expires := at.Add(fleet.TokenTTL)
+	c := fleet.Cluster{ID: cluster, Organization: org, Name: "Producción Lima", TokenExpiresAt: &expires}
+	cert := fleet.Issued{Serial: "5a1f", ExpiresAt: at.Add(fleet.CertificateTTL)}
+	app := fleet.App{Organization: org, Project: proj, Environment: env, Cluster: cluster, Name: "visitas",
+		Revision: 3, Image: "registry.local/visitas@sha256:" + strings.Repeat("a", 64),
+		Env: map[string]string{"B_KEY": "secret", "A_KEY": "secret"}}
+	for _, e := range []event.Event{
+		fleet.NewClusterCreated(org, user, c),
+		fleet.NewTokenIssued(org, user, c, fleet.Token{ExpiresAt: expires}),
+		fleet.NewEnrolled(org, c, cert),
+		fleet.NewCertificateRenewed(org, c, cert),
+		fleet.NewConnected(org, c, fleet.Agent{Version: "0.3.0",
+			Capabilities: fleet.Capabilities{KubernetesVersion: "v1.31.4+k3s1"}}, "203.0.113.7"),
+		fleet.NewRevoked(org, user, c),
+		fleet.NewAppApplied(org, c, app, true),
+	} {
+		eventtest.Golden(t, e)
+	}
+}
+
+func TestEnvValuesStayOutOfTheTrail(t *testing.T) {
+	e := fleet.NewAppApplied(org, fleet.Cluster{ID: cluster}, fleet.App{Name: "a", Revision: 1,
+		Env: map[string]string{"API_KEY": "s3cr3t"}}, false)
+	if strings.Contains(string(e.Payload), "s3cr3t") || !strings.Contains(string(e.Payload), "API_KEY") {
+		t.Fatalf("payload %s", e.Payload)
+	}
+}
+
+func TestTokenCarriesItsClusterAndOnlyItsHashIsKept(t *testing.T) {
+	value, hash := fleet.NewToken(org, cluster)
+	if !strings.HasPrefix(value, "odyssey-enroll-") {
+		t.Fatalf("token %q has no recognisable prefix", value)
+	}
+	if string(fleet.HashToken(value)) != string(hash) || strings.Contains(value, string(hash)) {
+		t.Fatal("hash does not match the token")
+	}
+	gotOrg, gotCluster, err := fleet.ParseToken("  " + value + "\n")
+	if err != nil || gotOrg != org || gotCluster != cluster {
+		t.Fatalf("ParseToken = %v %v %v", gotOrg, gotCluster, err)
+	}
+	other, _ := fleet.NewToken(org, cluster)
+	if other == value {
+		t.Fatal("two tokens are equal")
+	}
+}
+
+func TestMalformedTokensAreOneError(t *testing.T) {
+	value, _ := fleet.NewToken(org, cluster)
+	for _, bad := range []string{"", "odyssey-enroll-", "nope-" + value[15:], value[:40], value + "AA",
+		"odyssey-enroll-" + strings.Repeat("A", 86)} {
+		_, _, err := fleet.ParseToken(bad)
+		var e *errx.Error
+		if !errx.As(err, &e) || e.Code != fleet.CodeInvalidToken {
+			t.Errorf("ParseToken(%q) = %v, want %s", bad, err, fleet.CodeInvalidToken)
+		}
+	}
+}
+
+func TestAgentURIRoundTrips(t *testing.T) {
+	u, err := url.Parse(fleet.AgentURI(org, cluster))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, c, err := fleet.ParseAgentURI(u)
+	if err != nil || o != org || c != cluster {
+		t.Fatalf("ParseAgentURI = %v %v %v", o, c, err)
+	}
+	for _, bad := range []string{
+		"spiffe://evil.dev/org/" + org.String() + "/cluster/" + cluster.String(),
+		"spiffe://odyssey.dev/org/" + org.String(),
+		"spiffe://odyssey.dev/org/x/cluster/" + cluster.String(),
+		"spiffe://odyssey.dev/org/" + org.String() + "/cluster/" + cluster.String() + "/extra",
+	} {
+		u, _ := url.Parse(bad)
+		if _, _, err := fleet.ParseAgentURI(u); err == nil {
+			t.Errorf("ParseAgentURI(%q) accepted", bad)
+		}
+	}
+}
+
+func TestReportsAreBounded(t *testing.T) {
+	ok := fleet.AppStatus{Environment: env, Name: "visitas", ObservedRevision: 2, Phase: fleet.PhaseReady, URL: "https://visitas.apps.example"}
+	if err := (fleet.Report{Apps: []fleet.AppStatus{ok}}).Validate(); err != nil {
+		t.Fatalf("valid report rejected: %v", err)
+	}
+	for name, s := range map[string]fleet.AppStatus{
+		"no environment":  {Name: "a", Phase: fleet.PhaseReady},
+		"bad name":        {Environment: env, Name: "A_b", Phase: fleet.PhaseReady},
+		"bad phase":       {Environment: env, Name: "a", Phase: "exploded"},
+		"bad reason":      {Environment: env, Name: "a", Phase: fleet.PhaseFailed, Reason: "cosmic_ray"},
+		"negative":        {Environment: env, Name: "a", Phase: fleet.PhaseReady, ObservedRevision: -1},
+		"huge message":    {Environment: env, Name: "a", Phase: fleet.PhaseReady, Message: strings.Repeat("x", fleet.MaxMessage+1)},
+		"control in text": {Environment: env, Name: "a", Phase: fleet.PhaseReady, Message: "a\x1b[2Jb"},
+		"javascript url":  {Environment: env, Name: "a", Phase: fleet.PhaseReady, URL: "javascript:alert(document.cookie)"},
+		"data url":        {Environment: env, Name: "a", Phase: fleet.PhaseReady, URL: "data:text/html,<script>x</script>"},
+		"relative url":    {Environment: env, Name: "a", Phase: fleet.PhaseReady, URL: "//evil.example/x"},
+		"url with creds":  {Environment: env, Name: "a", Phase: fleet.PhaseReady, URL: "https://u:p@evil.example"},
+	} {
+		if _, err := (fleet.Report{Apps: []fleet.AppStatus{s}}).Valid(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	kept, err := (fleet.Report{Apps: []fleet.AppStatus{ok, {Name: "bad"}, ok}}).Valid()
+	if err == nil || len(kept.Apps) != 2 {
+		t.Errorf("a partly invalid report kept %d statuses (%v)", len(kept.Apps), err)
+	}
+	many := make([]fleet.AppStatus, fleet.MaxReportApps+1)
+	for i := range many {
+		many[i] = ok
+	}
+	if err := (fleet.Report{Apps: many}).Validate(); err == nil {
+		t.Error("an oversized report was accepted")
+	}
+	if err := (fleet.Agent{Capabilities: fleet.Capabilities{APIs: make([]string, fleet.MaxReported+1)}}).Validate(); err == nil {
+		t.Error("too many capabilities accepted")
+	}
+}

@@ -1,0 +1,6 @@
+{
+  "cluster_id": "00000000-0000-4000-8000-0000000000c1",
+  "address": "203.0.113.7",
+  "agent_version": "0.3.0",
+  "kubernetes_version": "v1.31.4+k3s1"
+}

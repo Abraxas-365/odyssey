@@ -23,6 +23,8 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
+	"github.com/Abraxas-365/odyssey/internal/fleet"
+	"github.com/Abraxas-365/odyssey/internal/fleet/fleetmodule"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
@@ -222,6 +224,7 @@ func Migrations() []migrate.Set {
 		{Owner: outboxpg.Schema, Files: outboxpg.Migrations()},
 		{Owner: projectmodule.Schema, Files: projectmodule.Migrations()},
 		{Owner: releasemodule.Schema, Files: releasemodule.Migrations()},
+		{Owner: fleetmodule.Schema, Files: fleetmodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
 	}
@@ -247,6 +250,7 @@ type Platform struct {
 	Workflows *workflowpg.Engine
 	Projects  projectmodule.Module
 	Releases  releasemodule.Module
+	Fleet     fleetmodule.Module
 	Audit     auditmodule.Module
 }
 
@@ -265,6 +269,11 @@ type Options struct {
 	// calls the cluster and leaves it as the in-memory fake).
 	Cluster       release.Cluster
 	ClusterConfig config.Cluster
+	// Authority is the fleet CA: verify-only in the API, signing in the
+	// gateway, nil where clusters are not registered (the worker).
+	Authority fleet.Authority
+	// Gateway is the host:port agents dial (the API puts it in tokens).
+	Gateway string
 	// Release tunes the deploy workflow (tests shorten its waits).
 	Release releasesvc.Options
 }
@@ -281,8 +290,9 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	registry := workflow.NewRegistry()
 	engine := &workflow.Deferred{}
 	projects := projectmodule.New(projectmodule.Deps{DB: db, Events: events})
+	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway})
 	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
-		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Options: opts.Release})
+		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch, Options: opts.Release})
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +302,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Events:   events,
 		Projects: projects,
 		Releases: releases,
+		Fleet:    fleets,
 		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
@@ -349,7 +360,16 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		a.Close()
 		return nil, err
 	}
-	p, err := Assemble(ctx, db, Options{})
+	opts := Options{Gateway: cfg.Fleet.Gateway}
+	if cfg.Fleet.Enabled() {
+		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
+		if err != nil {
+			a.Close()
+			return nil, err
+		}
+		opts.Authority = ca
+	}
+	p, err := Assemble(ctx, db, opts)
 	if err != nil {
 		a.Close()
 		return nil, err
@@ -370,6 +390,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler) *fiber.App {
 		[]fiber.Handler{auth},
 		p.Projects.HTTP,
 		p.Releases.HTTP,
+		p.Fleet.HTTP,
 		p.Audit.HTTP,
 	)
 }

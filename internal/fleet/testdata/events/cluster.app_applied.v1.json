@@ -1,0 +1,13 @@
+{
+  "cluster_id": "00000000-0000-4000-8000-0000000000c1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "environment_id": "00000000-0000-4000-8000-0000000000bb",
+  "name": "visitas",
+  "revision": 3,
+  "image": "registry.local/visitas@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "env_keys": [
+    "A_KEY",
+    "B_KEY"
+  ],
+  "placed": true
+}

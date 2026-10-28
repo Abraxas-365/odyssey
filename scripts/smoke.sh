@@ -4,9 +4,9 @@
 # a failing one (auto-restore), "Volver a esta"; audit; archive; auth and
 # validation denials. Exits non-zero on any mismatch.
 #
-# SMOKE_CLUSTER=kubernetes runs the releases on the local k3d cluster (make
-# cluster, make agent, make worker CLUSTER=kubernetes): real images, and the
-# published URL must answer.
+# SMOKE_CLUSTER=fleet runs the releases on the local k3d cluster through the
+# fleet (make gateway, make cluster, make agent-enroll, make agent, make
+# worker CLUSTER=fleet): real images, and the published URL must answer.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; source .env; set +a
@@ -46,7 +46,7 @@ expect "production environment" production "$(curl -s "$api/projects/$id/environ
 deps="$api/projects/$id/environments/$env_id/deployments"
 digest() { printf 'sha256:%s' "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)"; }
 whoami=docker.io/traefik/whoami@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab
-kube=$([[ "${SMOKE_CLUSTER:-fake}" == kubernetes ]] && echo 1 || true)
+kube=$([[ "${SMOKE_CLUSTER:-fake}" == fleet ]] && echo 1 || true)
 version() { # version NAME -> deploy body
   if [[ -n "$kube" ]]; then
     local port=8080; [[ "$1" == bad ]] && port=9090

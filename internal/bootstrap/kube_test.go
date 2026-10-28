@@ -1,10 +1,12 @@
-package releasekube_test
+package bootstrap_test
 
-// End-to-end: this adapter and the agent's controller against a real
-// cluster. `make test-kube` starts a throwaway k3s with testcontainers
-// (ODYSSEY_TEST_KUBE=1); ODYSSEY_TEST_KUBECONFIG points it at an existing
-// cluster instead (k3d: stop any other agent first, two controllers would
-// reconcile the same apps). Skipped otherwise: it takes about a minute.
+// End-to-end on a real cluster: the gateway and a real agent (its app
+// controller plus tunnel, in-process) on a throwaway k3s; release deploys
+// through releasefleet and the app answers through the cluster's ingress.
+// `make test-kube` starts k3s with testcontainers (ODYSSEY_TEST_KUBE=1);
+// ODYSSEY_TEST_KUBECONFIG points it at an existing cluster instead (k3d:
+// stop any other agent first, two controllers would reconcile the same
+// apps). Skipped otherwise: it takes about a minute.
 
 import (
 	"context"
@@ -21,14 +23,18 @@ import (
 
 	"github.com/Abraxas-365/odyssey/agent"
 	"github.com/Abraxas-365/odyssey/agent/controllers/app"
+	"github.com/Abraxas-365/odyssey/agent/desired"
+	"github.com/Abraxas-365/odyssey/agent/tunnel"
+	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
-	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasekube"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefleet"
+	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/k3s"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -42,33 +48,54 @@ func TestKube(t *testing.T) {
 	defer cancel()
 	log.SetLogger(zap.New(zap.WriteTo(io.Discard)))
 	kubeconfig, port := clusterFor(t, ctx)
-
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// The platform and its gateway; the cluster is registered like the
+	// console does, and the agent enrols with the token it got.
+	h := startFleet(t)
+	org, user := identity.NewOrganizationID(), identity.MustParseUserID(uuid.NewString())
+	created, err := h.platform.Fleet.Commands.Create(ctx, org, fleet.Create{Name: "k3s", CreatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := tunnel.NewMemoryStore(tunnel.Enrollment{Token: created.Token.Value, Gateway: created.Token.Gateway, CAPin: created.Token.CAPin})
 	mgr, err := agent.NewManager(cfg, agent.Options{
 		App:         app.Config{Domain: "apps.odyssey.localhost", URLScheme: "http", URLPort: port, ReadyDeadline: 90},
 		HealthGrace: 20 * time.Second, HealthAddr: "0", MetricsAddr: "0",
+		Tunnel: tunnel.Options{Store: store, MinBackoff: 100 * time.Millisecond, MaxBackoff: time.Second},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		if err := mgr.Start(ctx); err != nil {
-			t.Error("agent:", err)
+	actx, stopAgent := context.WithCancel(ctx)
+	agentDone := make(chan error, 1)
+	go func() { agentDone <- mgr.Start(actx) }()
+	t.Cleanup(func() {
+		stopAgent()
+		if err := <-agentDone; err != nil {
+			t.Errorf("agent: %v", err)
 		}
-	}()
-
-	k, err := releasekube.Connect(kubeconfig)
-	if err != nil {
-		t.Fatal(err)
+	})
+	eventually(t, "the agent to connect", func() bool {
+		c, err := h.platform.Fleet.Queries.Find(ctx, org, created.Cluster.ID)
+		return err == nil && c.Connected
+	})
+	c, _ := h.platform.Fleet.Queries.Find(ctx, org, created.Cluster.ID)
+	if !strings.HasPrefix(c.Agent.Capabilities.KubernetesVersion, "v1.") || len(c.Agent.Capabilities.IngressClasses) == 0 {
+		t.Errorf("capabilities %+v", c.Agent.Capabilities)
 	}
-	target := release.Target{Organization: identity.NewOrganizationID(), Project: project.NewID(), Environment: project.NewEnvironmentID()}
+
+	k := releasefleet.New(h.platform.Fleet.Dispatch)
+	target := release.Target{Organization: org, Project: project.NewID(), Environment: project.NewEnvironmentID()}
 	name := "e2e-" + target.Environment.String()[:8]
 	t.Cleanup(func() {
-		c := mgr.GetClient()
-		_ = c.Delete(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: releasekube.Namespace(target)}})
+		cs, err := kubernetes.NewForConfig(cfg)
+		if err == nil {
+			_ = cs.CoreV1().Namespaces().Delete(context.Background(), desired.Namespace(target.Environment.String()), metav1.DeleteOptions{})
+		}
 	})
 
 	apply := func(rev int64, image string, appPort int) {
@@ -82,14 +109,14 @@ func TestKube(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// wait polls Status like the deploy workflow: until revision rev is ready
-	// or failed. A failed read is retried, as the workflow's step retries it
-	// (a k3s under load drops connections now and then).
+	// wait polls Status like the deploy workflow: until revision rev is
+	// ready or failed (as reported by the agent, through the tunnel).
 	wait := func(rev int64) release.AppStatus {
 		t.Helper()
+		var s release.AppStatus
 		for {
-			s, err := k.Status(ctx, target, name)
-			if err != nil {
+			var err error
+			if s, err = k.Status(ctx, target, name); err != nil {
 				t.Logf("status (retrying): %v", err)
 			} else if s.ObservedRevision == rev && s.Phase != release.PhaseProgressing {
 				t.Logf("revision %d: %s %s %s", rev, s.Phase, s.Reason, s.Message)
@@ -110,8 +137,8 @@ func TestKube(t *testing.T) {
 	}
 	expectServing(t, ctx, s.URL, "Name: rev1")
 
-	// Listening on another port than declared: the health check never passes.
-	// The version that serves keeps serving.
+	// Listening on another port than declared: the health check never
+	// passes. The version that serves keeps serving.
 	apply(2, whoami, 9090)
 	if s := wait(2); s.Phase != release.PhaseFailed || s.Reason != release.FailureUnhealthy {
 		t.Fatalf("revision 2: %+v", s)
@@ -134,6 +161,7 @@ func TestKube(t *testing.T) {
 
 	// A superseded deployment arriving late changes nothing.
 	apply(2, whoami, 9090)
+	time.Sleep(2 * time.Second)
 	if s, _ := k.Status(ctx, target, name); s.ObservedRevision != 4 || s.Phase != release.PhaseReady {
 		t.Fatalf("late revision 2: %+v", s)
 	}
@@ -157,7 +185,7 @@ func clusterFor(t *testing.T, ctx context.Context) (string, int) {
 	if image == "" {
 		image = "rancher/k3s:v1.35.5-k3s1"
 	}
-	crd, err := filepath.Abs("../../../../agent/install/crd/odyssey.dev_odysseyapps.yaml")
+	crd, err := filepath.Abs("../../agent/install/crd/odyssey.dev_odysseyapps.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,13 +220,16 @@ func clusterFor(t *testing.T, ctx context.Context) (string, int) {
 // waitForCRD waits until the cluster serves OdysseyApps.
 func waitForCRD(t *testing.T, ctx context.Context, kubeconfig string) {
 	t.Helper()
-	k, err := releasekube.Connect(kubeconfig)
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	probe := release.Target{Organization: identity.NewOrganizationID(), Project: project.NewID(), Environment: project.NewEnvironmentID()}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for {
-		_, err := k.Status(ctx, probe, "probe")
+		_, err := cs.Discovery().ServerResourcesForGroupVersion("odyssey.dev/v1alpha1")
 		if err == nil {
 			return
 		}

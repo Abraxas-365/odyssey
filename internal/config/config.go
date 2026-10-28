@@ -19,7 +19,22 @@ type Config struct {
 	// CORSOrigins are the browser origins allowed to call the API
 	// (CORS_ORIGINS, comma-separated). Empty leaves CORS closed.
 	CORSOrigins []string
+	// Fleet is what the API puts in enrolment tokens. Optional: without it
+	// clusters can be listed but not registered.
+	Fleet Fleet
 }
+
+// Fleet is the API's view of the fleet gateway.
+type Fleet struct {
+	// CACert is FLEET_CA_CERT: the fleet CA certificate file (agents pin
+	// its key). The API never holds the CA key.
+	CACert string
+	// Gateway is FLEET_GATEWAY_URL: host:port agents dial.
+	Gateway string
+}
+
+// Enabled reports whether clusters can be registered.
+func (f Fleet) Enabled() bool { return f.CACert != "" && f.Gateway != "" }
 
 // IAM holds the trusted token boundaries checked on every request. They come
 // from configuration, never from the token itself.
@@ -50,6 +65,10 @@ func Load() (Config, error) {
 			WebClientID: os.Getenv("IAMKIT_WEB_CLIENT_ID"),
 		},
 		CORSOrigins: splitList(os.Getenv("CORS_ORIGINS")),
+		Fleet:       Fleet{CACert: os.Getenv("FLEET_CA_CERT"), Gateway: os.Getenv("FLEET_GATEWAY_URL")},
+	}
+	if (cfg.Fleet.CACert == "") != (cfg.Fleet.Gateway == "") {
+		return Config{}, errx.Validation("FLEET_CA_CERT and FLEET_GATEWAY_URL go together")
 	}
 	var missing []string
 	for name, v := range map[string]string{
@@ -85,17 +104,14 @@ type Worker struct {
 
 // Cluster kinds.
 const (
-	ClusterFake       = "fake"       // in memory: apps "run" without a cluster (development, tests)
-	ClusterKubernetes = "kubernetes" // one Kubernetes API with the odyssey-agent installed
+	ClusterFake  = "fake"  // in memory: apps "run" without a cluster (development, tests)
+	ClusterFleet = "fleet" // the organization's enrolled clusters, through their agents' tunnels
 )
 
 // Cluster selects the release.Cluster adapter.
 type Cluster struct {
-	// Kind is ODYSSEY_CLUSTER: fake (default) or kubernetes.
+	// Kind is ODYSSEY_CLUSTER: fake (default) or fleet.
 	Kind string
-	// Kubeconfig is ODYSSEY_KUBECONFIG: the kubeconfig file of the cluster
-	// ("" = in-cluster credentials).
-	Kubeconfig string
 }
 
 // LoadWorker reads the worker's environment.
@@ -103,13 +119,55 @@ func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		HealthPort:  env("WORKER_HEALTH_PORT", "8096"),
-		Cluster:     Cluster{Kind: env("ODYSSEY_CLUSTER", ClusterFake), Kubeconfig: os.Getenv("ODYSSEY_KUBECONFIG")},
+		Cluster:     Cluster{Kind: env("ODYSSEY_CLUSTER", ClusterFake)},
 	}
 	if cfg.DatabaseURL == "" {
 		return Worker{}, errx.Validation("missing required environment: DATABASE_URL")
 	}
-	if cfg.Cluster.Kind != ClusterFake && cfg.Cluster.Kind != ClusterKubernetes {
-		return Worker{}, errx.Validation("ODYSSEY_CLUSTER must be fake or kubernetes")
+	if cfg.Cluster.Kind != ClusterFake && cfg.Cluster.Kind != ClusterFleet {
+		return Worker{}, errx.Validation("ODYSSEY_CLUSTER must be fake or fleet")
+	}
+	return cfg, nil
+}
+
+// Gateway is the configuration of odyssey-gateway, where agents connect.
+// It holds the fleet CA key: it signs the agents' certificates and its own.
+type Gateway struct {
+	DatabaseURL string
+	// Listen is FLEET_GATEWAY_LISTEN (default :8443).
+	Listen string
+	// Hosts are FLEET_GATEWAY_HOSTS: the names and IPs agents reach it by
+	// (its serving certificate covers them).
+	Hosts      []string
+	CACert     string // FLEET_CA_CERT
+	CAKey      string // FLEET_CA_KEY
+	HealthPort string // GATEWAY_HEALTH_PORT (default 8098; "" disables it)
+}
+
+// LoadGateway reads the gateway's environment.
+func LoadGateway() (Gateway, error) {
+	cfg := Gateway{
+		DatabaseURL: os.Getenv("DATABASE_URL"),
+		Listen:      env("FLEET_GATEWAY_LISTEN", ":8443"),
+		Hosts:       splitList(os.Getenv("FLEET_GATEWAY_HOSTS")),
+		CACert:      os.Getenv("FLEET_CA_CERT"),
+		CAKey:       os.Getenv("FLEET_CA_KEY"),
+		HealthPort:  env("GATEWAY_HEALTH_PORT", "8098"),
+	}
+	var missing []string
+	for name, v := range map[string]string{
+		"DATABASE_URL":        cfg.DatabaseURL,
+		"FLEET_CA_CERT":       cfg.CACert,
+		"FLEET_CA_KEY":        cfg.CAKey,
+		"FLEET_GATEWAY_HOSTS": strings.Join(cfg.Hosts, ","),
+	} {
+		if v == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return Gateway{}, errx.Validation("missing required environment: " + strings.Join(missing, ", "))
 	}
 	return cfg, nil
 }

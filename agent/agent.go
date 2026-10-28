@@ -12,11 +12,14 @@ import (
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	"github.com/Abraxas-365/odyssey/agent/controllers/app"
+	"github.com/Abraxas-365/odyssey/agent/desired"
+	"github.com/Abraxas-365/odyssey/agent/tunnel"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -38,7 +41,16 @@ type Options struct {
 	// LeaderElectionNamespace holds the lease when running out of the
 	// cluster (in-cluster it is the agent's own namespace).
 	LeaderElectionNamespace string
+	// Tunnel connects the agent to the control plane. Zero (no Store):
+	// the agent only reconciles OdysseyApps written by someone else.
+	Tunnel tunnel.Options
+	// Secret is the agent's Secret (namespace/name): its tunnel Store when
+	// Tunnel.Store is nil. Empty: no tunnel.
+	Secret client.ObjectKey
 }
+
+// Version is the agent's version (set at build time with -ldflags).
+var Version = "dev"
 
 // Scheme knows Kubernetes' built-in types and Odyssey's resources.
 func Scheme() (*runtime.Scheme, error) {
@@ -66,6 +78,9 @@ func Run(args []string) error {
 	fs.StringVar(&o.MetricsAddr, "metrics-addr", "0", "metrics address (0 = off)")
 	fs.BoolVar(&o.LeaderElection, "leader-elect", false, "elect a leader (run more than one replica)")
 	fs.StringVar(&o.LeaderElectionNamespace, "leader-election-namespace", "", "namespace of the leader lease when out of cluster")
+	secretNS := fs.String("secret-namespace", env("POD_NAMESPACE", "odyssey-system"), "namespace of the agent's Secret")
+	secret := fs.String("secret", env("ODYSSEY_AGENT_SECRET", "odyssey-agent"), "the agent's Secret (enrolment token, then its identity); empty = no tunnel")
+	fs.StringVar(&o.Tunnel.Dial, "gateway-dial", os.Getenv("ODYSSEY_GATEWAY_DIAL"), "host:port to reach the gateway by when not its own (an agent run outside the cluster)")
 	zopts := zap.Options{}
 	zopts.BindFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -78,11 +93,14 @@ func Run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("kubernetes config: %w", err)
 	}
+	if *secret != "" {
+		o.Secret = client.ObjectKey{Namespace: *secretNS, Name: *secret}
+	}
 	mgr, err := NewManager(cfg, o)
 	if err != nil {
 		return err
 	}
-	ctrl.Log.Info("odyssey-agent starting", "domain", o.App.Domain, "health", o.HealthAddr)
+	ctrl.Log.Info("odyssey-agent starting", "version", Version, "domain", o.App.Domain, "health", o.HealthAddr, "tunnel", *secret != "")
 	return mgr.Start(ctrl.SetupSignalHandler())
 }
 
@@ -112,6 +130,11 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 	if err := (&app.Reconciler{Client: mgr.GetClient(), Config: o.App, HealthGrace: o.HealthGrace}).SetupWithManager(mgr); err != nil {
 		return nil, err
 	}
+	if o.Tunnel.Store != nil || o.Secret.Name != "" {
+		if err := addTunnel(cfg, mgr, o); err != nil {
+			return nil, err
+		}
+	}
 	if o.HealthAddr != "0" {
 		if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 			return nil, err
@@ -121,6 +144,31 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		}
 	}
 	return mgr, nil
+}
+
+// addTunnel connects the cluster to the control plane: a leader-elected
+// runnable (only one replica holds the tunnel) plus the watch that reports
+// status changes.
+func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
+	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("kubernetes discovery: %w", err)
+	}
+	t := o.Tunnel
+	if t.Store == nil {
+		t.Store = &tunnel.SecretStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: o.Secret.Namespace, Name: o.Secret.Name}
+	}
+	t.Desired = &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc}
+	t.IsRejected, t.Rejected = desired.IsRejected, desired.RejectedStatus
+	if t.Version == "" {
+		t.Version = Version
+	}
+	t.Log = ctrl.Log.WithName("tunnel")
+	c := tunnel.New(t)
+	if err := c.WatchStatuses(mgr); err != nil {
+		return err
+	}
+	return mgr.Add(c)
 }
 
 func env(name, fallback string) string {

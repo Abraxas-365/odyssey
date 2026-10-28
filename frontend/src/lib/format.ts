@@ -30,3 +30,18 @@ export function formatDateTime(iso: string) {
 export function formatMoney(usd: number) {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(usd)
 }
+
+/**
+ * An app's address, only if it is safe to link to (absolute http/https). The
+ * URL comes from the customer's cluster, outside the platform's trust
+ * boundary: anything else (javascript:, data:…) is never put in an href.
+ */
+export function safeAppUrl(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined
+  try {
+    const u = new URL(raw)
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.hostname !== '' ? u.href : undefined
+  } catch {
+    return undefined
+  }
+}

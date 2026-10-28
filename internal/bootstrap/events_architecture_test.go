@@ -136,6 +136,15 @@ var eventSinks = map[string]string{
 	"audit": "the trail records every event; an audit event would audit itself forever",
 }
 
+// observers are the domains whose repositories record observations
+// (Observe* methods): what something outside reports, not a decision made
+// here; the outcome that matters is published by whoever acts on it. Only
+// these domains get the exemption, so renaming a write cannot escape the
+// rule.
+var observers = map[string]string{
+	"fleet": "heartbeats and app statuses reported by agents; deployment events carry their outcome",
+}
+
 func isRead(name string) bool {
 	for _, p := range readPrefixes {
 		if strings.HasPrefix(name, p) {
@@ -149,9 +158,11 @@ func publishViolations(files []goFile) []string {
 	var out []string
 	for _, f := range files {
 		dir := path.Dir(f.rel)
-		if role := roleOf(dir); role.kind != "svc" || eventSinks[role.domain] != "" {
+		role := roleOf(dir)
+		if role.kind != "svc" || eventSinks[role.domain] != "" {
 			continue
 		}
+		observes := observers[role.domain] != ""
 		for _, decl := range f.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Recv == nil || fn.Body == nil || !fn.Name.IsExported() {
@@ -170,7 +181,8 @@ func publishViolations(files []goFile) []string {
 				if sel.Sel.Name == "Publish" {
 					publishes = true
 				}
-				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "repo" && !isRead(sel.Sel.Name) && writes == "" {
+				observation := observes && strings.HasPrefix(sel.Sel.Name, "Observe")
+				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "repo" && !isRead(sel.Sel.Name) && !observation && writes == "" {
 					writes = sel.Sel.Name
 				}
 				return true
@@ -258,7 +270,10 @@ func (s *S) Find(ctx C) error { _, err := s.repo.Find(ctx); return err }`,
 		// violations
 		"order/ordersvc/s.go": `package ordersvc; import "` + m + `event"
 func (s *S) Wire(b *event.Bus) { event.Subscribe(b, "", 1, "", nil) }
-func (s *S) Archive(ctx C) error { return s.repo.Archive(ctx) }`,
+func (s *S) Archive(ctx C) error { return s.repo.Archive(ctx) }
+func (s *S) Ping(ctx C) error { return s.repo.ObservePing(ctx) }`,
+		"fleet/fleetsvc/s.go": `package fleetsvc
+func (s *S) Heartbeat(ctx C) error { return s.repo.ObserveHeartbeat(ctx) }`,
 		"order/events.go": `package order; import _ "` + m + `widget"
 const EventPlaced = "order.placed"`,
 		"order/adapters/orderpg/r.go": `package orderpg
@@ -267,7 +282,9 @@ func (r *R) Create(ctx C) error { _, err := r.db.ExecContext(ctx, "x"); return e
 	expectViolations(t, subscribeViolations(files), "order/ordersvc/s.go: svc order/ordersvc must not subscribe")
 	expectViolations(t, eventsFileViolations(files), "order/events.go: events.go of order is a public contract")
 	expectViolations(t, repositoryTxViolations(files), "order/adapters/orderpg/r.go: order/adapters/orderpg calls db.ExecContext")
-	expectViolations(t, publishViolations(files), "order/ordersvc/s.go: order/ordersvc.Archive writes (repo.Archive) without publishing")
+	expectViolations(t, publishViolations(files),
+		"order/ordersvc/s.go: order/ordersvc.Archive writes (repo.Archive) without publishing",
+		"order/ordersvc/s.go: order/ordersvc.Ping writes (repo.ObservePing) without publishing") // not an observer domain
 	expectViolations(t, contractViolations(files, func(rel string) bool { return rel == "widget/testdata/events/widget.created.v1.json" }),
 		"order/events.go: order.placed has no contract")
 }

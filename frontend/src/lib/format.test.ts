@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatRelative } from './format'
+import { formatRelative, safeAppUrl } from './format'
 import { slugify } from './projects'
 
 describe('slugify (mirrors the API Slugify)', () => {
@@ -25,4 +25,15 @@ describe('formatRelative', () => {
     expect(formatRelative('2026-10-26T12:00:00Z', now)).toBe('ayer')
   })
   it('is empty for invalid input', () => expect(formatRelative('nope', now)).toBe(''))
+})
+
+describe('safeAppUrl (cluster-reported, untrusted)', () => {
+  it('keeps http(s) addresses', () => {
+    expect(safeAppUrl('https://visitas.apps.example/')).toBe('https://visitas.apps.example/')
+    expect(safeAppUrl('http://portal.apps.test')).toBe('http://portal.apps.test/')
+  })
+  it.each(['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,x', '//evil.example', 'nope', '', null, undefined])(
+    'drops %s',
+    (raw) => expect(safeAppUrl(raw)).toBeUndefined(),
+  )
 })

@@ -15,6 +15,8 @@ const (
 	DeploymentsRead     = "odyssey:deployments:read"     // Ver qué versión está en línea y el historial de publicaciones
 	DeploymentsCreate   = "odyssey:deployments:create"   // Publicar una versión nueva de una app
 	DeploymentsRollback = "odyssey:deployments:rollback" // Volver a una versión anterior de una app
+	ClustersRead        = "odyssey:clusters:read"        // Ver los clústeres de la organización y su estado
+	ClustersManage      = "odyssey:clusters:manage"      // Conectar, reconectar y desconectar clústeres
 	AuditRead           = "odyssey:audit:read"           // Ver el historial de actividad de la organización
 )
 
@@ -25,6 +27,8 @@ var All = []string{
 	DeploymentsRead,
 	DeploymentsCreate,
 	DeploymentsRollback,
+	ClustersRead,
+	ClustersManage,
 	AuditRead,
 }
 
@@ -35,6 +39,8 @@ var Labels = map[string]string{
 	DeploymentsRead:     "Ver qué versión está en línea y el historial de publicaciones",
 	DeploymentsCreate:   "Publicar una versión nueva de una app",
 	DeploymentsRollback: "Volver a una versión anterior de una app",
+	ClustersRead:        "Ver los clústeres de la organización y su estado",
+	ClustersManage:      "Conectar, reconectar y desconectar clústeres",
 	AuditRead:           "Ver el historial de actividad de la organización",
 }
 
@@ -46,12 +52,14 @@ var Names = map[string]string{
 	"DeploymentsRead":     DeploymentsRead,
 	"DeploymentsCreate":   DeploymentsCreate,
 	"DeploymentsRollback": DeploymentsRollback,
+	"ClustersRead":        ClustersRead,
+	"ClustersManage":      ClustersManage,
 	"AuditRead":           AuditRead,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, AuditRead}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, AuditRead}},
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }

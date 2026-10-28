@@ -35,6 +35,14 @@ export type DeploymentStep = Schemas['DeploymentStep']
 export type CurrentRelease = Schemas['CurrentRelease']
 export type DeployRequest = Schemas['DeployRequest']
 
+/** The organization's Kubernetes clusters (TI: Infraestructura → Clústeres). */
+export type Cluster = Schemas['Cluster']
+export type ClusterStatus = Schemas['ClusterStatus']
+export type ClusterCreate = Schemas['ClusterCreate']
+export type ClusterCreated = Schemas['ClusterCreated']
+export type EnrollmentToken = Schemas['EnrollmentToken']
+export type ClusterList = Schemas['ClusterList']
+
 export type AuditEntry = Schemas['AuditEntry']
 export type AuditEntryList = Schemas['AuditEntryList']
 export type AuditVerification = Schemas['AuditVerification']

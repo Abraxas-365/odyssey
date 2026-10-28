@@ -37,18 +37,23 @@ jobs:
         with:
           go-version-file: go.mod
       - name: gofmt
-        run: test -z "$(gofmt -l agent api cmd internal)" || (gofmt -l agent api cmd internal && exit 1)
+        run: test -z "$(gofmt -l agent api cmd internal proto)" || (gofmt -l agent api cmd internal proto && exit 1)
       - name: go mod tidy is clean
         run: go mod tidy && git diff --exit-code go.mod go.sum
       - run: go vet ./...
-      - name: generated code is fresh (permissions, agent deepcopy, CRD, RBAC)
-        run: make gen && git diff --exit-code internal/permission agent && test -z "$(git status --porcelain agent)"
+      - name: install protoc (the version generated files name)
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "34.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: generated code is fresh (permissions, fleet protocol, agent deepcopy, CRD, RBAC)
+        run: make gen && git diff --exit-code internal/permission agent proto && test -z "$(git status --porcelain agent proto)"
       - name: tests (unit, architecture, contract, Postgres)
         run: go test -count=1 -race ./...
       - run: make build
 
   kube:
-    name: agent + releasekube vs a real cluster (k3d)
+    name: the fleet (gateway + agent + releasefleet) vs a real cluster (k3s)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -56,9 +61,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: install k3d
-        run: curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.9.0 bash
-      - run: make cluster
+      # A throwaway k3s and Postgres (testcontainers).
       - run: make test-kube
 
   frontend:

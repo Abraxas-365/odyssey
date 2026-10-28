@@ -2,6 +2,7 @@ import { Outlet, useMatch, useNavigate } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { AppShell, CommandPalette, Crumb, NotificationsMenu, UserMenu, useCoreCommands, type NavTab } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
+import { permissions } from '@/lib/permissions'
 import { PreferencesProvider, usePreferences } from '@/lib/preferences'
 import { useProject, useProjects } from '@/lib/projects'
 
@@ -28,12 +29,17 @@ function Chrome() {
   const navigate = useNavigate()
   const commands = [
     ...useCoreCommands(),
+    ...(auth.can(permissions.clustersRead) ? [{ id: 'clusters', label: 'Clústeres', group: 'Infraestructura', onSelect: () => navigate('/infraestructura/clusteres') }] : []),
     ...(apps.data?.items ?? []).map(p => ({ id: p.id, label: p.name, group: 'Apps', onSelect: () => navigate(`/apps/${p.id}`) })),
   ]
 
   const tabs: NavTab[] = appId
     ? [{ to: `/apps/${appId}`, label: 'Resumen', end: true }]
-    : [{ to: '/', label: 'Inicio', end: true }, { to: '/asistente', label: 'Asistente' }]
+    : [
+        { to: '/', label: 'Inicio', end: true },
+        { to: '/asistente', label: 'Asistente' },
+        ...(auth.can(permissions.clustersRead) ? [{ to: '/infraestructura/clusteres', label: 'Infraestructura' }] : []),
+      ]
 
   return (
     <AppShell

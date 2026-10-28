@@ -27,6 +27,12 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["--leader-elect"]
           env:
+            # The agent's Secret (odyssey-agent) lives here. It is created
+            # by the install command the console shows (token, gateway,
+            # ca-pin); the agent enrols with it and keeps its identity there.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
             # Where apps answer (k3d maps the ingress to localhost:8088).
             - name: ODYSSEY_APPS_DOMAIN
               value: apps.odyssey.localhost

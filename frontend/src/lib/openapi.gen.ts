@@ -269,6 +269,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the organization's clusters
+         * @description Order: revoked last, then `lower(name)`, then `id`.
+         */
+        get: operations["listClusters"];
+        put?: never;
+        /**
+         * Register a cluster
+         * @description Answers with the cluster and its one-time enrolment token, valid 24 h. The token is shown only here (only its hash is kept); install the agent with it. `FLEET_DISABLED` (422) when this installation has no gateway configured.
+         */
+        post: operations["createCluster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /** Get a cluster */
+        get: operations["getCluster"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{id}/enrollment-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a new enrolment token
+         * @description Replaces the pending token (a lost or expired one). Enrolling an active cluster again (its agent lost its key) stops accepting its previous certificate. `CLUSTER_REVOKED` (422) for a revoked cluster.
+         */
+        post: operations["issueClusterToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disconnect a cluster for good (idempotent)
+         * @description Its certificate stops being accepted and its tunnel closes at once; no app is placed there again. Apps already running there keep running without changes.
+         */
+        post: operations["revokeCluster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -516,6 +603,77 @@ export interface components {
             deployment: null | components["schemas"]["Deployment"];
             /** @description The deployment in progress. */
             active: null | components["schemas"]["Deployment"];
+        };
+        /**
+         * @description `pending`: waiting for its agent to enrol. `active`: enrolled. `revoked`: disconnected for good.
+         * @enum {string}
+         */
+        ClusterStatus: "pending" | "active" | "revoked";
+        /** @description A Kubernetes cluster of the organization. Its agent keeps an outbound mutual-TLS tunnel to the gateway. */
+        Cluster: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            name: string;
+            status: components["schemas"]["ClusterStatus"];
+            /** @description What its agent said when it last connected (empty before). */
+            agent: {
+                version: string;
+                capabilities: {
+                    kubernetes_version: string;
+                    apis: string[];
+                    ingress_classes: string[];
+                    storage_classes: string[];
+                };
+            };
+            /** @description The client certificate its agent holds now. */
+            certificate: {
+                /** @description "" before enrolment. */
+                serial: string;
+                /** Format: date-time */
+                expires_at: string | null;
+            };
+            /** @description Its agent's tunnel is up and was heard from in the last 90 s. */
+            connected: boolean;
+            /**
+             * Format: date-time
+             * @description When the pending enrolment token stops working; null when none is pending.
+             */
+            token_expires_at: string | null;
+            /** Format: uuid */
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            enrolled_at: string | null;
+            /** Format: date-time */
+            last_seen_at: string | null;
+            /** Format: date-time */
+            revoked_at: string | null;
+        };
+        ClusterCreate: {
+            /** @description Unique among the organization's clusters not revoked. */
+            name: string;
+        };
+        /** @description Everything the agent needs to enrol, shown once. */
+        EnrollmentToken: {
+            /** @description `odyssey-enroll-…`: one use, 24 h. */
+            token: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description `host:port` the agent dials. */
+            gateway: string;
+            /** @description `sha256:<hex>` of the fleet CA's public key; the agent trusts only it. */
+            ca_pin: string;
+        };
+        ClusterCreated: {
+            cluster: components["schemas"]["Cluster"];
+            enrollment: components["schemas"]["EnrollmentToken"];
+        };
+        ClusterList: {
+            items: components["schemas"]["Cluster"][];
+            page: components["schemas"]["Page"];
         };
         /** @description One domain event, hash-chained to the previous entry of the organization. */
         AuditEntry: {
@@ -1077,6 +1235,152 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Release"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listClusters: {
+        parameters: {
+            query?: {
+                /** @description Repeatable (OR). Default all. */
+                status?: components["schemas"]["ClusterStatus"][];
+                search?: components["parameters"]["Search"];
+                /** @description 1–100 (larger values are clamped), default 20. */
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of clusters. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterCreate"];
+            };
+        };
+        responses: {
+            /** @description Created. `Location` points at the new cluster. */
+            201: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterCreated"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cluster. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cluster"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    issueClusterToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new token, shown only here. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentToken"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    revokeCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The revoked cluster. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cluster"];
                 };
             };
             400: components["responses"]["Validation"];

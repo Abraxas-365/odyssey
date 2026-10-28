@@ -29,6 +29,8 @@ tags:
     description: A project groups everything a team ships. The console calls it an "app".
   - name: deployments
     description: What runs in each environment - publishing, progress, history and going back.
+  - name: clusters
+    description: The organization's Kubernetes clusters, where apps run (TI's Infraestructura → Clústeres).
   - name: audit
     description: The organization's tamper-evident activity trail.
 
@@ -394,6 +396,134 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Release" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/clusters:
+    get:
+      tags: [clusters]
+      operationId: listClusters
+      summary: List the organization's clusters
+      description: "Order: revoked last, then `lower(name)`, then `id`."
+      x-permissions: [odyssey:clusters:read]
+      parameters:
+        - name: status
+          in: query
+          description: Repeatable (OR). Default all.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ClusterStatus" }
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of clusters.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      tags: [clusters]
+      operationId: createCluster
+      summary: Register a cluster
+      description: >-
+        Answers with the cluster and its one-time enrolment token, valid 24 h. The token is shown only here
+        (only its hash is kept); install the agent with it. `FLEET_DISABLED` (422) when this installation has no
+        gateway configured.
+      x-permissions: [odyssey:clusters:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClusterCreate" }
+      responses:
+        "201":
+          description: Created. `Location` points at the new cluster.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterCreated" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/clusters/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [clusters]
+      operationId: getCluster
+      summary: Get a cluster
+      x-permissions: [odyssey:clusters:read]
+      responses:
+        "200":
+          description: The cluster.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cluster" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/clusters/{id}/enrollment-token:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [clusters]
+      operationId: issueClusterToken
+      summary: Issue a new enrolment token
+      description: >-
+        Replaces the pending token (a lost or expired one). Enrolling an active cluster again (its agent lost its
+        key) stops accepting its previous certificate. `CLUSTER_REVOKED` (422) for a revoked cluster.
+      x-permissions: [odyssey:clusters:manage]
+      responses:
+        "200":
+          description: The new token, shown only here.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnrollmentToken" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/clusters/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [clusters]
+      operationId: revokeCluster
+      summary: Disconnect a cluster for good (idempotent)
+      description: >-
+        Its certificate stops being accepted and its tunnel closes at once; no app is placed there again. Apps
+        already running there keep running without changes.
+      x-permissions: [odyssey:clusters:manage]
+      responses:
+        "200":
+          description: The revoked cluster.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cluster" }
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -811,6 +941,93 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/Deployment"
+
+    ClusterStatus:
+      type: string
+      enum: [pending, active, revoked]
+      description: "`pending`: waiting for its agent to enrol. `active`: enrolled. `revoked`: disconnected for good."
+
+    Cluster:
+      type: object
+      additionalProperties: false
+      description: A Kubernetes cluster of the organization. Its agent keeps an outbound mutual-TLS tunnel to the gateway.
+      required: [id, organization_id, name, status, agent, certificate, connected, token_expires_at, created_by,
+                 created_at, enrolled_at, last_seen_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        name: { type: string, maxLength: 60 }
+        status: { $ref: "#/components/schemas/ClusterStatus" }
+        agent:
+          type: object
+          additionalProperties: false
+          description: What its agent said when it last connected (empty before).
+          required: [version, capabilities]
+          properties:
+            version: { type: string }
+            capabilities:
+              type: object
+              additionalProperties: false
+              required: [kubernetes_version, apis, ingress_classes, storage_classes]
+              properties:
+                kubernetes_version: { type: string }
+                apis: { type: array, items: { type: string } }
+                ingress_classes: { type: array, items: { type: string } }
+                storage_classes: { type: array, items: { type: string } }
+        certificate:
+          type: object
+          additionalProperties: false
+          description: The client certificate its agent holds now.
+          required: [serial, expires_at]
+          properties:
+            serial: { type: string, description: '"" before enrolment.' }
+            expires_at: { type: [string, "null"], format: date-time }
+        connected: { type: boolean, description: Its agent's tunnel is up and was heard from in the last 90 s. }
+        token_expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the pending enrolment token stops working; null when none is pending.
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        enrolled_at: { type: [string, "null"], format: date-time }
+        last_seen_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+
+    ClusterCreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60, description: Unique among the organization's clusters not revoked. }
+
+    EnrollmentToken:
+      type: object
+      additionalProperties: false
+      description: Everything the agent needs to enrol, shown once.
+      required: [token, expires_at, gateway, ca_pin]
+      properties:
+        token: { type: string, description: "`odyssey-enroll-…`: one use, 24 h." }
+        expires_at: { type: string, format: date-time }
+        gateway: { type: string, description: "`host:port` the agent dials." }
+        ca_pin: { type: string, description: "`sha256:<hex>` of the fleet CA's public key; the agent trusts only it." }
+
+    ClusterCreated:
+      type: object
+      additionalProperties: false
+      required: [cluster, enrollment]
+      properties:
+        cluster: { $ref: "#/components/schemas/Cluster" }
+        enrollment: { $ref: "#/components/schemas/EnrollmentToken" }
+
+    ClusterList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Cluster" }
+        page: { $ref: "#/components/schemas/Page" }
 
     AuditEntry:
       type: object

@@ -7,42 +7,49 @@ and uses IAMKit for platform and app auth.
 
 This repo holds the **control-plane API** (`cmd/odyssey-api`), the **worker**
 (`cmd/odyssey-worker`: outbox delivery, workflows, scheduled tasks), the
-**data-plane agent** (`cmd/odyssey-agent`, `agent/`: the operator that runs in
-each cluster and turns `OdysseyApp` resources into Deployment + Service +
-Ingress) and the **web console** (`frontend/`). Domain modules today: `project`
-(the golden sample; apps and their environments), `release` (releases,
-deployments and the `release.deploy` workflow behind the `Cluster` port) and
-`audit` (an event subscriber). The worker's `ODYSSEY_CLUSTER` picks the
-`Cluster` adapter: `fake` (default, in memory; an image repository containing
-`unhealthy` / `reject` simulates a failed health check / a refused apply) or
-`kubernetes` (`releasekube`: writes `OdysseyApp`s through `ODYSSEY_KUBECONFIG`;
-the fleet tunnel replaces it in phase 1a-a3). The full
+**gateway** (`cmd/odyssey-gateway`: where agents enrol and keep an mTLS gRPC
+tunnel; the only process holding the fleet CA key), the **data-plane agent**
+(`cmd/odyssey-agent`, `agent/`: runs in each cluster, dials out to the
+gateway, applies the desired `OdysseyApp`s it is sent and turns them into
+Deployment + Service + Ingress) and the **web console** (`frontend/`). Domain
+modules today: `project` (the golden sample; apps and their environments),
+`release` (releases, deployments and the `release.deploy` workflow behind the
+`Cluster` port), `fleet` (clusters, enrolment, the fleet CA, desired state
+and what agents report) and `audit` (an event subscriber). The worker's
+`ODYSSEY_CLUSTER` picks the `Cluster` adapter: `fake` (default, in memory; an
+image repository containing `unhealthy` / `reject` simulates a failed health
+check / a refused apply) or `fleet` (`releasefleet`: the environment's
+cluster, through `fleet.Dispatch`). The control plane holds no cluster
+credentials and never talks to Kubernetes. The full
 design (binaries, domains, build order) lives outside the repo, in
-`~/.rness/plans/Personal/odicea-architecture.md`. The UI design is in
+`~/.rness/plans/Personal/odicea-architecture.md` (the fleet:
+`odicea-fase1a3-fleet.md`). The UI design is in
 `odicea-mockup.html` and `odicea-product-ux-v3.md` there.
 
 ## Commands
 
 | Task | Command | ~Time |
 |---|---|---|
-| Build | `make build` (→ `bin/odyssey-api`, `bin/odyssey-worker`, `bin/odyssey-agent`) | 5s |
+| Build | `make build` (→ `bin/odyssey-{api,worker,gateway,agent}`) | 5s |
 | Unit + arch tests (DB tests skip) | `make test` | 5s |
 | All tests vs compose Postgres | `make test-db` (`PKG=./internal/project/...`) | 10s |
 | Local CI gate (gofmt, vet, test) | `make check` (CI also runs `-race` vs Postgres: `.github/workflows/ci.yml`) | 10s |
-| Run the worker on the host | `make worker` (health on 8096; `CLUSTER=kubernetes` deploys to k3d) | 2s |
+| Run the worker on the host | `make worker` (health on 8096; `CLUSTER=fleet` deploys to the enrolled clusters) | 2s |
+| Run the gateway on the host (fleet CA from `make setup` in `secrets/fleet/`) | `make gateway` (agents on 8443, health on 8098) | 2s |
 | Local cluster (k3d `odyssey`, CRDs; kubeconfig in `.dev-secrets/`) | `make cluster` / `make cluster-down` | 30s |
+| Connect it (registers it through the API, token → the agent's Secret; needs `make run`) | `make agent-enroll NAME=local` | 5s |
 | Agent on the host / inside the cluster (pick one) | `make agent` / `make agent-image` | 2s / 2-5m |
-| Adapter + controller e2e vs k3d (stop other agents first) | `make test-kube` | 45s |
-| Regenerate permissions, agent deepcopy, CRD + RBAC | `make gen` (after editing `iam/permissions.json` or `agent/api`, `+kubebuilder` markers) | 5s |
+| Fleet e2e: gateway + agent + releasefleet on a throwaway k3s (Docker) / on k3d (stop other agents first) | `make test-kube` / `make test-kube-k3d` | 90s / 45s |
+| Regenerate permissions, fleet protocol, agent deepcopy, CRD + RBAC | `make gen` (after editing `iam/permissions.json`, `proto/`, `agent/api` or `+kubebuilder` markers; needs `protoc`) | 5s |
 | Regenerate console wire types | `make api-types` (after editing `api/openapi.yaml`) | 2s |
 | First local run (secrets, IAMKit, seed, API) | `make dev` | 2-4m |
 | Push manifest changes to local IAMKit | `make iam-sync` (`DRY_RUN=1`, `PRUNE=1`) | 5s |
-| Token / end-to-end check (projects + publish, auto-restore, "Volver a esta", audit; needs API + worker) | `make token` / `make smoke` (`SMOKE_CLUSTER=kubernetes` with the worker on k3d + an agent: real whoami, the URL must answer) | 60s / 90s |
+| Token / end-to-end check (projects + publish, auto-restore, "Volver a esta", audit; needs API + worker) | `make token` / `make smoke` (`SMOKE_CLUSTER=fleet` with the worker on `CLUSTER=fleet`, the gateway and an enrolled agent: real whoami, the URL must answer) | 60s / 90s |
 | Console dev server (needs API + IAMKit) | `make web` → http://localhost:5178 | 2s |
 | Console gate (types, oxlint, vitest, build) | `make web-check` | 15s |
 
-Local ports: API 8095, worker health 8096, agent health 8097, IAMKit 8085,
-Postgres 5438, web 5178, apps (k3d ingress) 8088 →
+Local ports: API 8095, worker health 8096, agent health 8097, gateway 8443
+(health 8098), IAMKit 8085, Postgres 5438, web 5178, apps (k3d ingress) 8088 →
 `http://<app>.apps.odyssey.localhost:8088`.
 
 ## File map
@@ -50,12 +57,17 @@ Postgres 5438, web 5178, apps (k3d ingress) 8088 →
 ```
 cmd/odyssey-api/          entry point → bootstrap.Run
 cmd/odyssey-worker/       entry point → bootstrap.RunWorker
+cmd/odyssey-gateway/      entry point → bootstrap.RunGateway (+ `ca init`)
 cmd/odyssey-agent/        entry point → agent.Run
+proto/fleet/v1/           the gRPC contract between the planes (fleet.proto + generated code)
 agent/                    DATA PLANE (never imports internal/): manager (agent.go)
-agent/api/v1alpha1/       OdysseyApp CRD types (+ generated deepcopy) — shared with releasekube
+agent/api/v1alpha1/       OdysseyApp CRD types (+ generated deepcopy)
 agent/controllers/app/    OdysseyApp → Deployment/Service/Ingress; Observe = the pure phase function
+agent/desired/            desired app (proto) → namespace + OdysseyApp; status/capabilities → proto
+agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports
 agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, deployment
-internal/bootstrap/       composition root, migrations list, ARCHITECTURE TESTS
+internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
+internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp
 internal/server/          Fiber app: middleware, /health, /api/config, /api/v1
 internal/<domain>/        domain types + ports.go; <domain>svc, <domain>module, adapters/<domain>{http,pg}
 internal/event/           event envelope + Bus; adapters/outboxpg: transactional outbox + dispatcher
@@ -112,7 +124,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | `permission_gen.go` matches `iam/permissions.json` | `TestGeneratedFilesAreFresh` |
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
-| `agent/` and `cmd/odyssey-agent` never import `internal/`; in `internal/`, `k8s.io/*`, `sigs.k8s.io/*` and `agent/api` only in adapters | `TestPlanesStayApart` |
+| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
 
