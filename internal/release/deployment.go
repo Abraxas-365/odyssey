@@ -103,10 +103,12 @@ type Progress struct {
 	Status StepState `json:"status"`
 }
 
-// Failure is why a deployment did not go live.
+// Failure is why a deployment did not go live: Message in plain Spanish for
+// whoever deploys, Detail the cluster's own words ("" when it said nothing).
 type Failure struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Detail  string `json:"detail"`
 }
 
 // Deployment is one attempt to make a release the one an environment serves.

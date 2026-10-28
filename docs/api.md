@@ -211,8 +211,9 @@ environment serves. The console calls both "versión".
 - **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
   path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
   image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),
-  `APPLY_FAILED` (the cluster refused it), `PROMOTE_FAILED`, each with a
-  plain-Spanish `message` followed by the cluster's own detail.
+  `APPLY_FAILED` (the cluster refused it), `PROMOTE_FAILED`. `message` is
+  plain Spanish for whoever deploys; `detail` holds the cluster's own words
+  (often English, `""` when it said nothing) for technical readers.
 - **Rollback** ("Volver a esta") takes no body. It deploys the release of a
   deployment that went live (`ready`); otherwise 422 `NOT_ROLLBACKABLE`. 422
   `ALREADY_CURRENT` if that release is the one online and nothing is in

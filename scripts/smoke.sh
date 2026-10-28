@@ -89,6 +89,7 @@ expect "current is v1" "$v1" "$(curl -s "$api/projects/$id/environments/$env_id/
 bad=$(deploy bad)
 expect "unhealthy fails" failed "$(wait_done "$bad")"
 expect "failure code" HEALTH_CHECK_FAILED "$(curl -s "$deps/$bad" "${auth[@]}" | jq -r .error.code)"
+expect "cluster words kept apart" true "$(curl -s "$deps/$bad" "${auth[@]}" | jq '.error.detail != "" and (.error.message | test("[0-9]{3}") | not)')"
 restore=$(curl -s -G "$deps" -d status=pending -d status=applying -d status=verifying -d status=ready "${auth[@]}" | jq -r --arg b "$bad" '[.items[] | select(.rollback_of==$b)][0].id')
 expect "auto-restore" ready "$(wait_done "$restore")"
 expect "still serving v1" "$(curl -s "$deps/$v1" "${auth[@]}" | jq -r .release_id)" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .release.id)"

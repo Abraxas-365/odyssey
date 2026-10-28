@@ -74,6 +74,7 @@ type DeploymentFailed struct {
 	Step         string        `json:"step"`
 	Code         string        `json:"code"`
 	Message      string        `json:"message"`
+	Detail       string        `json:"detail"` // the cluster's own words (since v1, additive)
 	AutoRollback *DeploymentID `json:"auto_rollback_id"`
 }
 
@@ -128,7 +129,7 @@ func NewDeploymentFailed(org identity.OrganizationID, actor identity.UserID, d D
 	return event.New(EventDeploymentFailed, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID),
 		"Falló la publicación de "+n.where()+": "+f.Message,
 		DeploymentFailed{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release,
-			Step: d.Step, Code: f.Code, Message: f.Message, AutoRollback: autoRollback})
+			Step: d.Step, Code: f.Code, Message: f.Message, Detail: f.Detail, AutoRollback: autoRollback})
 }
 
 func NewDeploymentCancelled(org identity.OrganizationID, actor identity.UserID, d Deployment, by DeploymentID, n Names) event.Event {

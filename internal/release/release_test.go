@@ -2,6 +2,7 @@ package release_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestEventContracts(t *testing.T) {
 		Project: r.Project, Environment: project.MustParseEnvironmentID("00000000-0000-4000-8000-0000000000bb"),
 		Release: r.ID, Image: r.Image, Reason: release.ReasonAutoRollback, Step: release.StepWaitReady, Revision: 7,
 		Previous: &prev, RollbackOf: &failed,
-		Error: &release.Failure{Code: release.CodeUnhealthy, Message: "La app arrancó pero no responde en su ruta de salud."}}
+		Error: &release.Failure{Code: release.CodeUnhealthy, Message: "La app arrancó pero no responde en su ruta de salud.", Detail: "GET /health 503"}}
 	restore := release.MustParseDeploymentID("00000000-0000-4000-8000-0000000000d2")
 	n := release.Names{Project: "Visitas", Environment: "production"}
 	for _, e := range []event.Event{
@@ -135,7 +136,7 @@ func TestFailureOf(t *testing.T) {
 		{release.StepApply, errors.New("dial tcp: refused"), release.CodeApplyFailed, "No se pudo entregar la app al clúster."},
 		{release.StepPromote, errx.Internal("db"), release.CodePromoteFailed, "No se pudo dejar la nueva versión en línea."},
 	} {
-		if f := release.FailureOf(c.step, c.cause); f.Code != c.code || f.Message != c.msg {
+		if f := release.FailureOf(c.step, c.cause); f.Code != c.code || f.Message != c.msg || f.Detail != "" {
 			t.Errorf("%s / %v: %+v", c.step, c.cause, f)
 		}
 	}
@@ -147,17 +148,27 @@ func TestUnready(t *testing.T) {
 		code   string
 		msg    string
 	}{
-		{release.FailureUnhealthy, release.CodeUnhealthy, "no responde en su ruta de salud. GET /x 404"},
+		{release.FailureUnhealthy, release.CodeUnhealthy, "no responde en su ruta de salud."},
 		{"", release.CodeUnhealthy, "no responde en su ruta de salud"},
 		{release.FailureImagePull, release.CodeImagePull, "no pudo descargar la imagen"},
-		{release.FailureCrash, release.CodeCrashed, "se cierra al arrancar. GET /x 404"},
+		{release.FailureCrash, release.CodeCrashed, "se cierra al arrancar."},
 		{release.FailureConfig, release.CodeApplyFailed, "no pudo aplicar la configuración"},
 	} {
-		err := release.Unready(release.AppStatus{Phase: release.PhaseFailed, Reason: c.reason, Message: "GET /x 404"})
-		// The code survives the trip through the engine (the cause as text).
-		f := release.FailureOf(release.StepWaitReady, errors.New(err.Error()))
-		if f.Code != c.code || !strings.Contains(f.Message, c.msg) || !strings.HasSuffix(f.Message, "GET /x 404") {
-			t.Errorf("%q: %+v", c.reason, f)
+		err := release.Unready(release.AppStatus{Phase: release.PhaseFailed, Reason: c.reason, Message: "GET /x: 404 Not Found"})
+		// Code, message and detail survive as the error and as text (the
+		// engine hands a retried OnFailure the cause as text).
+		for _, cause := range []error{err, workflowFail(err), errors.New(err.Error())} {
+			f := release.FailureOf(release.StepWaitReady, cause)
+			if f.Code != c.code || !strings.Contains(f.Message, c.msg) || strings.Contains(f.Message, "404") || f.Detail != "GET /x: 404 Not Found" {
+				t.Errorf("%q via %T: %+v", c.reason, cause, f)
+			}
 		}
 	}
+	// The cluster said nothing: no detail.
+	if f := release.FailureOf(release.StepWaitReady, release.Unready(release.AppStatus{Phase: release.PhaseFailed})); f.Detail != "" || f.Code != release.CodeUnhealthy {
+		t.Errorf("no detail: %+v", f)
+	}
 }
+
+// workflowFail wraps like workflow.Fail does (the domain test cannot import it).
+func workflowFail(err error) error { return fmt.Errorf("workflow: %w", err) }

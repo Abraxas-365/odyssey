@@ -44,7 +44,7 @@ const current = (d: Deployment, active?: Deployment): CurrentRelease => ({
 describe('versions', () => {
   // newest first, as the API returns them
   const v1 = dep({})
-  const bad = dep({ status: 'failed', step: 'wait_ready', error: { code: 'HEALTH_CHECK_FAILED', message: 'No responde.' } })
+  const bad = dep({ status: 'failed', step: 'wait_ready', error: { code: 'HEALTH_CHECK_FAILED', message: 'No responde.', detail: 'GET /health 503' } })
   const restore = dep({ reason: 'auto_rollback', release_id: v1.release_id, requested_by: '' })
   const replaced = dep({ status: 'cancelled' })
   const v2 = dep({ requested_by: 'ana' })

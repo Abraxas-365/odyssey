@@ -86,7 +86,7 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 	}
 	o := c.opts.Behavior(d)
 	if o.Reject {
-		return release.Failed(release.CodeApplyFailed, "El clúster rechazó la app: la imagen no se puede descargar.")
+		return release.Failed(release.CodeApplyFailed, "El clúster rechazó la configuración de la app.", "fake cluster: rejected")
 	}
 	c.apps[k] = &app{desired: d, outcome: o}
 	c.applied = append(c.applied, Applied{Target: t, App: d})

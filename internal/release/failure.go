@@ -8,8 +8,16 @@ import (
 )
 
 // Failed builds the error a deploy step returns to fail the deployment for
-// good (no retries): a known code and a message for the person deploying.
-func Failed(code, message string) error {
+// good (no retries): a known code, a plain-Spanish message for the person
+// deploying and, optionally, the cluster's own technical detail (kept apart:
+// the console shows it only with technical details on).
+//
+// Messages never contain ": " — that separates the detail when the cause
+// travels as text.
+func Failed(code, message string, detail ...string) error {
+	if d := strings.Join(detail, " "); d != "" {
+		return errx.Wrap(errors.New(d), message, errx.TypeBusiness).WithCode(code)
+	}
 	return errx.Business(message).WithCode(code)
 }
 
@@ -18,15 +26,21 @@ func Failed(code, message string) error {
 // else (retries exhausted, a timeout) is named after the step.
 //
 // When OnFailure itself had to be retried, the engine hands it the cause as
-// text ("[CODE] message"); a step's coded failure is recognised there too.
+// text ("[CODE] message: detail"); a step's coded failure is recognised there
+// too.
 func FailureOf(step string, cause error) Failure {
 	var e *errx.Error
 	if errors.As(cause, &e) && stepCodes[e.Code] {
-		return Failure{Code: e.Code, Message: e.Message}
+		f := Failure{Code: e.Code, Message: e.Message}
+		if e.Err != nil {
+			f.Detail = e.Err.Error()
+		}
+		return f
 	}
 	if cause != nil {
-		if code, msg, ok := strings.Cut(strings.TrimPrefix(cause.Error(), "["), "] "); ok && strings.HasPrefix(cause.Error(), "[") && stepCodes[code] {
-			return Failure{Code: code, Message: msg}
+		if code, rest, ok := strings.Cut(strings.TrimPrefix(cause.Error(), "["), "] "); ok && strings.HasPrefix(cause.Error(), "[") && stepCodes[code] {
+			msg, detail, _ := strings.Cut(rest, ": ")
+			return Failure{Code: code, Message: msg, Detail: detail}
 		}
 	}
 	switch step {
@@ -42,7 +56,7 @@ func FailureOf(step string, cause error) Failure {
 var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true, CodeImagePull: true, CodeCrashed: true}
 
 // Unready explains, for the person deploying, why the cluster reports the
-// app failed: plain consequence first, then the cluster's own detail.
+// app failed: the plain consequence, with the cluster's words as the detail.
 func Unready(s AppStatus) error {
 	code, msg := CodeUnhealthy, "La app arrancó pero no responde en su ruta de salud."
 	switch s.Reason {
@@ -53,8 +67,5 @@ func Unready(s AppStatus) error {
 	case FailureConfig:
 		code, msg = CodeApplyFailed, "El clúster no pudo aplicar la configuración de la app."
 	}
-	if s.Message != "" {
-		msg += " " + s.Message
-	}
-	return Failed(code, msg)
+	return Failed(code, msg, s.Message)
 }

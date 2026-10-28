@@ -153,7 +153,9 @@ func TestDeployWorkflow(t *testing.T) {
 	// 2. a version that fails its health check never becomes current, and the
 	// platform puts v1 back
 	bad := await(deploy(image("bad")).ID, release.StatusFailed)
-	if bad.Error == nil || bad.Error.Code != release.CodeUnhealthy || bad.Step != release.StepWaitReady {
+	// plain message and the cluster's words travel apart
+	if bad.Error == nil || bad.Error.Code != release.CodeUnhealthy || bad.Step != release.StepWaitReady ||
+		strings.Contains(bad.Error.Message, "503") || !strings.Contains(bad.Error.Detail, "503") {
 		t.Fatalf("failed deployment %+v", bad)
 	}
 	c = settled()
@@ -262,7 +264,7 @@ func TestDeployWorkflow(t *testing.T) {
 	res = checked(t, app, http.MethodGet, "/api/v1/projects/"+proj.ID.String()+"/environments", token, nil)
 	base = "/api/v1/projects/" + proj.ID.String() + "/environments/" + httpxtest.JSON[query.Paginated[project.Environment]](t, res).Items[0].ID.String()
 	dead := await(deploy(image("dead")).ID, release.StatusFailed)
-	if dead.Error == nil || dead.Error.Code != release.CodeApplyFailed || dead.Step != release.StepApply {
+	if dead.Error == nil || dead.Error.Code != release.CodeApplyFailed || dead.Step != release.StepApply || dead.Error.Detail == "" {
 		t.Fatalf("refused deployment %+v", dead)
 	}
 	if c = settled(); c.Release != nil || c.Deployment != nil {

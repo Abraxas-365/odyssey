@@ -486,7 +486,10 @@ export interface components {
             error: null | {
                 /** @enum {string} */
                 code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED";
+                /** @description Plain Spanish for whoever deploys. */
                 message: string;
+                /** @description The cluster's own words (often English); "" when it said nothing. Show it as technical detail. */
+                detail: string;
             };
             /** Format: uuid */
             run_id: string;

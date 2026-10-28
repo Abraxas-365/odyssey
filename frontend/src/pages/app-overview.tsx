@@ -97,6 +97,7 @@ function Overview({ project: p }: { project: Project }) {
       {problem && (
         <Callout tone={live ? 'warn' : 'bad'} title={live ? 'Tu app sigue funcionando con la versión anterior.' : 'La nueva versión no se publicó.'}>
           {failureText(problem)} {live ? 'Nadie se vio afectado.' : 'Revisa los cambios y vuelve a intentarlo.'}
+          {technical && problem.error?.detail && <span className="mt-1.5 block font-mono text-xs break-words">{problem.error.detail}</span>}
         </Callout>
       )}
 

@@ -6,5 +6,6 @@
   "step": "wait_ready",
   "code": "HEALTH_CHECK_FAILED",
   "message": "La app arrancó pero no responde en su ruta de salud.",
+  "detail": "GET /health 503",
   "auto_rollback_id": "00000000-0000-4000-8000-0000000000d2"
 }

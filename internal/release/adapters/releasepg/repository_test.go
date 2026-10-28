@@ -100,7 +100,7 @@ func TestRepository(t *testing.T) {
 
 	second := begin(2)
 	err = tx.Do(ctx, func(ctx context.Context) error {
-		if err := repo.Finish(ctx, org, second.ID, release.StatusFailed, &release.Failure{Code: release.CodeUnhealthy, Message: "503"}); err != nil {
+		if err := repo.Finish(ctx, org, second.ID, release.StatusFailed, &release.Failure{Code: release.CodeUnhealthy, Message: "No responde.", Detail: "GET /health 503"}); err != nil {
 			return err
 		}
 		return repo.Settle(ctx, org, env, second.ID)
@@ -109,7 +109,7 @@ func TestRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := repo.FindDeployment(ctx, org, second.ID)
-	if err != nil || got.Status != release.StatusFailed || got.Error == nil || got.Error.Code != release.CodeUnhealthy || got.FinishedAt == nil {
+	if err != nil || got.Status != release.StatusFailed || got.Error == nil || *got.Error != (release.Failure{Code: release.CodeUnhealthy, Message: "No responde.", Detail: "GET /health 503"}) || got.FinishedAt == nil {
 		t.Fatalf("failed deployment %+v %v", got, err)
 	}
 	// a stale revision cannot begin

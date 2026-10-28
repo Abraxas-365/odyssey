@@ -84,18 +84,19 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 // ---- deployments ----
 
 const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, status, reason, step, revision,
-	previous_release_id, rollback_of, error_code, error_message, run_id, requested_by, created_at, updated_at, finished_at`
+	previous_release_id, rollback_of, error_code, error_message, error_detail, run_id, requested_by, created_at, updated_at, finished_at`
 
 type deploymentRow struct {
 	release.Deployment
 	ErrorCode    *string `db:"error_code"`
 	ErrorMessage *string `db:"error_message"`
+	ErrorDetail  string  `db:"error_detail"`
 }
 
 func (d deploymentRow) deployment() release.Deployment {
 	out := d.Deployment
 	if d.ErrorCode != nil {
-		out.Error = &release.Failure{Code: *d.ErrorCode}
+		out.Error = &release.Failure{Code: *d.ErrorCode, Detail: d.ErrorDetail}
 		if d.ErrorMessage != nil {
 			out.Error.Message = *d.ErrorMessage
 		}
@@ -172,12 +173,13 @@ func (r *Repository) SetProgress(ctx context.Context, organization identity.Orga
 
 func (r *Repository) Finish(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, status release.Status, failure *release.Failure) error {
 	var code, msg *string
+	var detail string
 	if failure != nil {
-		code, msg = &failure.Code, &failure.Message
+		code, msg, detail = &failure.Code, &failure.Message, failure.Detail
 	}
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.deployments
-		SET status = $3, error_code = $4, error_message = $5, finished_at = now(), updated_at = now()
-		WHERE organization_id = $1 AND id = $2 AND finished_at IS NULL`, organization, id, status, code, msg)
+		SET status = $3, error_code = $4, error_message = $5, error_detail = $6, finished_at = now(), updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND finished_at IS NULL`, organization, id, status, code, msg, detail)
 	return affected(res, err, "finish deployment", "deployment not found or finished")
 }
 

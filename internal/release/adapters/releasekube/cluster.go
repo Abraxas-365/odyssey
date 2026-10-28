@@ -124,11 +124,11 @@ func permanent(err error) error {
 	case err == nil:
 		return nil
 	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
-		return release.Failed(release.CodeApplyFailed, "El clúster rechazó la configuración de la app. "+err.Error())
+		return release.Failed(release.CodeApplyFailed, "El clúster rechazó la configuración de la app.", err.Error())
 	case meta.IsNoMatchError(err):
-		return release.Failed(release.CodeApplyFailed, "El agente de Odyssey no está instalado en el clúster (falta el recurso OdysseyApp). "+err.Error())
+		return release.Failed(release.CodeApplyFailed, "El agente de Odyssey no está instalado en el clúster (falta el recurso OdysseyApp).", err.Error())
 	case apierrors.IsForbidden(err):
-		return release.Failed(release.CodeApplyFailed, "Odyssey no tiene permiso para desplegar en el clúster. "+err.Error())
+		return release.Failed(release.CodeApplyFailed, "Odyssey no tiene permiso para desplegar en el clúster.", err.Error())
 	}
 	return err
 }

@@ -769,10 +769,11 @@ components:
             - type: "null"
             - type: object
               additionalProperties: false
-              required: [code, message]
+              required: [code, message, detail]
               properties:
                 code: { type: string, enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED] }
-                message: { type: string }
+                message: { type: string, description: Plain Spanish for whoever deploys. }
+                detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }
         requested_by: { type: string, description: '"" when the platform started it.' }
         created_at: { type: string, format: date-time }
