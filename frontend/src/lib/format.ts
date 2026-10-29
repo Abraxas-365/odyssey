@@ -31,6 +31,18 @@ export function formatMoney(usd: number) {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(usd)
 }
 
+/** "820 B", "4.2 KB", "12.5 MB" (powers of 1024, one decimal under 100). */
+export function formatBytes(n: number) {
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
+  }
+  const digits = i === 0 || n >= 100 ? 0 : 1
+  return `${n.toLocaleString(locale, { maximumFractionDigits: digits, minimumFractionDigits: 0 })} ${units[i]}`
+}
+
 /**
  * An app's address, only if it is safe to link to (absolute http/https). The
  * URL comes from the customer's cluster, outside the platform's trust

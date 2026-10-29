@@ -34,6 +34,11 @@ export type DeploymentStatus = Schemas['DeploymentStatus']
 export type DeploymentStep = Schemas['DeploymentStep']
 export type CurrentRelease = Schemas['CurrentRelease']
 export type DeployRequest = Schemas['DeployRequest']
+export type DeploySourceConfig = Schemas['DeploySourceConfig']
+/** The image built from an uploaded folder, and its log. */
+export type Build = Schemas['Build']
+export type BuildLogPage = Schemas['BuildLogPage']
+export type BuildLogLine = BuildLogPage['lines'][number]
 
 /** The organization's Kubernetes clusters (TI: Infraestructura → Clústeres). */
 export type Cluster = Schemas['Cluster']

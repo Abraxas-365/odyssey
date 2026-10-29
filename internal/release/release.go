@@ -121,6 +121,31 @@ func (d Deploy) Validate() error {
 	return d.Config.Validate()
 }
 
+// DeploySource asks to publish an uploaded folder: the deployment first
+// builds it (in the environment's own cluster) and then runs the image like
+// Deploy does. Name names the source ("" takes the uploaded file's).
+type DeploySource struct {
+	Name string `json:"name"`
+	Config
+	RequestedBy identity.UserID `json:"-"` // from the token
+}
+
+func (d DeploySource) Normalize() DeploySource {
+	d.Name = strings.TrimSpace(d.Name)
+	d.Config = d.Config.Normalize()
+	return d
+}
+
+func (d DeploySource) Validate() error {
+	if len(d.Name) > MaxSourceName || !utf8.ValidString(d.Name) {
+		return errx.InvalidField("name", "name must be up to 200 bytes of text")
+	}
+	return d.Config.Validate()
+}
+
+// MaxSourceName bounds a source's display name.
+const MaxSourceName = 200
+
 // Rollback asks to serve again the release of an earlier ready deployment.
 type Rollback struct {
 	RequestedBy identity.UserID `json:"-"`

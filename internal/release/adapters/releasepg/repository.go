@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"strconv"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/pgerr"
@@ -83,34 +84,61 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 
 // ---- deployments ----
 
-const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, status, reason, step, revision,
-	previous_release_id, rollback_of, error_code, error_message, error_detail, run_id, requested_by, created_at, updated_at, finished_at`
+const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name,
+	source_size, config, status, reason, step, revision, previous_release_id, rollback_of, error_code, error_message, error_detail,
+	run_id, requested_by, created_at, updated_at, finished_at`
 
 type deploymentRow struct {
 	release.Deployment
-	ErrorCode    *string `db:"error_code"`
-	ErrorMessage *string `db:"error_message"`
-	ErrorDetail  string  `db:"error_detail"`
+	SourceID     *build.SourceID `db:"source_id"`
+	SourceName   string          `db:"source_name"`
+	SourceSize   int64           `db:"source_size"`
+	RawConfig    []byte          `db:"config"`
+	ErrorCode    *string         `db:"error_code"`
+	ErrorMessage *string         `db:"error_message"`
+	ErrorDetail  string          `db:"error_detail"`
 }
 
-func (d deploymentRow) deployment() release.Deployment {
+func (d deploymentRow) deployment() (release.Deployment, error) {
 	out := d.Deployment
+	if d.SourceID != nil {
+		out.Source = &release.DeploymentSource{ID: *d.SourceID, Name: d.SourceName, Size: d.SourceSize}
+	}
+	if d.RawConfig != nil {
+		out.Config = &release.Config{}
+		if err := json.Unmarshal(d.RawConfig, out.Config); err != nil {
+			return release.Deployment{}, errx.Wrap(err, "decode deployment config", errx.TypeInternal)
+		}
+	}
 	if d.ErrorCode != nil {
 		out.Error = &release.Failure{Code: *d.ErrorCode, Detail: d.ErrorDetail}
 		if d.ErrorMessage != nil {
 			out.Error.Message = *d.ErrorMessage
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (r *Repository) CreateDeployment(ctx context.Context, d release.Deployment) error {
+	var source *build.SourceID
+	var name string
+	var size int64
+	if d.Source != nil {
+		source, name, size = &d.Source.ID, d.Source.Name, d.Source.Size
+	}
+	var cfg []byte
+	if d.Config != nil {
+		var err error
+		if cfg, err = json.Marshal(d.Config); err != nil {
+			return errx.Wrap(err, "marshal deployment config", errx.TypeInternal)
+		}
+	}
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.deployments
-		(id, organization_id, project_id, environment_id, release_id, image, status, reason, step, revision,
-		 previous_release_id, rollback_of, run_id, requested_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-		d.ID, d.Organization, d.Project, d.Environment, d.Release, d.Image, d.Status, d.Reason, d.Step, d.Revision,
-		d.Previous, d.RollbackOf, d.Run, d.RequestedBy)
+		(id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name, source_size, config,
+		 status, reason, step, revision, previous_release_id, rollback_of, run_id, requested_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+		d.ID, d.Organization, d.Project, d.Environment, d.Release, d.Image, d.Build, source, name, size, cfg,
+		d.Status, d.Reason, d.Step, d.Revision, d.Previous, d.RollbackOf, d.Run, d.RequestedBy)
 	return pgerr.MapWith(err, "create deployment", messages)
 }
 
@@ -132,7 +160,7 @@ func (r *Repository) findDeployment(ctx context.Context, lock string, organizati
 	if err != nil {
 		return release.Deployment{}, pgerr.MapWith(err, "find deployment", messages)
 	}
-	return row.deployment(), nil
+	return row.deployment()
 }
 
 // ListDeployments orders newest first.
@@ -160,9 +188,19 @@ func (r *Repository) ListDeployments(ctx context.Context, organization identity.
 	}
 	items := make([]release.Deployment, len(rows))
 	for i, row := range rows {
-		items[i] = row.deployment()
+		if items[i], err = row.deployment(); err != nil {
+			return query.Paginated[release.Deployment]{}, err
+		}
 	}
 	return query.NewPaginated(items, total, page), nil
+}
+
+func (r *Repository) SetBuilt(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, rel release.Release) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.deployments
+		SET release_id = $3, image = $4, status = $5, step = $6, updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND finished_at IS NULL AND release_id IS NULL AND build_id IS NOT NULL`,
+		organization, id, rel.ID, rel.Image, release.StatusPending, release.StepApply)
+	return affected(res, err, "record built release", "deployment not found, finished or not building")
 }
 
 func (r *Repository) SetProgress(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, status release.Status, step string) error {

@@ -27,6 +27,11 @@ type Queries interface {
 	FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, project ID, slug string) (Environment, error)
 	// ListEnvironments returns the project's environments, production first.
 	ListEnvironments(ctx context.Context, organization identity.OrganizationID, project ID, filter EnvironmentFilter) ([]Environment, error)
+	// Hold is Find that keeps the project as it is (SELECT … FOR SHARE) until
+	// the caller's transaction ends: it cannot be archived meanwhile, so a
+	// check of its status stays true while the caller writes. Call it inside
+	// txn.Runner.Do.
+	Hold(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -38,6 +43,9 @@ type Repository interface {
 	// FindForUpdate is Find that locks the row until the transaction in ctx
 	// ends (SELECT … FOR UPDATE); call it inside txn.Runner.Do.
 	FindForUpdate(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
+	// FindForShare is Find that keeps the row from changing (SELECT … FOR
+	// SHARE) until the transaction in ctx ends; call it inside txn.Runner.Do.
+	FindForShare(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Project], error)
 	Update(ctx context.Context, organization identity.OrganizationID, project ID, input Update) error
 	Archive(ctx context.Context, organization identity.OrganizationID, project ID, input Archive) error

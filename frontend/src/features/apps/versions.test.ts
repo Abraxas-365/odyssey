@@ -12,6 +12,8 @@ function dep(over: Partial<Deployment>): Deployment {
     environment_id: 'e',
     release_id: `r${n}`,
     image: `r.local/app@sha256:${String(n).padStart(64, '0')}`,
+    build_id: null,
+    source: null,
     status: 'ready',
     reason: 'deploy',
     step: 'promote',
@@ -36,7 +38,7 @@ function dep(over: Partial<Deployment>): Deployment {
 const current = (d: Deployment, active?: Deployment): CurrentRelease => ({
   environment_id: 'e',
   url: 'https://app.example',
-  release: { id: d.release_id, organization_id: 'o', project_id: 'p', image: d.image, config: { port: 80, health_path: '/', replicas: 1, env: {} }, created_by: 'me', created_at: d.created_at },
+  release: { id: d.release_id!, organization_id: 'o', project_id: 'p', image: d.image, config: { port: 80, health_path: '/', replicas: 1, env: {} }, created_by: 'me', created_at: d.created_at },
   deployment: d,
   active: active ?? null,
 })
@@ -99,5 +101,21 @@ describe('progressSteps', () => {
       ['Revisando que funcione', 'running', 'wait_ready'],
       ['Publicando', 'pending', 'promote'],
     ])
+  })
+
+  it('starts a deployment from a folder by building it', () => {
+    const d = dep({ status: 'building', step: 'build', release_id: null, image: '', build_id: 'b', steps: [{ name: 'build', status: 'running' }, { name: 'apply', status: 'pending' }, { name: 'wait_ready', status: 'pending' }, { name: 'promote', status: 'pending' }] })
+    expect(progressSteps(d).map(s => [s.title, s.state])[0]).toEqual(['Construyendo tu app', 'running'])
+  })
+})
+
+describe('folder versions', () => {
+  it('say which folder they came from, and building counts as in progress', () => {
+    const built = dep({ build_id: 'b', source: { id: 's', name: 'visitas', size: 4300 } })
+    const [item] = versions([built], current(built), 'me')
+    expect(item.message).toBe('Desde la carpeta visitas · 4.2 KB')
+    const failed = dep({ status: 'failed', release_id: null, image: '', build_id: 'b2', source: { id: 's2', name: 'roto', size: 10 } })
+    expect(versions([failed], undefined, 'me')[0].sha).toBeUndefined()
+    expect(lastProblem([dep({ status: 'building' }), failed])).toBe(failed)
   })
 })

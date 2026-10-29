@@ -1,0 +1,8 @@
+{
+  "build_id": "00000000-0000-4000-8000-0000000000f1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "environment_id": "00000000-0000-4000-8000-0000000000bb",
+  "code": "UNSUPPORTED_APP",
+  "message": "No reconocimos qué tipo de app es ni cómo arrancarla. Revisa que la carpeta tenga el código completo (por ejemplo package.json con un script start, requirements.txt o go.mod).",
+  "detail": "railpack: no start command"
+}

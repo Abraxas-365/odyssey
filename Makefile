@@ -56,16 +56,24 @@ run:
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
 	IAMKIT_URL=http://localhost:$${IAMKIT_PORT:-8085} PORT=$${ODYSSEY_PORT:-8095} \
 	FLEET_CA_CERT=$(FLEET_DIR)/ca.crt FLEET_GATEWAY_URL=$(GATEWAY_HOST):$(GATEWAY_PORT) \
+	ODYSSEY_BLOB_URL='$(BLOB_URL)' \
 	go run ./cmd/odyssey-api
 
 # Run the worker on the host (outbox delivery, workflows, scheduled tasks).
 # CLUSTER=fleet deploys to the organization's enrolled clusters (make
-# gateway + make agent-enroll) instead of the in-memory fake.
+# gateway + make agent-enroll) instead of the in-memory fake. BUILDER picks
+# who builds uploaded sources (fake: a scripted log and a placeholder image;
+# none: builds fail with NO_BUILDER, the default with CLUSTER=fleet).
 worker:
 	set -a && . ./.env && set +a && \
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
-	ODYSSEY_CLUSTER=$(or $(CLUSTER),fake) \
+	ODYSSEY_CLUSTER=$(or $(CLUSTER),fake) ODYSSEY_BUILDER='$(BUILDER)' \
+	ODYSSEY_BLOB_URL='$(BLOB_URL)' \
 	go run ./cmd/odyssey-worker
+
+# Uploaded sources and build logs on the host (make run and make worker
+# share it; the compose services share the blobs volume instead).
+BLOB_URL := file://$(CURDIR)/.data/blobs?create_dir=1&no_tmp_dir=1
 
 # ---- Fleet: the gateway agents connect to ----
 # The fleet CA (make setup) lives in secrets/fleet/; only the gateway holds

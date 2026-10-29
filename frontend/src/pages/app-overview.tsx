@@ -20,6 +20,7 @@ import {
   PanelFooter,
   PanelHeader,
   Term,
+  TechnicalDetails,
 } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
 import { formatDateTime, formatRelative, safeAppUrl } from '@/lib/format'
@@ -28,7 +29,7 @@ import { usePreferences } from '@/lib/preferences'
 import { useArchiveProject, useProject, useUpdateProject } from '@/lib/projects'
 import { useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
 import type { Project } from '@/lib/types'
-import { PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
+import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
 import { appStatus, failureText, lastProblem, versions } from '@/features/apps/versions'
 
 /** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
@@ -101,6 +102,13 @@ function Overview({ project: p }: { project: Project }) {
           {technical && problem.error?.detail && <span className="mt-1.5 block font-mono text-xs break-words">{problem.error.detail}</span>}
         </Callout>
       )}
+      {problem?.build_id && problem.step === 'build' && (
+        <Panel>
+          <TechnicalDetails title="Ver cómo se construyó" defaultOpen={technical}>
+            <BuildLog project={p.id} build={problem.build_id} />
+          </TechnicalDetails>
+        </Panel>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <Panel>
@@ -145,6 +153,8 @@ function Overview({ project: p }: { project: Project }) {
           </PanelBody>
         </Panel>
       </div>
+
+      {production && can(permissions.deploymentsCreate) && !archived && <PublishFolderPanel project={p.id} env={production.id} busy={publishing} technical={technical} />}
 
       {canRead && production && (
         <VersionsPanel

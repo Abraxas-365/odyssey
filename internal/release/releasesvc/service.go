@@ -1,15 +1,19 @@
 // Package releasesvc implements release.Commands and release.Queries and the
 // deploy workflow that moves a deployment through the cluster.
 //
-// Locks are always taken in the same order — workflow run, environment state,
-// deployment — so Deploy, Rollback, the promote step and OnFailure (which
-// runs holding its run) never deadlock each other.
+// Locks are always taken in the same order — workflow run, project (held
+// for share by DeploySource), environment state, deployment — so Deploy,
+// Rollback, the promote step and OnFailure (which runs holding its run)
+// never deadlock each other.
 package releasesvc
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -33,13 +37,14 @@ type Service struct {
 	repo     release.Repository
 	projects project.Queries
 	cluster  release.Cluster
+	builder  release.Builder
 	engine   workflow.Engine
 	tx       txn.Runner
 	events   event.Publisher
 	opts     Options
 }
 
-func New(repo release.Repository, projects project.Queries, cluster release.Cluster, engine workflow.Engine,
+func New(repo release.Repository, projects project.Queries, cluster release.Cluster, builder release.Builder, engine workflow.Engine,
 	tx txn.Runner, events event.Publisher, opts Options) *Service {
 	if opts.ReadyTimeout <= 0 {
 		opts.ReadyTimeout = 5 * time.Minute
@@ -47,7 +52,7 @@ func New(repo release.Repository, projects project.Queries, cluster release.Clus
 	if opts.PollEvery <= 0 {
 		opts.PollEvery = 2 * time.Second
 	}
-	return &Service{repo: repo, projects: projects, cluster: cluster, engine: engine, tx: tx, events: events, opts: opts}
+	return &Service{repo: repo, projects: projects, cluster: cluster, builder: builder, engine: engine, tx: tx, events: events, opts: opts}
 }
 
 var (
@@ -111,10 +116,62 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 		if err != nil {
 			return err
 		}
-		d, superseded, err = s.begin(ctx, state, p, e, r, release.NewDeploymentID(), release.ReasonDeploy, nil, input.RequestedBy)
+		d, superseded, err = s.begin(ctx, state, p, e, release.Deployment{ID: release.NewDeploymentID(), Release: &r.ID,
+			Image: r.Image, Reason: release.ReasonDeploy, RequestedBy: input.RequestedBy})
 		return err
 	})
 	if err != nil {
+		return release.Deployment{}, err
+	}
+	s.stop(ctx, superseded)
+	return d.WithProgress(), nil
+}
+
+// DeploySource stores the source first (a stream: it may take minutes, so
+// outside any transaction); the deployment then builds it in its workflow.
+// The project is held while the deployment is written, so it cannot have
+// been archived during the upload; a source whose deployment could not
+// start is discarded (or, failing that, swept as an orphan).
+func (s *Service) DeploySource(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, input release.DeploySource, archive io.Reader) (release.Deployment, error) {
+	input = input.Normalize()
+	if err := input.Validate(); err != nil {
+		return release.Deployment{}, err
+	}
+	p, e, err := s.place(ctx, organization, id, env)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	if err := archived(p); err != nil {
+		return release.Deployment{}, err
+	}
+	src, err := s.builder.Upload(ctx, organization, id, build.Upload{Name: input.Name, UploadedBy: input.RequestedBy}, archive)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	b := build.NewID()
+	var d release.Deployment
+	var superseded *release.Deployment
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		held, err := s.projects.Hold(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		if err := archived(held); err != nil { // archived while the source was uploading
+			return err
+		}
+		state, err := s.lockState(ctx, held, e)
+		if err != nil {
+			return err
+		}
+		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &b,
+			Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size}, Config: &input.Config,
+			Reason: release.ReasonDeploy, RequestedBy: input.RequestedBy})
+		return err
+	})
+	if err != nil {
+		if derr := s.builder.Discard(context.WithoutCancel(ctx), organization, src.ID); derr != nil {
+			slog.Warn("could not discard the source of a deployment that did not start; the sweep will", "source", src.ID, "error", derr)
+		}
 		return release.Deployment{}, err
 	}
 	s.stop(ctx, superseded)
@@ -136,10 +193,10 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 	if err != nil {
 		return release.Deployment{}, err
 	}
-	if old.Status != release.StatusReady {
+	if old.Status != release.StatusReady || old.Release == nil {
 		return release.Deployment{}, errx.Business("only a version that went live can be restored").WithCode(release.CodeNotRollbackable)
 	}
-	r, err := s.repo.FindRelease(ctx, organization, old.Release)
+	r, err := s.repo.FindRelease(ctx, organization, *old.Release)
 	if err != nil {
 		return release.Deployment{}, err
 	}
@@ -153,7 +210,8 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 		if state.Current != nil && *state.Current == r.ID && state.Active == nil {
 			return errx.Business("this version is already the one online").WithCode(release.CodeAlreadyCurrent)
 		}
-		d, superseded, err = s.begin(ctx, state, p, e, r, release.NewDeploymentID(), release.ReasonRollback, state.CurrentDeployment, input.RequestedBy)
+		d, superseded, err = s.begin(ctx, state, p, e, release.Deployment{ID: release.NewDeploymentID(), Release: &r.ID, Image: r.Image,
+			Reason: release.ReasonRollback, RollbackOf: state.CurrentDeployment, RequestedBy: input.RequestedBy})
 		return err
 	})
 	if err != nil {
@@ -168,15 +226,19 @@ func (s *Service) lockState(ctx context.Context, p project.Project, e project.En
 		Project: p.ID, App: release.AppName(p.Slug, e)})
 }
 
-// begin starts a deployment of r in the locked environment, cancelling the
-// one in progress (returned, so its run can be stopped after the commit).
+// begin starts the deployment d (its ID, what it runs, why and for whom) in
+// the locked environment, cancelling the one in progress, and its build
+// (returned, so its run can be stopped after the commit). A deployment with
+// a build starts building; one of a release, at apply.
 func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p project.Project, e project.Environment,
-	r release.Release, id release.DeploymentID, reason release.Reason, rollbackOf *release.DeploymentID, actor identity.UserID) (release.Deployment, *release.Deployment, error) {
-	d := release.Deployment{
-		ID: id, Organization: p.Organization, Project: p.ID, Environment: e.ID,
-		Release: r.ID, Image: r.Image, Status: release.StatusPending, Reason: reason, Step: release.StepApply,
-		Revision: state.Revision + 1, Previous: state.Current, RollbackOf: rollbackOf, RequestedBy: actor,
+	d release.Deployment) (release.Deployment, *release.Deployment, error) {
+	d.Organization, d.Project, d.Environment = p.Organization, p.ID, e.ID
+	d.Status, d.Step = release.StatusPending, release.StepApply
+	if d.Build != nil {
+		d.Status, d.Step = release.StatusBuilding, release.StepBuild
 	}
+	d.Revision, d.Previous = state.Revision+1, state.Current
+	actor := d.RequestedBy
 	var superseded *release.Deployment
 	if state.Active != nil {
 		old, err := s.repo.FindDeploymentForUpdate(ctx, p.Organization, *state.Active)
@@ -186,6 +248,11 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 		if !old.Status.Finished() {
 			if err := s.repo.Finish(ctx, p.Organization, old.ID, release.StatusCancelled, nil); err != nil {
 				return release.Deployment{}, nil, err
+			}
+			if old.Build != nil && old.Release == nil { // nobody needs its image now
+				if err := s.builder.Cancel(ctx, p.Organization, *old.Build, build.Cancel{CancelledBy: actor}); err != nil {
+					return release.Deployment{}, nil, err
+				}
 			}
 			if err := s.events.Publish(ctx, release.NewDeploymentCancelled(p.Organization, actor, old, d.ID, names(p, e))); err != nil {
 				return release.Deployment{}, nil, err

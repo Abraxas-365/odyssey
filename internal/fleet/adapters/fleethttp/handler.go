@@ -129,7 +129,7 @@ func (h *Handler) revoke(c *fiber.Ctx) error {
 		return err
 	}
 	var input fleet.Revoke
-	if len(c.Body()) > 0 {
+	if httpx.HasBody(c) {
 		if err := httpx.DecodeJSON(c, &input); err != nil {
 			return err
 		}

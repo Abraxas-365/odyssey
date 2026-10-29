@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -22,6 +23,49 @@ type Config struct {
 	// Fleet is what the API puts in enrolment tokens. Optional: without it
 	// clusters can be listed but not registered.
 	Fleet Fleet
+	// Blob is where uploaded sources and build logs are stored.
+	Blob Blob
+	// Builder reads live build logs (the worker runs the builds).
+	Builder Builder
+}
+
+// Blob is the object storage shared by the API and the worker.
+type Blob struct {
+	// URL is ODYSSEY_BLOB_URL (gocloudblob: s3://…, file://…). Required.
+	URL string
+	// SourceQuota is ODYSSEY_SOURCE_QUOTA_GIB in bytes: the compressed
+	// sources an organization keeps at once (0 is the default, 10 GiB).
+	SourceQuota int64
+}
+
+// Builder kinds.
+const (
+	BuilderFake = "fake" // builds nothing: an image appears after a scripted log (development, tests)
+	BuilderNone = "none" // builds nothing: every build is refused (NO_BUILDER); a fleet worker's default
+)
+
+// Builder selects the build.Runner adapter (ODYSSEY_BUILDER).
+type Builder struct {
+	Kind string
+}
+
+func loadStorage() (Blob, Builder, error) {
+	b := Blob{URL: os.Getenv("ODYSSEY_BLOB_URL")}
+	r := Builder{Kind: env("ODYSSEY_BUILDER", BuilderFake)}
+	if b.URL == "" {
+		return b, r, errx.Validation("missing required environment: ODYSSEY_BLOB_URL")
+	}
+	if r.Kind != BuilderFake && r.Kind != BuilderNone {
+		return b, r, errx.Validation("ODYSSEY_BUILDER must be fake or none")
+	}
+	if raw := os.Getenv("ODYSSEY_SOURCE_QUOTA_GIB"); raw != "" {
+		gib, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || gib < 1 || gib > 1<<20 {
+			return b, r, errx.Validation("ODYSSEY_SOURCE_QUOTA_GIB must be a whole number of GiB, 1 or more")
+		}
+		b.SourceQuota = gib << 30
+	}
+	return b, r, nil
 }
 
 // Fleet is the API's view of the fleet gateway.
@@ -88,6 +132,10 @@ func Load() (Config, error) {
 		sort.Strings(missing)
 		return Config{}, errx.Validation("missing required environment: " + strings.Join(missing, ", "))
 	}
+	var err error
+	if cfg.Blob, cfg.Builder, err = loadStorage(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -100,6 +148,9 @@ type Worker struct {
 	// Cluster is where the deploy workflow runs apps (only the worker talks
 	// to clusters).
 	Cluster Cluster
+	// Blob stores sources and build logs; Builder runs the builds.
+	Blob    Blob
+	Builder Builder
 }
 
 // Cluster kinds.
@@ -126,6 +177,21 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.Cluster.Kind != ClusterFake && cfg.Cluster.Kind != ClusterFleet {
 		return Worker{}, errx.Validation("ODYSSEY_CLUSTER must be fake or fleet")
+	}
+	var err error
+	if cfg.Blob, cfg.Builder, err = loadStorage(); err != nil {
+		return Worker{}, err
+	}
+	// The fake builder's images exist nowhere: a real cluster would be sent
+	// apps it cannot pull. Until the cluster builder (phase 1b-2) a fleet
+	// worker refuses builds (NO_BUILDER) unless told otherwise.
+	if cfg.Cluster.Kind == ClusterFleet {
+		switch os.Getenv("ODYSSEY_BUILDER") {
+		case "":
+			cfg.Builder.Kind = BuilderNone
+		case BuilderFake:
+			return Worker{}, errx.Validation("ODYSSEY_BUILDER=fake cannot build for ODYSSEY_CLUSTER=fleet: its images exist nowhere (use none)")
+		}
 	}
 	return cfg, nil
 }

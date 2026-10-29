@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasebuild"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefake"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefleet"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasehttp"
@@ -38,8 +40,11 @@ type Deps struct {
 	ClusterConfig config.Cluster
 	// Fleet runs apps on the organization's enrolled clusters (the fleet
 	// adapter).
-	Fleet   fleet.Dispatch
-	Options releasesvc.Options
+	Fleet fleet.Dispatch
+	// Builds build deployments from source (the build module's ports).
+	BuildCommands build.Commands
+	BuildQueries  build.Queries
+	Options       releasesvc.Options
 }
 
 type Module struct {
@@ -54,7 +59,11 @@ func New(deps Deps) (Module, error) {
 	if err != nil {
 		return Module{}, err
 	}
-	svc := releasesvc.New(releasepg.New(deps.DB), deps.Projects, cluster, deps.Engine,
+	if deps.BuildCommands == nil || deps.BuildQueries == nil {
+		return Module{}, fmt.Errorf("the release module needs the build module")
+	}
+	svc := releasesvc.New(releasepg.New(deps.DB), deps.Projects, cluster,
+		releasebuild.New(deps.BuildCommands, deps.BuildQueries), deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Options)
 	return Module{Commands: svc, Queries: svc, HTTP: releasehttp.New(svc, svc), workflows: svc}, nil
 }

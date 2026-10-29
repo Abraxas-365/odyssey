@@ -296,24 +296,47 @@ paths:
     post:
       tags: [deployments]
       operationId: deploy
-      summary: Publish an image
+      summary: Publish an image or a folder
       description: |
-        Creates a release (the image pinned by digest plus its configuration)
-        and starts deploying it. Answers 202: the worker applies it, waits for
-        its health check and only then makes it the environment's current
-        release; poll the deployment (`Location`). A deployment in progress in
-        the environment is cancelled. If the new version fails while another
-        was online, the platform restores that one (a deployment with reason
-        `auto_rollback`).
+        **An image** (`application/json`): creates a release (the image
+        pinned by digest plus its configuration) and starts deploying it.
+
+        **A folder** (`multipart/form-data`, parts in this order: `config`,
+        the JSON configuration; then `source`, the folder as `.tar.gz`, at
+        most 100 MiB and 20 000 files): stores it and starts a deployment that
+        builds it first (status `building`, step `build`); the release is
+        created when its image is ready. A build that fails fails the
+        deployment with the build's code and leaves the app as it was.
+        Uploaded folders count against the organization's quota (10 GiB
+        compressed by default): when full, the oldest folders already built
+        are dropped (their images stay); when none can be, 422
+        `SOURCE_QUOTA`.
+
+        Answers 202: the worker applies it, waits for its health check and
+        only then makes it the environment's current release; poll the
+        deployment (`Location`). A deployment in progress in the environment
+        is cancelled (and its build, if it was building). If the new version
+        fails once applied while another was online, the platform restores
+        that one (a deployment with reason `auto_rollback`).
       x-permissions: [odyssey:deployments:create]
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/DeployRequest" }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [config, source]
+              properties:
+                config: { $ref: "#/components/schemas/DeploySourceConfig" }
+                source: { type: string, format: binary, description: The folder as tar.gz. }
+            encoding:
+              config: { contentType: application/json }
+              source: { contentType: application/gzip }
       responses:
         "202":
-          description: The deployment, pending. `Location` is its URL.
+          description: The deployment, pending (an image) or building (a folder). `Location` is its URL.
           headers:
             Location: { schema: { type: string } }
           content:
@@ -323,6 +346,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/Validation" }
         "415": { $ref: "#/components/responses/Validation" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
@@ -396,6 +420,61 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Release" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/builds/{build}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Build"
+    get:
+      tags: [deployments]
+      operationId: getBuild
+      summary: Get a build
+      description: The image built from an uploaded source, for a deployment's `build` step.
+      x-permissions: [odyssey:deployments:read]
+      responses:
+        "200":
+          description: The build.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Build" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/builds/{build}/logs:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Build"
+    get:
+      tags: [deployments]
+      operationId: getBuildLogs
+      summary: Read a build's log
+      description: |
+        Lines after `after`, in order. Poll with `after` = the page's `next`
+        until `finished`. Live while it builds; kept after it ends.
+      x-permissions: [odyssey:deployments:read]
+      parameters:
+        - name: after
+          in: query
+          description: Return lines with a larger `seq` (0 = from the start).
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          description: 1–1000 (larger values are clamped), default 1000.
+          schema: { type: integer, minimum: 0, default: 1000 }
+      responses:
+        "200":
+          description: A page of the log.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BuildLogPage" }
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -662,6 +741,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    Build:
+      name: build
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Search:
       name: search
       in: query
@@ -897,39 +981,126 @@ components:
           description: Non-secret variables. Names starting with `ODYSSEY_` are reserved.
           additionalProperties: { type: string, maxLength: 4096 }
 
+    DeploySourceConfig:
+      type: object
+      additionalProperties: false
+      description: The `config` part of a deployment from source (at most 256 KiB).
+      required: [port]
+      properties:
+        name: { type: string, maxLength: 200, description: "Names the source. Default: the uploaded file's name." }
+        port: { type: integer, minimum: 1, maximum: 65535, description: The port the app listens on. }
+        health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
+        replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
+        env:
+          type: object
+          maxProperties: 100
+          description: Non-secret variables. Names starting with `ODYSSEY_` are reserved.
+          additionalProperties: { type: string, maxLength: 4096 }
+
     DeploymentStatus:
       type: string
-      enum: [pending, applying, verifying, ready, failed, cancelled]
+      enum: [building, pending, applying, verifying, ready, failed, cancelled]
 
     DeploymentStep:
       type: object
       additionalProperties: false
       required: [name, status]
       properties:
-        name: { type: string, enum: [apply, wait_ready, promote] }
+        name: { type: string, enum: [build, apply, wait_ready, promote] }
         status: { type: string, enum: [pending, running, done, failed, skipped] }
 
+    Build:
+      type: object
+      additionalProperties: false
+      description: The image built from an uploaded source. A finished one never changes.
+      required: [id, organization_id, project_id, environment_id, source_id, status, image, error, run_id,
+                 requested_by, created_at, updated_at, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        image:
+          type: string
+          description: "`repository@sha256:…` once succeeded; empty before."
+        error:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/BuildFailure"
+        run_id: { type: string, format: uuid }
+        requested_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+    BuildFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message, detail]
+      properties:
+        code:
+          type: string
+          enum: [UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER, SOURCE_EXPIRED, INTERNAL]
+        message: { type: string, description: Plain words for the person who deployed. }
+        detail: { type: string, description: The technical cause (the technical view). }
+    BuildLogPage:
+      type: object
+      additionalProperties: false
+      required: [lines, next, finished]
+      properties:
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [seq, stream, text]
+            properties:
+              seq: { type: integer }
+              stream: { type: string, enum: [prepare, build, system] }
+              text: { type: string }
+        next: { type: integer, description: The `after` to ask with next time. }
+        finished: { type: boolean, description: The build ended and this page reaches the end of its log. }
     Deployment:
       type: object
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
-      required: [id, organization_id, project_id, environment_id, release_id, image, status, reason, step, steps,
+      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, status, reason, step, steps,
                  revision, previous_release_id, rollback_of, error, run_id, requested_by, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
         environment_id: { type: string, format: uuid }
-        release_id: { type: string, format: uuid }
-        image: { type: string }
+        release_id:
+          type: [string, "null"]
+          format: uuid
+          description: Null while a deployment from source builds (and when its build failed or was cancelled).
+        image: { type: string, description: '"" while building.' }
+        build_id:
+          type: [string, "null"]
+          format: uuid
+          description: "The build of a deployment from source (`GET /projects/{id}/builds/{build}`); null for an image."
+        source:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [id, name, size]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                size: { type: integer, description: The archive's size in bytes. }
         status: { $ref: "#/components/schemas/DeploymentStatus" }
         reason:
           type: string
           enum: [deploy, rollback, auto_rollback]
           description: "`auto_rollback`: the platform restored the version online after a failed deployment."
-        step: { type: string, enum: [apply, wait_ready, promote] }
+        step: { type: string, enum: [build, apply, wait_ready, promote] }
         steps:
           type: array
+          description: The steps this deployment goes through (`build` only for a folder).
           items: { $ref: "#/components/schemas/DeploymentStep" }
         revision: { type: integer }
         previous_release_id: { type: [string, "null"], format: uuid }
@@ -944,7 +1115,12 @@ components:
               additionalProperties: false
               required: [code, message, detail]
               properties:
-                code: { type: string, enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED] }
+                code:
+                  type: string
+                  enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED,
+                         UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER,
+                         SOURCE_EXPIRED, BUILD_INTERNAL]
+                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side)."
                 message: { type: string, description: Plain Spanish for whoever deploys. }
                 detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }

@@ -222,8 +222,15 @@ func TestOperationPermissionsMatchTheRoutes(t *testing.T) {
 // response validates against the documented operation.
 func checked(t *testing.T, app *fiber.App, method, path, token string, body any) httpxtest.Response {
 	t.Helper()
-	_, v := loadSpec(t)
 	res := httpxtest.Do(t, app, method, path, token, body)
+	validate(t, method, path, res)
+	return res
+}
+
+// validate fails the test unless res matches the documented operation.
+func validate(t *testing.T, method, path string, res httpxtest.Response) {
+	t.Helper()
+	_, v := loadSpec(t)
 	req := httptest.NewRequest(method, path, nil)
 	httpRes := &http.Response{
 		StatusCode: res.Status, Header: res.Header, Request: req,
@@ -238,5 +245,4 @@ func checked(t *testing.T, app *fiber.App, method, path, token string, body any)
 			t.Errorf("%s %s → %d does not match api/openapi.yaml: %s\n  body: %s", method, path, res.Status, msg, res.Body)
 		}
 	}
-	return res
 }

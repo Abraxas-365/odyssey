@@ -26,7 +26,7 @@ func TestEventContracts(t *testing.T) {
 	failed := release.MustParseDeploymentID("00000000-0000-4000-8000-0000000000d0")
 	d := release.Deployment{ID: release.MustParseDeploymentID("00000000-0000-4000-8000-0000000000d1"), Organization: org,
 		Project: r.Project, Environment: project.MustParseEnvironmentID("00000000-0000-4000-8000-0000000000bb"),
-		Release: r.ID, Image: r.Image, Reason: release.ReasonAutoRollback, Step: release.StepWaitReady, Revision: 7,
+		Release: &r.ID, Image: r.Image, Reason: release.ReasonAutoRollback, Step: release.StepWaitReady, Revision: 7,
 		Previous: &prev, RollbackOf: &failed,
 		Error: &release.Failure{Code: release.CodeUnhealthy, Message: "La app arrancó pero no responde en su ruta de salud.", Detail: "GET /health 503"}}
 	restore := release.MustParseDeploymentID("00000000-0000-4000-8000-0000000000d2")

@@ -2,7 +2,9 @@ package release
 
 import (
 	"context"
+	"io"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
@@ -14,6 +16,9 @@ type Commands interface {
 	// Deploy creates a release of the image and starts deploying it to the
 	// environment, cancelling the deployment in progress there.
 	Deploy(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input Deploy) (Deployment, error)
+	// DeploySource stores the uploaded folder (a tar.gz stream) and starts a
+	// deployment that builds it first, cancelling the one in progress there.
+	DeploySource(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input DeploySource, archive io.Reader) (Deployment, error)
 	// Rollback deploys again the release of an earlier deployment that went live.
 	Rollback(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, deployment DeploymentID, input Rollback) (Deployment, error)
 }
@@ -42,6 +47,24 @@ type Cluster interface {
 	Status(ctx context.Context, target Target, name string) (AppStatus, error)
 }
 
+// Builder turns uploaded sources into images: the build domain, through
+// adapter releasebuild (release depends on this port, never on buildsvc).
+type Builder interface {
+	// Upload stores and validates a source archive streamed from archive.
+	Upload(ctx context.Context, organization identity.OrganizationID, project project.ID, input build.Upload, archive io.Reader) (build.Source, error)
+	// Start builds a source; the same build ID starts it once. It joins the
+	// caller's transaction.
+	Start(ctx context.Context, organization identity.OrganizationID, input build.Start) error
+	// Status is the build (NotFound before Start).
+	Status(ctx context.Context, organization identity.OrganizationID, id build.ID) (build.Build, error)
+	// Cancel stops a build nobody needs (a no-op when finished or never
+	// started). It joins the caller's transaction.
+	Cancel(ctx context.Context, organization identity.OrganizationID, id build.ID, input build.Cancel) error
+	// Discard drops a source no deployment will build (best effort: what it
+	// cannot drop, the sweep does).
+	Discard(ctx context.Context, organization identity.OrganizationID, source build.SourceID) error
+}
+
 // Repository is the persistence contract; only the service depends on it.
 // Every statement filters by organization (another tenant's row is NotFound).
 type Repository interface {
@@ -55,6 +78,9 @@ type Repository interface {
 	ListDeployments(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, filter DeploymentFilter, page query.Pagination) (query.Paginated[Deployment], error)
 	// SetProgress records the step an unfinished deployment is in.
 	SetProgress(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, status Status, step string) error
+	// SetBuilt records the release a building deployment built and moves it
+	// on to apply.
+	SetBuilt(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, release Release) error
 	// Finish moves an unfinished deployment to a final status.
 	Finish(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, status Status, failure *Failure) error
 

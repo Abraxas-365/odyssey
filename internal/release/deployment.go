@@ -3,6 +3,7 @@ package release
 import (
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -11,17 +12,21 @@ import (
 
 // Status is a deployment's lifecycle:
 //
-//	pending → applying → verifying → ready
-//	   (apply or health check fails) ↘ failed
+//	(building →) pending → applying → verifying → ready
+//	   (build, apply or health check fails) ↘ failed
 //	(any unfinished) → cancelled: a newer deployment superseded it
 //
-// A finished deployment never changes again. When one fails while another
-// release was serving, the platform starts a new deployment of that release
-// (Reason auto_rollback, RollbackOf the failed one): the environment's
-// current release never moved, and the cluster is put back to it.
+// A deployment from source starts building: its release (the built image
+// plus its configuration) exists only once the build succeeded. A finished
+// deployment never changes again. When one fails after reaching the cluster
+// while another release was serving, the platform starts a new deployment of
+// that release (Reason auto_rollback, RollbackOf the failed one): the
+// environment's current release never moved, and the cluster is put back to
+// it. A failed build changed nothing in the cluster: nothing is restored.
 type Status string
 
 const (
+	StatusBuilding  Status = "building"
 	StatusPending   Status = "pending"
 	StatusApplying  Status = "applying"
 	StatusVerifying Status = "verifying"
@@ -32,7 +37,7 @@ const (
 
 func (s Status) Valid() bool {
 	switch s {
-	case StatusPending, StatusApplying, StatusVerifying, StatusReady, StatusFailed, StatusCancelled:
+	case StatusBuilding, StatusPending, StatusApplying, StatusVerifying, StatusReady, StatusFailed, StatusCancelled:
 		return true
 	}
 	return false
@@ -44,7 +49,7 @@ func (s Status) Finished() bool {
 }
 
 // StatusMessage is the 400 text for a value outside the set.
-const StatusMessage = "status must be pending, applying, verifying, ready, failed or cancelled"
+const StatusMessage = "status must be building, pending, applying, verifying, ready, failed or cancelled"
 
 // Reason is why a deployment exists.
 type Reason string
@@ -66,6 +71,10 @@ const (
 	CodeAlreadyCurrent  = "ALREADY_CURRENT"     // rollback to what is already serving
 	CodeNotRollbackable = "NOT_ROLLBACKABLE"    // rollback to a version that never went live
 	CodeArchived        = project.CodeArchived  // deploy to an archived project
+	// CodeBuildInternal is a build that failed on the platform's side: the
+	// build's INTERNAL, named apart from the API's own INTERNAL errors. The
+	// other build failures keep the build's code (build.Code*).
+	CodeBuildInternal = "BUILD_INTERNAL"
 )
 
 // WorkflowDeploy is the workflow that drives a deployment (releasesvc).
@@ -78,13 +87,22 @@ type DeployInput struct {
 
 // Steps of the deploy workflow, in order (the console's progress).
 const (
+	StepBuild     = "build"      // build the uploaded source into an image (deployments from source)
 	StepApply     = "apply"      // hand the desired app to the cluster
 	StepWaitReady = "wait_ready" // wait until it answers its health check
 	StepPromote   = "promote"    // make it the environment's current release
 )
 
 // Steps lists the deploy workflow's steps in order.
-func Steps() []string { return []string{StepApply, StepWaitReady, StepPromote} }
+func Steps() []string { return []string{StepBuild, StepApply, StepWaitReady, StepPromote} }
+
+// StepNames are the steps d goes through: an image deployment skips build.
+func (d Deployment) StepNames() []string {
+	if d.Build == nil {
+		return Steps()[1:]
+	}
+	return Steps()
+}
 
 // StepState is one step's progress.
 type StepState string
@@ -111,17 +129,33 @@ type Failure struct {
 	Detail  string `json:"detail"`
 }
 
+// DeploymentSource is the uploaded folder a deployment from source builds.
+type DeploymentSource struct {
+	ID   build.SourceID `json:"id"`
+	Name string         `json:"name"`
+	// Size is the archive's size in bytes.
+	Size int64 `json:"size"`
+}
+
 // Deployment is one attempt to make a release the one an environment serves.
 type Deployment struct {
 	ID           DeploymentID            `json:"id" db:"id"`
 	Organization identity.OrganizationID `json:"organization_id" db:"organization_id"`
 	Project      project.ID              `json:"project_id" db:"project_id"`
 	Environment  project.EnvironmentID   `json:"environment_id" db:"environment_id"`
-	Release      ID                      `json:"release_id" db:"release_id"`
-	// Image is the release's image (denormalised for listings).
-	Image  string `json:"image" db:"image"`
-	Status Status `json:"status" db:"status"`
-	Reason Reason `json:"reason" db:"reason"`
+	// Release is nil while a deployment from source builds.
+	Release *ID `json:"release_id" db:"release_id"`
+	// Image is the release's image (denormalised for listings; "" while building).
+	Image string `json:"image" db:"image"`
+	// Build makes the image of a deployment from source, out of Source (both
+	// nil when an image was published).
+	Build  *build.ID         `json:"build_id" db:"build_id"`
+	Source *DeploymentSource `json:"source" db:"-"`
+	// Config is how a deployment from source runs once built; its release
+	// keeps it from then on (nil for an image: its release's).
+	Config *Config `json:"-" db:"-"`
+	Status Status  `json:"status" db:"status"`
+	Reason Reason  `json:"reason" db:"reason"`
 	// Step is the workflow step the deployment is in (or failed at).
 	Step  string     `json:"step" db:"step"`
 	Steps []Progress `json:"steps" db:"-"`
@@ -189,9 +223,10 @@ func (f DeploymentFilter) Validate() error {
 
 // WithProgress fills Steps from Status and Step.
 func (d Deployment) WithProgress() Deployment {
-	d.Steps = make([]Progress, 0, 3)
+	names := d.StepNames()
+	d.Steps = make([]Progress, 0, len(names))
 	reached := false
-	for _, name := range Steps() {
+	for _, name := range names {
 		p := Progress{Name: name, Status: StepPending}
 		switch {
 		case d.Status == StatusReady:

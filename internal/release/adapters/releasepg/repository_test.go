@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
@@ -45,7 +46,7 @@ func TestRepository(t *testing.T) {
 	begin := func(revision int64) release.Deployment {
 		t.Helper()
 		d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env,
-			Release: r.ID, Image: r.Image, Status: release.StatusPending, Reason: release.ReasonDeploy,
+			Release: &r.ID, Image: r.Image, Status: release.StatusPending, Reason: release.ReasonDeploy,
 			Step: release.StepApply, Revision: revision, Run: workflow.NewRunID()}
 		err := tx.Do(ctx, func(ctx context.Context) error {
 			if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"}); err != nil {
@@ -69,11 +70,20 @@ func TestRepository(t *testing.T) {
 	// one unfinished deployment per environment
 	err := tx.Do(ctx, func(ctx context.Context) error {
 		return repo.CreateDeployment(ctx, release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj,
-			Environment: env, Release: r.ID, Image: r.Image, Status: release.StatusPending, Reason: release.ReasonDeploy,
+			Environment: env, Release: &r.ID, Image: r.Image, Status: release.StatusPending, Reason: release.ReasonDeploy,
 			Step: release.StepApply, Revision: 2, Run: workflow.NewRunID()})
 	})
 	if !errx.IsType(err, errx.TypeConflict) {
 		t.Fatalf("second active deployment: %v", err)
+	}
+	// a release-less deployment must be building from a source
+	err = tx.Do(ctx, func(ctx context.Context) error {
+		return repo.CreateDeployment(ctx, release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj,
+			Environment: project.NewEnvironmentID(), Status: release.StatusPending, Reason: release.ReasonDeploy,
+			Step: release.StepApply, Revision: 1, Run: workflow.NewRunID()})
+	})
+	if err == nil {
+		t.Fatal("a deployment without release nor build was stored")
 	}
 
 	// promote moves the current release and clears the active deployment
@@ -139,5 +149,45 @@ func TestRepository(t *testing.T) {
 	})
 	if !errx.IsType(err, errx.TypeNotFound) {
 		t.Fatalf("cross-tenant lock: %v", err)
+	}
+
+	// from source: building with no release until SetBuilt records it
+	b, src := build.NewID(), build.NewSourceID()
+	cfg := release.Config{Port: 3000, HealthPath: "/", Replicas: 1, Env: map[string]string{"A": "1"}}
+	third := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env,
+		Build: &b, Source: &release.DeploymentSource{ID: src, Name: "visitas.tar.gz", Size: 1234}, Config: &cfg,
+		Status: release.StatusBuilding, Reason: release.ReasonDeploy, Step: release.StepBuild, Revision: 3, Run: workflow.NewRunID()}
+	if err := tx.Do(ctx, func(ctx context.Context) error { return repo.CreateDeployment(ctx, third) }); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.FindDeployment(ctx, org, third.ID)
+	if err != nil || got.Release != nil || got.Image != "" || got.Build == nil || *got.Build != b || got.Source == nil ||
+		*got.Source != *third.Source || got.Config == nil || got.Config.Env["A"] != "1" || got.Status != release.StatusBuilding {
+		t.Fatalf("building deployment %+v %v", got, err)
+	}
+	// a building deployment cannot move on without its release
+	if err := repo.SetProgress(ctx, org, third.ID, release.StatusApplying, release.StepApply); err == nil {
+		t.Fatal("a release-less deployment moved to apply")
+	}
+	built := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/built" + digest, Config: cfg}
+	err = tx.Do(ctx, func(ctx context.Context) error {
+		if err := repo.CreateRelease(ctx, built); err != nil {
+			return err
+		}
+		return repo.SetBuilt(ctx, org, third.ID, built)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.FindDeployment(ctx, org, third.ID)
+	if err != nil || got.Release == nil || *got.Release != built.ID || got.Image != built.Image ||
+		got.Status != release.StatusPending || got.Step != release.StepApply {
+		t.Fatalf("built deployment %+v %v", got, err)
+	}
+	if err := repo.SetBuilt(ctx, org, third.ID, built); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("set built twice: %v", err)
+	}
+	if err := repo.SetBuilt(ctx, org, first.ID, built); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("set built on an image deployment: %v", err)
 	}
 }

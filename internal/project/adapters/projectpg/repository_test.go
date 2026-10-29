@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -66,6 +67,32 @@ func TestRepository(t *testing.T) {
 	err = txn.Postgres{DB: db}.Do(ctx, func(ctx context.Context) error {
 		_, err := repo.FindForUpdate(ctx, org, id)
 		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// FindForShare also needs a transaction, and while it holds the row
+	// nobody can lock it for update (Archive) — but others may share it.
+	if _, err := repo.FindForShare(ctx, org, id); err == nil {
+		t.Fatal("FindForShare outside a transaction")
+	}
+	err = txn.Postgres{DB: db}.Do(ctx, func(ctx context.Context) error {
+		if _, err := repo.FindForShare(ctx, org, id); err != nil {
+			return err
+		}
+		blocked, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		if err := (txn.Postgres{DB: db}).Do(blocked, func(ctx context.Context) error {
+			_, err := repo.FindForUpdate(ctx, org, id)
+			return err
+		}); err == nil {
+			t.Error("a held project was locked for update")
+		}
+		return txn.Postgres{DB: db}.Do(context.Background(), func(ctx context.Context) error {
+			_, err := repo.FindForShare(ctx, org, id)
+			return err
+		})
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -28,6 +28,14 @@ func image(v string) string {
 	return "registry.local/visitas@sha256:" + strings.Repeat("0", 64-len(v)) + v
 }
 
+// rel is a deployment's release (zero while it builds).
+func rel(d release.Deployment) release.ID {
+	if d.Release == nil {
+		return release.ID{}
+	}
+	return *d.Release
+}
+
 // TestDeployWorkflow is phase 1a-a1's exit criterion: publishing an image
 // goes live through apply → wait_ready → promote; a version that fails its
 // health check never becomes current and the platform restores the one
@@ -159,7 +167,7 @@ func TestDeployWorkflow(t *testing.T) {
 		t.Fatalf("failed deployment %+v", bad)
 	}
 	c = settled()
-	if c.Release.ID != v1.Release || c.Deployment.Reason != release.ReasonAutoRollback || c.Deployment.RollbackOf == nil ||
+	if c.Release.ID != rel(v1) || c.Deployment.Reason != release.ReasonAutoRollback || c.Deployment.RollbackOf == nil ||
 		*c.Deployment.RollbackOf != bad.ID || cluster.Running(target, "visitas") != image("1") {
 		t.Fatalf("current after auto-rollback %+v", c)
 	}
@@ -169,11 +177,11 @@ func TestDeployWorkflow(t *testing.T) {
 	res = checked(t, app, http.MethodPost, base+"/deployments/"+v1.ID.String()+"/rollback", token, nil)
 	httpxtest.Want(t, res, http.StatusAccepted)
 	back := httpxtest.JSON[release.Deployment](t, res)
-	if back.Reason != release.ReasonRollback || back.Release != v1.Release || res.Header.Get("Location") != base+"/deployments/"+back.ID.String() {
+	if back.Reason != release.ReasonRollback || rel(back) != rel(v1) || res.Header.Get("Location") != base+"/deployments/"+back.ID.String() {
 		t.Fatalf("rollback %+v at %q", back, res.Header.Get("Location"))
 	}
 	await(back.ID, release.StatusReady)
-	if c = settled(); c.Release.ID != v1.Release || cluster.Running(target, "visitas") != image("1") {
+	if c = settled(); c.Release.ID != rel(v1) || cluster.Running(target, "visitas") != image("1") {
 		t.Fatalf("current after rollback %+v", c)
 	}
 	res = checked(t, app, http.MethodPost, base+"/deployments/"+back.ID.String()+"/rollback", token, nil)
@@ -192,7 +200,7 @@ func TestDeployWorkflow(t *testing.T) {
 	if d := await(slow.ID, release.StatusCancelled); d.Error != nil {
 		t.Fatalf("cancelled %+v", d)
 	}
-	if c = settled(); c.Release.ID != v3.Release || cluster.Running(target, "visitas") != image("3") {
+	if c = settled(); c.Release.ID != rel(v3) || cluster.Running(target, "visitas") != image("3") {
 		t.Fatalf("current after supersede %+v", c)
 	}
 
@@ -202,7 +210,7 @@ func TestDeployWorkflow(t *testing.T) {
 	if page := httpxtest.JSON[query.Paginated[release.Deployment]](t, res); page.Page.Total != 5 || page.Items[0].ID != v3.ID || page.Items[4].ID != v1.ID {
 		t.Fatalf("ready history %+v", page)
 	}
-	res = checked(t, app, http.MethodGet, "/api/v1/projects/"+proj.ID.String()+"/releases/"+v2.Release.String(), token, nil)
+	res = checked(t, app, http.MethodGet, "/api/v1/projects/"+proj.ID.String()+"/releases/"+rel(v2).String(), token, nil)
 	if httpxtest.Want(t, res, http.StatusOK); httpxtest.JSON[release.Release](t, res).Image != image("2") {
 		t.Fatal("release v2")
 	}
@@ -276,7 +284,7 @@ func TestDeployWorkflow(t *testing.T) {
 	c = settled()
 	res = checked(t, app, http.MethodGet, base+"/deployments", token, nil)
 	history := httpxtest.JSON[query.Paginated[release.Deployment]](t, res)
-	if c.Release.ID != p1.Release || history.Page.Total != 4 || history.Items[0].Reason != release.ReasonAutoRollback ||
+	if c.Release.ID != rel(p1) || history.Page.Total != 4 || history.Items[0].Reason != release.ReasonAutoRollback ||
 		history.Items[0].Status != release.StatusFailed {
 		t.Fatalf("after a failed restore: current %+v, history %+v", c, history)
 	}

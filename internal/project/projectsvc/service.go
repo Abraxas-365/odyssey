@@ -101,6 +101,12 @@ func (s *Service) Find(ctx context.Context, organization identity.OrganizationID
 	return s.repo.Find(ctx, organization, id)
 }
 
+// Hold joins the caller's transaction (it is a read for another domain's
+// write, so it opens none of its own).
+func (s *Service) Hold(ctx context.Context, organization identity.OrganizationID, id project.ID) (project.Project, error) {
+	return s.repo.FindForShare(ctx, organization, id)
+}
+
 func (s *Service) FindEnvironment(ctx context.Context, organization identity.OrganizationID, id project.ID, environment project.EnvironmentID) (project.Environment, error) {
 	return s.repo.FindEnvironment(ctx, organization, id, environment)
 }

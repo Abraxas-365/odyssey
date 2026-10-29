@@ -4,8 +4,23 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 )
+
+// BuildFailed is the error the build step fails a deployment with: its
+// build's code, message and the builder's words.
+func BuildFailed(f build.Failure) error {
+	code := f.Code
+	if code == build.CodeInternal || code == "" {
+		code = CodeBuildInternal
+	}
+	msg := f.Message
+	if msg == "" {
+		msg = build.Message(f.Code)
+	}
+	return Failed(code, strings.ReplaceAll(msg, ": ", " — "), f.Detail)
+}
 
 // Failed builds the error a deploy step returns to fail the deployment for
 // good (no retries): a known code, a plain-Spanish message for the person
@@ -44,6 +59,8 @@ func FailureOf(step string, cause error) Failure {
 		}
 	}
 	switch step {
+	case StepBuild:
+		return Failure{Code: CodeBuildInternal, Message: build.Message(build.CodeInternal)}
 	case StepApply:
 		return Failure{Code: CodeApplyFailed, Message: "No se pudo entregar la app al clúster."}
 	case StepWaitReady:
@@ -52,8 +69,12 @@ func FailureOf(step string, cause error) Failure {
 	return Failure{Code: CodePromoteFailed, Message: "No se pudo dejar la nueva versión en línea."}
 }
 
-// stepCodes are the failures a step reports itself (the rest are inferred).
-var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true, CodeImagePull: true, CodeCrashed: true}
+// stepCodes are the failures a step reports itself (the rest are inferred);
+// the build step reports its build's own code (build.Code*).
+var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true, CodeImagePull: true, CodeCrashed: true,
+	build.CodeUnsupported: true, build.CodeFailed: true, build.CodeTimeout: true, build.CodeSourceInvalid: true,
+	build.CodePushFailed: true, build.CodeNoBuilder: true, build.CodeNoCluster: true, build.CodeSourceExpired: true,
+	CodeBuildInternal: true}
 
 // Unready explains, for the person deploying, why the cluster reports the
 // app failed: the plain consequence, with the cluster's words as the detail.

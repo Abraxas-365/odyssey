@@ -44,15 +44,19 @@ type Created struct {
 
 // DeploymentStarted v1.
 type DeploymentStarted struct {
-	Deployment  DeploymentID  `json:"deployment_id"`
-	Project     string        `json:"project_id"`
-	Environment string        `json:"environment_id"`
-	Release     ID            `json:"release_id"`
-	Image       string        `json:"image"`
-	Reason      Reason        `json:"reason"`
-	Revision    int64         `json:"revision"`
-	Previous    *ID           `json:"previous_release_id"`
-	RollbackOf  *DeploymentID `json:"rollback_of"`
+	Deployment  DeploymentID `json:"deployment_id"`
+	Project     string       `json:"project_id"`
+	Environment string       `json:"environment_id"`
+	// Release and Image are null and "" for a deployment from source (it
+	// builds first: deployment.ready names the built release); BuildID is its
+	// build, null for an image (since v1, additive).
+	Release    *ID           `json:"release_id"`
+	Image      string        `json:"image"`
+	Build      *string       `json:"build_id"`
+	Reason     Reason        `json:"reason"`
+	Revision   int64         `json:"revision"`
+	Previous   *ID           `json:"previous_release_id"`
+	RollbackOf *DeploymentID `json:"rollback_of"`
 }
 
 // DeploymentReady v1: the release is now the environment's current one.
@@ -70,7 +74,7 @@ type DeploymentFailed struct {
 	Deployment   DeploymentID  `json:"deployment_id"`
 	Project      string        `json:"project_id"`
 	Environment  string        `json:"environment_id"`
-	Release      ID            `json:"release_id"`
+	Release      *ID           `json:"release_id"` // null when its build failed
 	Step         string        `json:"step"`
 	Code         string        `json:"code"`
 	Message      string        `json:"message"`
@@ -83,7 +87,7 @@ type DeploymentCancelled struct {
 	Deployment   DeploymentID `json:"deployment_id"`
 	Project      string       `json:"project_id"`
 	Environment  string       `json:"environment_id"`
-	Release      ID           `json:"release_id"`
+	Release      *ID          `json:"release_id"` // null when it was still building
 	SupersededBy DeploymentID `json:"superseded_by"`
 }
 
@@ -109,7 +113,15 @@ func NewDeploymentStarted(org identity.OrganizationID, actor identity.UserID, d 
 	}
 	return event.New(EventDeploymentStarted, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID), summary,
 		DeploymentStarted{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(),
-			Release: d.Release, Image: d.Image, Reason: d.Reason, Revision: d.Revision, Previous: d.Previous, RollbackOf: d.RollbackOf})
+			Release: d.Release, Image: d.Image, Build: buildOf(d), Reason: d.Reason, Revision: d.Revision, Previous: d.Previous, RollbackOf: d.RollbackOf})
+}
+
+func buildOf(d Deployment) *string {
+	if d.Build == nil {
+		return nil
+	}
+	s := d.Build.String()
+	return &s
 }
 
 func NewDeploymentReady(org identity.OrganizationID, actor identity.UserID, d Deployment, url string, n Names) event.Event {
@@ -118,7 +130,7 @@ func NewDeploymentReady(org identity.OrganizationID, actor identity.UserID, d De
 		summary = "Se restauró la versión anterior de " + n.where()
 	}
 	return event.New(EventDeploymentReady, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID), summary,
-		DeploymentReady{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release, URL: url})
+		DeploymentReady{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: *d.Release, URL: url})
 }
 
 func NewDeploymentFailed(org identity.OrganizationID, actor identity.UserID, d Deployment, autoRollback *DeploymentID, n Names) event.Event {

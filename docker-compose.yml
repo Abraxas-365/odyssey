@@ -65,8 +65,11 @@ services:
       # Registers clusters: tokens name the gateway as a k3d cluster sees it.
       FLEET_CA_CERT: /secrets/fleet/ca.crt
       FLEET_GATEWAY_URL: ${FLEET_GATEWAY_URL:-host.k3d.internal:8443}
+      # Uploaded sources and build logs, shared with the worker.
+      ODYSSEY_BLOB_URL: file:///var/lib/odyssey/blobs?no_tmp_dir=1
     volumes:
       - ./secrets/fleet/ca.crt:/secrets/fleet/ca.crt:ro
+      - blobs:/var/lib/odyssey/blobs
     depends_on:
       db:
         condition: service_healthy
@@ -108,6 +111,10 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/odyssey?sslmode=disable
       WORKER_HEALTH_PORT: "8096"
       ODYSSEY_CLUSTER: ${ODYSSEY_CLUSTER:-fake}
+      ODYSSEY_BLOB_URL: file:///var/lib/odyssey/blobs?no_tmp_dir=1
+      ODYSSEY_BUILDER: ${ODYSSEY_BUILDER:-}
+    volumes:
+      - blobs:/var/lib/odyssey/blobs
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8096/health"]
       interval: 10s
@@ -119,3 +126,4 @@ services:
 
 volumes:
   pgdata:
+  blobs:

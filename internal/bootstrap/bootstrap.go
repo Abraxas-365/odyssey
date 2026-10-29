@@ -19,6 +19,11 @@ import (
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
 	"github.com/Abraxas-365/odyssey/internal/audit/auditmodule"
+	"github.com/Abraxas-365/odyssey/internal/blob"
+	"github.com/Abraxas-365/odyssey/internal/blob/adapters/gocloudblob"
+	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/build/buildmodule"
+	"github.com/Abraxas-365/odyssey/internal/build/buildsvc"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -87,7 +92,13 @@ func RunWorker() error {
 	if err := Migrate(ctx, db); err != nil {
 		return err
 	}
-	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster})
+	blobs, err := gocloudblob.Open(ctx, cfg.Blob.URL)
+	if err != nil {
+		return err
+	}
+	defer blobs.Close()
+	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster,
+		Blobs: blobs, BuilderConfig: cfg.Builder})
 	if err != nil {
 		return err
 	}
@@ -224,6 +235,7 @@ func Migrations() []migrate.Set {
 		{Owner: outboxpg.Schema, Files: outboxpg.Migrations()},
 		{Owner: projectmodule.Schema, Files: projectmodule.Migrations()},
 		{Owner: releasemodule.Schema, Files: releasemodule.Migrations()},
+		{Owner: buildmodule.Schema, Files: buildmodule.Migrations()},
 		{Owner: fleetmodule.Schema, Files: fleetmodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
@@ -250,6 +262,7 @@ type Platform struct {
 	Workflows *workflowpg.Engine
 	Projects  projectmodule.Module
 	Releases  releasemodule.Module
+	Builds    buildmodule.Module
 	Fleet     fleetmodule.Module
 	Audit     auditmodule.Module
 }
@@ -279,6 +292,16 @@ type Options struct {
 	CertificateTTL time.Duration
 	// Release tunes the deploy workflow (tests shorten its waits).
 	Release releasesvc.Options
+	// Blobs stores sources and build logs: the API and the worker open the
+	// same ODYSSEY_BLOB_URL. Nil is an in-memory store, for tests and for
+	// commands that never touch a source.
+	Blobs blob.Store
+	// Runner builds images; tests pass a configured fake. Nil picks the
+	// adapter from BuilderConfig (the API only reads live logs through it).
+	Runner        build.Runner
+	BuilderConfig config.Builder
+	// Build tunes the build service (tests shorten its polls).
+	Build buildsvc.Options
 }
 
 // Assemble builds the modules and wires who reacts to what. This is the only
@@ -295,8 +318,21 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	projects := projectmodule.New(projectmodule.Deps{DB: db, Events: events})
 	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
 		CertificateTTL: opts.CertificateTTL})
+	if opts.Blobs == nil {
+		mem, err := gocloudblob.Open(ctx, "mem://")
+		if err != nil {
+			return nil, err
+		}
+		opts.Blobs = mem
+	}
+	builds, err := buildmodule.New(buildmodule.Deps{DB: db, Events: events, Projects: projects.Queries, Blobs: opts.Blobs,
+		Engine: engine, Runner: opts.Runner, BuilderConfig: opts.BuilderConfig, Options: opts.Build})
+	if err != nil {
+		return nil, err
+	}
 	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
-		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch, Options: opts.Release})
+		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch,
+		BuildCommands: builds.Commands, BuildQueries: builds.Queries, Options: opts.Release})
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +342,14 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Events:   events,
 		Projects: projects,
 		Releases: releases,
+		Builds:   builds,
 		Fleet:    fleets,
 		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
 	bus.Seal()
 	p.Releases.Register(registry)
+	p.Builds.Register(registry)
 
 	registry.Every(workflow.Schedule{Name: "event.purge", Every: 6 * time.Hour, Run: func(ctx context.Context) error {
 		n, err := p.Dispatcher(outboxpg.Options{}).Purge(ctx, time.Now().Add(-opts.EventRetention))
@@ -364,7 +402,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		a.Close()
 		return nil, err
 	}
-	opts := Options{Gateway: cfg.Fleet.Gateway}
+	blobs, err := gocloudblob.Open(ctx, cfg.Blob.URL)
+	if err != nil {
+		a.Close()
+		return nil, err
+	}
+	a.closers = append(a.closers, blobs.Close)
+	opts := Options{Gateway: cfg.Fleet.Gateway, Blobs: blobs, BuilderConfig: cfg.Builder,
+		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
 		if err != nil {
@@ -394,6 +439,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler) *fiber.App {
 		[]fiber.Handler{auth},
 		p.Projects.HTTP,
 		p.Releases.HTTP,
+		p.Builds.HTTP,
 		p.Fleet.HTTP,
 		p.Audit.HTTP,
 	)

@@ -72,6 +72,8 @@ internal/server/          Fiber app: middleware, /health, /api/config, /api/v1
 internal/<domain>/        domain types + ports.go; <domain>svc, <domain>module, adapters/<domain>{http,pg}
 internal/event/           event envelope + Bus; adapters/outboxpg: transactional outbox + dispatcher
 internal/workflow/        durable workflow port + Registry; adapters/workflowpg: River-backed engine
+internal/blob/            object storage port (Store, TenantKey); adapters/gocloudblob: Go CDK (file://, mem://, s3://, azblob://)
+internal/build/           sources (uploaded tar.gz) + builds; archive/ (verify, extract); adapters buildpg, buildhttp (status, logs), buildfake (runner)
 internal/audit/           ordered subscriber of every event → hash-chained trail, GET /api/v1/audit
 internal/{errx,identity,query,text,txn,pgerr,migrate,pgtest,config,httpx,permission}/  foundation
 iam/permissions.json      the IAMKit permission manifest (source of internal/permission)
@@ -124,6 +126,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | `permission_gen.go` matches `iam/permissions.json` | `TestGeneratedFilesAreFresh` |
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
+| A foundation port's backends (`blob/adapters/*`, `event/adapters/*`, `workflow/adapters/*`) are opened only by bootstrap; `gocloud.dev` only inside `blob/adapters`; a domain with a service declares `Commands`, `Queries`, `Repository` and has a `<domain>module` | `TestBackendsStayInTheCompositionRoot`, `TestDomainsHaveTheGoldenShape` |
 | `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |

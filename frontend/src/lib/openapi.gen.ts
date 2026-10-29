@@ -186,14 +186,27 @@ export interface paths {
         get: operations["listDeployments"];
         put?: never;
         /**
-         * Publish an image
-         * @description Creates a release (the image pinned by digest plus its configuration)
-         *     and starts deploying it. Answers 202: the worker applies it, waits for
-         *     its health check and only then makes it the environment's current
-         *     release; poll the deployment (`Location`). A deployment in progress in
-         *     the environment is cancelled. If the new version fails while another
-         *     was online, the platform restores that one (a deployment with reason
-         *     `auto_rollback`).
+         * Publish an image or a folder
+         * @description **An image** (`application/json`): creates a release (the image
+         *     pinned by digest plus its configuration) and starts deploying it.
+         *
+         *     **A folder** (`multipart/form-data`, parts in this order: `config`,
+         *     the JSON configuration; then `source`, the folder as `.tar.gz`, at
+         *     most 100 MiB and 20 000 files): stores it and starts a deployment that
+         *     builds it first (status `building`, step `build`); the release is
+         *     created when its image is ready. A build that fails fails the
+         *     deployment with the build's code and leaves the app as it was.
+         *     Uploaded folders count against the organization's quota (10 GiB
+         *     compressed by default): when full, the oldest folders already built
+         *     are dropped (their images stay); when none can be, 422
+         *     `SOURCE_QUOTA`.
+         *
+         *     Answers 202: the worker applies it, waits for its health check and
+         *     only then makes it the environment's current release; poll the
+         *     deployment (`Location`). A deployment in progress in the environment
+         *     is cancelled (and its build, if it was building). If the new version
+         *     fails once applied while another was online, the platform restores
+         *     that one (a deployment with reason `auto_rollback`).
          */
         post: operations["deploy"];
         delete?: never;
@@ -261,6 +274,53 @@ export interface paths {
         };
         /** Get a release */
         get: operations["getRelease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/builds/{build}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                build: components["parameters"]["Build"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a build
+         * @description The image built from an uploaded source, for a deployment's `build` step.
+         */
+        get: operations["getBuild"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/builds/{build}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                build: components["parameters"]["Build"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a build's log
+         * @description Lines after `after`, in order. Poll with `after` = the page's `next`
+         *     until `finished`. Live while it builds; kept after it ends.
+         */
+        get: operations["getBuildLogs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -554,13 +614,78 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** @description The `config` part of a deployment from source (at most 256 KiB). */
+        DeploySourceConfig: {
+            /** @description Names the source. Default: the uploaded file's name. */
+            name?: string;
+            /** @description The port the app listens on. */
+            port: number;
+            /** @description Answers 2xx when the app is healthy. Default `/`. */
+            health_path?: string;
+            /** @description Default 1. */
+            replicas?: number;
+            /** @description Non-secret variables. Names starting with `ODYSSEY_` are reserved. */
+            env?: {
+                [key: string]: string;
+            };
+        };
         /** @enum {string} */
-        DeploymentStatus: "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
+        DeploymentStatus: "building" | "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
         DeploymentStep: {
             /** @enum {string} */
-            name: "apply" | "wait_ready" | "promote";
+            name: "build" | "apply" | "wait_ready" | "promote";
             /** @enum {string} */
             status: "pending" | "running" | "done" | "failed" | "skipped";
+        };
+        /** @description The image built from an uploaded source. A finished one never changes. */
+        Build: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            environment_id: string;
+            /** Format: uuid */
+            source_id: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            /** @description `repository@sha256:…` once succeeded; empty before. */
+            image: string;
+            error: null | components["schemas"]["BuildFailure"];
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        BuildFailure: {
+            /** @enum {string} */
+            code: "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "INTERNAL";
+            /** @description Plain words for the person who deployed. */
+            message: string;
+            /** @description The technical cause (the technical view). */
+            detail: string;
+        };
+        BuildLogPage: {
+            lines: {
+                seq: number;
+                /** @enum {string} */
+                stream: "prepare" | "build" | "system";
+                text: string;
+            }[];
+            /** @description The `after` to ask with next time. */
+            next: number;
+            /** @description The build ended and this page reaches the end of its log. */
+            finished: boolean;
         };
         /** @description One attempt to make a release the one an environment serves. A finished one never changes. */
         Deployment: {
@@ -572,9 +697,25 @@ export interface components {
             project_id: string;
             /** Format: uuid */
             environment_id: string;
-            /** Format: uuid */
-            release_id: string;
+            /**
+             * Format: uuid
+             * @description Null while a deployment from source builds (and when its build failed or was cancelled).
+             */
+            release_id: string | null;
+            /** @description "" while building. */
             image: string;
+            /**
+             * Format: uuid
+             * @description The build of a deployment from source (`GET /projects/{id}/builds/{build}`); null for an image.
+             */
+            build_id: string | null;
+            source: null | {
+                /** Format: uuid */
+                id: string;
+                name: string;
+                /** @description The archive's size in bytes. */
+                size: number;
+            };
             status: components["schemas"]["DeploymentStatus"];
             /**
              * @description `auto_rollback`: the platform restored the version online after a failed deployment.
@@ -582,7 +723,8 @@ export interface components {
              */
             reason: "deploy" | "rollback" | "auto_rollback";
             /** @enum {string} */
-            step: "apply" | "wait_ready" | "promote";
+            step: "build" | "apply" | "wait_ready" | "promote";
+            /** @description The steps this deployment goes through (`build` only for a folder). */
             steps: components["schemas"]["DeploymentStep"][];
             revision: number;
             /** Format: uuid */
@@ -593,8 +735,11 @@ export interface components {
              */
             rollback_of: string | null;
             error: null | {
-                /** @enum {string} */
-                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED";
+                /**
+                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side).
+                 * @enum {string}
+                 */
+                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL";
                 /** @description Plain Spanish for whoever deploys. */
                 message: string;
                 /** @description The cluster's own words (often English); "" when it said nothing. Show it as technical detail. */
@@ -832,6 +977,7 @@ export interface components {
         ID: string;
         Environment: string;
         Deployment: string;
+        Build: string;
         Search: string;
         /** @description 1–100 (larger values are clamped), default 20. */
         Limit: number;
@@ -1176,10 +1322,18 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DeployRequest"];
+                "multipart/form-data": {
+                    config: components["schemas"]["DeploySourceConfig"];
+                    /**
+                     * Format: binary
+                     * @description The folder as tar.gz.
+                     */
+                    source: string;
+                };
             };
         };
         responses: {
-            /** @description The deployment, pending. `Location` is its URL. */
+            /** @description The deployment, pending (an image) or building (a folder). `Location` is its URL. */
             202: {
                 headers: {
                     Location?: string;
@@ -1193,6 +1347,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
@@ -1277,6 +1432,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Release"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                build: components["parameters"]["Build"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The build. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Build"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getBuildLogs: {
+        parameters: {
+            query?: {
+                /** @description Return lines with a larger `seq` (0 = from the start). */
+                after?: number;
+                /** @description 1–1000 (larger values are clamped), default 1000. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                build: components["parameters"]["Build"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the log. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildLogPage"];
                 };
             };
             400: components["responses"]["Validation"];

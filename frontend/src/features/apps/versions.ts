@@ -1,6 +1,6 @@
-import { CloudUpload, HeartPulse, Rocket } from 'lucide-react'
+import { CloudUpload, Hammer, HeartPulse, Rocket } from 'lucide-react'
 import type { AppStatusKind, ProgressStepItem, VersionData } from '@/components/odyssey'
-import { formatRelative } from '@/lib/format'
+import { formatBytes, formatRelative } from '@/lib/format'
 import type { CurrentRelease, Deployment, DeploymentStep } from '@/lib/types'
 
 /**
@@ -10,6 +10,7 @@ import type { CurrentRelease, Deployment, DeploymentStep } from '@/lib/types'
  */
 
 const stepCopy: Record<DeploymentStep['name'], Omit<ProgressStepItem, 'state'>> = {
+  build: { icon: Hammer, title: 'Construyendo tu app', description: 'Convertimos tu carpeta en una app lista para funcionar.', technical: 'build' },
   apply: { icon: CloudUpload, title: 'Preparando tu app', description: 'Enviamos la nueva versión a su servidor.', technical: 'apply' },
   wait_ready: { icon: HeartPulse, title: 'Revisando que funcione', description: 'Esperamos a que responda antes de mostrarla a nadie.', technical: 'wait_ready' },
   promote: { icon: Rocket, title: 'Publicando', description: 'La dejamos en línea en lugar de la anterior.', technical: 'promote' },
@@ -34,8 +35,10 @@ export function appStatus(archived: boolean, current: CurrentRelease | undefined
  * and replaced attempts don't count: after a failure the platform's restore
  * is newer, but the person's last attempt is still the failed one.
  */
+const inProgress = new Set<Deployment['status']>(['building', 'pending', 'applying', 'verifying'])
+
 export function lastProblem(deployments: Deployment[]): Deployment | undefined {
-  const last = deployments.find(d => d.reason !== 'auto_rollback' && d.status !== 'cancelled' && d.status !== 'pending' && d.status !== 'applying' && d.status !== 'verifying')
+  const last = deployments.find(d => d.reason !== 'auto_rollback' && d.status !== 'cancelled' && !inProgress.has(d.status))
   return last?.status === 'failed' ? last : undefined
 }
 
@@ -43,6 +46,12 @@ const reasonText: Record<Deployment['reason'], string> = {
   deploy: 'Nueva versión',
   rollback: 'Volviste a una versión anterior',
   auto_rollback: 'Restaurada automáticamente',
+}
+
+/** What a version is called: a new one from a folder says which folder. */
+function versionMessage(d: Deployment): string {
+  if (d.reason === 'deploy' && d.source) return `Desde la carpeta ${d.source.name} · ${formatBytes(d.source.size)}`
+  return reasonText[d.reason]
 }
 
 export interface VersionItem extends VersionData {
@@ -65,10 +74,10 @@ export function versions(deployments: Deployment[], current: CurrentRelease | un
         id: d.id,
         deployment: d,
         kind,
-        message: reasonText[d.reason],
+        message: versionMessage(d),
         when: formatRelative(d.finished_at ?? d.created_at, now),
         by: d.requested_by === '' ? 'la plataforma' : d.requested_by === me ? 'ti' : 'tu equipo',
-        sha: d.image.split('@sha256:')[1],
+        sha: d.image.split('@sha256:')[1] || undefined,
         restorable: kind === 'previous' && d.release_id !== current?.release?.id,
       }
     })

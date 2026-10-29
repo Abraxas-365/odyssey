@@ -37,15 +37,20 @@ type Options struct {
 // New returns the app. Every domain route sits under /api/v1 behind the auth chain.
 func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler, routes ...Routes) *fiber.App {
 	app := fiber.New(fiber.Config{
-		AppName:               "odyssey-api",
-		ErrorHandler:          httpx.ErrorHandler,
-		ReadTimeout:           30 * time.Second,
-		WriteTimeout:          60 * time.Second,
-		IdleTimeout:           120 * time.Second,
-		BodyLimit:             httpx.MaxJSONBody,
-		DisableStartupMessage: true,
+		AppName:      "odyssey-api",
+		ErrorHandler: httpx.ErrorHandler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		// Bodies are streamed so uploads never sit in memory; httpx.LimitBody
+		// buffers every other body (≤ 1 MiB) before any handler runs.
+		BodyLimit:                    httpx.MaxJSONBody,
+		StreamRequestBody:            true,
+		DisablePreParseMultipartForm: true,
+		DisableStartupMessage:        true,
 	})
-	app.Use(recover.New(recover.Config{EnableStackTrace: true}), httpx.RequestID, httpx.Headers, httpx.RejectContentEncoding)
+	app.Server().HeaderReceived = httpx.HeaderReceived
+	app.Use(recover.New(recover.Config{EnableStackTrace: true}), httpx.RequestID, httpx.Headers, httpx.RejectContentEncoding, httpx.LimitBody)
 	if len(opts.CORSOrigins) > 0 {
 		app.Use(cors.New(cors.Config{
 			AllowOrigins:  strings.Join(opts.CORSOrigins, ","),

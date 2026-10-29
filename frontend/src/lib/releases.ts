@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from './api'
-import type { CurrentRelease, Deployment, DeployRequest, EnvironmentList, List } from './types'
+import { ApiError, api, params } from './api'
+import type { BuildLogLine, BuildLogPage, CurrentRelease, Deployment, DeployRequest, DeploySourceConfig, EnvironmentList, List } from './types'
 
 /** While something is being published the console polls every 2 s (plan 1a-a1). */
 export const PUBLISHING_POLL_MS = 2000
@@ -64,6 +64,66 @@ function useDeploymentWrite<V>(project: string, env: string, fn: (v: V) => Promi
 
 export const useDeploy = (project: string, env: string) =>
   useDeploymentWrite(project, env, (body: DeployRequest) => api<Deployment>(`${envPath(project, env)}/deployments`, { method: 'POST', body }))
+
+/** Publishes a folder already packed as .tar.gz: multipart `config` first, then `source` (docs/api.md §11). */
+export const useDeploySource = (project: string, env: string) =>
+  useDeploymentWrite(project, env, ({ config, source, name }: { config: DeploySourceConfig; source: Blob; name: string }) => {
+    const form = new FormData()
+    form.append('config', new Blob([JSON.stringify(config)], { type: 'application/json' }), 'config.json')
+    form.append('source', source, `${name}.tar.gz`)
+    return api<Deployment>(`${envPath(project, env)}/deployments`, { method: 'POST', body: form })
+  })
+
+/** While a build runs its log is polled every second (plan 1b). */
+export const BUILD_LOG_POLL_MS = 1000
+
+/**
+ * A build's whole log, read page by page: each poll asks only for the lines
+ * after the last one it has, until the build has finished and the log ends.
+ */
+export function useBuildLog(project: string, build: string | null | undefined, enabled = true) {
+  const [lines, setLines] = useState<BuildLogLine[]>([])
+  const [finished, setFinished] = useState(false)
+  const [error, setError] = useState<unknown>()
+  const after = useRef(0)
+  useEffect(() => {
+    setLines([])
+    setFinished(false)
+    setError(undefined)
+    after.current = 0
+    if (!build || !enabled) return
+    const ctrl = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      try {
+        for (;;) {
+          const page = await api<BuildLogPage>(`/projects/${enc(project)}/builds/${enc(build)}/logs${params({ after: after.current })}`, { signal: ctrl.signal })
+          if (ctrl.signal.aborted) return // another build's page, arrived late
+          if (page.lines.length) setLines(prev => [...prev, ...page.lines])
+          after.current = page.next
+          setError(undefined)
+          if (page.finished) {
+            setFinished(true)
+            return
+          }
+          if (page.lines.length < 1000) break // caught up: wait for more
+        }
+      } catch (e) {
+        if (ctrl.signal.aborted) return
+        setError(e)
+        // Not allowed, gone or malformed will not change by asking again.
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429) return
+      }
+      timer = setTimeout(tick, BUILD_LOG_POLL_MS)
+    }
+    void tick()
+    return () => {
+      ctrl.abort()
+      clearTimeout(timer)
+    }
+  }, [project, build, enabled])
+  return { lines, finished, error }
+}
 
 /** "Volver a esta": deploys again the release of `deployment`. */
 export const useRollback = (project: string, env: string) =>

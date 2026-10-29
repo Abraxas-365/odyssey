@@ -4,6 +4,7 @@
   "environment_id": "00000000-0000-4000-8000-0000000000bb",
   "release_id": "00000000-0000-4000-8000-0000000000c1",
   "image": "registry.local/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "build_id": null,
   "reason": "auto_rollback",
   "revision": 7,
   "previous_release_id": "00000000-0000-4000-8000-0000000000c0",

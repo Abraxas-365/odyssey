@@ -99,6 +99,11 @@ reaches Postgres as a 500.
   - A patch that changes nothing returns 200 without writing.
 - Fields the server owns (`created_by`, `organization_id`, …) come from the
   token, never from the body.
+- **Multipart** (`multipart/form-data`) is accepted only where an endpoint
+  says so (deploy from source). Parts are read in order and streamed, never
+  buffered whole: a small JSON part first (strict as above, ≤ 256 KiB), then
+  the file. A body over the endpoint's limit is 413, without reading it
+  into memory.
 
 ## 7. Response fields
 
@@ -116,7 +121,13 @@ a field, or changing a success status, needs `/v2` or `Deprecation` +
 
 ## 9. Limits and timeouts
 
-- Request body limit: 1 MiB.
+- Request body limit: 1 MiB (JSON). A deploy from source accepts a source
+  of up to 100 MiB compressed (500 MiB and 20 000 entries unpacked).
+- Uploaded sources: up to `ODYSSEY_SOURCE_QUOTA_GIB` GiB compressed per
+  organization (default 10). When an upload would exceed it, the oldest
+  sources already built are dropped early (their images and releases stay;
+  event `source.expired`); when none can be dropped, 422 `SOURCE_QUOTA`.
+  Unbuilt sources expire after 24 h, built ones after 7 days.
 - Server timeouts: read 30 s, write 60 s, idle 120 s.
 - Database sessions: `statement_timeout` 30 s, `lock_timeout` 10 s,
   `idle_in_transaction_session_timeout` 60 s, `TimeZone` UTC. A value set in
@@ -193,33 +204,55 @@ environment serves. The console calls both "versión".
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
 | `GET` | `/api/v1/projects/:id/releases/:release` | read | 200 release |
+| `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
+| `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
 
 - **Deploy** takes `{image, port, health_path?, replicas?, env?}`. `image` must
   be `registry/repository@sha256:<64 hex>`: tags are refused (400, field
   `image`). Defaults: `health_path` `/`, `replicas` 1. `env` holds non-secret
   values; `ODYSSEY_*` names are reserved. Its values never reach events or
   the audit trail (only the names do).
-- **Lifecycle**: `pending → applying → verifying → ready | failed | cancelled`,
-  through the steps `apply`, `wait_ready` (≤ 5 min for the health check) and
-  `promote`. Only `promote` changes what the environment serves, so a version
-  that fails never replaces the one online.
+- **Deploy from source** sends the same endpoint `multipart/form-data` (§6):
+  part `config` = `{port, health_path?, replicas?, env?}` (no `image`), then
+  part `source` = a `.tar.gz` of the app's folder. The archive is checked
+  before anything starts: no absolute paths, `..`, links or devices, within
+  the limits of §9; otherwise 400 `SOURCE_INVALID` (field `source`). The
+  deployment then starts at the `build` step (status `building`,
+  `release_id` null, `build_id` and `source` set); the release is created
+  when the image is built. The build runs in the environment's cluster,
+  whose agent fetches the source through the tunnel. Its log is readable
+  while it runs (`/builds/:build/logs`, poll with `after`). Uploaded sources
+  are deleted after 7 days (24 h if never built); the image outlives them.
+- **Lifecycle**: `[building →] pending → applying → verifying → ready |
+  failed | cancelled`, through the steps `build` (from source only),
+  `apply`, `wait_ready` (≤ 5 min for the health check) and `promote`. Only
+  `promote` changes what the environment serves, so a version that fails
+  never replaces the one online.
 - **One at a time**: a new deployment cancels the one in progress
-  (`cancelled`, event `deployment.cancelled`).
+  (`cancelled`, event `deployment.cancelled`), and its build if it is still
+  building.
 - **Automatic restore**: when a deployment fails and another release was
   online, the platform starts a deployment of it with reason `auto_rollback`
   (`rollback_of` = the failed one). A failed `auto_rollback` is not retried.
+  A failed build restores nothing: the cluster never changed.
 - **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
   path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
   image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),
-  `APPLY_FAILED` (the cluster refused it), `PROMOTE_FAILED`. `message` is
+  `APPLY_FAILED` (the cluster refused it), `PROMOTE_FAILED`. From the build:
+  `UNSUPPORTED_APP` (no known way to build or start it), `BUILD_FAILED`,
+  `BUILD_TIMEOUT` (25 min), `SOURCE_INVALID`, `SOURCE_EXPIRED`,
+  `PUSH_FAILED`, `NO_BUILDER`, `NO_CLUSTER`, `BUILD_INTERNAL`. `message` is
   plain Spanish for whoever deploys; `detail` holds the cluster's own words
   (often English, `""` when it said nothing) for technical readers.
 - **Rollback** ("Volver a esta") takes no body. It deploys the release of a
-  deployment that went live (`ready`); otherwise 422 `NOT_ROLLBACKABLE`. 422
+  deployment that went live (`ready`), without building again; otherwise 422
+  `NOT_ROLLBACKABLE`. 422
   `ALREADY_CURRENT` if that release is the one online and nothing is in
   progress. Archived apps refuse both with 422 `PROJECT_ARCHIVED`.
 - **Events**: `release.created`, `deployment.started`, `deployment.ready`,
-  `deployment.failed`, `deployment.cancelled` (subject `deployment/<id>`).
+  `deployment.failed`, `deployment.cancelled` (subject `deployment/<id>`);
+  `source.uploaded`, `build.started`, `build.succeeded`, `build.failed`,
+  `build.cancelled`, `source.expired`.
 - **Where it runs** (`ODYSSEY_CLUSTER=fleet`): an environment's first
   deployment pins it to the organization's first-enrolled active cluster; it stays
   there. With none, the deployment fails with `APPLY_FAILED` and a message

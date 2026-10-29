@@ -24,6 +24,9 @@ const MaxJSONBody = 1 << 20
 //   - unknown fields are an error naming the field (400);
 //   - exactly one JSON value, nothing after it (400).
 func DecodeJSON(c *fiber.Ctx, into any) error {
+	if isMultipart(c) { // a stream up to MaxUploadBody: never buffer it here
+		return errx.UnsupportedMediaType("Content-Type must be application/json")
+	}
 	body := c.Body()
 	if len(body) == 0 {
 		return errx.Validation("request body is required")
@@ -80,10 +83,15 @@ func IsJSON(c *fiber.Ctx) bool {
 }
 
 // IsMultipart reports a multipart/form-data Content-Type.
-func IsMultipart(c *fiber.Ctx) bool {
-	mt, _, err := mime.ParseMediaType(c.Get(fiber.HeaderContentType))
-	return err == nil && mt == fiber.MIMEMultipartForm
-}
+func IsMultipart(c *fiber.Ctx) bool { return isMultipart(c) }
+
+// HasBody reports whether the request carries a body (an optional JSON body
+// is decoded only when present). It never reads the body.
+func HasBody(c *fiber.Ctx) bool { return c.Request().Header.ContentLength() != 0 }
+
+// DecodeStrict reads a JSON value already in hand (a multipart form field)
+// with DecodeJSON's rules: unknown fields and trailing data are 400s.
+func DecodeStrict(body []byte, into any) error { return decodeStrict(body, into) }
 
 func decodeStrict(body []byte, into any) error {
 	dec := json.NewDecoder(bytes.NewReader(body))

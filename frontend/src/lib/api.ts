@@ -32,7 +32,9 @@ interface RequestOptions { method?: string; body?: unknown; signal?: AbortSignal
 
 async function request(path: string, options: RequestOptions = {}): Promise<Response> {
   const cfg = await loadConfig()
-  const body = options.body === undefined ? undefined : JSON.stringify(options.body)
+  // FormData goes as multipart (the browser sets the boundary); anything else as JSON.
+  const multipart = options.body instanceof FormData
+  const body = options.body === undefined ? undefined : multipart ? (options.body as FormData) : JSON.stringify(options.body)
   let token = await accessToken(cfg)
   if (!token) {
     window.dispatchEvent(new Event('session-expired'))
@@ -44,7 +46,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
       body,
       signal: options.signal,
       credentials: 'omit',
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body !== undefined && !multipart ? { 'Content-Type': 'application/json' } : {}) },
     })
   let res: Response
   try {
@@ -81,6 +83,8 @@ const messages: Record<string, string> = {
   FORBIDDEN: 'No tienes permiso para hacer esto. Si lo necesitas, pídeselo a TI.',
   UNAUTHORIZED: 'Tu sesión expiró. Vuelve a ingresar.',
   PAYLOAD_TOO_LARGE: 'Lo que enviaste es demasiado grande.',
+  SOURCE_INVALID: 'No pudimos leer la carpeta. Vuelve a elegirla y publica otra vez.',
+  SOURCE_QUOTA: 'Tu organización llenó su espacio para carpetas subidas. Espera a que terminen las publicaciones en curso o pide a TI más espacio.',
   CLUSTER_REVOKED: 'Ese clúster fue revocado. Conecta uno nuevo.',
   INVALID_MOVE_TARGET: 'Las apps solo pueden ir a otro clúster conectado. Elige otro.',
   CLUSTER_NOT_REVOKED: 'Solo se mueven las apps de un clúster revocado.',

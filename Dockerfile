@@ -24,7 +24,8 @@ ENTRYPOINT ["odyssey-agent"]
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata \
-    && addgroup -S odyssey && adduser -S odyssey -G odyssey
+    && addgroup -S odyssey && adduser -S odyssey -G odyssey \
+    && mkdir -p /var/lib/odyssey/blobs && chown odyssey:odyssey /var/lib/odyssey/blobs
 
 ENV TZ=UTC
 # One image, three processes: odyssey-api (default), odyssey-worker (its

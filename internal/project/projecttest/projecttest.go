@@ -99,6 +99,10 @@ func (m *Repo) FindForUpdate(ctx context.Context, org identity.OrganizationID, i
 	return m.Find(ctx, org, id)
 }
 
+func (m *Repo) FindForShare(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
+	return m.Find(ctx, org, id)
+}
+
 func (m *Repo) List(_ context.Context, org identity.OrganizationID, f project.Filter, p query.Pagination) (query.Paginated[project.Project], error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

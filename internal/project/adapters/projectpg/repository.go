@@ -68,6 +68,13 @@ func (r *Repository) FindForUpdate(ctx context.Context, organization identity.Or
 	return r.find(ctx, organization, id, " FOR UPDATE")
 }
 
+func (r *Repository) FindForShare(ctx context.Context, organization identity.OrganizationID, id project.ID) (project.Project, error) {
+	if _, ok := txn.Tx(ctx); !ok {
+		return project.Project{}, errx.Internal("FindForShare needs a transaction")
+	}
+	return r.find(ctx, organization, id, " FOR SHARE")
+}
+
 func (r *Repository) find(ctx context.Context, organization identity.OrganizationID, id project.ID, lock string) (project.Project, error) {
 	var p project.Project
 	err := txn.Q(ctx, r.db).GetContext(ctx, &p,
