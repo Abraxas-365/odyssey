@@ -147,6 +147,8 @@ type Capabilities struct {
 	APIs           []string `json:"apis"`
 	IngressClasses []string `json:"ingress_classes"`
 	StorageClasses []string `json:"storage_classes"`
+	// Builder is set when the cluster can build images (nil: it cannot).
+	Builder *Builder `json:"builder,omitempty"`
 }
 
 // Limits of what an agent reports (it is outside the trust boundary of
@@ -167,6 +169,9 @@ func (a Agent) Validate() error {
 		if utf8.RuneCountInString(s) > MaxReportedText || text.HasForbiddenControl(s) {
 			return errx.Validation("a reported capability is not valid")
 		}
+	}
+	if a.Capabilities.Builder != nil {
+		return a.Capabilities.Builder.Validate()
 	}
 	return nil
 }

@@ -15,9 +15,11 @@ func TestWorkerBuilder(t *testing.T) {
 	}{
 		{"fake", "", config.BuilderFake},
 		{"fake", "none", config.BuilderNone},
-		{"fleet", "", config.BuilderNone},
+		{"fleet", "", config.BuilderFleet},
 		{"fleet", "none", config.BuilderNone},
+		{"fleet", "fleet", config.BuilderFleet},
 		{"fleet", "fake", ""},
+		{"fake", "fleet", ""},
 		{"fake", "kaniko", ""},
 	} {
 		t.Setenv("DATABASE_URL", "postgres://x")

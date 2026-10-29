@@ -29,6 +29,94 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type FetchSourceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BuildId       string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchSourceRequest) Reset() {
+	*x = FetchSourceRequest{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchSourceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchSourceRequest) ProtoMessage() {}
+
+func (x *FetchSourceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchSourceRequest.ProtoReflect.Descriptor instead.
+func (*FetchSourceRequest) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *FetchSourceRequest) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+type SourceChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceChunk) Reset() {
+	*x = SourceChunk{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceChunk) ProtoMessage() {}
+
+func (x *SourceChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceChunk.ProtoReflect.Descriptor instead.
+func (*SourceChunk) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *SourceChunk) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
 type EnrollRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// token is the one-time token shown when the cluster was created.
@@ -41,7 +129,7 @@ type EnrollRequest struct {
 
 func (x *EnrollRequest) Reset() {
 	*x = EnrollRequest{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[0]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -53,7 +141,7 @@ func (x *EnrollRequest) String() string {
 func (*EnrollRequest) ProtoMessage() {}
 
 func (x *EnrollRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[0]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -66,7 +154,7 @@ func (x *EnrollRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollRequest.ProtoReflect.Descriptor instead.
 func (*EnrollRequest) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{0}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *EnrollRequest) GetToken() string {
@@ -94,7 +182,7 @@ type EnrollResponse struct {
 
 func (x *EnrollResponse) Reset() {
 	*x = EnrollResponse{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[1]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -106,7 +194,7 @@ func (x *EnrollResponse) String() string {
 func (*EnrollResponse) ProtoMessage() {}
 
 func (x *EnrollResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[1]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -119,7 +207,7 @@ func (x *EnrollResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollResponse.ProtoReflect.Descriptor instead.
 func (*EnrollResponse) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{1}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EnrollResponse) GetClusterId() string {
@@ -152,7 +240,7 @@ type RenewRequest struct {
 
 func (x *RenewRequest) Reset() {
 	*x = RenewRequest{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[2]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -164,7 +252,7 @@ func (x *RenewRequest) String() string {
 func (*RenewRequest) ProtoMessage() {}
 
 func (x *RenewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[2]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -177,7 +265,7 @@ func (x *RenewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewRequest.ProtoReflect.Descriptor instead.
 func (*RenewRequest) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{2}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RenewRequest) GetCsr() []byte {
@@ -196,7 +284,7 @@ type RenewResponse struct {
 
 func (x *RenewResponse) Reset() {
 	*x = RenewResponse{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[3]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -208,7 +296,7 @@ func (x *RenewResponse) String() string {
 func (*RenewResponse) ProtoMessage() {}
 
 func (x *RenewResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[3]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -221,7 +309,7 @@ func (x *RenewResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewResponse.ProtoReflect.Descriptor instead.
 func (*RenewResponse) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{3}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RenewResponse) GetCertificate() *Certificate {
@@ -247,7 +335,7 @@ type RecoverRequest struct {
 
 func (x *RecoverRequest) Reset() {
 	*x = RecoverRequest{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[4]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -259,7 +347,7 @@ func (x *RecoverRequest) String() string {
 func (*RecoverRequest) ProtoMessage() {}
 
 func (x *RecoverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[4]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -272,7 +360,7 @@ func (x *RecoverRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecoverRequest.ProtoReflect.Descriptor instead.
 func (*RecoverRequest) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{4}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RecoverRequest) GetToken() string {
@@ -314,7 +402,7 @@ type RecoverResponse struct {
 
 func (x *RecoverResponse) Reset() {
 	*x = RecoverResponse{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[5]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -326,7 +414,7 @@ func (x *RecoverResponse) String() string {
 func (*RecoverResponse) ProtoMessage() {}
 
 func (x *RecoverResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[5]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -339,7 +427,7 @@ func (x *RecoverResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecoverResponse.ProtoReflect.Descriptor instead.
 func (*RecoverResponse) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{5}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RecoverResponse) GetClusterId() string {
@@ -375,7 +463,7 @@ type Certificate struct {
 
 func (x *Certificate) Reset() {
 	*x = Certificate{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[6]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -387,7 +475,7 @@ func (x *Certificate) String() string {
 func (*Certificate) ProtoMessage() {}
 
 func (x *Certificate) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[6]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -400,7 +488,7 @@ func (x *Certificate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Certificate.ProtoReflect.Descriptor instead.
 func (*Certificate) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{6}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Certificate) GetPem() []byte {
@@ -423,6 +511,8 @@ type AgentMessage struct {
 	//
 	//	*AgentMessage_Hello
 	//	*AgentMessage_Report
+	//	*AgentMessage_BuildReport
+	//	*AgentMessage_BuildLog
 	Message       isAgentMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -430,7 +520,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[7]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +532,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[7]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +545,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{7}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *AgentMessage) GetMessage() isAgentMessage_Message {
@@ -483,6 +573,24 @@ func (x *AgentMessage) GetReport() *AppReport {
 	return nil
 }
 
+func (x *AgentMessage) GetBuildReport() *BuildReport {
+	if x != nil {
+		if x, ok := x.Message.(*AgentMessage_BuildReport); ok {
+			return x.BuildReport
+		}
+	}
+	return nil
+}
+
+func (x *AgentMessage) GetBuildLog() *BuildLog {
+	if x != nil {
+		if x, ok := x.Message.(*AgentMessage_BuildLog); ok {
+			return x.BuildLog
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Message interface {
 	isAgentMessage_Message()
 }
@@ -496,15 +604,33 @@ type AgentMessage_Report struct {
 	Report *AppReport `protobuf:"bytes,2,opt,name=report,proto3,oneof"`
 }
 
+type AgentMessage_BuildReport struct {
+	// build_report says how builds are going (sent on every change, and for
+	// every build the cluster holds right after Hello).
+	BuildReport *BuildReport `protobuf:"bytes,3,opt,name=build_report,json=buildReport,proto3,oneof"`
+}
+
+type AgentMessage_BuildLog struct {
+	// build_log carries lines a build printed, in order. Lines may be sent
+	// again (after a reconnect): their seq makes that harmless.
+	BuildLog *BuildLog `protobuf:"bytes,4,opt,name=build_log,json=buildLog,proto3,oneof"`
+}
+
 func (*AgentMessage_Hello) isAgentMessage_Message() {}
 
 func (*AgentMessage_Report) isAgentMessage_Message() {}
+
+func (*AgentMessage_BuildReport) isAgentMessage_Message() {}
+
+func (*AgentMessage_BuildLog) isAgentMessage_Message() {}
 
 type ControlMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Message:
 	//
 	//	*ControlMessage_Apply
+	//	*ControlMessage_Build
+	//	*ControlMessage_CancelBuild
 	Message       isControlMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -512,7 +638,7 @@ type ControlMessage struct {
 
 func (x *ControlMessage) Reset() {
 	*x = ControlMessage{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[8]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -524,7 +650,7 @@ func (x *ControlMessage) String() string {
 func (*ControlMessage) ProtoMessage() {}
 
 func (x *ControlMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[8]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -537,7 +663,7 @@ func (x *ControlMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlMessage.ProtoReflect.Descriptor instead.
 func (*ControlMessage) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{8}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ControlMessage) GetMessage() isControlMessage_Message {
@@ -556,6 +682,24 @@ func (x *ControlMessage) GetApply() *App {
 	return nil
 }
 
+func (x *ControlMessage) GetBuild() *Build {
+	if x != nil {
+		if x, ok := x.Message.(*ControlMessage_Build); ok {
+			return x.Build
+		}
+	}
+	return nil
+}
+
+func (x *ControlMessage) GetCancelBuild() *CancelBuild {
+	if x != nil {
+		if x, ok := x.Message.(*ControlMessage_CancelBuild); ok {
+			return x.CancelBuild
+		}
+	}
+	return nil
+}
+
 type isControlMessage_Message interface {
 	isControlMessage_Message()
 }
@@ -566,7 +710,22 @@ type ControlMessage_Apply struct {
 	Apply *App `protobuf:"bytes,1,opt,name=apply,proto3,oneof"`
 }
 
+type ControlMessage_Build struct {
+	// build asks the cluster to build an image; asking again changes nothing.
+	Build *Build `protobuf:"bytes,2,opt,name=build,proto3,oneof"`
+}
+
+type ControlMessage_CancelBuild struct {
+	// cancel_build: the build is no longer wanted (cancelled, or finished
+	// and recorded): stop it if it runs and drop what the cluster keeps of it.
+	CancelBuild *CancelBuild `protobuf:"bytes,3,opt,name=cancel_build,json=cancelBuild,proto3,oneof"`
+}
+
 func (*ControlMessage_Apply) isControlMessage_Message() {}
+
+func (*ControlMessage_Build) isControlMessage_Message() {}
+
+func (*ControlMessage_CancelBuild) isControlMessage_Message() {}
 
 type Hello struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -578,7 +737,7 @@ type Hello struct {
 
 func (x *Hello) Reset() {
 	*x = Hello{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[9]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -590,7 +749,7 @@ func (x *Hello) String() string {
 func (*Hello) ProtoMessage() {}
 
 func (x *Hello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[9]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -603,7 +762,7 @@ func (x *Hello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hello.ProtoReflect.Descriptor instead.
 func (*Hello) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{9}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Hello) GetAgentVersion() string {
@@ -630,13 +789,15 @@ type Capabilities struct {
 	Apis           []string `protobuf:"bytes,2,rep,name=apis,proto3" json:"apis,omitempty"`
 	IngressClasses []string `protobuf:"bytes,3,rep,name=ingress_classes,json=ingressClasses,proto3" json:"ingress_classes,omitempty"`
 	StorageClasses []string `protobuf:"bytes,4,rep,name=storage_classes,json=storageClasses,proto3" json:"storage_classes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// builder is set when the cluster can build images (unset: it cannot).
+	Builder       *Builder `protobuf:"bytes,5,opt,name=builder,proto3" json:"builder,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Capabilities) Reset() {
 	*x = Capabilities{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[10]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -648,7 +809,7 @@ func (x *Capabilities) String() string {
 func (*Capabilities) ProtoMessage() {}
 
 func (x *Capabilities) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[10]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -661,7 +822,7 @@ func (x *Capabilities) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Capabilities.ProtoReflect.Descriptor instead.
 func (*Capabilities) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{10}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Capabilities) GetKubernetesVersion() string {
@@ -692,6 +853,511 @@ func (x *Capabilities) GetStorageClasses() []string {
 	return nil
 }
 
+func (x *Capabilities) GetBuilder() *Builder {
+	if x != nil {
+		return x.Builder
+	}
+	return nil
+}
+
+// Builder is the cluster's image builder.
+type Builder struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// registry is where built images are pushed and pulled from, as the
+	// cluster's nodes reach it (host[:port][/path], e.g. "registry.example.com/odyssey").
+	Registry string `protobuf:"bytes,1,opt,name=registry,proto3" json:"registry,omitempty"`
+	// platforms it builds for (e.g. "linux/amd64").
+	Platforms     []string `protobuf:"bytes,2,rep,name=platforms,proto3" json:"platforms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Builder) Reset() {
+	*x = Builder{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Builder) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Builder) ProtoMessage() {}
+
+func (x *Builder) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Builder.ProtoReflect.Descriptor instead.
+func (*Builder) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *Builder) GetRegistry() string {
+	if x != nil {
+		return x.Registry
+	}
+	return ""
+}
+
+func (x *Builder) GetPlatforms() []string {
+	if x != nil {
+		return x.Platforms
+	}
+	return nil
+}
+
+// Build asks the cluster to turn a source into an image.
+type Build struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	BuildId        string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	OrganizationId string                 `protobuf:"bytes,2,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	ProjectId      string                 `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EnvironmentId  string                 `protobuf:"bytes,4,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	Source         *SourceRef             `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	// image_repository is where to push the image (the registry the cluster
+	// announced, then "<organization>/<project>"); the agent reports only the
+	// digest it got.
+	ImageRepository string `protobuf:"bytes,6,opt,name=image_repository,json=imageRepository,proto3" json:"image_repository,omitempty"`
+	// cache_ref is the registry reference of the project's build cache.
+	CacheRef string `protobuf:"bytes,7,opt,name=cache_ref,json=cacheRef,proto3" json:"cache_ref,omitempty"`
+	// timeout_seconds bounds the build in the cluster.
+	TimeoutSeconds int32 `protobuf:"varint,8,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Build) Reset() {
+	*x = Build{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Build) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Build) ProtoMessage() {}
+
+func (x *Build) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Build.ProtoReflect.Descriptor instead.
+func (*Build) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *Build) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *Build) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *Build) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *Build) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *Build) GetSource() *SourceRef {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *Build) GetImageRepository() string {
+	if x != nil {
+		return x.ImageRepository
+	}
+	return ""
+}
+
+func (x *Build) GetCacheRef() string {
+	if x != nil {
+		return x.CacheRef
+	}
+	return ""
+}
+
+func (x *Build) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+// SourceRef is what FetchSource must return for a build.
+type SourceRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sha256        string                 `protobuf:"bytes,1,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceRef) Reset() {
+	*x = SourceRef{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceRef) ProtoMessage() {}
+
+func (x *SourceRef) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceRef.ProtoReflect.Descriptor instead.
+func (*SourceRef) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SourceRef) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *SourceRef) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type CancelBuild struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BuildId       string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelBuild) Reset() {
+	*x = CancelBuild{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelBuild) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelBuild) ProtoMessage() {}
+
+func (x *CancelBuild) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelBuild.ProtoReflect.Descriptor instead.
+func (*CancelBuild) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CancelBuild) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+type BuildReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Builds        []*BuildStatus         `protobuf:"bytes,1,rep,name=builds,proto3" json:"builds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuildReport) Reset() {
+	*x = BuildReport{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuildReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuildReport) ProtoMessage() {}
+
+func (x *BuildReport) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuildReport.ProtoReflect.Descriptor instead.
+func (*BuildReport) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *BuildReport) GetBuilds() []*BuildStatus {
+	if x != nil {
+		return x.Builds
+	}
+	return nil
+}
+
+type BuildStatus struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	BuildId string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	// phase is "pending", "running", "succeeded" or "failed".
+	Phase string `protobuf:"bytes,2,opt,name=phase,proto3" json:"phase,omitempty"`
+	// image_digest ("sha256:<64 hex>") of the pushed image (succeeded only).
+	ImageDigest string `protobuf:"bytes,3,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	// reason explains a failed phase: "unsupported", "source", "push",
+	// "timeout" or "failed".
+	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	Message       string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuildStatus) Reset() {
+	*x = BuildStatus{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuildStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuildStatus) ProtoMessage() {}
+
+func (x *BuildStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuildStatus.ProtoReflect.Descriptor instead.
+func (*BuildStatus) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *BuildStatus) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *BuildStatus) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *BuildStatus) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *BuildStatus) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *BuildStatus) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type BuildLog struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BuildId       string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	Lines         []*LogLine             `protobuf:"bytes,2,rep,name=lines,proto3" json:"lines,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuildLog) Reset() {
+	*x = BuildLog{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuildLog) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuildLog) ProtoMessage() {}
+
+func (x *BuildLog) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuildLog.ProtoReflect.Descriptor instead.
+func (*BuildLog) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *BuildLog) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *BuildLog) GetLines() []*LogLine {
+	if x != nil {
+		return x.Lines
+	}
+	return nil
+}
+
+type LogLine struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// seq orders the lines of a build and is stable across resends (it is
+	// derived from where the line was printed, not from when it was sent).
+	Seq int64 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
+	// stream is "prepare", "build" or "system".
+	Stream        string `protobuf:"bytes,2,opt,name=stream,proto3" json:"stream,omitempty"`
+	Text          string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogLine) Reset() {
+	*x = LogLine{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogLine) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogLine) ProtoMessage() {}
+
+func (x *LogLine) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
+func (*LogLine) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *LogLine) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *LogLine) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *LogLine) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
 // App is the desired state of one app: the spec of its OdysseyApp.
 type App struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -714,7 +1380,7 @@ type App struct {
 
 func (x *App) Reset() {
 	*x = App{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +1392,7 @@ func (x *App) String() string {
 func (*App) ProtoMessage() {}
 
 func (x *App) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +1405,7 @@ func (x *App) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use App.ProtoReflect.Descriptor instead.
 func (*App) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{11}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *App) GetOrganizationId() string {
@@ -831,7 +1497,7 @@ type AppReport struct {
 
 func (x *AppReport) Reset() {
 	*x = AppReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -843,7 +1509,7 @@ func (x *AppReport) String() string {
 func (*AppReport) ProtoMessage() {}
 
 func (x *AppReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -856,7 +1522,7 @@ func (x *AppReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppReport.ProtoReflect.Descriptor instead.
 func (*AppReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{12}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AppReport) GetFull() bool {
@@ -893,7 +1559,7 @@ type AppStatus struct {
 
 func (x *AppStatus) Reset() {
 	*x = AppStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -905,7 +1571,7 @@ func (x *AppStatus) String() string {
 func (*AppStatus) ProtoMessage() {}
 
 func (x *AppStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -918,7 +1584,7 @@ func (x *AppStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppStatus.ProtoReflect.Descriptor instead.
 func (*AppStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{13}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *AppStatus) GetEnvironmentId() string {
@@ -981,7 +1647,11 @@ var File_proto_fleet_v1_fleet_proto protoreflect.FileDescriptor
 
 const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\n" +
-	"\x1aproto/fleet/v1/fleet.proto\x12\bfleet.v1\"7\n" +
+	"\x1aproto/fleet/v1/fleet.proto\x12\bfleet.v1\"/\n" +
+	"\x12FetchSourceRequest\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\"!\n" +
+	"\vSourceChunk\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"7\n" +
 	"\rEnrollRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x10\n" +
 	"\x03csr\x18\x02 \x01(\fR\x03csr\"\x91\x01\n" +
@@ -1007,22 +1677,60 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\vcertificate\x18\x03 \x01(\v2\x15.fleet.v1.CertificateR\vcertificate\"6\n" +
 	"\vCertificate\x12\x10\n" +
 	"\x03pem\x18\x01 \x01(\fR\x03pem\x12\x15\n" +
-	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"q\n" +
+	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\xe0\x01\n" +
 	"\fAgentMessage\x12'\n" +
 	"\x05hello\x18\x01 \x01(\v2\x0f.fleet.v1.HelloH\x00R\x05hello\x12-\n" +
-	"\x06report\x18\x02 \x01(\v2\x13.fleet.v1.AppReportH\x00R\x06reportB\t\n" +
-	"\amessage\"B\n" +
+	"\x06report\x18\x02 \x01(\v2\x13.fleet.v1.AppReportH\x00R\x06report\x12:\n" +
+	"\fbuild_report\x18\x03 \x01(\v2\x15.fleet.v1.BuildReportH\x00R\vbuildReport\x121\n" +
+	"\tbuild_log\x18\x04 \x01(\v2\x12.fleet.v1.BuildLogH\x00R\bbuildLogB\t\n" +
+	"\amessage\"\xa7\x01\n" +
 	"\x0eControlMessage\x12%\n" +
-	"\x05apply\x18\x01 \x01(\v2\r.fleet.v1.AppH\x00R\x05applyB\t\n" +
+	"\x05apply\x18\x01 \x01(\v2\r.fleet.v1.AppH\x00R\x05apply\x12'\n" +
+	"\x05build\x18\x02 \x01(\v2\x0f.fleet.v1.BuildH\x00R\x05build\x12:\n" +
+	"\fcancel_build\x18\x03 \x01(\v2\x15.fleet.v1.CancelBuildH\x00R\vcancelBuildB\t\n" +
 	"\amessage\"h\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12:\n" +
-	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xa3\x01\n" +
+	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xd0\x01\n" +
 	"\fCapabilities\x12-\n" +
 	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\x12\x12\n" +
 	"\x04apis\x18\x02 \x03(\tR\x04apis\x12'\n" +
 	"\x0fingress_classes\x18\x03 \x03(\tR\x0eingressClasses\x12'\n" +
-	"\x0fstorage_classes\x18\x04 \x03(\tR\x0estorageClasses\"\xdb\x03\n" +
+	"\x0fstorage_classes\x18\x04 \x03(\tR\x0estorageClasses\x12+\n" +
+	"\abuilder\x18\x05 \x01(\v2\x11.fleet.v1.BuilderR\abuilder\"C\n" +
+	"\aBuilder\x12\x1a\n" +
+	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1c\n" +
+	"\tplatforms\x18\x02 \x03(\tR\tplatforms\"\xaf\x02\n" +
+	"\x05Build\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12'\n" +
+	"\x0forganization_id\x18\x02 \x01(\tR\x0eorganizationId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x03 \x01(\tR\tprojectId\x12%\n" +
+	"\x0eenvironment_id\x18\x04 \x01(\tR\renvironmentId\x12+\n" +
+	"\x06source\x18\x05 \x01(\v2\x13.fleet.v1.SourceRefR\x06source\x12)\n" +
+	"\x10image_repository\x18\x06 \x01(\tR\x0fimageRepository\x12\x1b\n" +
+	"\tcache_ref\x18\a \x01(\tR\bcacheRef\x12'\n" +
+	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\"7\n" +
+	"\tSourceRef\x12\x16\n" +
+	"\x06sha256\x18\x01 \x01(\tR\x06sha256\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x03R\x04size\"(\n" +
+	"\vCancelBuild\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\"<\n" +
+	"\vBuildReport\x12-\n" +
+	"\x06builds\x18\x01 \x03(\v2\x15.fleet.v1.BuildStatusR\x06builds\"\x93\x01\n" +
+	"\vBuildStatus\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12\x14\n" +
+	"\x05phase\x18\x02 \x01(\tR\x05phase\x12!\n" +
+	"\fimage_digest\x18\x03 \x01(\tR\vimageDigest\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\"N\n" +
+	"\bBuildLog\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12'\n" +
+	"\x05lines\x18\x02 \x03(\v2\x11.fleet.v1.LogLineR\x05lines\"G\n" +
+	"\aLogLine\x12\x10\n" +
+	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
+	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"\xdb\x03\n" +
 	"\x03App\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -1055,12 +1763,13 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x06 \x01(\tR\amessage\x12%\n" +
 	"\x0eready_replicas\x18\a \x01(\x05R\rreadyReplicas\x12\x10\n" +
-	"\x03url\x18\b \x01(\tR\x03url2\xff\x01\n" +
+	"\x03url\x18\b \x01(\tR\x03url2\xc5\x02\n" +
 	"\x05Fleet\x12;\n" +
 	"\x06Enroll\x12\x17.fleet.v1.EnrollRequest\x1a\x18.fleet.v1.EnrollResponse\x128\n" +
 	"\x05Renew\x12\x16.fleet.v1.RenewRequest\x1a\x17.fleet.v1.RenewResponse\x12>\n" +
 	"\aRecover\x12\x18.fleet.v1.RecoverRequest\x1a\x19.fleet.v1.RecoverResponse\x12?\n" +
-	"\aConnect\x12\x16.fleet.v1.AgentMessage\x1a\x18.fleet.v1.ControlMessage(\x010\x01B7Z5github.com/Abraxas-365/odyssey/proto/fleet/v1;fleetv1b\x06proto3"
+	"\aConnect\x12\x16.fleet.v1.AgentMessage\x1a\x18.fleet.v1.ControlMessage(\x010\x01\x12D\n" +
+	"\vFetchSource\x12\x1c.fleet.v1.FetchSourceRequest\x1a\x15.fleet.v1.SourceChunk0\x01B7Z5github.com/Abraxas-365/odyssey/proto/fleet/v1;fleetv1b\x06proto3"
 
 var (
 	file_proto_fleet_v1_fleet_proto_rawDescOnce sync.Once
@@ -1074,49 +1783,69 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
-	(*EnrollRequest)(nil),   // 0: fleet.v1.EnrollRequest
-	(*EnrollResponse)(nil),  // 1: fleet.v1.EnrollResponse
-	(*RenewRequest)(nil),    // 2: fleet.v1.RenewRequest
-	(*RenewResponse)(nil),   // 3: fleet.v1.RenewResponse
-	(*RecoverRequest)(nil),  // 4: fleet.v1.RecoverRequest
-	(*RecoverResponse)(nil), // 5: fleet.v1.RecoverResponse
-	(*Certificate)(nil),     // 6: fleet.v1.Certificate
-	(*AgentMessage)(nil),    // 7: fleet.v1.AgentMessage
-	(*ControlMessage)(nil),  // 8: fleet.v1.ControlMessage
-	(*Hello)(nil),           // 9: fleet.v1.Hello
-	(*Capabilities)(nil),    // 10: fleet.v1.Capabilities
-	(*App)(nil),             // 11: fleet.v1.App
-	(*AppReport)(nil),       // 12: fleet.v1.AppReport
-	(*AppStatus)(nil),       // 13: fleet.v1.AppStatus
-	nil,                     // 14: fleet.v1.App.EnvEntry
-	nil,                     // 15: fleet.v1.App.LabelsEntry
+	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
+	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
+	(*EnrollRequest)(nil),      // 2: fleet.v1.EnrollRequest
+	(*EnrollResponse)(nil),     // 3: fleet.v1.EnrollResponse
+	(*RenewRequest)(nil),       // 4: fleet.v1.RenewRequest
+	(*RenewResponse)(nil),      // 5: fleet.v1.RenewResponse
+	(*RecoverRequest)(nil),     // 6: fleet.v1.RecoverRequest
+	(*RecoverResponse)(nil),    // 7: fleet.v1.RecoverResponse
+	(*Certificate)(nil),        // 8: fleet.v1.Certificate
+	(*AgentMessage)(nil),       // 9: fleet.v1.AgentMessage
+	(*ControlMessage)(nil),     // 10: fleet.v1.ControlMessage
+	(*Hello)(nil),              // 11: fleet.v1.Hello
+	(*Capabilities)(nil),       // 12: fleet.v1.Capabilities
+	(*Builder)(nil),            // 13: fleet.v1.Builder
+	(*Build)(nil),              // 14: fleet.v1.Build
+	(*SourceRef)(nil),          // 15: fleet.v1.SourceRef
+	(*CancelBuild)(nil),        // 16: fleet.v1.CancelBuild
+	(*BuildReport)(nil),        // 17: fleet.v1.BuildReport
+	(*BuildStatus)(nil),        // 18: fleet.v1.BuildStatus
+	(*BuildLog)(nil),           // 19: fleet.v1.BuildLog
+	(*LogLine)(nil),            // 20: fleet.v1.LogLine
+	(*App)(nil),                // 21: fleet.v1.App
+	(*AppReport)(nil),          // 22: fleet.v1.AppReport
+	(*AppStatus)(nil),          // 23: fleet.v1.AppStatus
+	nil,                        // 24: fleet.v1.App.EnvEntry
+	nil,                        // 25: fleet.v1.App.LabelsEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
-	6,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
-	6,  // 1: fleet.v1.RenewResponse.certificate:type_name -> fleet.v1.Certificate
-	6,  // 2: fleet.v1.RecoverResponse.certificate:type_name -> fleet.v1.Certificate
-	9,  // 3: fleet.v1.AgentMessage.hello:type_name -> fleet.v1.Hello
-	12, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
-	11, // 5: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
-	10, // 6: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
-	14, // 7: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	15, // 8: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
-	13, // 9: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
-	0,  // 10: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	2,  // 11: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	4,  // 12: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	7,  // 13: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	1,  // 14: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	3,  // 15: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	5,  // 16: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	8,  // 17: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	14, // [14:18] is the sub-list for method output_type
-	10, // [10:14] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
+	8,  // 1: fleet.v1.RenewResponse.certificate:type_name -> fleet.v1.Certificate
+	8,  // 2: fleet.v1.RecoverResponse.certificate:type_name -> fleet.v1.Certificate
+	11, // 3: fleet.v1.AgentMessage.hello:type_name -> fleet.v1.Hello
+	22, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
+	17, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
+	19, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
+	21, // 7: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
+	14, // 8: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
+	16, // 9: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
+	12, // 10: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
+	13, // 11: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
+	15, // 12: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
+	18, // 13: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
+	20, // 14: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
+	24, // 15: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	25, // 16: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	23, // 17: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
+	2,  // 18: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 19: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 20: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 21: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 22: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 23: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 24: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 25: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 26: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 27: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	23, // [23:28] is the sub-list for method output_type
+	18, // [18:23] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -1124,12 +1853,16 @@ func file_proto_fleet_v1_fleet_proto_init() {
 	if File_proto_fleet_v1_fleet_proto != nil {
 		return
 	}
-	file_proto_fleet_v1_fleet_proto_msgTypes[7].OneofWrappers = []any{
+	file_proto_fleet_v1_fleet_proto_msgTypes[9].OneofWrappers = []any{
 		(*AgentMessage_Hello)(nil),
 		(*AgentMessage_Report)(nil),
+		(*AgentMessage_BuildReport)(nil),
+		(*AgentMessage_BuildLog)(nil),
 	}
-	file_proto_fleet_v1_fleet_proto_msgTypes[8].OneofWrappers = []any{
+	file_proto_fleet_v1_fleet_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlMessage_Apply)(nil),
+		(*ControlMessage_Build)(nil),
+		(*ControlMessage_CancelBuild)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1137,7 +1870,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

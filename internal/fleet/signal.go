@@ -12,6 +12,8 @@ type Signal struct {
 	// Environment and Name are set when that desired app changed.
 	Environment project.EnvironmentID
 	Name        string
+	// Build is set when that desired build changed (dispatched or cancelled).
+	Build BuildID
 	// Revoked: the cluster's certificate is no longer accepted.
 	Revoked bool
 	// Reenrolled: the cluster enrolled again with a new key; tunnels of the

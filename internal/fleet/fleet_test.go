@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
@@ -42,6 +43,11 @@ func TestEventContracts(t *testing.T) {
 		fleet.NewAppsMoved(org, user, c, fleet.Cluster{ID: fleet.MustParseClusterID("00000000-0000-4000-8000-0000000000c2"), Name: "Producción Arequipa"},
 			fleet.Moved{Environments: []project.EnvironmentID{env}, Apps: 2}),
 		fleet.NewAppApplied(org, c, app, true),
+		fleet.NewBuildSent(org, c, fleet.DesiredBuild{ID: fleet.MustParseBuildID("00000000-0000-4000-8000-0000000000b1"),
+			Project: proj, Environment: env, SourceSHA256: strings.Repeat("b", 64),
+			ImageRepository: "registry.local/" + org.String() + "/" + proj.String()}, false),
+		fleet.NewBuildReleased(org, fleet.DesiredBuild{ID: fleet.MustParseBuildID("00000000-0000-4000-8000-0000000000b1"),
+			Cluster: cluster, Final: true}),
 	} {
 		eventtest.Golden(t, e)
 	}
@@ -142,5 +148,50 @@ func TestReportsAreBounded(t *testing.T) {
 	}
 	if err := (fleet.Agent{Capabilities: fleet.Capabilities{APIs: make([]string, fleet.MaxReported+1)}}).Validate(); err == nil {
 		t.Error("too many capabilities accepted")
+	}
+}
+
+// What an agent says of a build is made safe to show, never trusted as is.
+func TestBuildReportsAreCleaned(t *testing.T) {
+	id := fleet.MustParseBuildID("00000000-0000-4000-8000-0000000000b1")
+	s := fleet.BuildStatus{Build: id, Phase: fleet.BuildRunning, Reason: "push", Message: "\x1b]0;title\x07ok\x00"}.Clean()
+	if s.Reason != "" || s.Message != "ok" {
+		t.Errorf("running status cleaned to %+v", s)
+	}
+	if s := (fleet.BuildStatus{Build: id, Phase: fleet.BuildFailed, Reason: "timeout"}).Clean(); s.Reason != "timeout" {
+		t.Errorf("a known reason was replaced: %+v", s)
+	}
+	for _, bad := range []fleet.BuildStatus{
+		{Phase: fleet.BuildRunning},
+		{Build: id, Phase: "exploded"},
+		{Build: id, Phase: fleet.BuildSucceeded, Digest: "latest"},
+		{Build: id, Phase: fleet.BuildFailed, Digest: "sha256:" + strings.Repeat("a", 64)},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+	long, ok := fleet.LogLine{Seq: 1, Stream: "build", Text: strings.Repeat("ñ", fleet.MaxLogLineBytes)}.Clean()
+	if !ok || len(long.Text) > fleet.MaxLogLineBytes || !strings.HasSuffix(long.Text, "…") {
+		t.Errorf("a long line kept %d bytes", len(long.Text))
+	}
+	for _, l := range []fleet.LogLine{{Seq: 0, Stream: "build"}, {Seq: fleet.MaxLogSeq + 1, Stream: "build"}, {Seq: 1, Stream: "stdout"}} {
+		if _, ok := l.Clean(); ok {
+			t.Errorf("%+v kept", l)
+		}
+	}
+	b := fleet.DesiredBuild{ID: id, Organization: org, Project: proj, Environment: env, SourceSHA256: strings.Repeat("a", 64), SourceSize: 1, Timeout: time.Minute}
+	stranger := identity.MustParseOrganizationID("00000000-0000-4000-8000-000000000009")
+	for key, valid := range map[string]bool{
+		blob.TenantKey(org, "sources", "x.tar.gz"):                     true,
+		blob.TenantKey(stranger, "sources", "x.tar.gz"):                false,
+		blob.TenantKey(org, "builds", "x.log.jsonl"):                   false,
+		blob.TenantKey(org, "sources", "..", "..", "sources", "x.tar"): false,
+		"": false,
+	} {
+		b.SourceKey = key
+		if (b.Validate() == nil) != valid {
+			t.Errorf("source key %q: valid=%v", key, !valid)
+		}
 	}
 }

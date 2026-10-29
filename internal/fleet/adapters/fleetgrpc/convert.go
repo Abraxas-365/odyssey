@@ -13,6 +13,7 @@ func agentFromProto(h *fleetv1.Hello) fleet.Agent {
 		APIs:              nonNil(c.GetApis()),
 		IngressClasses:    nonNil(c.GetIngressClasses()),
 		StorageClasses:    nonNil(c.GetStorageClasses()),
+		Builder:           builderFromProto(c.GetBuilder()),
 	}}
 }
 
@@ -47,4 +48,48 @@ func appToProto(a fleet.App) *fleetv1.App {
 		Name: a.Name, Revision: a.Revision, Image: a.Image, Port: int32(a.Port), HealthPath: a.HealthPath,
 		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels,
 	}
+}
+
+func builderFromProto(b *fleetv1.Builder) *fleet.Builder {
+	if b == nil {
+		return nil
+	}
+	return &fleet.Builder{Registry: b.GetRegistry(), Platforms: nonNil(b.GetPlatforms())}
+}
+
+func buildToProto(b fleet.DesiredBuild) *fleetv1.ControlMessage {
+	if b.Cancelled || b.Final {
+		return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_CancelBuild{CancelBuild: &fleetv1.CancelBuild{BuildId: b.ID.String()}}}
+	}
+	return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_Build{Build: &fleetv1.Build{
+		BuildId: b.ID.String(), OrganizationId: b.Organization.String(), ProjectId: b.Project.String(),
+		EnvironmentId: b.Environment.String(), Source: &fleetv1.SourceRef{Sha256: b.SourceSHA256, Size: b.SourceSize},
+		ImageRepository: b.ImageRepository, CacheRef: b.CacheRef, TimeoutSeconds: int32(b.Timeout.Seconds()),
+	}}}
+}
+
+// buildReportFromProto skips unreadable ids (validation drops the rest).
+func buildReportFromProto(r *fleetv1.BuildReport) []fleet.BuildStatus {
+	out := make([]fleet.BuildStatus, 0, len(r.GetBuilds()))
+	for _, b := range r.GetBuilds() {
+		id, err := fleet.ParseBuildID(b.GetBuildId())
+		if err != nil {
+			continue
+		}
+		out = append(out, fleet.BuildStatus{Build: id, Phase: fleet.BuildPhase(b.GetPhase()), Digest: b.GetImageDigest(),
+			Reason: b.GetReason(), Message: b.GetMessage()})
+	}
+	return out
+}
+
+func buildLogFromProto(l *fleetv1.BuildLog) (fleet.BuildLog, error) {
+	id, err := fleet.ParseBuildID(l.GetBuildId())
+	if err != nil {
+		return fleet.BuildLog{}, err
+	}
+	out := fleet.BuildLog{Build: id, Lines: make([]fleet.LogLine, 0, len(l.GetLines()))}
+	for _, x := range l.GetLines() {
+		out.Lines = append(out.Lines, fleet.LogLine{Seq: x.GetSeq(), Stream: x.GetStream(), Text: x.GetText()})
+	}
+	return out, nil
 }

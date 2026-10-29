@@ -67,6 +67,9 @@ services:
       FLEET_GATEWAY_URL: ${FLEET_GATEWAY_URL:-host.k3d.internal:8443}
       # Uploaded sources and build logs, shared with the worker.
       ODYSSEY_BLOB_URL: file:///var/lib/odyssey/blobs?no_tmp_dir=1
+      # Live build logs are read through the worker's builder: same choice.
+      ODYSSEY_CLUSTER: ${ODYSSEY_CLUSTER:-fake}
+      ODYSSEY_BUILDER: ${ODYSSEY_BUILDER:-}
     volumes:
       - ./secrets/fleet/ca.crt:/secrets/fleet/ca.crt:ro
       - blobs:/var/lib/odyssey/blobs
@@ -87,12 +90,15 @@ services:
       FLEET_CA_CERT: /secrets/fleet/ca.crt
       FLEET_CA_KEY: /secrets/fleet/ca.key
       FLEET_GATEWAY_HOSTS: host.k3d.internal,localhost
+      # Build sources agents fetch (read only): the API's uploads.
+      ODYSSEY_BLOB_URL: file:///var/lib/odyssey/blobs?no_tmp_dir=1
     # The CA key stays 0600, owned by whoever ran `make setup`: the gateway
     # runs as that uid to read it (make setup writes ODYSSEY_UID/GID to .env;
     # never loosen the key's mode instead).
     user: "${ODYSSEY_UID:-100}:${ODYSSEY_GID:-101}"
     volumes:
       - ./secrets/fleet:/secrets/fleet:ro
+      - blobs:/var/lib/odyssey/blobs:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8098/health"]
       interval: 10s

@@ -27,10 +27,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Fleet_Enroll_FullMethodName  = "/fleet.v1.Fleet/Enroll"
-	Fleet_Renew_FullMethodName   = "/fleet.v1.Fleet/Renew"
-	Fleet_Recover_FullMethodName = "/fleet.v1.Fleet/Recover"
-	Fleet_Connect_FullMethodName = "/fleet.v1.Fleet/Connect"
+	Fleet_Enroll_FullMethodName      = "/fleet.v1.Fleet/Enroll"
+	Fleet_Renew_FullMethodName       = "/fleet.v1.Fleet/Renew"
+	Fleet_Recover_FullMethodName     = "/fleet.v1.Fleet/Recover"
+	Fleet_Connect_FullMethodName     = "/fleet.v1.Fleet/Connect"
+	Fleet_FetchSource_FullMethodName = "/fleet.v1.Fleet/FetchSource"
 )
 
 // FleetClient is the client API for Fleet service.
@@ -54,6 +55,11 @@ type FleetClient interface {
 	// observes; the control plane sends the desired state. Either side may
 	// close it; the agent reconnects with backoff.
 	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentMessage, ControlMessage], error)
+	// FetchSource streams the source archive (tar.gz) of a build sent to this
+	// cluster, while the build is wanted: another cluster's build is
+	// PermissionDenied, an unknown, cancelled or finished one NotFound. The
+	// agent checks the bytes against Build.source before using them.
+	FetchSource(ctx context.Context, in *FetchSourceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SourceChunk], error)
 }
 
 type fleetClient struct {
@@ -107,6 +113,25 @@ func (c *fleetClient) Connect(ctx context.Context, opts ...grpc.CallOption) (grp
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Fleet_ConnectClient = grpc.BidiStreamingClient[AgentMessage, ControlMessage]
 
+func (c *fleetClient) FetchSource(ctx context.Context, in *FetchSourceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SourceChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Fleet_ServiceDesc.Streams[1], Fleet_FetchSource_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[FetchSourceRequest, SourceChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Fleet_FetchSourceClient = grpc.ServerStreamingClient[SourceChunk]
+
 // FleetServer is the server API for Fleet service.
 // All implementations must embed UnimplementedFleetServer
 // for forward compatibility.
@@ -128,6 +153,11 @@ type FleetServer interface {
 	// observes; the control plane sends the desired state. Either side may
 	// close it; the agent reconnects with backoff.
 	Connect(grpc.BidiStreamingServer[AgentMessage, ControlMessage]) error
+	// FetchSource streams the source archive (tar.gz) of a build sent to this
+	// cluster, while the build is wanted: another cluster's build is
+	// PermissionDenied, an unknown, cancelled or finished one NotFound. The
+	// agent checks the bytes against Build.source before using them.
+	FetchSource(*FetchSourceRequest, grpc.ServerStreamingServer[SourceChunk]) error
 	mustEmbedUnimplementedFleetServer()
 }
 
@@ -149,6 +179,9 @@ func (UnimplementedFleetServer) Recover(context.Context, *RecoverRequest) (*Reco
 }
 func (UnimplementedFleetServer) Connect(grpc.BidiStreamingServer[AgentMessage, ControlMessage]) error {
 	return status.Error(codes.Unimplemented, "method Connect not implemented")
+}
+func (UnimplementedFleetServer) FetchSource(*FetchSourceRequest, grpc.ServerStreamingServer[SourceChunk]) error {
+	return status.Error(codes.Unimplemented, "method FetchSource not implemented")
 }
 func (UnimplementedFleetServer) mustEmbedUnimplementedFleetServer() {}
 func (UnimplementedFleetServer) testEmbeddedByValue()               {}
@@ -232,6 +265,17 @@ func _Fleet_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Fleet_ConnectServer = grpc.BidiStreamingServer[AgentMessage, ControlMessage]
 
+func _Fleet_FetchSource_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(FetchSourceRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(FleetServer).FetchSource(m, &grpc.GenericServerStream[FetchSourceRequest, SourceChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Fleet_FetchSourceServer = grpc.ServerStreamingServer[SourceChunk]
+
 // Fleet_ServiceDesc is the grpc.ServiceDesc for Fleet service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -258,6 +302,11 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _Fleet_Connect_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "FetchSource",
+			Handler:       _Fleet_FetchSource_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "proto/fleet/v1/fleet.proto",

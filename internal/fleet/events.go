@@ -21,6 +21,8 @@ const (
 	EventRevoked            = "cluster.revoked"
 	EventAppsMoved          = "cluster.apps_moved"
 	EventAppApplied         = "cluster.app_applied"
+	EventBuildSent          = "cluster.build_sent"
+	EventBuildReleased      = "cluster.build_released"
 )
 
 // SubjectKind prefixes the fleet's event subjects ("cluster/<id>").
@@ -93,6 +95,42 @@ type AppApplied struct {
 }
 
 const timeLayout = "2006-01-02T15:04:05Z07:00"
+
+// BuildSent v1: a build went to the cluster of its environment.
+type BuildSent struct {
+	Cluster     ClusterID `json:"cluster_id"`
+	Build       BuildID   `json:"build_id"`
+	Project     string    `json:"project_id"`
+	Environment string    `json:"environment_id"`
+	SourceSHA   string    `json:"source_sha256"`
+	Repository  string    `json:"image_repository"`
+	// Placed is true when this placed the environment on the cluster.
+	Placed bool `json:"placed"`
+}
+
+// BuildReleased v1: the cluster was told to drop a build: cancelled while
+// it ran, or done with once it finished (Finished).
+type BuildReleased struct {
+	Cluster  ClusterID `json:"cluster_id"`
+	Build    BuildID   `json:"build_id"`
+	Finished bool      `json:"finished"`
+}
+
+func NewBuildSent(org identity.OrganizationID, c Cluster, b DesiredBuild, placed bool) event.Event {
+	return event.New(EventBuildSent, 1, org, identity.UserID{}, event.Subject(SubjectKind, c.ID),
+		"Envió una construcción al clúster "+c.Name,
+		BuildSent{Cluster: c.ID, Build: b.ID, Project: b.Project.String(), Environment: b.Environment.String(),
+			SourceSHA: b.SourceSHA256, Repository: b.ImageRepository, Placed: placed})
+}
+
+func NewBuildReleased(org identity.OrganizationID, b DesiredBuild) event.Event {
+	what := "Canceló una construcción en el clúster"
+	if b.Final {
+		what = "Liberó una construcción terminada en el clúster"
+	}
+	return event.New(EventBuildReleased, 1, org, identity.UserID{}, event.Subject(SubjectKind, b.Cluster), what,
+		BuildReleased{Cluster: b.Cluster, Build: b.ID, Finished: b.Final})
+}
 
 func NewClusterCreated(org identity.OrganizationID, actor identity.UserID, c Cluster) event.Event {
 	return event.New(EventCreated, 1, org, actor, event.Subject(SubjectKind, c.ID), "Registró el clúster "+c.Name,

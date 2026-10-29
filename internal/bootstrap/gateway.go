@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/blob/adapters/gocloudblob"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet/adapters/fleetca"
@@ -47,7 +48,13 @@ func RunGateway() error {
 	if err != nil {
 		return err
 	}
-	p, err := Assemble(ctx, db, Options{Authority: ca, Workflow: workflowpg.Options{}})
+	// the build sources agents fetch: the same store the API uploads to
+	blobs, err := gocloudblob.Open(ctx, cfg.BlobURL)
+	if err != nil {
+		return err
+	}
+	defer blobs.Close()
+	p, err := Assemble(ctx, db, Options{Authority: ca, Workflow: workflowpg.Options{}, Blobs: blobs})
 	if err != nil {
 		return err
 	}
@@ -116,7 +123,7 @@ func Gateway(ctx context.Context, p *Platform, ca *fleetca.Authority, cfg config
 		ClientAuth: tls.VerifyClientCertIfGiven,
 		ClientCAs:  ca.Pool(),
 	}
-	server := p.Fleet.Gateway(cfg.DatabaseURL, opts)
+	server := p.Fleet.Gateway(cfg.DatabaseURL, p.Blobs, opts)
 	g := grpc.NewServer(append(server.ServerOptions(),
 		grpc.Creds(credentials.NewTLS(tlsConfig)),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -55,6 +56,13 @@ type Options struct {
 	EnrollBurst      int
 	AddressPerSecond float64
 	AddressBurst     int
+	// LogsPerSecond and LogBurst bound the build log messages of one tunnel
+	// (default 20/s, burst 100; each carries up to fleet.MaxLogBatch lines).
+	LogsPerSecond float64
+	LogBurst      int
+	// FetchesPerCluster bounds one cluster's concurrent source downloads
+	// (default 4).
+	FetchesPerCluster int
 }
 
 // Server implements fleetv1.FleetServer.
@@ -62,15 +70,25 @@ type Server struct {
 	fleetv1.UnimplementedFleetServer
 	agents  fleet.Agents
 	signals fleet.Signals
-	opts    Options
-	public  *perAddress
+	// sources holds the build sources FetchSource streams (the build
+	// domain's blob store: the gateway reads it, never writes).
+	sources  blob.Store
+	fetching inFlight
+	opts     Options
+	public   *perAddress
 
 	mu      sync.Mutex
 	tunnels map[fleet.ClusterID]*tunnel
 	closing bool // CloseAll ran: new tunnels are refused
 }
 
-func New(agents fleet.Agents, signals fleet.Signals, opts Options) *Server {
+func New(agents fleet.Agents, signals fleet.Signals, sources blob.Store, opts Options) *Server {
+	if opts.LogsPerSecond <= 0 {
+		opts.LogsPerSecond, opts.LogBurst = 20, 100
+	}
+	if opts.FetchesPerCluster <= 0 {
+		opts.FetchesPerCluster = 4
+	}
 	if opts.HeartbeatEvery <= 0 {
 		opts.HeartbeatEvery = fleet.HeartbeatEvery
 	}
@@ -92,7 +110,7 @@ func New(agents fleet.Agents, signals fleet.Signals, opts Options) *Server {
 	if opts.AddressPerSecond <= 0 {
 		opts.AddressPerSecond, opts.AddressBurst = 0.2, 5
 	}
-	return &Server{agents: agents, signals: signals, opts: opts, tunnels: map[fleet.ClusterID]*tunnel{},
+	return &Server{agents: agents, signals: signals, sources: sources, opts: opts, tunnels: map[fleet.ClusterID]*tunnel{},
 		public: newPerAddress(rate.Limit(opts.AddressPerSecond), opts.AddressBurst,
 			rate.NewLimiter(rate.Limit(opts.EnrollsPerSecond), opts.EnrollBurst))}
 }
@@ -153,7 +171,7 @@ func (s *Server) signal(sig fleet.Signal) {
 		t.close(fleet.Superseded())
 		return
 	}
-	t.kick(key{environment: sig.Environment, name: sig.Name}, false)
+	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build}, false)
 }
 
 func (s *Server) each(fn func(*tunnel)) {
@@ -208,9 +226,11 @@ func (s *Server) Recover(ctx context.Context, req *fleetv1.RecoverRequest) (*fle
 
 // ---- the tunnel -------------------------------------------------------
 
+// key is what changed: an app (environment and name) or a build.
 type key struct {
 	environment project.EnvironmentID
 	name        string
+	build       fleet.BuildID
 }
 
 type tunnel struct {
@@ -387,31 +407,46 @@ func (s *Server) hello(stream fleetv1.Fleet_ConnectServer) (fleet.Agent, error) 
 	}
 }
 
-// receive stores the agent's reports until the stream ends, at most
-// ReportsPerSecond (with a burst): beyond that it stops reading and flow
-// control slows the agent down.
+// receive stores the agent's reports and build logs until the stream ends,
+// at most ReportsPerSecond (with a burst; logs have their own, larger
+// budget): beyond that it stops reading and flow control slows the agent
+// down.
 func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slog.Logger) {
 	limit := rate.NewLimiter(rate.Limit(s.opts.ReportsPerSecond), s.opts.ReportBurst)
+	logs := rate.NewLimiter(rate.Limit(s.opts.LogsPerSecond), s.opts.LogBurst)
 	for {
 		m, err := stream.Recv()
 		if err != nil {
 			t.close(err)
 			return
 		}
-		r := m.GetReport()
-		if r == nil {
+		ctx := stream.Context()
+		switch {
+		case m.GetReport() != nil:
+			if err = limit.Wait(ctx); err == nil {
+				var report fleet.Report
+				if report, err = reportFromProto(m.GetReport()); err == nil {
+					err = s.agents.Report(ctx, t.agent, t.session, report)
+				}
+			}
+		case m.GetBuildReport() != nil:
+			if err = limit.Wait(ctx); err == nil {
+				err = s.agents.ReportBuilds(ctx, t.agent, t.session, buildReportFromProto(m.GetBuildReport()))
+			}
+		case m.GetBuildLog() != nil:
+			if err = logs.Wait(ctx); err == nil {
+				var l fleet.BuildLog
+				if l, err = buildLogFromProto(m.GetBuildLog()); err != nil {
+					err = errx.Validation("build log with an unreadable build id")
+				} else {
+					err = s.agents.LogBuild(ctx, t.agent, t.session, l)
+				}
+			}
+		default:
 			continue // unknown or repeated Hello: ignored (newer agents may send more)
 		}
-		if err := limit.Wait(stream.Context()); err != nil {
-			t.close(err)
-			return
-		}
-		report, err := reportFromProto(r)
-		if err == nil {
-			err = s.agents.Report(stream.Context(), t.agent, t.session, report)
-		}
 		if errx.IsType(err, errx.TypeValidation) {
-			log.Warn("agent report partly rejected", "err", err) // keep the tunnel: one bad app must not cut the cluster off
+			log.Warn("agent message partly rejected", "err", err) // keep the tunnel: one bad app must not cut the cluster off
 			continue
 		}
 		if err != nil {
@@ -421,18 +456,32 @@ func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slo
 	}
 }
 
-// push sends what changed (or everything).
+// push sends what changed (or everything): apps, then builds.
 func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t *tunnel) error {
 	pending, all := t.take()
 	var apps []fleet.App
+	var builds []fleet.DesiredBuild
 	if all {
 		desired, err := s.agents.Desired(ctx, t.agent)
 		if err != nil {
 			return err
 		}
 		apps = desired
+		if builds, err = s.agents.DesiredBuilds(ctx, t.agent); err != nil {
+			return err
+		}
 	} else {
 		for k := range pending {
+			if !k.build.IsZero() {
+				b, ok, err := s.agents.DesiredBuild(ctx, t.agent, k.build)
+				if err != nil {
+					return err
+				}
+				if ok {
+					builds = append(builds, b)
+				}
+				continue
+			}
 			a, ok, err := s.agents.DesiredApp(ctx, t.agent, k.environment, k.name)
 			if err != nil {
 				return err
@@ -444,6 +493,17 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 	}
 	for _, a := range apps {
 		if err := stream.Send(&fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_Apply{Apply: appToProto(a)}}); err != nil {
+			return err
+		}
+	}
+	now := time.Now()
+	for _, b := range builds {
+		// one past its resend window is neither built nor cancelled again:
+		// its own deadline in the cluster ended it long ago
+		if !b.Cancelled && !b.Final && !b.Wanted(now) {
+			continue
+		}
+		if err := stream.Send(buildToProto(b)); err != nil {
 			return err
 		}
 	}

@@ -505,14 +505,16 @@ func (r *Repository) notify(ctx context.Context, s fleet.Signal) error {
 	return pgerr.Map(err, "notify fleet")
 }
 
-// Signals are "<org> <cluster> revoked", "<org> <cluster> reenrolled" or
-// "<org> <cluster> app <env> <name>".
+// Signals are "<org> <cluster> revoked", "<org> <cluster> reenrolled",
+// "<org> <cluster> app <env> <name>" or "<org> <cluster> build <id>".
 func encodeSignal(s fleet.Signal) string {
 	switch {
 	case s.Revoked:
 		return s.Organization.String() + " " + s.Cluster.String() + " revoked"
 	case s.Reenrolled:
 		return s.Organization.String() + " " + s.Cluster.String() + " reenrolled"
+	case !s.Build.IsZero():
+		return s.Organization.String() + " " + s.Cluster.String() + " build " + s.Build.String()
 	}
 	return s.Organization.String() + " " + s.Cluster.String() + " app " + s.Environment.String() + " " + s.Name
 }
@@ -541,6 +543,10 @@ func decodeSignal(raw string) (fleet.Signal, bool) {
 			return fleet.Signal{}, false
 		}
 		s.Name = f[4]
+	case f[2] == "build" && len(f) == 4:
+		if s.Build, err = fleet.ParseBuildID(f[3]); err != nil {
+			return fleet.Signal{}, false
+		}
 	default:
 		return fleet.Signal{}, false
 	}

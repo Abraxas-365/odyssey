@@ -1,0 +1,9 @@
+{
+  "cluster_id": "00000000-0000-4000-8000-0000000000c1",
+  "build_id": "00000000-0000-4000-8000-0000000000b1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "environment_id": "00000000-0000-4000-8000-0000000000bb",
+  "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "image_repository": "registry.local/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-0000000000aa",
+  "placed": false
+}

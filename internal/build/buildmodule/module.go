@@ -13,11 +13,13 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/build/adapters/buildfake"
+	"github.com/Abraxas-365/odyssey/internal/build/adapters/buildfleet"
 	"github.com/Abraxas-365/odyssey/internal/build/adapters/buildhttp"
 	"github.com/Abraxas-365/odyssey/internal/build/adapters/buildpg"
 	"github.com/Abraxas-365/odyssey/internal/build/buildsvc"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
@@ -36,7 +38,9 @@ type Deps struct {
 	// adapter from BuilderConfig.
 	Runner        build.Runner
 	BuilderConfig config.Builder
-	Options       buildsvc.Options
+	// Fleet carries builds to the clusters (BuilderConfig.Kind fleet).
+	Fleet   fleet.Builds
+	Options buildsvc.Options
 }
 
 type Module struct {
@@ -71,11 +75,16 @@ func runnerOf(deps Deps) (build.Runner, error) {
 		// source named "…unsupported…" fails (scripts/smoke.sh).
 		return buildfake.New(buildfake.Options{Duration: 8 * time.Second, Behavior: buildfake.ByName}), nil
 	case config.BuilderNone:
-		// No builder yet (a fleet worker before phase 1b-2): every build is
-		// refused, and the deployment that asked for it fails with NO_BUILDER.
+		// No builder: every build is refused, and the deployment that asked
+		// for it fails with NO_BUILDER.
 		return buildfake.New(buildfake.Options{Behavior: func(build.Job) buildfake.Outcome {
 			return buildfake.Outcome{Refuse: build.CodeNoBuilder}
 		}}), nil
+	case config.BuilderFleet:
+		if deps.Fleet == nil {
+			return nil, fmt.Errorf("the fleet builder needs the fleet")
+		}
+		return buildfleet.New(deps.Fleet), nil
 	}
 	return nil, fmt.Errorf("unknown builder kind %q", deps.BuilderConfig.Kind)
 }

@@ -254,48 +254,60 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		return err
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		placed := false
-		cluster, err := s.repo.FindPlacement(ctx, app.Organization, app.Environment)
-		if errx.IsType(err, errx.TypeNotFound) {
-			def, err := s.repo.FindDefaultCluster(ctx, app.Organization)
-			if errx.IsType(err, errx.TypeNotFound) {
-				return errx.Business("Tu organización todavía no tiene un clúster conectado. Pide a TI que conecte uno en Infraestructura → Clústeres.").
-					WithCode(fleet.CodeNoCluster)
-			}
-			if err != nil {
-				return err
-			}
-			if cluster, err = s.repo.Place(ctx, app.Organization, app.Project, app.Environment, def.ID); err != nil {
-				return err
-			}
-			placed = cluster == def.ID
-		} else if err != nil {
-			return err
-		}
-		c, err := s.repo.FindClusterForShare(ctx, app.Organization, cluster)
+		c, placed, err := s.placement(ctx, app.Organization, app.Project, app.Environment)
 		if err != nil {
 			return err
 		}
-		// moved between the read and the lock: the retry finds it there
-		if now, err := s.repo.FindPlacement(ctx, app.Organization, app.Environment); err != nil {
-			return err
-		} else if now != cluster {
-			return errx.Conflict("this environment was just moved to another cluster; retry").WithCode(fleet.CodePlacementMoved)
-		}
-		if c.Status == fleet.StatusRevoked {
-			if placed { // placed this instant on a cluster revoked meanwhile: the retry picks another
-				return errx.Conflict("this environment's cluster was just revoked; retry").WithCode(fleet.CodePlacementMoved)
-			}
-			return errx.Business("El clúster de este entorno fue desconectado. Pide a TI que mueva sus apps a otro clúster en Infraestructura → Clústeres.").
-				WithCode(fleet.CodeClusterRevoked)
-		}
-		app.Cluster = cluster
+		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)
 		if err != nil || !changed {
 			return err
 		}
 		return s.events.Publish(ctx, fleet.NewAppApplied(app.Organization, c, app, placed))
 	})
+}
+
+// placement is the active cluster of an environment, placing it on the
+// organization's default cluster on first use (placed). It runs in the
+// caller's transaction and locks the cluster against revocation and moves
+// until it commits.
+func (s *Service) placement(ctx context.Context, organization identity.OrganizationID, p project.ID, environment project.EnvironmentID) (fleet.Cluster, bool, error) {
+	placed := false
+	cluster, err := s.repo.FindPlacement(ctx, organization, environment)
+	if errx.IsType(err, errx.TypeNotFound) {
+		def, err := s.repo.FindDefaultCluster(ctx, organization)
+		if errx.IsType(err, errx.TypeNotFound) {
+			return fleet.Cluster{}, false, errx.Business("Tu organización todavía no tiene un clúster conectado. Pide a TI que conecte uno en Infraestructura → Clústeres.").
+				WithCode(fleet.CodeNoCluster)
+		}
+		if err != nil {
+			return fleet.Cluster{}, false, err
+		}
+		if cluster, err = s.repo.Place(ctx, organization, p, environment, def.ID); err != nil {
+			return fleet.Cluster{}, false, err
+		}
+		placed = cluster == def.ID
+	} else if err != nil {
+		return fleet.Cluster{}, false, err
+	}
+	c, err := s.repo.FindClusterForShare(ctx, organization, cluster)
+	if err != nil {
+		return fleet.Cluster{}, false, err
+	}
+	// moved between the read and the lock: the retry finds it there
+	if now, err := s.repo.FindPlacement(ctx, organization, environment); err != nil {
+		return fleet.Cluster{}, false, err
+	} else if now != cluster {
+		return fleet.Cluster{}, false, errx.Conflict("this environment was just moved to another cluster; retry").WithCode(fleet.CodePlacementMoved)
+	}
+	if c.Status == fleet.StatusRevoked {
+		if placed { // placed this instant on a cluster revoked meanwhile: the retry picks another
+			return fleet.Cluster{}, false, errx.Conflict("this environment's cluster was just revoked; retry").WithCode(fleet.CodePlacementMoved)
+		}
+		return fleet.Cluster{}, false, errx.Business("El clúster de este entorno fue desconectado. Pide a TI que mueva sus apps a otro clúster en Infraestructura → Clústeres.").
+			WithCode(fleet.CodeClusterRevoked)
+	}
+	return c, placed, nil
 }
 
 func (s *Service) Status(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (fleet.AppStatus, error) {

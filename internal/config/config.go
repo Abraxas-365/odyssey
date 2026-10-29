@@ -25,7 +25,8 @@ type Config struct {
 	Fleet Fleet
 	// Blob is where uploaded sources and build logs are stored.
 	Blob Blob
-	// Builder reads live build logs (the worker runs the builds).
+	// Builder reads live build logs (the worker runs the builds); it follows
+	// ODYSSEY_CLUSTER like the worker's.
 	Builder Builder
 }
 
@@ -40,23 +41,48 @@ type Blob struct {
 
 // Builder kinds.
 const (
-	BuilderFake = "fake" // builds nothing: an image appears after a scripted log (development, tests)
-	BuilderNone = "none" // builds nothing: every build is refused (NO_BUILDER); a fleet worker's default
+	BuilderFake  = "fake"  // builds nothing: an image appears after a scripted log (development, tests)
+	BuilderNone  = "none"  // builds nothing: every build is refused (NO_BUILDER)
+	BuilderFleet = "fleet" // the environment's cluster builds, through its agent (a fleet worker's default)
 )
 
-// Builder selects the build.Runner adapter (ODYSSEY_BUILDER).
+// Builder selects the build.Runner adapter (ODYSSEY_BUILDER). The API reads
+// live logs through it and the worker runs the builds with it, so both
+// resolve it the same way from the same environment: unset, it is fleet
+// with ODYSSEY_CLUSTER=fleet and fake otherwise.
 type Builder struct {
 	Kind string
 }
 
 func loadStorage() (Blob, Builder, error) {
 	b := Blob{URL: os.Getenv("ODYSSEY_BLOB_URL")}
-	r := Builder{Kind: env("ODYSSEY_BUILDER", BuilderFake)}
+	cluster := env("ODYSSEY_CLUSTER", ClusterFake)
+	r := Builder{Kind: os.Getenv("ODYSSEY_BUILDER")}
 	if b.URL == "" {
 		return b, r, errx.Validation("missing required environment: ODYSSEY_BLOB_URL")
 	}
-	if r.Kind != BuilderFake && r.Kind != BuilderNone {
-		return b, r, errx.Validation("ODYSSEY_BUILDER must be fake or none")
+	if cluster != ClusterFake && cluster != ClusterFleet {
+		return b, r, errx.Validation("ODYSSEY_CLUSTER must be fake or fleet")
+	}
+	// The fake builder's images exist nowhere: a real cluster would be sent
+	// apps it cannot pull. The fleet builder needs the fleet's clusters.
+	switch r.Kind {
+	case "":
+		r.Kind = BuilderFake
+		if cluster == ClusterFleet {
+			r.Kind = BuilderFleet
+		}
+	case BuilderFake:
+		if cluster == ClusterFleet {
+			return b, r, errx.Validation("ODYSSEY_BUILDER=fake cannot build for ODYSSEY_CLUSTER=fleet: its images exist nowhere (use fleet or none)")
+		}
+	case BuilderFleet:
+		if cluster != ClusterFleet {
+			return b, r, errx.Validation("ODYSSEY_BUILDER=fleet builds in the fleet's clusters: it needs ODYSSEY_CLUSTER=fleet")
+		}
+	case BuilderNone:
+	default:
+		return b, r, errx.Validation("ODYSSEY_BUILDER must be fake, none or fleet")
 	}
 	if raw := os.Getenv("ODYSSEY_SOURCE_QUOTA_GIB"); raw != "" {
 		gib, err := strconv.ParseInt(raw, 10, 64)
@@ -182,17 +208,6 @@ func LoadWorker() (Worker, error) {
 	if cfg.Blob, cfg.Builder, err = loadStorage(); err != nil {
 		return Worker{}, err
 	}
-	// The fake builder's images exist nowhere: a real cluster would be sent
-	// apps it cannot pull. Until the cluster builder (phase 1b-2) a fleet
-	// worker refuses builds (NO_BUILDER) unless told otherwise.
-	if cfg.Cluster.Kind == ClusterFleet {
-		switch os.Getenv("ODYSSEY_BUILDER") {
-		case "":
-			cfg.Builder.Kind = BuilderNone
-		case BuilderFake:
-			return Worker{}, errx.Validation("ODYSSEY_BUILDER=fake cannot build for ODYSSEY_CLUSTER=fleet: its images exist nowhere (use none)")
-		}
-	}
 	return cfg, nil
 }
 
@@ -208,6 +223,9 @@ type Gateway struct {
 	CACert     string // FLEET_CA_CERT
 	CAKey      string // FLEET_CA_KEY
 	HealthPort string // GATEWAY_HEALTH_PORT (default 8098; "" disables it)
+	// BlobURL is ODYSSEY_BLOB_URL: the store the API uploads build sources
+	// to, which agents fetch them from through the gateway (read only).
+	BlobURL string
 }
 
 // LoadGateway reads the gateway's environment.
@@ -219,6 +237,7 @@ func LoadGateway() (Gateway, error) {
 		CACert:      os.Getenv("FLEET_CA_CERT"),
 		CAKey:       os.Getenv("FLEET_CA_KEY"),
 		HealthPort:  env("GATEWAY_HEALTH_PORT", "8098"),
+		BlobURL:     os.Getenv("ODYSSEY_BLOB_URL"),
 	}
 	var missing []string
 	for name, v := range map[string]string{
@@ -226,6 +245,7 @@ func LoadGateway() (Gateway, error) {
 		"FLEET_CA_CERT":       cfg.CACert,
 		"FLEET_CA_KEY":        cfg.CAKey,
 		"FLEET_GATEWAY_HOSTS": strings.Join(cfg.Hosts, ","),
+		"ODYSSEY_BLOB_URL":    cfg.BlobURL,
 	} {
 		if v == "" {
 			missing = append(missing, name)

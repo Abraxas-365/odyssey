@@ -50,12 +50,15 @@ check:
 	go test ./...
 
 # Run the API on the host against the compose db/IAMKit (needs .env seeded).
-# It registers clusters (tokens point agents at the local gateway).
+# It registers clusters (tokens point agents at the local gateway). CLUSTER
+# and BUILDER must match the worker's: the API reads live build logs
+# through the same builder.
 run:
 	set -a && . ./.env && set +a && \
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
 	IAMKIT_URL=http://localhost:$${IAMKIT_PORT:-8085} PORT=$${ODYSSEY_PORT:-8095} \
 	FLEET_CA_CERT=$(FLEET_DIR)/ca.crt FLEET_GATEWAY_URL=$(GATEWAY_HOST):$(GATEWAY_PORT) \
+	ODYSSEY_CLUSTER=$(or $(CLUSTER),fake) ODYSSEY_BUILDER='$(BUILDER)' \
 	ODYSSEY_BLOB_URL='$(BLOB_URL)' \
 	go run ./cmd/odyssey-api
 
@@ -63,7 +66,8 @@ run:
 # CLUSTER=fleet deploys to the organization's enrolled clusters (make
 # gateway + make agent-enroll) instead of the in-memory fake. BUILDER picks
 # who builds uploaded sources (fake: a scripted log and a placeholder image;
-# none: builds fail with NO_BUILDER, the default with CLUSTER=fleet).
+# fleet: the cluster's builder, the default with CLUSTER=fleet; none: builds
+# fail with NO_BUILDER).
 worker:
 	set -a && . ./.env && set +a && \
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
@@ -87,6 +91,7 @@ gateway:
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
 	FLEET_CA_CERT=$(FLEET_DIR)/ca.crt FLEET_CA_KEY=$(FLEET_DIR)/ca.key \
 	FLEET_GATEWAY_LISTEN=:$(GATEWAY_PORT) FLEET_GATEWAY_HOSTS=$(GATEWAY_HOST),localhost \
+	ODYSSEY_BLOB_URL='$(BLOB_URL)' \
 	go run ./cmd/odyssey-gateway
 
 # ---- Local data plane: a k3d cluster with the agent ----

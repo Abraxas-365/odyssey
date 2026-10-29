@@ -29,6 +29,19 @@ service Fleet {
   // observes; the control plane sends the desired state. Either side may
   // close it; the agent reconnects with backoff.
   rpc Connect(stream AgentMessage) returns (stream ControlMessage);
+  // FetchSource streams the source archive (tar.gz) of a build sent to this
+  // cluster, while the build is wanted: another cluster's build is
+  // PermissionDenied, an unknown, cancelled or finished one NotFound. The
+  // agent checks the bytes against Build.source before using them.
+  rpc FetchSource(FetchSourceRequest) returns (stream SourceChunk);
+}
+
+message FetchSourceRequest {
+  string build_id = 1;
+}
+
+message SourceChunk {
+  bytes data = 1;
 }
 
 message EnrollRequest {
@@ -81,6 +94,12 @@ message AgentMessage {
     // hello is the first message of every stream.
     Hello hello = 1;
     AppReport report = 2;
+    // build_report says how builds are going (sent on every change, and for
+    // every build the cluster holds right after Hello).
+    BuildReport build_report = 3;
+    // build_log carries lines a build printed, in order. Lines may be sent
+    // again (after a reconnect): their seq makes that harmless.
+    BuildLog build_log = 4;
   }
 }
 
@@ -89,6 +108,11 @@ message ControlMessage {
     // apply hands the agent the desired state of one app. Applying it twice,
     // or a revision older than the one the cluster has, changes nothing.
     App apply = 1;
+    // build asks the cluster to build an image; asking again changes nothing.
+    Build build = 2;
+    // cancel_build: the build is no longer wanted (cancelled, or finished
+    // and recorded): stop it if it runs and drop what the cluster keeps of it.
+    CancelBuild cancel_build = 3;
   }
 }
 
@@ -106,6 +130,74 @@ message Capabilities {
   repeated string apis = 2;
   repeated string ingress_classes = 3;
   repeated string storage_classes = 4;
+  // builder is set when the cluster can build images (unset: it cannot).
+  Builder builder = 5;
+}
+
+// Builder is the cluster's image builder.
+message Builder {
+  // registry is where built images are pushed and pulled from, as the
+  // cluster's nodes reach it (host[:port][/path], e.g. "registry.example.com/odyssey").
+  string registry = 1;
+  // platforms it builds for (e.g. "linux/amd64").
+  repeated string platforms = 2;
+}
+
+// Build asks the cluster to turn a source into an image.
+message Build {
+  string build_id = 1;
+  string organization_id = 2;
+  string project_id = 3;
+  string environment_id = 4;
+  SourceRef source = 5;
+  // image_repository is where to push the image (the registry the cluster
+  // announced, then "<organization>/<project>"); the agent reports only the
+  // digest it got.
+  string image_repository = 6;
+  // cache_ref is the registry reference of the project's build cache.
+  string cache_ref = 7;
+  // timeout_seconds bounds the build in the cluster.
+  int32 timeout_seconds = 8;
+}
+
+// SourceRef is what FetchSource must return for a build.
+message SourceRef {
+  string sha256 = 1;
+  int64 size = 2;
+}
+
+message CancelBuild {
+  string build_id = 1;
+}
+
+message BuildReport {
+  repeated BuildStatus builds = 1;
+}
+
+message BuildStatus {
+  string build_id = 1;
+  // phase is "pending", "running", "succeeded" or "failed".
+  string phase = 2;
+  // image_digest ("sha256:<64 hex>") of the pushed image (succeeded only).
+  string image_digest = 3;
+  // reason explains a failed phase: "unsupported", "source", "push",
+  // "timeout" or "failed".
+  string reason = 4;
+  string message = 5;
+}
+
+message BuildLog {
+  string build_id = 1;
+  repeated LogLine lines = 2;
+}
+
+message LogLine {
+  // seq orders the lines of a build and is stable across resends (it is
+  // derived from where the line was printed, not from when it was sent).
+  int64 seq = 1;
+  // stream is "prepare", "build" or "system".
+  string stream = 2;
+  string text = 3;
 }
 
 // App is the desired state of one app: the spec of its OdysseyApp.

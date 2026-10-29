@@ -2,9 +2,12 @@ package fleetpg_test
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/fleet/adapters/fleetpg"
@@ -432,5 +435,47 @@ func TestSignals(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("no revoked signal")
 		}
+	}
+}
+
+// The log cap counts every line at least minLine (so it bounds the rows
+// too), and concurrent batches never store past it.
+func TestBuildLogCap(t *testing.T) {
+	e := setup(t)
+	org := identity.NewOrganizationID()
+	c := e.create(org, "lima")
+	e.enrol(c, "s1")
+	session := fleet.NewSession()
+	if err := e.repo.SetSession(e.ctx, org, c.ID, session, fleet.Agent{Version: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := fleet.DesiredBuild{ID: fleet.MustParseBuildID(uuid.NewString()), Organization: org, Project: project.NewID(), Environment: project.NewEnvironmentID(),
+		Cluster: c.ID, SourceKey: blob.TenantKey(org, "sources", "s.tar.gz"), SourceSHA256: strings.Repeat("a", 64), SourceSize: 1,
+		ImageRepository: "zot:5000/o/p", CacheRef: "zot:5000/o/p:buildcache", Timeout: time.Minute}
+	if _, err := e.repo.PutBuild(e.ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	const maxBytes, minLine = 1000, 100 // room for 10 lines, however short
+	var wg sync.WaitGroup
+	for w := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lines := make([]fleet.LogLine, 5)
+			for i := range lines {
+				lines[i] = fleet.LogLine{Seq: int64(w*5 + i + 1), Stream: "build", Text: ""}
+			}
+			if live, err := e.repo.ObserveBuildLog(e.ctx, org, c.ID, session, fleet.BuildLog{Build: b.ID, Lines: lines}, maxBytes, minLine); err != nil || !live {
+				t.Error(live, err)
+			}
+		}()
+	}
+	wg.Wait()
+	page, err := e.repo.ListBuildLog(e.ctx, org, b.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Lines) != 10 || !page.Truncated {
+		t.Fatalf("%d lines stored, truncated %v; want 10 and the cut", len(page.Lines), page.Truncated)
 	}
 }

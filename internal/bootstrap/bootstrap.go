@@ -263,8 +263,11 @@ type Platform struct {
 	Projects  projectmodule.Module
 	Releases  releasemodule.Module
 	Builds    buildmodule.Module
-	Fleet     fleetmodule.Module
-	Audit     auditmodule.Module
+	// Blobs stores sources and archived build logs (the gateway streams
+	// sources from it to the agents).
+	Blobs blob.Store
+	Fleet fleetmodule.Module
+	Audit auditmodule.Module
 }
 
 // Options are the process-specific parts of a Platform.
@@ -326,7 +329,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		opts.Blobs = mem
 	}
 	builds, err := buildmodule.New(buildmodule.Deps{DB: db, Events: events, Projects: projects.Queries, Blobs: opts.Blobs,
-		Engine: engine, Runner: opts.Runner, BuilderConfig: opts.BuilderConfig, Options: opts.Build})
+		Engine: engine, Runner: opts.Runner, BuilderConfig: opts.BuilderConfig, Fleet: fleets.Builds, Options: opts.Build})
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +346,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Projects: projects,
 		Releases: releases,
 		Builds:   builds,
+		Blobs:    opts.Blobs,
 		Fleet:    fleets,
 		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
 	}

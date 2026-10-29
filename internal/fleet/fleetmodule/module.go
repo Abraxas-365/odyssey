@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/fleet/adapters/fleetca"
@@ -34,6 +35,7 @@ type Module struct {
 	Commands fleet.Commands
 	Queries  fleet.Queries
 	Dispatch fleet.Dispatch
+	Builds   fleet.Builds
 	Agents   fleet.Agents
 	HTTP     *fleethttp.Handler
 }
@@ -45,7 +47,7 @@ func New(deps Deps) Module {
 	}
 	svc := fleetsvc.New(fleetpg.New(deps.DB), ca, txn.Postgres{DB: deps.DB}, deps.Events,
 		fleetsvc.Options{Gateway: deps.Gateway, CertificateTTL: deps.CertificateTTL})
-	return Module{Commands: svc, Queries: svc, Dispatch: svc, Agents: svc, HTTP: fleethttp.New(svc, svc)}
+	return Module{Commands: svc, Queries: svc, Dispatch: svc, Builds: svc, Agents: svc, HTTP: fleethttp.New(svc, svc)}
 }
 
 // LoadAuthority reads the fleet CA (keyFile "" for verify-only).
@@ -54,9 +56,10 @@ func LoadAuthority(certFile, keyFile string) (*fleetca.Authority, error) {
 }
 
 // Gateway is the gRPC server agents connect to; changes are signalled
-// through Postgres at listenURL.
-func (m Module) Gateway(listenURL string, opts fleetgrpc.Options) *fleetgrpc.Server {
-	return fleetgrpc.New(m.Agents, fleetpg.NewSignals(listenURL), opts)
+// through Postgres at listenURL. sources is the build domain's blob store
+// (where FetchSource reads; nil: this gateway serves no build sources).
+func (m Module) Gateway(listenURL string, sources blob.Store, opts fleetgrpc.Options) *fleetgrpc.Server {
+	return fleetgrpc.New(m.Agents, fleetpg.NewSignals(listenURL), sources, opts)
 }
 
 // Schema is the module's Postgres schema and migration owner.

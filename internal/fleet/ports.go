@@ -40,6 +40,27 @@ type Dispatch interface {
 	Status(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (AppStatus, error)
 }
 
+// Builds is what the build domain uses to build in clusters (its buildfleet
+// adapter), implemented by fleetsvc.Service. Every method is idempotent.
+type Builds interface {
+	// DispatchBuild stores the build for the cluster of its environment
+	// (placing the environment on first use, like Apply) and has it sent.
+	// A cluster that announced no builder refuses it (Business, CodeNoBuilder);
+	// dispatching the same build again changes nothing.
+	DispatchBuild(ctx context.Context, build DesiredBuild) error
+	// CancelBuild has the cluster stop the build and drop it (a no-op for an
+	// unknown build). It is also how a finished build is let go.
+	CancelBuild(ctx context.Context, organization identity.OrganizationID, build BuildID) error
+	// BuildStatus is what the agent last reported (Phase BuildPending when
+	// nothing yet, or when the build is unknown).
+	BuildStatus(ctx context.Context, organization identity.OrganizationID, build BuildID) (BuildStatus, error)
+	// BuildLogs are the stored lines after seq, in order, at most limit.
+	BuildLogs(ctx context.Context, organization identity.OrganizationID, build BuildID, after int64, limit int) (LogPage, error)
+	// ForgetBuildLogs drops the stored lines once the log is archived
+	// elsewhere; lines sent later are not stored.
+	ForgetBuildLogs(ctx context.Context, organization identity.OrganizationID, build BuildID) error
+}
+
 // Agents is what the gateway does on behalf of connected agents,
 // implemented by fleetsvc.Service. The AgentRef always comes from the
 // verified client certificate.
@@ -75,6 +96,21 @@ type Agents interface {
 	// apps desired on the agent's own cluster are taken, at most at their
 	// desired revision; the rest is ignored.
 	Report(ctx context.Context, agent AgentRef, session Session, report Report) error
+
+	// DesiredBuilds are the cluster's builds of the last BuildResendWithin
+	// (wanted, cancelled and finished: the gateway decides what to send).
+	DesiredBuilds(ctx context.Context, agent AgentRef) ([]DesiredBuild, error)
+	// DesiredBuild is one of them (false when it is not this cluster's).
+	DesiredBuild(ctx context.Context, agent AgentRef, build BuildID) (DesiredBuild, bool, error)
+	// BuildSource authorizes a source download: the build must be wanted on
+	// the agent's own cluster (NotFound otherwise, whoever's it is).
+	BuildSource(ctx context.Context, agent AgentRef, build BuildID) (DesiredBuild, error)
+	// ReportBuilds stores build statuses, like Report: only builds desired
+	// on the agent's own cluster are taken, and a final phase never changes.
+	ReportBuilds(ctx context.Context, agent AgentRef, session Session, statuses []BuildStatus) error
+	// LogBuild stores lines of a build of the agent's own cluster, dropping
+	// the ones already stored and the ones beyond MaxBuildLogBytes.
+	LogBuild(ctx context.Context, agent AgentRef, session Session, log BuildLog) error
 }
 
 // Signals delivers the changes committed by any process (the worker applies
@@ -159,4 +195,27 @@ type Repository interface {
 	ListApps(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]App, error)
 	FindApp(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, environment project.EnvironmentID, name string) (App, error)
 	FindAppStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (AppStatus, error)
+
+	// PutBuild stores a new desired build and signals its cluster's gateway
+	// in the same transaction (false: it was already stored).
+	PutBuild(ctx context.Context, build DesiredBuild) (bool, error)
+	// CancelBuild marks the build no longer wanted and signals (false, with
+	// the build, when it already was; NotFound when unknown).
+	CancelBuild(ctx context.Context, organization identity.OrganizationID, build BuildID) (DesiredBuild, bool, error)
+	FindBuild(ctx context.Context, organization identity.OrganizationID, build BuildID) (DesiredBuild, error)
+	// ListBuilds are the cluster's builds changed after since.
+	ListBuilds(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, since time.Time) ([]DesiredBuild, error)
+	// FindBuildStatus is the last report, with Image filled (NotFound before one).
+	FindBuildStatus(ctx context.Context, organization identity.OrganizationID, build BuildID) (BuildStatus, error)
+	// ObserveBuilds stores statuses of builds desired on this cluster while
+	// session is its tunnel (false otherwise); a final phase never changes.
+	ObserveBuilds(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, statuses []BuildStatus) (bool, error)
+	// ObserveBuildLog stores new lines of a build desired on this cluster
+	// while session is its tunnel (false otherwise), up to maxBytes per build
+	// (a line costs at least minLine).
+	ObserveBuildLog(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, log BuildLog, maxBytes, minLine int64) (bool, error)
+	// ListBuildLog pages the stored lines (NotFound for an unknown build).
+	ListBuildLog(ctx context.Context, organization identity.OrganizationID, build BuildID, after int64, limit int) (LogPage, error)
+	// ObserveLogsArchived drops the stored lines; later ones are not stored.
+	ObserveLogsArchived(ctx context.Context, organization identity.OrganizationID, build BuildID) error
 }
