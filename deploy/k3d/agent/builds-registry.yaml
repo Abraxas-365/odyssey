@@ -1,0 +1,20 @@
+# Network policies are additive: this opens build pods' egress to zot only
+# (the pod, not the namespace), on top of the base "builds" policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: builds-registry
+  namespace: odyssey-builds
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: odyssey-registry
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: zot
+      ports:
+        - port: 5000

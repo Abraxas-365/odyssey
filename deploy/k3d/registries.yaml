@@ -1,0 +1,11 @@
+# k3s registries.yaml for the local k3d cluster (make cluster installs it as
+# /etc/rancher/k3s/registries.yaml in the node; k3s reads it at start).
+#
+# Build pods push to zot.odyssey-registry.svc.cluster.local:5000 and the
+# kubelet pulls the same name. The node's containerd cannot resolve cluster
+# DNS, so the name is mirrored to the Service's fixed ClusterIP (see
+# registry/zot.yaml); plain HTTP.
+mirrors:
+  "zot.odyssey-registry.svc.cluster.local:5000":
+    endpoint:
+      - "http://10.43.200.200:5000"

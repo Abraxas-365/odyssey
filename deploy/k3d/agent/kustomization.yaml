@@ -1,0 +1,24 @@
+# The agent as the local k3d cluster installs it (make agent-image): the
+# stock install plus the in-cluster registry (deploy/k3d/registry), which
+# makes the cluster a builder, and the egress rule build pods need to push
+# to it (the base policy blocks private addresses).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../agent/install
+  - builds-registry.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: odyssey-agent
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ODYSSEY_REGISTRY
+          value: zot.odyssey-registry.svc.cluster.local:5000/odyssey
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ODYSSEY_REGISTRY_INSECURE
+          value: "true"

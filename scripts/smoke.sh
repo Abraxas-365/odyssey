@@ -5,8 +5,13 @@
 # validation denials. Exits non-zero on any mismatch.
 #
 # SMOKE_CLUSTER=fleet runs the releases on the local k3d cluster through the
-# fleet (make gateway, make cluster, make agent-enroll, make agent, make
-# worker CLUSTER=fleet): real images, and the published URL must answer.
+# fleet: real images, and the published URL must answer. It needs the whole
+# stack up: make gateway, make cluster (k3d + zot registry), make agent-image
+# (the in-cluster agent, which also builds), make worker CLUSTER=fleet and
+# make run CLUSTER=fleet. The "From a folder" section then builds a real Node
+# app with Railpack/BuildKit (minutes; waits up to 10 min per build) and the
+# published URL must answer the app's marker. Without fleet it uses the fake
+# builder.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; source .env; set +a
@@ -70,9 +75,20 @@ serving() { # serving [WANT] -> the WHOAMI_NAME the published URL answers with (
   done
   echo "nothing at $u (${n:-no answer})"
 }
-wait_done() { # wait_done DEPLOYMENT -> final status
+serving_text() { # serving_text WANT -> WANT when the published URL's body contains it (Kubernetes only)
+  local u hostport port body
+  u=$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .url)
+  hostport=${u#http://}; port=${hostport##*:}
+  for _ in $(seq 1 15); do
+    body=$(curl -s --max-time 3 --resolve "${hostport%%:*}:$port:127.0.0.1" "$u" || true)
+    grep -qF -- "$1" <<<"$body" && { echo "$1"; return; }
+    sleep 1
+  done
+  echo "nothing at $u containing $1 (${body:-no answer})"
+}
+wait_done() { # wait_done DEPLOYMENT [MAX_SECONDS=240] -> final status
   local st
-  for _ in $(seq 1 240); do
+  for _ in $(seq 1 "${2:-240}"); do
     st=$(curl -s "$deps/$1" "${auth[@]}" | jq -r .status)
     case "$st" in ready|failed|cancelled) echo "$st"; return;; esac
     sleep 1
@@ -104,33 +120,53 @@ expect "volver a v1" ready "$(wait_done "$back")"
 expect "back on v1" "$(curl -s "$deps/$v1" "${auth[@]}" | jq -r .release_id)" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .release.id)"
 [[ -z "$kube" ]] || expect "v1 answers again" v1 "$(serving v1)"
 
-# --- From a folder (fake builder; the real one is phase 1b-2): upload a
-# tar.gz, it builds, then goes live; a source named "…unsupported…" fails
-# its build and leaves the app as it was; a broken archive is refused. ---
-if [[ -z "$kube" ]]; then
-  src=$(mktemp -d)
-  mkdir -p "$src/visitas" && printf '{"scripts":{"start":"node index.js"}}' >"$src/visitas/package.json" && echo 'console.log(1)' >"$src/visitas/index.js"
-  tar -czf "$src/visitas.tar.gz" -C "$src/visitas" .
-  cp "$src/visitas.tar.gz" "$src/app-unsupported.tar.gz"
-  printf 'not a tarball' >"$src/broken.tar.gz"
-  publish() { # publish FILE -> deployment JSON
-    curl -s -X POST "$deps" "${auth[@]}" -F 'config={"port":8080,"health_path":"/healthz"};type=application/json' -F "source=@$1;type=application/gzip"
-  }
-  folder=$(publish "$src/visitas.tar.gz")
-  expect "folder accepted" building "$(jq -r .status <<<"$folder")"
-  fid=$(jq -r .id <<<"$folder"); bid=$(jq -r .build_id <<<"$folder")
-  expect "source named after the file" visitas "$(jq -r .source.name <<<"$folder")"
-  expect "folder live" ready "$(wait_done "$fid")"
-  expect "build succeeded" succeeded "$(curl -s "$api/projects/$id/builds/$bid" "${auth[@]}" | jq -r .status)"
-  expect "build log ends" true "$(curl -s -G "$api/projects/$id/builds/$bid/logs" -d after=0 "${auth[@]}" | jq '.finished and (.lines | length > 0)')"
-  expect "current is the folder" "$fid" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .deployment.id)"
-  nope=$(publish "$src/app-unsupported.tar.gz" | jq -r .id)
-  expect "unsupported app fails" failed "$(wait_done "$nope")"
-  expect "build failure code" UNSUPPORTED_APP "$(curl -s "$deps/$nope" "${auth[@]}" | jq -r .error.code)"
-  expect "no restore after a failed build" "$fid" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .deployment.id)"
-  expect "broken archive refused" SOURCE_INVALID "$(publish "$src/broken.tar.gz" | jq -r .error.code)"
-  rm -rf "$src"
+# --- From a folder: upload a tar.gz, it builds, then goes live; a source that
+# cannot be built fails its build and leaves the app as it was; a broken
+# archive is refused. The fake builder (default) treats a source named
+# "…unsupported…" as unbuildable; with fleet the build is real (Railpack +
+# BuildKit): a Node app answering a marker on $PORT, and an unsupported one
+# that is just a README (no start command). ---
+src=$(mktemp -d)
+trap 'rm -rf "$src"' EXIT
+marker="visitas-$(date +%s)"
+mkdir -p "$src/visitas" "$src/unsupported"
+if [[ -n "$kube" ]]; then
+  printf '{"name":"visitas","scripts":{"start":"node index.js"}}' >"$src/visitas/package.json"
+  cat >"$src/visitas/index.js" <<EOF
+require('http').createServer((req, res) => res.end('$marker\n')).listen(process.env.PORT || 8080);
+EOF
+  echo '# Nothing to run here' >"$src/unsupported/README.md"
+  folder_cfg='{"port":8080,"health_path":"/"}'
+  folder_wait=600
+else
+  printf '{"scripts":{"start":"node index.js"}}' >"$src/visitas/package.json"
+  echo 'console.log(1)' >"$src/visitas/index.js"
+  cp "$src/visitas/"* "$src/unsupported/"
+  folder_cfg='{"port":8080,"health_path":"/healthz"}'
+  folder_wait=240
 fi
+tar -czf "$src/visitas.tar.gz" -C "$src/visitas" .
+tar -czf "$src/app-unsupported.tar.gz" -C "$src/unsupported" .
+printf 'not a tarball' >"$src/broken.tar.gz"
+publish() { # publish FILE -> deployment JSON
+  curl -s -X POST "$deps" "${auth[@]}" -F "config=$folder_cfg;type=application/json" -F "source=@$1;type=application/gzip"
+}
+folder=$(publish "$src/visitas.tar.gz")
+expect "folder accepted" building "$(jq -r .status <<<"$folder")"
+fid=$(jq -r .id <<<"$folder"); bid=$(jq -r .build_id <<<"$folder")
+expect "source named after the file" visitas "$(jq -r .source.name <<<"$folder")"
+expect "folder live" ready "$(wait_done "$fid" "$folder_wait")"
+expect "build succeeded" succeeded "$(curl -s "$api/projects/$id/builds/$bid" "${auth[@]}" | jq -r .status)"
+expect "build log ends" true "$(curl -s -G "$api/projects/$id/builds/$bid/logs" -d after=0 "${auth[@]}" | jq '.finished and (.lines | length > 0)')"
+expect "current is the folder" "$fid" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .deployment.id)"
+[[ -z "$kube" ]] || expect "the folder answers its marker" "$marker" "$(serving_text "$marker")"
+nope=$(publish "$src/app-unsupported.tar.gz" | jq -r .id)
+expect "unsupported app fails" failed "$(wait_done "$nope" "$folder_wait")"
+expect "build failure code" UNSUPPORTED_APP "$(curl -s "$deps/$nope" "${auth[@]}" | jq -r .error.code)"
+expect "no restore after a failed build" "$fid" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .deployment.id)"
+[[ -z "$kube" ]] || expect "the folder keeps answering" "$marker" "$(serving_text "$marker")"
+expect "broken archive refused" SOURCE_INVALID "$(publish "$src/broken.tar.gz" | jq -r .error.code)"
+rm -rf "$src"
 
 expect "env values stay out of the trail" 0 "$(curl -s -G "$api/audit" -d limit=100 "${auth[@]}" | grep -c hola || true)"
 trail=0

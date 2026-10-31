@@ -1,4 +1,4 @@
-.PHONY: build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
+.PHONY: build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
 
 # The Railpack library's version names the plans the builder writes (the
 # Dockerfile sets it the same way).
@@ -102,17 +102,35 @@ gateway:
 # The cluster's kubeconfig is written to .dev-secrets/ (your ~/.kube/config is
 # not touched). Apps answer at http://<app>.apps.odyssey.localhost:8088.
 K3D_CLUSTER      ?= odyssey
+K3D_NODE         ?= k3d-$(K3D_CLUSTER)-server-0
 KUBECONFIG_LOCAL := $(CURDIR)/.dev-secrets/kubeconfig
 APPS_PORT        ?= 8088
 
+# The cluster comes with zot (deploy/k3d/registry), the registry in-cluster
+# builds push to. The node's containerd cannot resolve cluster DNS, so
+# deploy/k3d/registries.yaml mirrors zot's name to its fixed ClusterIP; k3s
+# reads it at start: a new cluster gets it at creation, an existing one has
+# it copied in and is stopped and started (state is kept, nothing is
+# recreated). Not a bare `docker restart`: only k3d start re-injects
+# host.k3d.internal (the gateway's name) and refreshes the API load balancer.
 cluster:
 	@mkdir -p .dev-secrets && chmod 700 .dev-secrets
 	@k3d cluster list $(K3D_CLUSTER) >/dev/null 2>&1 || \
 		k3d cluster create $(K3D_CLUSTER) --agents 0 -p "$(APPS_PORT):80@loadbalancer" \
+			--registry-config deploy/k3d/registries.yaml \
 			--kubeconfig-update-default=false --kubeconfig-switch-context=false --wait
+	@k3d cluster start $(K3D_CLUSTER) --wait >/dev/null 2>&1 || true
+	@docker exec $(K3D_NODE) cat /etc/rancher/k3s/registries.yaml 2>/dev/null | cmp -s - deploy/k3d/registries.yaml || { \
+		echo "installing deploy/k3d/registries.yaml in $(K3D_NODE) and restarting the cluster"; \
+		docker cp deploy/k3d/registries.yaml $(K3D_NODE):/etc/rancher/k3s/registries.yaml && \
+		k3d cluster stop $(K3D_CLUSTER) && k3d cluster start $(K3D_CLUSTER) --wait; }
 	@k3d kubeconfig get $(K3D_CLUSTER) > $(KUBECONFIG_LOCAL) && chmod 600 $(KUBECONFIG_LOCAL)
+	@for i in $$(seq 30); do KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl --request-timeout=5s wait --for=condition=Ready node --all --timeout=5s >/dev/null 2>&1 && exit 0; sleep 2; done; \
+		echo "the cluster API did not come up" >&2; exit 1
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -f agent/install/crd
-	@echo "cluster ready: KUBECONFIG=$(KUBECONFIG_LOCAL); connect it with 'make agent-enroll NAME=local', then 'make agent' (or 'make agent-image' for in-cluster)"
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -k deploy/k3d/registry
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n odyssey-registry rollout status deployment/zot --timeout=180s
+	@echo "cluster ready: KUBECONFIG=$(KUBECONFIG_LOCAL); connect it with 'make agent-enroll NAME=local', then 'make agent' (or 'make agent-image' for in-cluster, which can also build)"
 
 cluster-down:
 	k3d cluster delete $(K3D_CLUSTER)
@@ -133,23 +151,35 @@ agent:
 	ODYSSEY_GATEWAY_DIAL=localhost:$(GATEWAY_PORT) \
 	go run -ldflags="$(RAILPACK_LDFLAGS)" ./cmd/odyssey-agent
 
-# The agent inside the cluster instead (as it is installed in a customer's).
+# The agent inside the cluster instead (as it is installed in a customer's),
+# with the local registry (needs make cluster) so it can build. The agent on
+# the host (make agent) does not build: build pods could not reach it.
 agent-image:
 	docker build --target agent -t odyssey-agent:dev .
 	k3d image import odyssey-agent:dev -c $(K3D_CLUSTER)
-	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -k agent/install
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -k deploy/k3d/agent
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n odyssey-system rollout restart deployment/odyssey-agent
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n odyssey-system rollout status deployment/odyssey-agent --timeout=120s
 
 # End to end on a real cluster: gateway + agent (in-process) + releasefleet,
 # in a throwaway k3s (testcontainers; needs Docker).
 test-kube:
-	ODYSSEY_TEST_KUBE=1 go test -count=1 -timeout 15m -run TestKube -v ./internal/bootstrap/
+	ODYSSEY_TEST_KUBE=1 go test -count=1 -timeout 15m -run '^TestKube$$' -v ./internal/bootstrap/
 
 # The same e2e against the long-lived k3d cluster (stop other agents first).
 test-kube-k3d:
 	ODYSSEY_TEST_KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_TEST_APPS_PORT=$(APPS_PORT) \
-	go test -count=1 -run TestKube -v ./internal/bootstrap/
+	go test -count=1 -run '^TestKube$$' -v ./internal/bootstrap/
+
+# Real builds on k3d (needs make cluster: zot + its mirror): folders uploaded
+# through the API are built by an in-process agent's BuildKit pods, pushed to
+# zot and deployed. The test pauses the in-cluster agent while it runs. Run
+# it alone: each build takes up to 4 GiB.
+test-build:
+	docker build --target agent -t odyssey-agent:dev .
+	k3d image import odyssey-agent:dev -c $(K3D_CLUSTER)
+	ODYSSEY_TEST_KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_TEST_APPS_PORT=$(APPS_PORT) ODYSSEY_TEST_BUILD=1 \
+	go test -count=1 -timeout 20m -run '^TestKubeBuild$$' -v ./internal/bootstrap/
 
 # One-time: signing key, fleet CA + .env with random secrets.
 setup:

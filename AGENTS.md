@@ -36,10 +36,11 @@ design (binaries, domains, build order) lives outside the repo, in
 | Local CI gate (gofmt, vet, test) | `make check` (CI also runs `-race` vs Postgres: `.github/workflows/ci.yml`) | 10s |
 | Run the worker on the host | `make worker` (health on 8096; `CLUSTER=fleet` deploys to the enrolled clusters) | 2s |
 | Run the gateway on the host (fleet CA from `make setup` in `secrets/fleet/`) | `make gateway` (agents on 8443, health on 8098) | 2s |
-| Local cluster (k3d `odyssey`, CRDs; kubeconfig in `.dev-secrets/`) | `make cluster` / `make cluster-down` | 30s |
+| Local cluster (k3d `odyssey`, CRDs, zot registry; kubeconfig in `.dev-secrets/`) | `make cluster` / `make cluster-down` | 30s |
 | Connect it (registers it through the API, token → the agent's Secret; needs `make run`) | `make agent-enroll NAME=local` | 5s |
-| Agent on the host / inside the cluster (pick one) | `make agent` / `make agent-image` | 2s / 2-5m |
+| Agent on the host (does not build) / inside the cluster (builds; applies `deploy/k3d/agent`) (pick one) | `make agent` / `make agent-image` | 2s / 2-5m |
 | Fleet e2e: gateway + agent + releasefleet on a throwaway k3s (Docker) / on k3d (stop other agents first) | `make test-kube` / `make test-kube-k3d` | 90s / 45s |
+| Real builds e2e on k3d (needs `make cluster`; pauses the in-cluster agent; run alone) | `make test-build` | 5-10m |
 | Regenerate permissions, fleet protocol, agent deepcopy, CRD + RBAC | `make gen` (after editing `iam/permissions.json`, `proto/`, `agent/api` or `+kubebuilder` markers; needs `protoc`) | 5s |
 | Regenerate console wire types | `make api-types` (after editing `api/openapi.yaml`) | 2s |
 | First local run (secrets, IAMKit, seed, API) | `make dev` | 2-4m |
@@ -47,6 +48,14 @@ design (binaries, domains, build order) lives outside the repo, in
 | Token / end-to-end check (projects + publish, auto-restore, "Volver a esta", audit; needs API + worker) | `make token` / `make smoke` (`SMOKE_CLUSTER=fleet` with the worker on `CLUSTER=fleet`, the gateway and an enrolled agent: real whoami, the URL must answer) | 60s / 90s |
 | Console dev server (needs API + IAMKit) | `make web` → http://localhost:5178 | 2s |
 | Console gate (types, oxlint, vitest, build) | `make web-check` | 15s |
+
+Local registry: zot at `zot.odyssey-registry.svc.cluster.local:5000` (HTTP, no
+auth). Build pods push to that name; the node's containerd cannot resolve
+cluster DNS, so `deploy/k3d/registries.yaml` mirrors it to the Service's fixed
+ClusterIP. `make cluster` installs that file in an existing node with
+`k3d cluster stop/start` (never a bare `docker restart`: it loses
+`host.k3d.internal`, and the agent can't reach the gateway). Build pods can
+reach only DNS, the agent's :8099, zot and public addresses.
 
 Local ports: API 8095, worker health 8096, agent health 8097, gateway 8443
 (health 8098), IAMKit 8085, Postgres 5438, web 5178, apps (k3d ingress) 8088 →
@@ -70,6 +79,7 @@ agent/builds/             tunnel ↔ OdysseyBuilds: start/cancel/status, follow 
 agent/source/             :8099 source server for build pods (per-build token) relaying FetchSource
 agent/desired/            desired app (proto) → namespace + OdysseyApp; status/capabilities → proto
 agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports; builds.go: build queue, final status after its log
+deploy/k3d/              local cluster extras: registry/ (zot in ns odyssey-registry, Service ClusterIP 10.43.200.200), registries.yaml (k3s mirror so the node pulls the registry by its in-cluster name), agent/ (overlay of agent/install: ODYSSEY_REGISTRY + `builds-registry` NetworkPolicy)
 agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), deployment
 internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
 internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp

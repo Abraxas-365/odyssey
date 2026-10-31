@@ -1,0 +1,13 @@
+# The local cluster's image registry (zot): where in-cluster builds push and
+# the node pulls from. Local-dev only; the agent's install does not carry it.
+#
+#   kubectl apply -k deploy/k3d/registry          (make cluster does it)
+#
+# Pods reach it as zot.odyssey-registry.svc.cluster.local:5000; the node's
+# containerd, which cannot resolve cluster DNS, reaches the same name through
+# the mirror in ../registries.yaml (the Service's fixed ClusterIP).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - zot.yaml
