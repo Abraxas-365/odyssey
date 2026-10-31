@@ -1,10 +1,14 @@
 .PHONY: build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
 
+# The Railpack library's version names the plans the builder writes (the
+# Dockerfile sets it the same way).
+RAILPACK_LDFLAGS = -X github.com/Abraxas-365/odyssey/agent/builder.RailpackVersion=$(patsubst v%,%,$(shell go list -m -f '{{.Version}}' github.com/railwayapp/railpack))
+
 build:
 	go build -o bin/odyssey-api ./cmd/odyssey-api
 	go build -o bin/odyssey-worker ./cmd/odyssey-worker
 	go build -o bin/odyssey-gateway ./cmd/odyssey-gateway
-	go build -o bin/odyssey-agent ./cmd/odyssey-agent
+	go build -ldflags="$(RAILPACK_LDFLAGS)" -o bin/odyssey-agent ./cmd/odyssey-agent
 
 test:
 	go test ./...
@@ -21,7 +25,7 @@ vet:
 	go vet ./...
 
 fmt:
-	gofmt -w agent api cmd internal proto
+	gofmt -w agent api cmd internal pkg proto
 
 tidy:
 	go mod tidy
@@ -45,7 +49,7 @@ api-types:
 
 # What CI runs.
 check:
-	@test -z "$$(gofmt -l agent api cmd internal proto)" || (gofmt -l agent api cmd internal proto && exit 1)
+	@test -z "$$(gofmt -l agent api cmd internal pkg proto)" || (gofmt -l agent api cmd internal pkg proto && exit 1)
 	go vet ./...
 	go test ./...
 
@@ -127,7 +131,7 @@ agent-enroll:
 agent:
 	KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_APPS_URL_PORT=$(APPS_PORT) \
 	ODYSSEY_GATEWAY_DIAL=localhost:$(GATEWAY_PORT) \
-	go run ./cmd/odyssey-agent
+	go run -ldflags="$(RAILPACK_LDFLAGS)" ./cmd/odyssey-agent
 
 # The agent inside the cluster instead (as it is installed in a customer's).
 agent-image:

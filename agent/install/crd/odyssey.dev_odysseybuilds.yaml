@@ -1,0 +1,162 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: odysseybuilds.odyssey.dev
+spec:
+  group: odyssey.dev
+  names:
+    categories:
+    - odyssey
+    kind: OdysseyBuild
+    listKind: OdysseyBuildList
+    plural: odysseybuilds
+    shortNames:
+    - obuild
+    singular: odysseybuild
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .spec.imageRepository
+      name: Image
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          OdysseyBuild is one build of an app from uploaded source: the agent runs
+          it as a Job in its own namespace (odyssey-builds) and pushes the image to
+          the cluster's registry.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              OdysseyBuildSpec is one build the control plane asked for. It mirrors the
+              fleet protocol's Build (field for field) and never changes once created.
+            properties:
+              cacheRef:
+                description: CacheRef is the registry reference of the project's build
+                  cache.
+                maxLength: 220
+                pattern: ^[a-z0-9][a-z0-9._:/-]*$
+                type: string
+              environment:
+                pattern: ^[0-9a-f-]{36}$
+                type: string
+              imageRepository:
+                description: |-
+                  ImageRepository is where the image is pushed (registry/repository,
+                  no tag); the build's id is the tag.
+                maxLength: 200
+                pattern: ^[a-z0-9][a-z0-9._:/-]*$
+                type: string
+              organization:
+                pattern: ^[0-9a-f-]{36}$
+                type: string
+              project:
+                pattern: ^[0-9a-f-]{36}$
+                type: string
+              source:
+                description: |-
+                  BuildSource identifies the uploaded archive the build fetches through
+                  the agent (the control plane checks it again while sending it).
+                properties:
+                  sha256:
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                required:
+                - sha256
+                - size
+                type: object
+              timeoutSeconds:
+                description: TimeoutSeconds bounds the build's Job (activeDeadlineSeconds).
+                format: int32
+                maximum: 7200
+                minimum: 60
+                type: integer
+            required:
+            - cacheRef
+            - environment
+            - imageRepository
+            - organization
+            - project
+            - source
+            - timeoutSeconds
+            type: object
+            x-kubernetes-validations:
+            - message: a build's spec never changes
+              rule: self == oldSelf
+          status:
+            description: |-
+              OdysseyBuildStatus is what the agent observed of the build's Job. Once
+              the phase is final it never changes (the Job may be gone by then).
+            properties:
+              finishedAt:
+                description: |-
+                  FinishedAt is when the agent saw the phase become final; the build is
+                  deleted a while after (agent/controllers/build Config.Retention).
+                format: date-time
+                type: string
+              imageDigest:
+                description: ImageDigest of the pushed image (succeeded only).
+                pattern: ^sha256:[a-f0-9]{64}$
+                type: string
+              message:
+                description: Message is the detail for people (the end of the failing
+                  step's output).
+                type: string
+              phase:
+                description: BuildPhase is where a build is.
+                enum:
+                - pending
+                - running
+                - succeeded
+                - failed
+                type: string
+              reason:
+                description: BuildReason explains a failed build.
+                enum:
+                - ""
+                - unsupported
+                - source
+                - push
+                - timeout
+                - failed
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

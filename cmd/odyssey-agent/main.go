@@ -7,10 +7,16 @@ import (
 	"os"
 
 	"github.com/Abraxas-365/odyssey/agent"
+	"github.com/Abraxas-365/odyssey/agent/builder"
 )
 
 func main() {
-	if err := agent.Run(os.Args[1:]); err != nil {
+	run := agent.Run
+	if len(os.Args) > 1 && os.Args[1] == "builder" {
+		run = builder.Run // a build's pod runs this binary too (agent/builder)
+		os.Args = os.Args[1:]
+	}
+	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "odyssey-agent:", err)
 		os.Exit(1)
 	}

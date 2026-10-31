@@ -33,14 +33,26 @@ spec:
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef: { fieldPath: metadata.namespace }
+            # Its own pod: build pods run the agent's image (prepare step).
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
             # Where apps answer (k3d maps the ingress to localhost:8088).
             - name: ODYSSEY_APPS_DOMAIN
               value: apps.odyssey.localhost
             - name: ODYSSEY_APPS_URL_PORT
               value: "8088"
+            # Building: the registry images go to, as the nodes reach it,
+            # makes this cluster a builder (empty: it does not build).
+            # - name: ODYSSEY_REGISTRY
+            #   value: registry.example.com/odyssey
+            # - name: ODYSSEY_REGISTRY_INSECURE   # plain HTTP (a local registry)
+            #   value: "true"
           ports:
             - name: health
               containerPort: 8097
+            - name: source
+              containerPort: 8099
           livenessProbe:
             httpGet: { path: /healthz, port: health }
           readinessProbe:

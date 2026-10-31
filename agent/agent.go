@@ -5,6 +5,7 @@
 package agent
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,9 +13,11 @@ import (
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	"github.com/Abraxas-365/odyssey/agent/controllers/app"
+	buildctl "github.com/Abraxas-365/odyssey/agent/controllers/build"
 	"github.com/Abraxas-365/odyssey/agent/desired"
 	"github.com/Abraxas-365/odyssey/agent/tunnel"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -47,6 +50,8 @@ type Options struct {
 	// Secret is the agent's Secret (namespace/name): its tunnel Store when
 	// Tunnel.Store is nil. Empty: no tunnel.
 	Secret client.ObjectKey
+	// Builds make the agent its cluster's builder (needs the tunnel).
+	Builds BuildOptions
 }
 
 // Version is the agent's version (set at build time with -ldflags).
@@ -81,6 +86,12 @@ func Run(args []string) error {
 	secretNS := fs.String("secret-namespace", env("POD_NAMESPACE", "odyssey-system"), "namespace of the agent's Secret")
 	secret := fs.String("secret", env("ODYSSEY_AGENT_SECRET", "odyssey-agent"), "the agent's Secret (enrolment token, then its identity); empty = no tunnel")
 	fs.StringVar(&o.Tunnel.Dial, "gateway-dial", os.Getenv("ODYSSEY_GATEWAY_DIAL"), "host:port to reach the gateway by when not its own (an agent run outside the cluster)")
+	fs.StringVar(&o.Builds.Registry, "registry", os.Getenv("ODYSSEY_REGISTRY"), "registry built images go to, as the nodes reach it (host[:port][/path]); empty = the agent does not build")
+	fs.BoolVar(&o.Builds.InsecureRegistry, "registry-insecure", envBool("ODYSSEY_REGISTRY_INSECURE"), "talk to the registry over plain HTTP (a local registry)")
+	fs.StringVar(&o.Builds.Platform, "build-platform", os.Getenv("ODYSSEY_BUILD_PLATFORM"), "platform images are built for (default linux/<the agent's arch>)")
+	fs.StringVar(&o.Builds.AgentImage, "agent-image", os.Getenv("ODYSSEY_AGENT_IMAGE"), "the agent's own image (it runs each build's prepare step)")
+	fs.StringVar(&o.Builds.SourceAddr, "source-addr", env("ODYSSEY_SOURCE_ADDR", ":8099"), "address the agent serves sources to build pods on")
+	fs.StringVar(&o.Builds.SourceURL, "source-url", env("ODYSSEY_SOURCE_URL", "http://odyssey-agent-source.odyssey-system.svc:8099"), "URL build pods reach the agent's source server at")
 	zopts := zap.Options{}
 	zopts.BindFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -111,8 +122,16 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		return nil, err
 	}
 	// The agent caches only what it owns: its pods, Deployments, Services and
-	// Ingresses carry the managed-by label.
+	// Ingresses carry the managed-by label; build Jobs live in their own
+	// namespace. Secrets are never cached (read through the API).
 	owned := cache.ByObject{Label: labels.SelectorFromSet(labels.Set{app.LabelManagedBy: app.ManagedBy})}
+	byObject := map[client.Object]cache.ByObject{
+		&corev1.Pod{}: owned, &appsv1.Deployment{}: owned, &corev1.Service{}: owned, &networkingv1.Ingress{}: owned,
+	}
+	if o.Builds.enabled() {
+		byObject[&batchv1.Job{}] = cache.ByObject{Label: owned.Label, Namespaces: map[string]cache.Config{buildctl.Namespace: {}}}
+		byObject[&v1alpha1.OdysseyBuild{}] = cache.ByObject{Namespaces: map[string]cache.Config{buildctl.Namespace: {}}}
+	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                  scheme,
 		HealthProbeBindAddress:  o.HealthAddr,
@@ -120,9 +139,8 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		LeaderElection:          o.LeaderElection,
 		LeaderElectionID:        "odyssey-agent.odyssey.dev",
 		LeaderElectionNamespace: o.LeaderElectionNamespace,
-		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&corev1.Pod{}: owned, &appsv1.Deployment{}: owned, &corev1.Service{}: owned, &networkingv1.Ingress{}: owned,
-		}},
+		Cache:                   cache.Options{ByObject: byObject},
+		Client:                  client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{&corev1.Secret{}}}},
 	})
 	if err != nil {
 		return nil, err
@@ -134,6 +152,8 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		if err := addTunnel(cfg, mgr, o); err != nil {
 			return nil, err
 		}
+	} else if o.Builds.enabled() {
+		return nil, errors.New("building needs the tunnel (--secret)")
 	}
 	if o.HealthAddr != "0" {
 		if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
@@ -164,9 +184,20 @@ func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
 		t.Version = Version
 	}
 	t.Log = ctrl.Log.WithName("tunnel")
+	var withTunnel func(*tunnel.Client) error
+	if o.Builds.enabled() {
+		if withTunnel, err = addBuilds(cfg, mgr, o, &t); err != nil {
+			return err
+		}
+	}
 	c := tunnel.New(t)
 	if err := c.WatchStatuses(mgr); err != nil {
 		return err
+	}
+	if withTunnel != nil {
+		if err := withTunnel(c); err != nil {
+			return err
+		}
 	}
 	return mgr.Add(c)
 }

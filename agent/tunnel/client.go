@@ -62,6 +62,9 @@ type Options struct {
 	// SaveRetry is the first wait before retrying to keep a certificate the
 	// control plane issued (default 1 s, doubling, five attempts).
 	SaveRetry time.Duration
+	// Builds runs the builds the control plane sends; nil: this agent does
+	// not build (its Capabilities have no builder).
+	Builds Builds
 }
 
 type key struct{ environment, name string }
@@ -71,7 +74,8 @@ type key struct{ environment, name string }
 type Client struct {
 	o Options
 
-	queue workqueue.TypedRateLimitingInterface[key]
+	queue      workqueue.TypedRateLimitingInterface[key]
+	buildQueue workqueue.TypedRateLimitingInterface[string]
 
 	mu       sync.Mutex
 	apps     map[key]*fleetv1.App       // newest desired revision per app, until applied
@@ -79,6 +83,11 @@ type Client struct {
 	changed  map[key]bool               // statuses to report
 	wake     chan struct{}
 	cert     *tls.Certificate // current client certificate
+	conn     *grpc.ClientConn // the open connection (FetchSource), nil when down
+
+	buildOps      map[string]buildOp              // what to do with a build, until done
+	refusedBuilds map[string]*fleetv1.BuildStatus // builds refused (reported failed) until cancelled
+	buildsChanged map[string]bool                 // build statuses to report
 }
 
 func New(o Options) *Client {
@@ -106,7 +115,9 @@ func New(o Options) *Client {
 			workqueue.NewTypedItemExponentialFailureRateLimiter[key](500*time.Millisecond, 30*time.Second),
 			workqueue.TypedRateLimitingQueueConfig[key]{Name: "odyssey-desired-apps"}),
 		apps: map[key]*fleetv1.App{}, rejected: map[key]*fleetv1.AppStatus{}, changed: map[key]bool{},
-		wake: make(chan struct{}, 1),
+		wake:       make(chan struct{}, 1),
+		buildQueue: newBuildQueue(), buildOps: map[string]buildOp{},
+		refusedBuilds: map[string]*fleetv1.BuildStatus{}, buildsChanged: map[string]bool{},
 	}
 }
 
@@ -116,17 +127,18 @@ func (c *Client) Changed(environment, name string) {
 	c.mu.Lock()
 	c.changed[key{environment, name}] = true
 	c.mu.Unlock()
-	select {
-	case c.wake <- struct{}{}:
-	default:
-	}
+	c.poke()
 }
 
 // Start connects and stays connected until ctx ends.
 func (c *Client) Start(ctx context.Context) error {
 	defer c.queue.ShutDown()
+	defer c.buildQueue.ShutDown()
 	for range c.o.Workers {
 		go c.work(ctx)
+	}
+	if c.o.Builds != nil {
+		go c.workBuilds(ctx)
 	}
 	backoff := c.o.MinBackoff
 	for ctx.Err() == nil {
@@ -224,6 +236,8 @@ func (c *Client) session(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close()
+	c.setConn(conn)
+	defer c.setConn(nil)
 	api := fleetv1.NewFleetClient(conn)
 	if time.Now().After(renewAt(pair.Leaf)) {
 		if id, err = c.renew(ctx, api, id); err != nil {
@@ -237,6 +251,12 @@ func (c *Client) session(ctx context.Context) error {
 func (c *Client) setCert(cert *tls.Certificate) {
 	c.mu.Lock()
 	c.cert = cert
+	c.mu.Unlock()
+}
+
+func (c *Client) setConn(conn *grpc.ClientConn) {
+	c.mu.Lock()
+	c.conn = conn
 	c.mu.Unlock()
 }
 
@@ -452,11 +472,15 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 	if err := c.reportAll(ctx, send); err != nil {
 		return err
 	}
+	builds := c.newBuildSession(ctx, send)
+	if err := c.reportBuilds(ctx, builds, true); err != nil {
+		return err
+	}
 	c.o.Log.Info("tunnel up", "gateway", id.Gateway, "cluster", id.Cluster)
 
 	errc := make(chan error, 2)
 	go func() { errc <- c.receive(st) }()
-	go func() { errc <- c.reportLoop(ctx, send) }()
+	go func() { errc <- c.reportLoop(ctx, send, builds) }()
 
 	renewal := time.NewTimer(time.Until(renewAt(leaf)))
 	defer renewal.Stop()
@@ -487,12 +511,15 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 // errRenewed ends a stream so the agent reconnects with its new certificate.
 var errRenewed = errors.New("reconnecting with the renewed certificate")
 
-// receive queues the desired apps the gateway sends.
+// receive queues the desired apps and builds the gateway sends.
 func (c *Client) receive(st fleetv1.Fleet_ConnectClient) error {
 	for {
 		m, err := st.Recv()
 		if err != nil {
 			return err
+		}
+		if c.receiveBuild(m) {
+			continue
 		}
 		a := m.GetApply()
 		if a == nil {
@@ -554,7 +581,7 @@ func (c *Client) applied(k key, a *fleetv1.App, refused error) {
 }
 
 // reportLoop sends what changed (coalesced) and, every ReportEvery, everything.
-func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage) error) error {
+func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage) error, builds *buildSession) error {
 	full := time.NewTicker(c.o.ReportEvery)
 	defer full.Stop()
 	for {
@@ -565,6 +592,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 			if err := c.reportAll(ctx, send); err != nil {
 				return err
 			}
+			if err := c.reportBuilds(ctx, builds, true); err != nil {
+				return err
+			}
 		case <-c.wake:
 			// let a burst of changes (a rollout) settle into one report
 			select {
@@ -573,6 +603,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 			case <-time.After(100 * time.Millisecond):
 			}
 			if err := c.reportChanged(ctx, send); err != nil {
+				return err
+			}
+			if err := c.reportBuilds(ctx, builds, false); err != nil {
 				return err
 			}
 		}

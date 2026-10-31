@@ -58,14 +58,19 @@ Local ports: API 8095, worker health 8096, agent health 8097, gateway 8443
 cmd/odyssey-api/          entry point → bootstrap.Run
 cmd/odyssey-worker/       entry point → bootstrap.RunWorker
 cmd/odyssey-gateway/      entry point → bootstrap.RunGateway (+ `ca init`)
-cmd/odyssey-agent/        entry point → agent.Run
+cmd/odyssey-agent/        entry point → agent.Run (and `builder prepare|build` in a build's pod)
 proto/fleet/v1/           the gRPC contract between the planes (fleet.proto + generated code)
-agent/                    DATA PLANE (never imports internal/): manager (agent.go)
-agent/api/v1alpha1/       OdysseyApp CRD types (+ generated deepcopy)
+pkg/srcarchive/           source .tar.gz rules (verify while streaming, safe extract), shared by the API and the builder
+agent/                    DATA PLANE (never imports internal/): manager (agent.go), builds wiring (builds.go)
+agent/api/v1alpha1/       OdysseyApp + OdysseyBuild CRD types (+ generated deepcopy)
 agent/controllers/app/    OdysseyApp → Deployment/Service/Ingress; Observe = the pure phase function
+agent/controllers/build/  OdysseyBuild → token Secret + Job (Job = pure builder); Observe = Job/Pod → phase
+agent/builder/            what a build's pod runs: prepare (fetch, verify, Dockerfile or Railpack plan), build (buildctl push); imports only pkg/
+agent/builds/             tunnel ↔ OdysseyBuilds: start/cancel/status, follow the pod's log (seq = stream<<32|line)
+agent/source/             :8099 source server for build pods (per-build token) relaying FetchSource
 agent/desired/            desired app (proto) → namespace + OdysseyApp; status/capabilities → proto
-agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports
-agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, deployment
+agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports; builds.go: build queue, final status after its log
+agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), deployment
 internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
 internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp
 internal/server/          Fiber app: middleware, /health, /api/config, /api/v1
@@ -73,7 +78,7 @@ internal/<domain>/        domain types + ports.go; <domain>svc, <domain>module, 
 internal/event/           event envelope + Bus; adapters/outboxpg: transactional outbox + dispatcher
 internal/workflow/        durable workflow port + Registry; adapters/workflowpg: River-backed engine
 internal/blob/            object storage port (Store, TenantKey); adapters/gocloudblob: Go CDK (file://, mem://, s3://, azblob://)
-internal/build/           sources (uploaded tar.gz) + builds; archive/ (verify, extract); adapters buildpg, buildhttp (status, logs), buildfake (runner)
+internal/build/           sources (uploaded tar.gz) + builds; archive/ (API wording of pkg/srcarchive); adapters buildpg, buildhttp (status, logs), buildfake (runner)
 internal/audit/           ordered subscriber of every event → hash-chained trail, GET /api/v1/audit
 internal/{errx,identity,query,text,txn,pgerr,migrate,pgtest,config,httpx,permission}/  foundation
 iam/permissions.json      the IAMKit permission manifest (source of internal/permission)
@@ -127,7 +132,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
 | A foundation port's backends (`blob/adapters/*`, `event/adapters/*`, `workflow/adapters/*`) are opened only by bootstrap; `gocloud.dev` only inside `blob/adapters`; a domain with a service declares `Commands`, `Queries`, `Repository` and has a `<domain>module` | `TestBackendsStayInTheCompositionRoot`, `TestDomainsHaveTheGoldenShape` |
-| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
+| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); `pkg/` (code both planes run, e.g. `srcarchive`) imports neither plane nor Kubernetes; `agent/builder` (a build pod's program) imports only `pkg/` — no Kubernetes, gRPC or protobuf — and is the only importer of Railpack; in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
 

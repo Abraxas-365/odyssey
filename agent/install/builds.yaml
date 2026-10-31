@@ -1,0 +1,125 @@
+# Builds: the namespace the agent runs build Jobs in, and how build pods
+# reach the agent for their source. Building stays off until the agent is
+# given a registry (ODYSSEY_REGISTRY, see deployment.yaml).
+#
+# BuildKit rootless needs seccomp and AppArmor unconfined (it creates user
+# namespaces and mounts), so this namespace is Pod Security "privileged".
+# Nothing else runs here: build pods have no service account token, run as
+# uid 1000 and only talk to the agent (their token), the registry and the
+# internet (NetworkPolicy "builds" below).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: odyssey-builds
+  labels:
+    app.kubernetes.io/part-of: odyssey
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: odyssey-agent
+  namespace: odyssey-builds
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: odyssey-agent
+subjects:
+  - kind: ServiceAccount
+    name: odyssey-agent
+    namespace: odyssey-system
+---
+# Build pods fetch their source from the agent (it relays the control
+# plane's stream; each build presents its own one-time token).
+apiVersion: v1
+kind: Service
+metadata:
+  name: odyssey-agent-source
+  namespace: odyssey-system
+  labels:
+    app.kubernetes.io/part-of: odyssey
+spec:
+  selector:
+    app.kubernetes.io/name: odyssey-agent
+  ports:
+    - name: source
+      port: 8099
+      targetPort: source
+---
+# Only build pods reach the source server; the health port stays open to
+# the kubelet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: odyssey-agent
+  namespace: odyssey-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: odyssey-agent
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: odyssey-builds
+      ports:
+        - port: 8099
+    - ports:
+        - port: 8097
+---
+# What a build may reach. Its RUN steps are the app's code, so: DNS, the
+# agent's source server, and the internet (base images, packages, mise) but
+# no private address — not the API server, other apps, databases nor the
+# cloud's metadata endpoint. Nothing reaches a build pod.
+#
+# The registry: on another network it is reached through the last rules. A
+# registry inside the cluster or on a private address needs its own egress
+# rule, added in the install's overlay (as the local cluster's does).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: builds
+  namespace: odyssey-builds
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: odyssey-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: odyssey-agent
+      ports:
+        - port: 8099
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+    - to:
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7
+              - fe80::/10
+              - ::1/128

@@ -20,6 +20,13 @@ import (
 //     phase 1a-a3 it holds no cluster credentials; the agent applies what
 //     it is sent through its tunnel;
 //   - proto/ imports neither plane;
+//   - pkg/ holds code both planes run with the same rules (srcarchive: the
+//     source checks of the upload and of the builder); it imports neither
+//     plane nor Kubernetes;
+//   - agent/builder is the program of a build's pod (which has no service
+//     account token and talks to nothing but the agent's source server and
+//     the registry): it imports no Kubernetes, no gRPC/proto and no other
+//     agent package (pkg/ only); Railpack is imported only there;
 //   - in the control plane the wire format (proto/, protobuf) is used only
 //     by adapters (fleet/adapters/fleetgrpc), and gRPC only by adapters and
 //     the composition root (which builds the gateway's server).
@@ -32,7 +39,29 @@ var (
 	kubernetesLibs = []string{"k8s.io/", "sigs.k8s.io/"}
 	wireFormat     = []string{repoModule + "proto/", "google.golang.org/protobuf"}
 	grpcLib        = "google.golang.org/grpc"
+	railpackLib    = "github.com/railwayapp/railpack"
 )
+
+// builderViolations: what a build pod's program may not import.
+func builderViolations(rel, p, pos string) []string {
+	var out []string
+	builder := strings.HasPrefix(rel, "agent/builder/")
+	if strings.HasPrefix(p, railpackLib) && !builder {
+		out = append(out, pos+": Railpack is the build pod's planner: only agent/builder imports it ("+p+")")
+	}
+	if !builder {
+		return out
+	}
+	if strings.HasPrefix(p, repoModule) && !strings.HasPrefix(p, repoModule+"pkg/") {
+		out = append(out, pos+": agent/builder runs in a build's pod and imports only pkg/ ("+p+")")
+	}
+	for _, lib := range append(append([]string{grpcLib}, kubernetesLibs...), "google.golang.org/protobuf") {
+		if strings.HasPrefix(p, lib) {
+			out = append(out, pos+": agent/builder runs in a build's pod, which talks to no cluster API nor the control plane ("+p+")")
+		}
+	}
+	return out
+}
 
 // repoSources parses the .go files (tests included) of the given top-level
 // directories, with paths relative to the repository root.
@@ -66,6 +95,7 @@ func planeViolations(files []goFile) []string {
 	for _, f := range files {
 		agentSide := strings.HasPrefix(f.rel, "agent/") || strings.HasPrefix(f.rel, "cmd/odyssey-agent/")
 		contract := strings.HasPrefix(f.rel, "proto/")
+		shared := strings.HasPrefix(f.rel, "pkg/")
 		controlPlane := !agentSide && (strings.HasPrefix(f.rel, "internal/") || strings.HasPrefix(f.rel, "cmd/"))
 		adapter := strings.HasPrefix(f.rel, "internal/") && strings.Contains(f.rel, "/adapters/")
 		wiring := strings.HasPrefix(f.rel, "internal/bootstrap/")
@@ -73,11 +103,20 @@ func planeViolations(files []goFile) []string {
 		for _, imp := range f.file.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
 			pos := f.fset.Position(imp.Pos()).String()
+			out = append(out, builderViolations(f.rel, p, pos)...)
 			if agentSide && (strings.HasPrefix(p, repoModule+"internal/") || strings.HasPrefix(p, repoModule+"cmd/")) {
 				out = append(out, pos+": the agent must not import the control plane ("+p+"); they talk through proto/")
 			}
 			if contract && strings.HasPrefix(p, repoModule) && !strings.HasPrefix(p, repoModule+"proto/") {
 				out = append(out, pos+": proto/ is the contract between the planes and imports neither ("+p+")")
+			}
+			if shared && strings.HasPrefix(p, repoModule) && !strings.HasPrefix(p, repoModule+"pkg/") {
+				out = append(out, pos+": pkg/ is shared by both planes and imports neither ("+p+")")
+			}
+			for _, lib := range kubernetesLibs {
+				if shared && strings.HasPrefix(p, lib) {
+					out = append(out, pos+": pkg/ is shared by both planes and may not use Kubernetes ("+p+")")
+				}
 			}
 			if !controlPlane || e2e {
 				continue
@@ -105,7 +144,7 @@ func planeViolations(files []goFile) []string {
 }
 
 func TestPlanesStayApart(t *testing.T) {
-	report(t, planeViolations(repoSources(t, "agent", "cmd", "internal", "proto")))
+	report(t, planeViolations(repoSources(t, "agent", "cmd", "internal", "pkg", "proto")))
 }
 
 func TestPlaneRulesCatchViolations(t *testing.T) {
@@ -122,7 +161,16 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"proto/fleet/v1/fleet.pb.go":                       `package fleetv1; import _ "google.golang.org/protobuf/reflect/protoreflect"`,
 		"cmd/odyssey-gateway/main.go":                      `package main; import _ "` + m + `internal/bootstrap"`,
 		"cmd/odyssey-agent/main.go":                        `package main; import _ "` + m + `agent"`,
+		"pkg/srcarchive/s.go":                              `package srcarchive; import _ "archive/tar"`,
+		"agent/builder/b.go":                               `package builder; import (_ "` + m + `pkg/srcarchive"; _ "github.com/railwayapp/railpack/core")`,
+		"agent/builds/m.go":                                `package builds; import (_ "` + m + `agent/controllers/build"; _ "` + m + `pkg/srcarchive"; _ "` + m + `proto/fleet/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client")`,
+		"agent/controllers/build/j.go":                     `package build; import (_ "` + m + `agent/builder"; _ "k8s.io/api/batch/v1")`,
+		"internal/build/archive/a.go":                      `package archive; import _ "` + m + `pkg/srcarchive"`,
 		// violations
+		"agent/builder/k.go":                         `package builder; import (_ "k8s.io/client-go/kubernetes"; _ "` + m + `agent/api/v1alpha1"; _ "google.golang.org/grpc")`,
+		"agent/builds/r.go":                          `package builds; import _ "github.com/railwayapp/railpack/core/app"`,
+		"pkg/srcarchive/bad.go":                      `package srcarchive; import _ "` + m + `internal/errx"`,
+		"pkg/other/k.go":                             `package other; import (_ "` + m + `agent/api/v1alpha1"; _ "k8s.io/api/core/v1")`,
 		"agent/agent.go":                             `package agent; import _ "` + m + `internal/fleet"`,
 		"proto/fleet/v1/extra.go":                    `package fleetv1; import _ "` + m + `agent/api/v1alpha1"`,
 		"internal/release/adapters/releasekube/c.go": `package releasekube; import _ "k8s.io/client-go/rest"`,
@@ -143,5 +191,12 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"internal/bootstrap/wire.go: is wire format",
 		"cmd/odyssey-worker/main.go: the control plane never talks to a cluster",
 		"internal/fleet/fleet_test.go: the control plane must not import the agent",
+		"pkg/srcarchive/bad.go: pkg/ is shared by both planes and imports neither",
+		"pkg/other/k.go: pkg/ is shared by both planes and imports neither",
+		"pkg/other/k.go: pkg/ is shared by both planes and may not use Kubernetes",
+		"agent/builder/k.go: agent/builder runs in a build's pod and imports only pkg/",
+		"agent/builder/k.go: talks to no cluster API nor the control plane (k8s.io/client-go",
+		"agent/builder/k.go: talks to no cluster API nor the control plane (google.golang.org/grpc",
+		"agent/builds/r.go: Railpack is the build pod's planner",
 	)
 }

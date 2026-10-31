@@ -10,9 +10,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - crd/odyssey.dev_odysseyapps.yaml
+  - crd/odyssey.dev_odysseybuilds.yaml
   - namespace.yaml
   - rbac/role.yaml
   - rbac.yaml
+  - builds.yaml
   - deployment.yaml
 images:
   - name: odyssey-agent

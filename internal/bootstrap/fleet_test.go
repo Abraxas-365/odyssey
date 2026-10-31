@@ -163,9 +163,14 @@ func startFleet(t *testing.T, tune ...func(*bootstrap.Options)) *fleetHarness {
 	return h
 }
 
-func (h *fleetHarness) agent(t *testing.T, store tunnel.Store, cluster *fakeCluster) (stop func()) {
+func (h *fleetHarness) agent(t *testing.T, store tunnel.Store, cluster *fakeCluster, tune ...func(*tunnel.Options)) (stop func()) {
 	t.Helper()
-	c := tunnel.New(tunnel.Options{
+	c := h.tunnelClient(store, cluster, tune...)
+	return runAgent(t, c)
+}
+
+func (h *fleetHarness) tunnelClient(store tunnel.Store, cluster *fakeCluster, tune ...func(*tunnel.Options)) *tunnel.Client {
+	o := tunnel.Options{
 		Store: store, Desired: cluster, Version: "test",
 		IsRejected: func(err error) bool { _, ok := err.(rejection); return ok },
 		Rejected: func(a *fleetv1.App, err error) *fleetv1.AppStatus {
@@ -173,10 +178,19 @@ func (h *fleetHarness) agent(t *testing.T, store tunnel.Store, cluster *fakeClus
 				Phase: "failed", Reason: "config", Message: "refused: " + err.Error()}
 		},
 		Log: logr.Discard(), MinBackoff: 50 * time.Millisecond, MaxBackoff: 200 * time.Millisecond, SaveRetry: 10 * time.Millisecond,
-	})
+	}
+	for _, f := range tune {
+		f(&o)
+	}
+	c := tunnel.New(o)
 	cluster.mu.Lock()
 	cluster.notify = c.Changed
 	cluster.mu.Unlock()
+	return c
+}
+
+func runAgent(t *testing.T, c *tunnel.Client) (stop func()) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = c.Start(ctx); close(done) }()
