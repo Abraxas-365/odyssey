@@ -33,6 +33,8 @@ tags:
     description: The organization's Kubernetes clusters, where apps run (TI's Infraestructura → Clústeres).
   - name: audit
     description: The organization's tamper-evident activity trail.
+  - name: github
+    description: Connecting apps to their GitHub repositories.
 
 paths:
   /health:
@@ -717,6 +719,347 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/github:
+    get:
+      tags: [github]
+      operationId: getGitHub
+      summary: Whether GitHub is available on this Odyssey
+      description: Holds no secrets. `enabled` is false when the GitHub App is not configured.
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The integration's settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/github/install:
+    get:
+      tags: [github]
+      operationId: getGitHubInstallURL
+      summary: Where to send the user to install the GitHub App
+      description: >-
+        The URL carries a signed state naming the organization and who asked; GitHub sends the browser back to
+        `/github/setup`. `return_to` is the console path to land on afterwards (default: the GitHub settings
+        page). `GITHUB_NOT_CONFIGURED` (422) when this installation has no GitHub App; 400 when `return_to` is not
+        a console path.
+      x-permissions: [odyssey:integrations:manage]
+      parameters:
+        - name: return_to
+          in: query
+          description: A console path (starts with a single `/`), e.g. `/apps/visitas/conectar`.
+          schema: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: The GitHub URL to open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubInstallURL" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/github/installations:
+    post:
+      tags: [github]
+      operationId: claimGitHubInstallation
+      summary: Link the GitHub installation of a claim to the organization
+      description: >-
+        Second step of linking an installation. `/github/setup` (public) only checks that the GitHub user owns
+        (User account) or administers (Organization admin, which needs the App's `members: read` permission) the
+        installation's account, and redirects the browser to the console with a signed, 15-minute `github_claim`
+        bound to the organization and to the Odyssey user who asked for the install link. The console posts it here,
+        logged in. Only that user, in that organization, can redeem it: any other user or organization, a forged or
+        expired claim, answers `GITHUB_STATE_INVALID` (422) without saying which. Linking again to the same
+        organization refreshes the installation; `GITHUB_INSTALLATION_TAKEN` (409) when another organization has it;
+        `GITHUB_NOT_CONFIGURED` (422); `GITHUB_NO_ACCESS` (404) when GitHub no longer knows it and
+        `GITHUB_UNAVAILABLE` (502) when it does not answer. `return_to` is the console path to land on (default:
+        the GitHub settings page).
+      x-permissions: [odyssey:integrations:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimGitHubInstallation" }
+      responses:
+        "200":
+          description: The linked installation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubInstallationClaimed" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
+    get:
+      tags: [github]
+      operationId: listGitHubInstallations
+      summary: List the GitHub installations linked to the organization
+      description: "Not paginated (an organization links a handful). Order: `lower(account)`, then `id`."
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The linked installations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubInstallationList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/github/installations/{installation}:
+    parameters:
+      - $ref: "#/components/parameters/Installation"
+    delete:
+      tags: [github]
+      operationId: unlinkGitHubInstallation
+      summary: Unlink a GitHub installation
+      description: >-
+        The apps connected through it stop publishing (their connections stay, marked unreachable). The
+        installation itself stays on GitHub; uninstalling the App is done there.
+      x-permissions: [odyssey:integrations:manage]
+      responses:
+        "204":
+          description: Unlinked. No body.
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/github/repositories:
+    get:
+      tags: [github]
+      operationId: listGitHubRepositories
+      summary: List the repositories the linked installations reach
+      description: >-
+        Across every linked installation, filtered by `search` on the full name. Each item says which
+        installation reaches it. `GITHUB_UNAVAILABLE` (502) when GitHub does not answer.
+      x-permissions: [odyssey:projects:write]
+      parameters:
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of repositories.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubRepositoryList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
+
+  /api/v1/github/installations/{installation}/repositories/{repository}/branches:
+    parameters:
+      - $ref: "#/components/parameters/Installation"
+      - name: repository
+        in: path
+        required: true
+        description: GitHub's numeric repository id.
+        schema: { type: integer, format: int64, minimum: 1 }
+    get:
+      tags: [github]
+      operationId: listGitHubBranches
+      summary: List a repository's branches
+      description: >-
+        Not paginated. `GITHUB_NO_ACCESS` (404) when the installation no longer reaches the repository or is
+        suspended; `GITHUB_UNAVAILABLE` (502) when GitHub does not answer.
+      x-permissions: [odyssey:projects:write]
+      responses:
+        "200":
+          description: The branches and their heads.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubBranchList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
+
+  /api/v1/projects/{id}/repository:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [github]
+      operationId: getProjectRepository
+      summary: Get the project's connected repository
+      description: 404 when the project has no repository connected.
+      x-permissions: [odyssey:deployments:read]
+      responses:
+        "200":
+          description: The connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepositoryConnection" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+    put:
+      tags: [github]
+      operationId: connectProjectRepository
+      summary: Connect (or reconnect) the project to a repository branch
+      description: >-
+        Replaces the project's connection, if any. Every push to the branch then publishes to production, and the
+        branch's current head is queued to publish now (see `publishProjectRepository`). An empty `branch` takes
+        the repository's default branch. Errors: `PROJECT_ARCHIVED`, `GITHUB_NOT_CONFIGURED` (422);
+        `GITHUB_NO_ACCESS` (404, the installation does not reach the repository or is suspended),
+        `GITHUB_BRANCH_MISSING` (404), and 404 for an installation or project that is not the organization's; 409
+        on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
+      x-permissions: [odyssey:projects:write, odyssey:deployments:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectRepository" }
+      responses:
+        "200":
+          description: The connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepositoryConnection" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
+    delete:
+      tags: [github]
+      operationId: disconnectProjectRepository
+      summary: Disconnect the project's repository
+      description: Stops publishing from it; deployments already made stay. 404 when none is connected.
+      x-permissions: [odyssey:projects:write]
+      responses:
+        "204":
+          description: Disconnected. No body.
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/repository/publish:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [github]
+      operationId: publishProjectRepository
+      summary: Publish the branch head now
+      description: >-
+        Queues the head of the connected branch as a push (trigger `manual`); the commit is imported and deployed
+        in the background. No body. It always queues, even the last commit published (publishing it again); older
+        pushes still waiting are skipped. `PROJECT_ARCHIVED` (422); `GITHUB_NO_ACCESS` (404, the installation no
+        longer reaches the repository or is suspended); `GITHUB_BRANCH_MISSING` (404); 409 when the connection
+        changed meanwhile or on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
+      x-permissions: [odyssey:deployments:create]
+      responses:
+        "202":
+          description: The push, queued. Poll `listProjectPushes` for its progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubPush" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
+
+  /api/v1/projects/{id}/repository/pushes:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [github]
+      operationId: listProjectPushes
+      summary: List the commits published from the repository
+      description: "Newest first (`created_at` descending, then `id`)."
+      x-permissions: [odyssey:deployments:read]
+      parameters:
+        - name: status
+          in: query
+          description: Repeatable (OR). Default all.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/PushStatus" }
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of pushes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubPushList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /github/setup:
+    get:
+      tags: [github]
+      operationId: gitHubSetup
+      summary: Where GitHub sends the browser after installing the App
+      description: >-
+        Public (the user has no Odyssey token here: the signed `state` names the organization and the Odyssey user
+        who asked, and the OAuth `code` proves the GitHub user owns the installation's account: is the User account
+        itself, or an active admin of the Organization, which needs the App's `members: read` permission). It links
+        nothing. Always answers 302 to the console, never a body or an error page. On success:
+        `<console>/configuracion/github?github_claim=<claim>`, a signed 15-minute claim (carrying the return path)
+        that the console posts, logged in, to `claimGitHubInstallation`. On failure:
+        `<console>/configuracion/github?github_error=<CODE>`, where CODE is `GITHUB_NOT_CONFIGURED`,
+        `GITHUB_STATE_INVALID` (bad or expired state), `GITHUB_NOT_YOURS` (the GitHub user does not own or
+        administer the installation's account), `GITHUB_NO_ACCESS` or `GITHUB_UNAVAILABLE`.
+      security: []
+      parameters:
+        - name: installation_id
+          in: query
+          description: GitHub's installation id.
+          schema: { type: integer, format: int64 }
+        - name: code
+          in: query
+          description: The user's OAuth code.
+          schema: { type: string }
+        - name: state
+          in: query
+          description: The signed state from `getGitHubInstallURL`.
+          schema: { type: string }
+        - name: setup_action
+          in: query
+          description: "`install`, `update`... as GitHub reports it. Ignored."
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the console (see above).
+          headers:
+            Location:
+              required: true
+              schema: { type: string }
+
 components:
   securitySchemes:
     bearer:
@@ -745,6 +1088,12 @@ components:
       name: build
       in: path
       required: true
+      schema: { type: string, format: uuid }
+    Installation:
+      name: installation
+      in: path
+      required: true
+      description: The id of a linked GitHub installation (Odyssey's, not GitHub's).
       schema: { type: string, format: uuid }
     Search:
       name: search
@@ -791,6 +1140,11 @@ components:
           schema: { $ref: "#/components/schemas/ErrorBody" }
     Business:
       description: Valid input that breaks a rule (`code` says which, e.g. `PROJECT_ARCHIVED`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    External:
+      description: An outside service (GitHub) failed or did not answer (`GITHUB_UNAVAILABLE`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorBody" }
@@ -1001,6 +1355,19 @@ components:
       type: string
       enum: [building, pending, applying, verifying, ready, failed, cancelled]
 
+    GitRef:
+      type: object
+      additionalProperties: false
+      description: A commit of a repository; where a source imported from git came from.
+      required: [provider, repository, branch, commit, title, author]
+      properties:
+        provider: { type: string, enum: [github] }
+        repository: { type: string, description: '"owner/name".' }
+        branch: { type: string }
+        commit: { type: string, description: The full SHA (40 or 64 hex characters). }
+        title: { type: string, description: The first line of the commit message. }
+        author: { type: string, description: The author's login, or name when it has none. }
+
     DeploymentStep:
       type: object
       additionalProperties: false
@@ -1087,11 +1454,16 @@ components:
             - type: "null"
             - type: object
               additionalProperties: false
-              required: [id, name, size]
+              required: [id, name, size, git]
               properties:
                 id: { type: string, format: uuid }
                 name: { type: string }
                 size: { type: integer, description: The archive's size in bytes. }
+                git:
+                  description: The commit the source was imported from; null for an uploaded folder.
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/GitRef"
         status: { $ref: "#/components/schemas/DeploymentStatus" }
         reason:
           type: string
@@ -1317,3 +1689,195 @@ components:
         broken_at:
           type: [integer, "null"]
           description: The first entry whose hash or link does not match; null when valid.
+
+    GitHubInfo:
+      type: object
+      additionalProperties: false
+      required: [enabled, slug]
+      properties:
+        enabled: { type: boolean, description: The GitHub App is configured on this Odyssey. }
+        slug: { type: string, description: 'The App''s name in URLs (`github.com/apps/<slug>`); "" when disabled.' }
+
+    GitHubInstallURL:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string, description: Where to send the browser, with a signed state. }
+
+    GitHubInstallation:
+      type: object
+      additionalProperties: false
+      description: An installation of Odyssey's GitHub App on a GitHub account, linked to the organization.
+      required: [id, organization_id, external_id, account, account_type, all_repositories, suspended, linked_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        external_id: { type: integer, format: int64, description: GitHub's installation id. }
+        account: { type: string, description: The GitHub login it is installed on. }
+        account_type: { type: string, description: "`User` or `Organization`." }
+        all_repositories: { type: boolean, description: Installed on every repository of the account (else on the ones chosen there). }
+        suspended: { type: boolean }
+        linked_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GitHubInstallationClaimed:
+      type: object
+      additionalProperties: false
+      required: [installation, return_to]
+      properties:
+        installation: { $ref: "#/components/schemas/GitHubInstallation" }
+        return_to: { type: string, description: The console path to go back to (starts with `/`). }
+
+    ClaimGitHubInstallation:
+      type: object
+      additionalProperties: false
+      required: [claim]
+      properties:
+        claim: { type: string, minLength: 1, maxLength: 2048, description: The `github_claim` the setup callback put in the console URL. }
+
+    GitHubInstallationList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubInstallation" }
+
+    GitHubRepository:
+      type: object
+      additionalProperties: false
+      required: [id, full_name, default_branch, private, installation_id]
+      properties:
+        id: { type: integer, format: int64, description: "GitHub's numeric id; survives a rename or transfer." }
+        full_name: { type: string, description: '"owner/name".' }
+        default_branch: { type: string }
+        private: { type: boolean }
+        installation_id: { type: string, format: uuid, description: The linked installation that reaches it. }
+
+    GitHubRepositoryList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubRepository" }
+        page: { $ref: "#/components/schemas/Page" }
+
+    GitHubBranch:
+      type: object
+      additionalProperties: false
+      required: [name, commit]
+      properties:
+        name: { type: string }
+        commit: { type: string, description: The SHA of the branch head. }
+
+    GitHubBranchList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubBranch" }
+
+    RepositoryConnection:
+      type: object
+      additionalProperties: false
+      description: A project's repository, the branch that publishes it and how the result runs. One per project; publishes to production.
+      required: [id, organization_id, project_id, installation_id, repository_id, repository, branch, root, config, last_commit, connected_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        installation_id: { type: string, format: uuid }
+        repository_id: { type: integer, format: int64, description: GitHub's numeric repository id. }
+        repository: { type: string, description: '"owner/name", refreshed on every push.' }
+        branch: { type: string }
+        root: { type: string, description: 'The app''s folder inside the repository; "" for its root.' }
+        config: { $ref: "#/components/schemas/ReleaseConfig" }
+        last_commit: { type: string, description: 'The newest commit seen on the branch; "" before the first.' }
+        connected_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ConnectRepository:
+      type: object
+      additionalProperties: false
+      required: [installation_id, repository_id, port]
+      properties:
+        installation_id: { type: string, format: uuid, description: A linked installation of the organization. }
+        repository_id: { type: integer, format: int64, minimum: 1, description: GitHub's numeric repository id. }
+        branch: { type: string, maxLength: 255, description: 'Empty (default) takes the repository''s default branch.' }
+        root:
+          type: string
+          maxLength: 200
+          description: 'The app''s folder inside the repository, relative, without `.` or `..` parts. Default "" (the root).'
+        port: { type: integer, minimum: 1, maximum: 65535, description: The port the app listens on. }
+        health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
+        replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
+        env:
+          type: object
+          maxProperties: 100
+          description: Non-secret variables. Names starting with `ODYSSEY_` are reserved.
+          additionalProperties: { type: string, maxLength: 4096 }
+
+    PushStatus:
+      type: string
+      description: >-
+        `queued` → `importing` → `deployed` | `failed`; `skipped` when a newer push of the same connection
+        replaced it (only the newest commit is published).
+      enum: [queued, importing, deployed, failed, skipped]
+
+    PushFailure:
+      type: object
+      additionalProperties: false
+      description: Why a push was not published.
+      required: [code, message, detail]
+      properties:
+        code: { type: string }
+        message: { type: string, description: In plain Spanish. }
+        detail: { type: string, description: In the provider's words. }
+
+    GitHubPush:
+      type: object
+      additionalProperties: false
+      description: One commit of a connection to publish. A commit is published once per connection, whatever reported it.
+      required: [id, organization_id, project_id, connection_id, git, trigger, status, deployment_id, error, requested_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        connection_id: { type: string, format: uuid }
+        git: { $ref: "#/components/schemas/GitRef" }
+        trigger:
+          type: string
+          description: "`webhook`: GitHub said the branch moved. `reconcile`: the poll found the branch ahead. `manual`: someone published now (or connected the repository)."
+          enum: [webhook, reconcile, manual]
+        status: { $ref: "#/components/schemas/PushStatus" }
+        deployment_id:
+          description: The deployment it became (`deployed` only).
+          oneOf:
+            - type: "null"
+            - { type: string, format: uuid }
+        error:
+          description: Why it failed (`failed` only).
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/PushFailure"
+        requested_by: { type: string, description: '"" for a webhook or the poll, else the user''s id.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GitHubPushList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubPush" }
+        page: { $ref: "#/components/schemas/Page" }

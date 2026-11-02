@@ -16,6 +16,13 @@ type Routes interface {
 	Register(r fiber.Router)
 }
 
+// PublicRoutes is implemented by the handlers that also mount
+// unauthenticated routes (a provider's callbacks, each checking its own
+// proof). Architecture tests confine them to the source domain.
+type PublicRoutes interface {
+	RegisterPublic(r fiber.Router)
+}
+
 // Health reports readiness of a dependency (database).
 type Health func() error
 
@@ -32,6 +39,8 @@ type Options struct {
 	// CORSOrigins are the browser origins allowed to call the API. Empty (the
 	// default) leaves CORS closed: no Access-Control-* header is ever sent.
 	CORSOrigins []string
+	// Public mount their unauthenticated routes on the root, outside /api/v1.
+	Public []PublicRoutes
 }
 
 // New returns the app. Every domain route sits under /api/v1 behind the auth chain.
@@ -70,6 +79,9 @@ func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler,
 	app.Get("/api/config", func(c *fiber.Ctx) error {
 		return c.JSON(public)
 	})
+	for _, p := range opts.Public {
+		p.RegisterPublic(app)
+	}
 
 	api := app.Group("/api/v1", append(append([]fiber.Handler{}, auth...), httpx.Provenance)...)
 	for _, r := range routes {

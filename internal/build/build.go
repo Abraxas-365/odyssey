@@ -49,6 +49,82 @@ type Source struct {
 	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
 	// ExpiredAt is when the sweep dropped its bytes (nil while available).
 	ExpiredAt *time.Time `json:"expired_at" db:"expired_at"`
+	// Git is the commit the source was taken from (nil for an uploaded folder).
+	Git *GitRef `json:"git" db:"-"`
+}
+
+// Git providers a source can come from.
+const ProviderGitHub = "github"
+
+// Limits of a GitRef's text.
+const (
+	MaxRepository  = 200 // "owner/name"
+	MaxBranch      = 255
+	MaxCommitTitle = 200 // the first line of the message, cut
+	MaxAuthor      = 100
+)
+
+var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
+
+// GitRef is a commit of a repository: where a source from git came from. It
+// is display and provenance only; the bytes are what the source holds.
+type GitRef struct {
+	Provider   string `json:"provider"`
+	Repository string `json:"repository"` // "owner/name"
+	Branch     string `json:"branch"`
+	Commit     string `json:"commit"` // full SHA (40 or 64 hex)
+	// Title is the first line of the commit message (cut to MaxCommitTitle).
+	Title  string `json:"title"`
+	Author string `json:"author"` // the author's login, or name when it has none
+}
+
+// Normalize keeps Title to the first line of the message, cut, and trims.
+func (g GitRef) Normalize() GitRef {
+	g.Repository, g.Branch, g.Author = strings.TrimSpace(g.Repository), strings.TrimSpace(g.Branch), strings.TrimSpace(g.Author)
+	g.Commit = strings.ToLower(strings.TrimSpace(g.Commit))
+	title, _, _ := strings.Cut(g.Title, "\n")
+	g.Title = cut(strings.TrimSpace(strings.Map(dropControl, title)), MaxCommitTitle)
+	g.Author = cut(strings.Map(dropControl, g.Author), MaxAuthor)
+	return g
+}
+
+func (g GitRef) Validate() error {
+	switch {
+	case g.Provider != ProviderGitHub:
+		return errx.InvalidField("git.provider", "provider must be github")
+	case g.Repository == "" || len(g.Repository) > MaxRepository || strings.Count(g.Repository, "/") != 1 || !utf8.ValidString(g.Repository):
+		return errx.InvalidField("git.repository", "repository must be owner/name")
+	case g.Branch == "" || len(g.Branch) > MaxBranch || !utf8.ValidString(g.Branch):
+		return errx.InvalidField("git.branch", "branch must be up to 255 bytes of text")
+	case !commitPattern.MatchString(g.Commit):
+		return errx.InvalidField("git.commit", "commit must be a full SHA")
+	case len(g.Title) > MaxCommitTitle*4 || !utf8.ValidString(g.Title) || len(g.Author) > MaxAuthor*4 || !utf8.ValidString(g.Author):
+		return errx.InvalidField("git", "commit title and author must be text")
+	}
+	return nil
+}
+
+// ShortCommit is the commit's first 7 characters.
+func (g GitRef) ShortCommit() string {
+	if len(g.Commit) < 7 {
+		return g.Commit
+	}
+	return g.Commit[:7]
+}
+
+func dropControl(r rune) rune {
+	if unicode.IsControl(r) {
+		return -1
+	}
+	return r
+}
+
+// cut keeps at most n runes of s.
+func cut(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 // Expired reports whether the source's bytes are gone (or going).
@@ -58,6 +134,8 @@ func (s Source) Expired() bool { return s.ExpiredAt != nil }
 type Upload struct {
 	Name       string
 	UploadedBy identity.UserID
+	// Git is the commit the archive was taken from (nil for a folder).
+	Git *GitRef
 }
 
 // Normalize cleans the display name: base name only, no control characters,
@@ -85,12 +163,19 @@ func (u Upload) Normalize() Upload {
 		name = "código"
 	}
 	u.Name = name
+	if u.Git != nil {
+		g := u.Git.Normalize()
+		u.Git = &g
+	}
 	return u
 }
 
 func (u Upload) Validate() error {
 	if !utf8.ValidString(u.Name) || u.Name == "" || len(u.Name) > MaxName {
 		return errx.InvalidField("name", "name must be up to 200 bytes of text")
+	}
+	if u.Git != nil {
+		return u.Git.Validate()
 	}
 	return nil
 }

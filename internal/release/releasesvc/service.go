@@ -148,10 +148,53 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 	if err != nil {
 		return release.Deployment{}, err
 	}
+	d, err := s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy)
+	if err != nil {
+		if derr := s.builder.Discard(context.WithoutCancel(ctx), organization, src.ID); derr != nil {
+			slog.Warn("could not discard the source of a deployment that did not start; the sweep will", "source", src.ID, "error", derr)
+		}
+		return release.Deployment{}, err
+	}
+	return d, nil
+}
+
+// DeployUploaded starts a deployment that builds a source already uploaded
+// to the project (a commit imported from git). Unlike DeploySource it never
+// discards the source when the deployment is refused: whoever uploaded it
+// decides.
+func (s *Service) DeployUploaded(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, input release.DeployUploaded) (release.Deployment, error) {
+	input = input.Normalize()
+	if err := input.Validate(); err != nil {
+		return release.Deployment{}, err
+	}
+	p, e, err := s.place(ctx, organization, id, env)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	if err := archived(p); err != nil {
+		return release.Deployment{}, err
+	}
+	src, err := s.builder.Source(ctx, organization, input.Source)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	if src.Project != id {
+		return release.Deployment{}, errx.NotFound("source not found")
+	}
+	if src.Expired() {
+		return release.Deployment{}, errx.Business(build.Message(build.CodeSourceExpired)).WithCode(build.CodeSourceExpired)
+	}
+	return s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy)
+}
+
+// startSource writes the deployment that builds src with cfg, holding the
+// project so it cannot have been archived meanwhile, and stops the one it
+// superseded.
+func (s *Service) startSource(ctx context.Context, organization identity.OrganizationID, id project.ID, e project.Environment, src build.Source, cfg release.Config, by identity.UserID) (release.Deployment, error) {
 	b := build.NewID()
 	var d release.Deployment
 	var superseded *release.Deployment
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		held, err := s.projects.Hold(ctx, organization, id)
 		if err != nil {
 			return err
@@ -164,14 +207,11 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 			return err
 		}
 		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &b,
-			Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size}, Config: &input.Config,
-			Reason: release.ReasonDeploy, RequestedBy: input.RequestedBy})
+			Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size, Git: src.Git}, Config: &cfg,
+			Reason: release.ReasonDeploy, RequestedBy: by})
 		return err
 	})
 	if err != nil {
-		if derr := s.builder.Discard(context.WithoutCancel(ctx), organization, src.ID); derr != nil {
-			slog.Warn("could not discard the source of a deployment that did not start; the sweep will", "source", src.ID, "error", derr)
-		}
 		return release.Deployment{}, err
 	}
 	s.stop(ctx, superseded)

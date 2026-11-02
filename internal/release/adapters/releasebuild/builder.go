@@ -52,3 +52,7 @@ func (b *Builder) Cancel(ctx context.Context, organization identity.Organization
 func (b *Builder) Discard(ctx context.Context, organization identity.OrganizationID, source build.SourceID) error {
 	return b.commands.Discard(ctx, organization, source)
 }
+
+func (b *Builder) Source(ctx context.Context, organization identity.OrganizationID, source build.SourceID) (build.Source, error) {
+	return b.queries.FindSource(ctx, organization, source)
+}

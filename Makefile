@@ -1,4 +1,4 @@
-.PHONY: build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types
+.PHONY: build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
 
 # The Railpack library's version names the plans the builder writes (the
 # Dockerfile sets it the same way).
@@ -65,6 +65,12 @@ run:
 	ODYSSEY_CLUSTER=$(or $(CLUSTER),fake) ODYSSEY_BUILDER='$(BUILDER)' \
 	ODYSSEY_BLOB_URL='$(BLOB_URL)' \
 	go run ./cmd/odyssey-api
+
+# Register Odyssey's GitHub App through GitHub's manifest flow: opens the
+# browser, then writes the secrets to .dev-secrets/github/ (github.env has the
+# variables to load). Flags via ARGS, e.g. ARGS="--org acme --public-url https://odyssey.example".
+github-app:
+	go run ./cmd/odyssey-api github-app create $(ARGS)
 
 # Run the worker on the host (outbox delivery, workflows, scheduled tasks).
 # CLUSTER=fleet deploys to the organization's enrolled clusters (make

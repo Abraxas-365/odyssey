@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -145,6 +146,27 @@ func (d DeploySource) Validate() error {
 
 // MaxSourceName bounds a source's display name.
 const MaxSourceName = 200
+
+// DeployUploaded asks to publish a source already uploaded to the build
+// domain (a commit imported from git): DeploySource without the upload. The
+// deployment shows the source's name and commit.
+type DeployUploaded struct {
+	Source build.SourceID `json:"source_id"`
+	Config
+	RequestedBy identity.UserID `json:"-"`
+}
+
+func (d DeployUploaded) Normalize() DeployUploaded {
+	d.Config = d.Config.Normalize()
+	return d
+}
+
+func (d DeployUploaded) Validate() error {
+	if d.Source.IsZero() {
+		return errx.InvalidField("source_id", "source_id is required")
+	}
+	return d.Config.Validate()
+}
 
 // Rollback asks to serve again the release of an earlier ready deployment.
 type Rollback struct {

@@ -35,11 +35,14 @@ func App() *fiber.App {
 // bootstrap.NewServer to exercise the real wiring without an IAMKit.
 func Auth() fiber.Handler {
 	return httpx.AuthenticateWith(func(_ context.Context, token string) (*authclient.Claims, error) {
-		org, perms, _ := strings.Cut(token, "|")
-		c := &authclient.Claims{Purpose: "application", OrganizationID: org}
+		parts := strings.SplitN(token, "|", 3)
+		c := &authclient.Claims{Purpose: "application", OrganizationID: parts[0]}
 		c.Subject = User
-		if perms != "" {
-			c.Permissions = strings.Split(perms, ",")
+		if len(parts) > 1 && parts[1] != "" {
+			c.Permissions = strings.Split(parts[1], ",")
+		}
+		if len(parts) > 2 && parts[2] != "" {
+			c.Subject = parts[2]
 		}
 		return c, nil
 	})
@@ -48,6 +51,11 @@ func Auth() fiber.Handler {
 // Token is a bearer token for org holding the given permissions.
 func Token(org identity.OrganizationID, permissions ...string) string {
 	return org.String() + "|" + strings.Join(permissions, ",")
+}
+
+// TokenAs is Token for another subject than User.
+func TokenAs(user string, org identity.OrganizationID, permissions ...string) string {
+	return Token(org, permissions...) + "|" + user
 }
 
 // Response is a finished request.

@@ -109,7 +109,7 @@ func (s *Service) Upload(ctx context.Context, organization identity.Organization
 	if p.Archived() {
 		return build.Source{}, errx.Business("the app is archived: unarchive it to publish").WithCode(project.CodeArchived)
 	}
-	src := build.Source{ID: build.NewSourceID(), Organization: organization, Project: id, Name: input.Name, UploadedBy: input.UploadedBy}
+	src := build.Source{ID: build.NewSourceID(), Organization: organization, Project: id, Name: input.Name, UploadedBy: input.UploadedBy, Git: input.Git}
 	src.Key = sourceKey(src)
 	// Refused before reading the body when even dropping every evictable
 	// source would not leave room (checked again, exactly, below).

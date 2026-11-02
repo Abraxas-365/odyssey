@@ -1,0 +1,10 @@
+{
+  "ref": "refs/heads/feature/login",
+  "before": "d00dfeedd00dfeedd00dfeedd00dfeedd00dfeed",
+  "after": "0000000000000000000000000000000000000000",
+  "created": false,
+  "deleted": true,
+  "head_commit": null,
+  "repository": {"id": 424242, "name": "web", "full_name": "acme/web"},
+  "installation": {"id": 7001}
+}

@@ -2,6 +2,7 @@ package releasepg_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
@@ -189,5 +190,32 @@ func TestRepository(t *testing.T) {
 	}
 	if err := repo.SetBuilt(ctx, org, first.ID, built); !errx.IsType(err, errx.TypeNotFound) {
 		t.Fatalf("set built on an image deployment: %v", err)
+	}
+
+	// a source imported from git keeps its commit
+	gitEnv, gitBuild := project.NewEnvironmentID(), build.NewID()
+	ref := &build.GitRef{Provider: build.ProviderGitHub, Repository: "acme/web", Branch: "main",
+		Commit: strings.Repeat("ab", 20), Title: "Fix the thing", Author: "octocat"}
+	fourth := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: gitEnv,
+		Build: &gitBuild, Source: &release.DeploymentSource{ID: build.NewSourceID(), Name: "acme/web", Size: 99, Git: ref}, Config: &cfg,
+		Status: release.StatusBuilding, Reason: release.ReasonDeploy, Step: release.StepBuild, Revision: 1, Run: workflow.NewRunID()}
+	if err := tx.Do(ctx, func(ctx context.Context) error {
+		if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: gitEnv, Organization: org, Project: proj, App: "git"}); err != nil {
+			return err
+		}
+		return repo.CreateDeployment(ctx, fourth)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.FindDeployment(ctx, org, fourth.ID)
+	if err != nil || got.Source == nil || got.Source.Git == nil || *got.Source.Git != *ref {
+		t.Fatalf("git deployment %+v %v", got, err)
+	}
+	if page, err := repo.ListDeployments(ctx, org, gitEnv, release.DeploymentFilter{}, query.Pagination{Limit: 10}); err != nil ||
+		len(page.Items) != 1 || page.Items[0].Source == nil || page.Items[0].Source.Git == nil || *page.Items[0].Source.Git != *ref {
+		t.Fatalf("listed git deployment %+v %v", page, err)
+	}
+	if got, err = repo.FindDeployment(ctx, org, third.ID); err != nil || got.Source == nil || got.Source.Git != nil {
+		t.Fatalf("a folder deployment has no git: %+v %v", got, err)
 	}
 }

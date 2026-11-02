@@ -8,10 +8,11 @@
     { "name": "odyssey:deployments:rollback", "label": "Volver a una versión anterior de una app" },
     { "name": "odyssey:clusters:read", "label": "Ver los clústeres de la organización y su estado" },
     { "name": "odyssey:clusters:manage", "label": "Conectar, reconectar y desconectar clústeres" },
+    { "name": "odyssey:integrations:manage", "label": "Conectar y desconectar GitHub en la organización" },
     { "name": "odyssey:audit:read", "label": "Ver el historial de actividad de la organización" }
   ],
   "roles": [
-    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:audit:read"] },
+    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read"] },
     { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback"] },
     { "name": "Lector", "permissions": ["odyssey:projects:read", "odyssey:deployments:read"] }
   ]

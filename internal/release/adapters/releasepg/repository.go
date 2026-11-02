@@ -85,7 +85,7 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 // ---- deployments ----
 
 const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name,
-	source_size, config, status, reason, step, revision, previous_release_id, rollback_of, error_code, error_message, error_detail,
+	source_size, source_git, config, status, reason, step, revision, previous_release_id, rollback_of, error_code, error_message, error_detail,
 	run_id, requested_by, created_at, updated_at, finished_at`
 
 type deploymentRow struct {
@@ -93,6 +93,7 @@ type deploymentRow struct {
 	SourceID     *build.SourceID `db:"source_id"`
 	SourceName   string          `db:"source_name"`
 	SourceSize   int64           `db:"source_size"`
+	RawSourceGit []byte          `db:"source_git"`
 	RawConfig    []byte          `db:"config"`
 	ErrorCode    *string         `db:"error_code"`
 	ErrorMessage *string         `db:"error_message"`
@@ -103,6 +104,12 @@ func (d deploymentRow) deployment() (release.Deployment, error) {
 	out := d.Deployment
 	if d.SourceID != nil {
 		out.Source = &release.DeploymentSource{ID: *d.SourceID, Name: d.SourceName, Size: d.SourceSize}
+		if d.RawSourceGit != nil {
+			out.Source.Git = &build.GitRef{}
+			if err := json.Unmarshal(d.RawSourceGit, out.Source.Git); err != nil {
+				return release.Deployment{}, errx.Wrap(err, "decode deployment source git", errx.TypeInternal)
+			}
+		}
 	}
 	if d.RawConfig != nil {
 		out.Config = &release.Config{}
@@ -123,8 +130,15 @@ func (r *Repository) CreateDeployment(ctx context.Context, d release.Deployment)
 	var source *build.SourceID
 	var name string
 	var size int64
+	var git []byte // NULL when the source has no git reference
 	if d.Source != nil {
 		source, name, size = &d.Source.ID, d.Source.Name, d.Source.Size
+		if d.Source.Git != nil {
+			var err error
+			if git, err = json.Marshal(d.Source.Git); err != nil {
+				return errx.Wrap(err, "marshal deployment source git", errx.TypeInternal)
+			}
+		}
 	}
 	var cfg []byte
 	if d.Config != nil {
@@ -134,10 +148,10 @@ func (r *Repository) CreateDeployment(ctx context.Context, d release.Deployment)
 		}
 	}
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.deployments
-		(id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name, source_size, config,
+		(id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name, source_size, source_git, config,
 		 status, reason, step, revision, previous_release_id, rollback_of, run_id, requested_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-		d.ID, d.Organization, d.Project, d.Environment, d.Release, d.Image, d.Build, source, name, size, cfg,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+		d.ID, d.Organization, d.Project, d.Environment, d.Release, d.Image, d.Build, source, name, size, git, cfg,
 		d.Status, d.Reason, d.Step, d.Revision, d.Previous, d.RollbackOf, d.Run, d.RequestedBy)
 	return pgerr.MapWith(err, "create deployment", messages)
 }

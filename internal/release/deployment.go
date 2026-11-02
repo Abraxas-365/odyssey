@@ -129,12 +129,15 @@ type Failure struct {
 	Detail  string `json:"detail"`
 }
 
-// DeploymentSource is the uploaded folder a deployment from source builds.
+// DeploymentSource is the code a deployment from source builds: an uploaded
+// folder, or a commit imported from git (Git set).
 type DeploymentSource struct {
 	ID   build.SourceID `json:"id"`
 	Name string         `json:"name"`
 	// Size is the archive's size in bytes.
 	Size int64 `json:"size"`
+	// Git is the commit it came from (nil for an uploaded folder).
+	Git *build.GitRef `json:"git"`
 }
 
 // Deployment is one attempt to make a release the one an environment serves.

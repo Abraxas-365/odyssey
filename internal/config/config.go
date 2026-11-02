@@ -28,6 +28,8 @@ type Config struct {
 	// Builder reads live build logs (the worker runs the builds); it follows
 	// ODYSSEY_CLUSTER like the worker's.
 	Builder Builder
+	// GitHub is the App that connects repositories (optional).
+	GitHub GitHub
 }
 
 // Blob is the object storage shared by the API and the worker.
@@ -162,7 +164,81 @@ func Load() (Config, error) {
 	if cfg.Blob, cfg.Builder, err = loadStorage(); err != nil {
 		return Config{}, err
 	}
+	if cfg.GitHub, err = loadGitHub(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// GitHub is Odyssey's GitHub App (phase 1c). One App per Odyssey install;
+// its secrets are files (GITHUB_*_FILE), never environment values or rows.
+// Unset (no GITHUB_APP_ID), GitHub is off: the console says so and every
+// GitHub endpoint answers GITHUB_NOT_CONFIGURED.
+type GitHub struct {
+	AppID int64  // GITHUB_APP_ID
+	Slug  string // GITHUB_APP_SLUG: the App's name in github.com/apps/<slug>
+	// PrivateKeyFile signs the App's JWTs (PEM, RSA).
+	PrivateKeyFile string // GITHUB_APP_PRIVATE_KEY_FILE
+	// WebhookSecretFile holds the secret that signs webhook deliveries.
+	WebhookSecretFile string // GITHUB_WEBHOOK_SECRET_FILE
+	// ClientID and ClientSecretFile verify, by OAuth, who came back from
+	// installing the App.
+	ClientID         string // GITHUB_CLIENT_ID
+	ClientSecretFile string // GITHUB_CLIENT_SECRET_FILE
+	// APIURL is GITHUB_API_URL (default https://api.github.com; GitHub
+	// Enterprise Server: https://<host>/api/v3); WebURL is GITHUB_URL
+	// (default https://github.com).
+	APIURL string
+	WebURL string
+	// ConsoleURL is ODYSSEY_CONSOLE_URL: where the setup callback sends the
+	// browser back, and what commit statuses link to.
+	ConsoleURL string
+	// StateKeyFile is ODYSSEY_STATE_KEY_FILE: the key that signs the
+	// install state (default: derived from the webhook secret file).
+	StateKeyFile string
+}
+
+// Enabled reports whether the App is configured.
+func (g GitHub) Enabled() bool { return g.AppID != 0 }
+
+func loadGitHub() (GitHub, error) {
+	g := GitHub{
+		Slug:              os.Getenv("GITHUB_APP_SLUG"),
+		PrivateKeyFile:    os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"),
+		WebhookSecretFile: os.Getenv("GITHUB_WEBHOOK_SECRET_FILE"),
+		ClientID:          os.Getenv("GITHUB_CLIENT_ID"),
+		ClientSecretFile:  os.Getenv("GITHUB_CLIENT_SECRET_FILE"),
+		APIURL:            strings.TrimRight(env("GITHUB_API_URL", "https://api.github.com"), "/"),
+		WebURL:            strings.TrimRight(env("GITHUB_URL", "https://github.com"), "/"),
+		ConsoleURL:        strings.TrimRight(env("ODYSSEY_CONSOLE_URL", "http://localhost:5178"), "/"),
+		StateKeyFile:      os.Getenv("ODYSSEY_STATE_KEY_FILE"),
+	}
+	raw := os.Getenv("GITHUB_APP_ID")
+	if raw == "" {
+		return g, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return g, errx.Validation("GITHUB_APP_ID must be the App's numeric id")
+	}
+	g.AppID = id
+	var missing []string
+	for name, v := range map[string]string{
+		"GITHUB_APP_SLUG":             g.Slug,
+		"GITHUB_APP_PRIVATE_KEY_FILE": g.PrivateKeyFile,
+		"GITHUB_WEBHOOK_SECRET_FILE":  g.WebhookSecretFile,
+		"GITHUB_CLIENT_ID":            g.ClientID,
+		"GITHUB_CLIENT_SECRET_FILE":   g.ClientSecretFile,
+	} {
+		if v == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return g, errx.Validation("GITHUB_APP_ID is set; also required: " + strings.Join(missing, ", "))
+	}
+	return g, nil
 }
 
 // Worker is the configuration of odyssey-worker: it needs the database only
@@ -177,6 +253,8 @@ type Worker struct {
 	// Blob stores sources and build logs; Builder runs the builds.
 	Blob    Blob
 	Builder Builder
+	// GitHub imports pushed commits and reports deployments on them.
+	GitHub GitHub
 }
 
 // Cluster kinds.
@@ -206,6 +284,9 @@ func LoadWorker() (Worker, error) {
 	}
 	var err error
 	if cfg.Blob, cfg.Builder, err = loadStorage(); err != nil {
+		return Worker{}, err
+	}
+	if cfg.GitHub, err = loadGitHub(); err != nil {
 		return Worker{}, err
 	}
 	return cfg, nil

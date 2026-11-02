@@ -111,10 +111,10 @@ describe('progressSteps', () => {
 
 describe('folder versions', () => {
   it('say which folder they came from, and building counts as in progress', () => {
-    const built = dep({ build_id: 'b', source: { id: 's', name: 'visitas', size: 4300 } })
+    const built = dep({ build_id: 'b', source: { id: 's', name: 'visitas', size: 4300, git: null } })
     const [item] = versions([built], current(built), 'me')
     expect(item.message).toBe('Desde la carpeta visitas · 4.2 KB')
-    const failed = dep({ status: 'failed', release_id: null, image: '', build_id: 'b2', source: { id: 's2', name: 'roto', size: 10 } })
+    const failed = dep({ status: 'failed', release_id: null, image: '', build_id: 'b2', source: { id: 's2', name: 'roto', size: 10, git: null } })
     expect(versions([failed], undefined, 'me')[0].sha).toBeUndefined()
     expect(lastProblem([dep({ status: 'building' }), failed])).toBe(failed)
   })

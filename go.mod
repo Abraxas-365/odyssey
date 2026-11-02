@@ -6,6 +6,8 @@ require (
 	github.com/Abraxas-365/iamkit/sdk v0.0.0-20261010060809-44dea49700ac
 	github.com/go-logr/logr v1.4.4
 	github.com/gofiber/fiber/v2 v2.52.13
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/go-github/v93 v93.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jmoiron/sqlx v1.4.0
@@ -109,8 +111,8 @@ require (
 	github.com/go-openapi/swag/typeutils v0.27.1 // indirect
 	github.com/go-openapi/swag/yamlutils v0.27.1 // indirect
 	github.com/gobuffalo/flect v1.0.3 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/wire v0.7.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.24.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

@@ -475,6 +475,232 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether GitHub is available on this Odyssey
+         * @description Holds no secrets. `enabled` is false when the GitHub App is not configured.
+         */
+        get: operations["getGitHub"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where to send the user to install the GitHub App
+         * @description The URL carries a signed state naming the organization and who asked; GitHub sends the browser back to `/github/setup`. `return_to` is the console path to land on afterwards (default: the GitHub settings page). `GITHUB_NOT_CONFIGURED` (422) when this installation has no GitHub App; 400 when `return_to` is not a console path.
+         */
+        get: operations["getGitHubInstallURL"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the GitHub installations linked to the organization
+         * @description Not paginated (an organization links a handful). Order: `lower(account)`, then `id`.
+         */
+        get: operations["listGitHubInstallations"];
+        put?: never;
+        /**
+         * Link the GitHub installation of a claim to the organization
+         * @description Second step of linking an installation. `/github/setup` (public) only checks that the GitHub user owns (User account) or administers (Organization admin, which needs the App's `members: read` permission) the installation's account, and redirects the browser to the console with a signed, 15-minute `github_claim` bound to the organization and to the Odyssey user who asked for the install link. The console posts it here, logged in. Only that user, in that organization, can redeem it: any other user or organization, a forged or expired claim, answers `GITHUB_STATE_INVALID` (422) without saying which. Linking again to the same organization refreshes the installation; `GITHUB_INSTALLATION_TAKEN` (409) when another organization has it; `GITHUB_NOT_CONFIGURED` (422); `GITHUB_NO_ACCESS` (404) when GitHub no longer knows it and `GITHUB_UNAVAILABLE` (502) when it does not answer. `return_to` is the console path to land on (default: the GitHub settings page).
+         */
+        post: operations["claimGitHubInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+                installation: components["parameters"]["Installation"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink a GitHub installation
+         * @description The apps connected through it stop publishing (their connections stay, marked unreachable). The installation itself stays on GitHub; uninstalling the App is done there.
+         */
+        delete: operations["unlinkGitHubInstallation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the repositories the linked installations reach
+         * @description Across every linked installation, filtered by `search` on the full name. Each item says which installation reaches it. `GITHUB_UNAVAILABLE` (502) when GitHub does not answer.
+         */
+        get: operations["listGitHubRepositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/{installation}/repositories/{repository}/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+                installation: components["parameters"]["Installation"];
+                /** @description GitHub's numeric repository id. */
+                repository: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * List a repository's branches
+         * @description Not paginated. `GITHUB_NO_ACCESS` (404) when the installation no longer reaches the repository or is suspended; `GITHUB_UNAVAILABLE` (502) when GitHub does not answer.
+         */
+        get: operations["listGitHubBranches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get the project's connected repository
+         * @description 404 when the project has no repository connected.
+         */
+        get: operations["getProjectRepository"];
+        /**
+         * Connect (or reconnect) the project to a repository branch
+         * @description Replaces the project's connection, if any. Every push to the branch then publishes to production, and the branch's current head is queued to publish now (see `publishProjectRepository`). An empty `branch` takes the repository's default branch. Errors: `PROJECT_ARCHIVED`, `GITHUB_NOT_CONFIGURED` (422); `GITHUB_NO_ACCESS` (404, the installation does not reach the repository or is suspended), `GITHUB_BRANCH_MISSING` (404), and 404 for an installation or project that is not the organization's; 409 on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
+         */
+        put: operations["connectProjectRepository"];
+        post?: never;
+        /**
+         * Disconnect the project's repository
+         * @description Stops publishing from it; deployments already made stay. 404 when none is connected.
+         */
+        delete: operations["disconnectProjectRepository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repository/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish the branch head now
+         * @description Queues the head of the connected branch as a push (trigger `manual`); the commit is imported and deployed in the background. No body. It always queues, even the last commit published (publishing it again); older pushes still waiting are skipped. `PROJECT_ARCHIVED` (422); `GITHUB_NO_ACCESS` (404, the installation no longer reaches the repository or is suspended); `GITHUB_BRANCH_MISSING` (404); 409 when the connection changed meanwhile or on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
+         */
+        post: operations["publishProjectRepository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repository/pushes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List the commits published from the repository
+         * @description Newest first (`created_at` descending, then `id`).
+         */
+        get: operations["listProjectPushes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where GitHub sends the browser after installing the App
+         * @description Public (the user has no Odyssey token here: the signed `state` names the organization and the Odyssey user who asked, and the OAuth `code` proves the GitHub user owns the installation's account: is the User account itself, or an active admin of the Organization, which needs the App's `members: read` permission). It links nothing. Always answers 302 to the console, never a body or an error page. On success: `<console>/configuracion/github?github_claim=<claim>`, a signed 15-minute claim (carrying the return path) that the console posts, logged in, to `claimGitHubInstallation`. On failure: `<console>/configuracion/github?github_error=<CODE>`, where CODE is `GITHUB_NOT_CONFIGURED`, `GITHUB_STATE_INVALID` (bad or expired state), `GITHUB_NOT_YOURS` (the GitHub user does not own or administer the installation's account), `GITHUB_NO_ACCESS` or `GITHUB_UNAVAILABLE`.
+         */
+        get: operations["gitHubSetup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -631,6 +857,20 @@ export interface components {
         };
         /** @enum {string} */
         DeploymentStatus: "building" | "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
+        /** @description A commit of a repository; where a source imported from git came from. */
+        GitRef: {
+            /** @enum {string} */
+            provider: "github";
+            /** @description "owner/name". */
+            repository: string;
+            branch: string;
+            /** @description The full SHA (40 or 64 hex characters). */
+            commit: string;
+            /** @description The first line of the commit message. */
+            title: string;
+            /** @description The author's login */
+            author: string;
+        };
         DeploymentStep: {
             /** @enum {string} */
             name: "build" | "apply" | "wait_ready" | "promote";
@@ -715,6 +955,8 @@ export interface components {
                 name: string;
                 /** @description The archive's size in bytes. */
                 size: number;
+                /** @description The commit the source was imported from; null for an uploaded folder. */
+                git: null | components["schemas"]["GitRef"];
             };
             status: components["schemas"]["DeploymentStatus"];
             /**
@@ -906,6 +1148,182 @@ export interface components {
             /** @description The first entry whose hash or link does not match; null when valid. */
             broken_at: number | null;
         };
+        GitHubInfo: {
+            /** @description The GitHub App is configured on this Odyssey. */
+            enabled: boolean;
+            /** @description The App's name in URLs (`github.com/apps/<slug>`); "" when disabled. */
+            slug: string;
+        };
+        GitHubInstallURL: {
+            /** @description Where to send the browser */
+            url: string;
+        };
+        /** @description An installation of Odyssey's GitHub App on a GitHub account, linked to the organization. */
+        GitHubInstallation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /**
+             * Format: int64
+             * @description GitHub's installation id.
+             */
+            external_id: number;
+            /** @description The GitHub login it is installed on. */
+            account: string;
+            /** @description `User` or `Organization`. */
+            account_type: string;
+            /** @description Installed on every repository of the account (else on the ones chosen there). */
+            all_repositories: boolean;
+            suspended: boolean;
+            /** Format: uuid */
+            linked_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        GitHubInstallationClaimed: {
+            installation: components["schemas"]["GitHubInstallation"];
+            /** @description The console path to go back to (starts with `/`). */
+            return_to: string;
+        };
+        ClaimGitHubInstallation: {
+            /** @description The `github_claim` the setup callback put in the console URL. */
+            claim: string;
+        };
+        GitHubInstallationList: {
+            items: components["schemas"]["GitHubInstallation"][];
+        };
+        GitHubRepository: {
+            /**
+             * Format: int64
+             * @description GitHub's numeric id; survives a rename or transfer.
+             */
+            id: number;
+            /** @description "owner/name". */
+            full_name: string;
+            default_branch: string;
+            private: boolean;
+            /**
+             * Format: uuid
+             * @description The linked installation that reaches it.
+             */
+            installation_id: string;
+        };
+        GitHubRepositoryList: {
+            items: components["schemas"]["GitHubRepository"][];
+            page: components["schemas"]["Page"];
+        };
+        GitHubBranch: {
+            name: string;
+            /** @description The SHA of the branch head. */
+            commit: string;
+        };
+        GitHubBranchList: {
+            items: components["schemas"]["GitHubBranch"][];
+        };
+        /** @description A project's repository, the branch that publishes it and how the result runs. One per project; publishes to production. */
+        RepositoryConnection: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            installation_id: string;
+            /**
+             * Format: int64
+             * @description GitHub's numeric repository id.
+             */
+            repository_id: number;
+            /** @description "owner/name", refreshed on every push. */
+            repository: string;
+            branch: string;
+            /** @description The app's folder inside the repository; "" for its root. */
+            root: string;
+            config: components["schemas"]["ReleaseConfig"];
+            /** @description The newest commit seen on the branch; "" before the first. */
+            last_commit: string;
+            /** Format: uuid */
+            connected_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ConnectRepository: {
+            /**
+             * Format: uuid
+             * @description A linked installation of the organization.
+             */
+            installation_id: string;
+            /**
+             * Format: int64
+             * @description GitHub's numeric repository id.
+             */
+            repository_id: number;
+            /** @description Empty (default) takes the repository's default branch. */
+            branch?: string;
+            /** @description The app's folder inside the repository, relative, without `.` or `..` parts. Default "" (the root). */
+            root?: string;
+            /** @description The port the app listens on. */
+            port: number;
+            /** @description Answers 2xx when the app is healthy. Default `/`. */
+            health_path?: string;
+            /** @description Default 1. */
+            replicas?: number;
+            /** @description Non-secret variables. Names starting with `ODYSSEY_` are reserved. */
+            env?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * @description `queued` → `importing` → `deployed` | `failed`; `skipped` when a newer push of the same connection replaced it (only the newest commit is published).
+         * @enum {string}
+         */
+        PushStatus: "queued" | "importing" | "deployed" | "failed" | "skipped";
+        /** @description Why a push was not published. */
+        PushFailure: {
+            code: string;
+            /** @description In plain Spanish. */
+            message: string;
+            /** @description In the provider's words. */
+            detail: string;
+        };
+        /** @description One commit of a connection to publish. A commit is published once per connection, whatever reported it. */
+        GitHubPush: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            connection_id: string;
+            git: components["schemas"]["GitRef"];
+            /**
+             * @description `webhook`: GitHub said the branch moved. `reconcile`: the poll found the branch ahead. `manual`: someone published now (or connected the repository).
+             * @enum {string}
+             */
+            trigger: "webhook" | "reconcile" | "manual";
+            status: components["schemas"]["PushStatus"];
+            /** @description The deployment it became (`deployed` only). */
+            deployment_id: null | string;
+            /** @description Why it failed (`failed` only). */
+            error: null | components["schemas"]["PushFailure"];
+            /** @description "" for a webhook or the poll, else the user's id. */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        GitHubPushList: {
+            items: components["schemas"]["GitHubPush"][];
+            page: components["schemas"]["Page"];
+        };
     };
     responses: {
         /** @description Malformed input (also 405, 413, 415). */
@@ -963,6 +1381,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorBody"];
             };
         };
+        /** @description An outside service (GitHub) failed or did not answer (`GITHUB_UNAVAILABLE`). */
+        External: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorBody"];
+            };
+        };
         /** @description Unexpected failure; the message is generic, the cause is logged with `request_id`. */
         Internal: {
             headers: {
@@ -978,6 +1405,8 @@ export interface components {
         Environment: string;
         Deployment: string;
         Build: string;
+        /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+        Installation: string;
         Search: string;
         /** @description 1–100 (larger values are clamped), default 20. */
         Limit: number;
@@ -1748,6 +2177,378 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
+        };
+    };
+    getGitHub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The integration's settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInfo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getGitHubInstallURL: {
+        parameters: {
+            query?: {
+                /** @description A console path (starts with a single `/`), e.g. `/apps/visitas/conectar`. */
+                return_to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The GitHub URL to open. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInstallURL"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listGitHubInstallations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The linked installations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInstallationList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    claimGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimGitHubInstallation"];
+            };
+        };
+        responses: {
+            /** @description The linked installation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInstallationClaimed"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
+        };
+    };
+    unlinkGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+                installation: components["parameters"]["Installation"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked. No body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listGitHubRepositories: {
+        parameters: {
+            query?: {
+                search?: components["parameters"]["Search"];
+                /** @description 1–100 (larger values are clamped), default 20. */
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of repositories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRepositoryList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
+        };
+    };
+    listGitHubBranches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+                installation: components["parameters"]["Installation"];
+                /** @description GitHub's numeric repository id. */
+                repository: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The branches and their heads. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubBranchList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
+        };
+    };
+    getProjectRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryConnection"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    connectProjectRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRepository"];
+            };
+        };
+        responses: {
+            /** @description The connection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryConnection"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
+        };
+    };
+    disconnectProjectRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. No body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    publishProjectRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The push, queued. Poll `listProjectPushes` for its progress. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPush"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
+        };
+    };
+    listProjectPushes: {
+        parameters: {
+            query?: {
+                /** @description Repeatable (OR). Default all. */
+                status?: components["schemas"]["PushStatus"][];
+                /** @description 1–100 (larger values are clamped), default 20. */
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of pushes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPushList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    gitHubSetup: {
+        parameters: {
+            query?: {
+                /** @description GitHub's installation id. */
+                installation_id?: number;
+                /** @description The user's OAuth code. */
+                code?: string;
+                /** @description The signed state from `getGitHubInstallURL`. */
+                state?: string;
+                /** @description `install`, `update`... as GitHub reports it. Ignored. */
+                setup_action?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the console (see above). */
+            302: {
+                headers: {
+                    Location: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

@@ -1,0 +1,20 @@
+{
+  "action": "removed",
+  "installation": {
+    "id": 7001,
+    "app_id": 12345,
+    "app_slug": "odyssey-dev",
+    "target_type": "Organization",
+    "repository_selection": "selected",
+    "account": {"login": "acme", "id": 99, "type": "Organization"}
+  },
+  "repository_selection": "selected",
+  "repositories_added": [
+    {"id": 555, "name": "api", "full_name": "acme/api", "private": true}
+  ],
+  "repositories_removed": [
+    {"id": 424242, "name": "web", "full_name": "acme/web", "private": true},
+    {"id": 424243, "name": "docs", "full_name": "acme/docs", "private": false}
+  ],
+  "sender": {"login": "anaperez", "id": 1001, "type": "User"}
+}

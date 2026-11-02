@@ -17,6 +17,7 @@ const (
 	DeploymentsRollback = "odyssey:deployments:rollback" // Volver a una versión anterior de una app
 	ClustersRead        = "odyssey:clusters:read"        // Ver los clústeres de la organización y su estado
 	ClustersManage      = "odyssey:clusters:manage"      // Conectar, reconectar y desconectar clústeres
+	IntegrationsManage  = "odyssey:integrations:manage"  // Conectar y desconectar GitHub en la organización
 	AuditRead           = "odyssey:audit:read"           // Ver el historial de actividad de la organización
 )
 
@@ -29,6 +30,7 @@ var All = []string{
 	DeploymentsRollback,
 	ClustersRead,
 	ClustersManage,
+	IntegrationsManage,
 	AuditRead,
 }
 
@@ -41,6 +43,7 @@ var Labels = map[string]string{
 	DeploymentsRollback: "Volver a una versión anterior de una app",
 	ClustersRead:        "Ver los clústeres de la organización y su estado",
 	ClustersManage:      "Conectar, reconectar y desconectar clústeres",
+	IntegrationsManage:  "Conectar y desconectar GitHub en la organización",
 	AuditRead:           "Ver el historial de actividad de la organización",
 }
 
@@ -54,12 +57,13 @@ var Names = map[string]string{
 	"DeploymentsRollback": DeploymentsRollback,
 	"ClustersRead":        ClustersRead,
 	"ClustersManage":      ClustersManage,
+	"IntegrationsManage":  IntegrationsManage,
 	"AuditRead":           AuditRead,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, AuditRead}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead}},
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }

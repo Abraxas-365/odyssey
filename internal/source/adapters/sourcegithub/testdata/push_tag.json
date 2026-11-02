@@ -1,0 +1,14 @@
+{
+  "ref": "refs/tags/v1.2.0",
+  "before": "0000000000000000000000000000000000000000",
+  "after": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00",
+  "created": true,
+  "deleted": false,
+  "head_commit": {
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00",
+    "message": "Release 1.2.0",
+    "author": {"name": "Bo Díaz", "email": "bo@example.com"}
+  },
+  "repository": {"id": 424242, "name": "web", "full_name": "acme/web"},
+  "installation": {"id": 7001}
+}

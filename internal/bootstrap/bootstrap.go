@@ -37,6 +37,9 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/release/releasemodule"
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
 	"github.com/Abraxas-365/odyssey/internal/server"
+	"github.com/Abraxas-365/odyssey/internal/source"
+	"github.com/Abraxas-365/odyssey/internal/source/sourcemodule"
+	"github.com/Abraxas-365/odyssey/internal/source/sourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
 	"github.com/gofiber/fiber/v2"
@@ -98,7 +101,7 @@ func RunWorker() error {
 	}
 	defer blobs.Close()
 	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster,
-		Blobs: blobs, BuilderConfig: cfg.Builder})
+		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub})
 	if err != nil {
 		return err
 	}
@@ -236,6 +239,7 @@ func Migrations() []migrate.Set {
 		{Owner: projectmodule.Schema, Files: projectmodule.Migrations()},
 		{Owner: releasemodule.Schema, Files: releasemodule.Migrations()},
 		{Owner: buildmodule.Schema, Files: buildmodule.Migrations()},
+		{Owner: sourcemodule.Schema, Files: sourcemodule.Migrations()},
 		{Owner: fleetmodule.Schema, Files: fleetmodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
@@ -263,6 +267,7 @@ type Platform struct {
 	Projects  projectmodule.Module
 	Releases  releasemodule.Module
 	Builds    buildmodule.Module
+	Sources   sourcemodule.Module
 	// Blobs stores sources and archived build logs (the gateway streams
 	// sources from it to the agents).
 	Blobs blob.Store
@@ -305,6 +310,12 @@ type Options struct {
 	BuilderConfig config.Builder
 	// Build tunes the build service (tests shorten its polls).
 	Build buildsvc.Options
+	// GitProvider is the git host; tests pass a configured sourcefake. Nil
+	// picks it from GitHub (the GitHub App, or disabled without one).
+	GitProvider source.GitProvider
+	GitHub      config.GitHub
+	// Source tunes the import service.
+	Source sourcesvc.Options
 }
 
 // Assemble builds the modules and wires who reacts to what. This is the only
@@ -339,6 +350,12 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	if err != nil {
 		return nil, err
 	}
+	sources, err := sourcemodule.New(sourcemodule.Deps{DB: db, Events: events, Projects: projects.Queries, Engine: engine,
+		Provider: opts.GitProvider, GitHub: opts.GitHub, BuildCommands: builds.Commands,
+		ReleaseCommands: releases.Commands, Options: opts.Source})
+	if err != nil {
+		return nil, err
+	}
 	p := &Platform{
 		DB:       db,
 		Bus:      bus,
@@ -346,6 +363,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Projects: projects,
 		Releases: releases,
 		Builds:   builds,
+		Sources:  sources,
 		Blobs:    opts.Blobs,
 		Fleet:    fleets,
 		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
@@ -354,6 +372,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	bus.Seal()
 	p.Releases.Register(registry)
 	p.Builds.Register(registry)
+	p.Sources.Register(registry)
 
 	registry.Every(workflow.Schedule{Name: "event.purge", Every: 6 * time.Hour, Run: func(ctx context.Context) error {
 		n, err := p.Dispatcher(outboxpg.Options{}).Purge(ctx, time.Now().Add(-opts.EventRetention))
@@ -413,7 +432,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a.closers = append(a.closers, blobs.Close)
 	opts := Options{Gateway: cfg.Fleet.Gateway, Blobs: blobs, BuilderConfig: cfg.Builder,
-		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}}
+		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
 		if err != nil {
@@ -439,11 +458,12 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler) *fiber.App {
 	return server.New(
 		func() error { return p.DB.Ping() },
 		server.PublicConfig{IAMURL: cfg.IAM.PublicURL, ClientID: cfg.IAM.WebClientID, Environment: cfg.IAM.Environment},
-		server.Options{CORSOrigins: cfg.CORSOrigins},
+		server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP}},
 		[]fiber.Handler{auth},
 		p.Projects.HTTP,
 		p.Releases.HTTP,
 		p.Builds.HTTP,
+		p.Sources.HTTP,
 		p.Fleet.HTTP,
 		p.Audit.HTTP,
 	)

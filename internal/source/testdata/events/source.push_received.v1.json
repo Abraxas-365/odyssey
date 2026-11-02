@@ -1,0 +1,9 @@
+{
+  "push_id": "00000000-0000-4000-8000-0000000000f3",
+  "connection_id": "00000000-0000-4000-8000-0000000000f2",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "repository": "inedge-andina/visitas",
+  "branch": "main",
+  "commit": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+  "trigger": "webhook"
+}

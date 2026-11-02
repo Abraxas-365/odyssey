@@ -19,6 +19,12 @@ type Commands interface {
 	// DeploySource stores the uploaded folder (a tar.gz stream) and starts a
 	// deployment that builds it first, cancelling the one in progress there.
 	DeploySource(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input DeploySource, archive io.Reader) (Deployment, error)
+	// DeployUploaded starts a deployment that builds a source already
+	// uploaded to the project (a commit imported from git), cancelling the
+	// one in progress there. The source must be the project's and not
+	// expired; it is not discarded when the deployment is refused (its
+	// uploader decides).
+	DeployUploaded(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input DeployUploaded) (Deployment, error)
 	// Rollback deploys again the release of an earlier deployment that went live.
 	Rollback(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, deployment DeploymentID, input Rollback) (Deployment, error)
 }
@@ -63,6 +69,9 @@ type Builder interface {
 	// Discard drops a source no deployment will build (best effort: what it
 	// cannot drop, the sweep does).
 	Discard(ctx context.Context, organization identity.OrganizationID, source build.SourceID) error
+	// Source is an uploaded source (NotFound when it is not the
+	// organization's).
+	Source(ctx context.Context, organization identity.OrganizationID, source build.SourceID) (build.Source, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
