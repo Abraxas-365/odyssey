@@ -29,6 +29,7 @@ import { usePreferences } from '@/lib/preferences'
 import { useArchiveProject, useProject, useUpdateProject } from '@/lib/projects'
 import { useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
 import type { Project } from '@/lib/types'
+import { CodePanel } from '@/features/github/code-panel'
 import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
 import { appStatus, failureText, lastProblem, versions } from '@/features/apps/versions'
 
@@ -153,6 +154,8 @@ function Overview({ project: p }: { project: Project }) {
           </PanelBody>
         </Panel>
       </div>
+
+      <CodePanel project={p} archived={archived} />
 
       {production && can(permissions.deploymentsCreate) && !archived && <PublishFolderPanel project={p.id} env={production.id} busy={publishing} technical={technical} />}
 

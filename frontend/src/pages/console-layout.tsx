@@ -39,6 +39,7 @@ function Chrome() {
         { to: '/', label: 'Inicio', end: true },
         { to: '/asistente', label: 'Asistente' },
         ...(auth.can(permissions.clustersRead) ? [{ to: '/infraestructura/clusteres', label: 'Infraestructura' }] : []),
+        ...(auth.can(permissions.integrationsManage) ? [{ to: '/configuracion/github', label: 'Configuración' }] : []),
       ]
 
   return (

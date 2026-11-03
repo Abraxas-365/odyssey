@@ -1,3 +1,4 @@
+import { githubMessages } from './github-errors'
 import { accessToken, loadConfig, refresh } from './session'
 import type { ApiErrorType, ErrorBody } from './types'
 
@@ -77,6 +78,7 @@ export async function api<T>(path: string, options?: RequestOptions): Promise<T>
 
 // Plain-Spanish messages per error code (UX v3 §4: consequences, not codes).
 const messages: Record<string, string> = {
+  ...githubMessages,
   PROJECT_ARCHIVED: 'Esta app está archivada. Restáurala antes de hacer cambios.',
   ALREADY_CURRENT: 'Esa versión ya es la que está en línea.',
   NOT_ROLLBACKABLE: 'Solo puedes volver a una versión que llegó a estar en línea.',

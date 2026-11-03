@@ -272,11 +272,12 @@ function AppsAndVersions({ technical }: { technical: boolean }) {
       </div>
       <Sample title="Miniaturas" className="flex items-end gap-3"><AppThumbnail mini /><AppThumbnail mini kind="form" /><AppThumbnail mini off /></Sample>
       <Panel>
-        <PanelHeader title="Versiones" meta="4" />
+        <PanelHeader title="Versiones" meta="5" />
         <PanelList>
           <VersionRow technical={technical} version={{ id: '4', kind: 'failed', message: 'Agrega exportar a Excel', when: 'hace 10 min', by: 'tu asistente', sha: '9e8d7c6b' }} onOpen={() => {}} />
           <VersionRow technical={technical} version={{ id: '3', kind: 'preview', message: 'Nuevo diseño del formulario', when: 'hace 1 h', by: 'Ana', sha: '5d4c3b2a', branch: 'diseno' }} onPublish={() => {}} />
           <VersionRow technical={technical} version={{ id: '2', kind: 'live', message: 'Agrega fotos a la visita', when: 'hace 2 h', by: 'Ana', sha: 'a1b2c3d4' }} />
+          <VersionRow technical={technical} version={{ id: '5', kind: 'previous', message: 'Filtro por almacén', when: 'ayer', by: 'tu equipo', git: { branch: 'main', sha: 'f00ba12c9', author: 'ana-ruiz' } }} onRestore={() => {}} />
           <VersionRow technical={technical} version={{ id: '1', kind: 'previous', message: 'Primera versión', when: 'el lunes', by: 'Ana', sha: '1a2b3c4d' }} onRestore={() => {}} />
         </PanelList>
       </Panel>
@@ -408,7 +409,9 @@ function TechnicalSection({ technical }: { technical: boolean }) {
       </Panel>
       <Sample title="Comandos" className="flex flex-col gap-2">
         <CodeLine code="claude mcp add --transport http odyssey https://odyssey.acme.com/mcp" />
-        {technical && <GitLine sha="a1b2c3d4e5" message="Agrega fotos a la visita" />}
+        {technical && <GitLine branch="main" sha="a1b2c3d4e5" message="Agrega fotos a la visita" />}
+        <GitLine author="ana-ruiz" message="Agrega fotos a la visita" />
+        <GitLine branch="main" sha="a1b2c3d4e5" message="Agrega fotos a la visita" author="ana-ruiz" />
       </Sample>
       <Panel>
         <PanelBody><KeyValue items={[['Dirección', <span className="font-mono">visitas.apps.acme.com</span>], ['Creada', '12 oct 2026'], ['Dueña', 'Ana Ruiz']]} /></PanelBody>

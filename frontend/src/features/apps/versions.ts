@@ -48,10 +48,17 @@ const reasonText: Record<Deployment['reason'], string> = {
   auto_rollback: 'Restaurada automáticamente',
 }
 
-/** What a version is called: a new one from a folder says which folder. */
-function versionMessage(d: Deployment): string {
+/** What a version is called: one from GitHub, its commit title; one from a folder, which folder. */
+export function versionMessage(d: Deployment): string {
+  if (d.reason === 'deploy' && d.source?.git) return d.source.git.title.trim() || 'Cambios desde GitHub'
   if (d.reason === 'deploy' && d.source) return `Desde la carpeta ${d.source.name} · ${formatBytes(d.source.size)}`
   return reasonText[d.reason]
+}
+
+/** The commit a version came from (GitHub), for the row's `GitLine`. */
+function gitOf(d: Deployment): VersionData['git'] {
+  const g = d.source?.git
+  return g && d.reason === 'deploy' ? { branch: g.branch, sha: g.commit, author: g.author } : undefined
 }
 
 export interface VersionItem extends VersionData {
@@ -78,6 +85,7 @@ export function versions(deployments: Deployment[], current: CurrentRelease | un
         when: formatRelative(d.finished_at ?? d.created_at, now),
         by: d.requested_by === '' ? 'la plataforma' : d.requested_by === me ? 'ti' : 'tu equipo',
         sha: d.image.split('@sha256:')[1] || undefined,
+        git: gitOf(d),
         restorable: kind === 'previous' && d.release_id !== current?.release?.id,
       }
     })

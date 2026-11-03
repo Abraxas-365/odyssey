@@ -2,6 +2,7 @@ import { Check, ChevronRight, FlaskConical, RotateCcw, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { GitLine } from './git-line'
 import { IconBadge } from './icon-badge'
 
 /**
@@ -19,6 +20,8 @@ export interface VersionData {
   kind: VersionKind
   sha?: string
   branch?: string
+  /** Published from a GitHub commit: `message` is its title. */
+  git?: { branch: string; sha: string; author: string }
 }
 
 const icon = { live: Check, previous: Check, preview: FlaskConical, failed: X }
@@ -46,16 +49,23 @@ export function VersionRow({ version: v, technical, onOpen, onRestore, onPublish
           {v.kind === 'preview' && <Badge>Versión de prueba</Badge>}
           {v.kind === 'failed' && <Badge variant="destructive">No se publicó</Badge>}
         </div>
-        <div className="text-xs text-muted-foreground">
-          {v.when} · por {v.by}
-          {technical && v.sha && (
-            <>
-              {' · '}
-              <span className="font-mono">{v.sha.slice(0, 7)}</span>
-              {v.branch && <> · <span className="font-mono">{v.branch}</span></>}
-            </>
-          )}
-        </div>
+        {v.git ? (
+          <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+            <span>{v.when}</span>
+            <GitLine branch={technical ? v.git.branch : undefined} sha={technical ? v.git.sha : undefined} author={v.git.author} className="w-auto" />
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">
+            {v.when} · por {v.by}
+            {technical && v.sha && (
+              <>
+                {' · '}
+                <span className="font-mono">{v.sha.slice(0, 7)}</span>
+                {v.branch && <> · <span className="font-mono">{v.branch}</span></>}
+              </>
+            )}
+          </div>
+        )}
       </div>
       {v.kind === 'preview' && onPublish && (
         <Button variant="outline" size="sm" onClick={onPublish}>

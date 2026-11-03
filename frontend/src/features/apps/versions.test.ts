@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, Deployment } from '@/lib/types'
-import { appStatus, lastProblem, progressSteps, versions } from './versions'
+import { appStatus, lastProblem, progressSteps, versionMessage, versions } from './versions'
 
 let n = 0
 function dep(over: Partial<Deployment>): Deployment {
@@ -117,5 +117,29 @@ describe('folder versions', () => {
     const failed = dep({ status: 'failed', release_id: null, image: '', build_id: 'b2', source: { id: 's2', name: 'roto', size: 10, git: null } })
     expect(versions([failed], undefined, 'me')[0].sha).toBeUndefined()
     expect(lastProblem([dep({ status: 'building' }), failed])).toBe(failed)
+  })
+})
+
+describe('GitHub versions', () => {
+  const git = { provider: 'github' as const, repository: 'acme/visitas', branch: 'main', commit: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', title: 'Agrega fotos a la visita', author: 'ana-ruiz' }
+  const fromGit = (over: Partial<Deployment> = {}) => dep({ build_id: 'b', source: { id: 's', name: 'acme-visitas', size: 4300, git }, ...over })
+
+  it('are called by the commit title, with the commit in the GitLine data', () => {
+    const d = fromGit()
+    const [item] = versions([d], current(d), 'me')
+    expect(item.message).toBe('Agrega fotos a la visita')
+    expect(item.git).toEqual({ branch: 'main', sha: git.commit, author: 'ana-ruiz' })
+  })
+
+  it('fall back to a plain phrase when the commit has no title', () => {
+    expect(versionMessage(fromGit({ source: { id: 's', name: 'x', size: 1, git: { ...git, title: '  ' } } }))).toBe('Cambios desde GitHub')
+  })
+
+  it('leave folder uploads and restores without git', () => {
+    const folder = dep({ build_id: 'b', source: { id: 's', name: 'visitas', size: 10, git: null } })
+    const restored = fromGit({ reason: 'rollback' })
+    const items = versions([folder, restored], undefined, 'me')
+    expect(items.map(i => i.git)).toEqual([undefined, undefined])
+    expect(items[1].message).toBe('Volviste a una versión anterior')
   })
 })

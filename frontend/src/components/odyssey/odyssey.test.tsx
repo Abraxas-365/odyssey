@@ -16,6 +16,7 @@ import {
   CodeLine,
   EmptyState,
   ErrorNotice,
+  GitLine,
   Panel,
   PanelHeader,
   ProgressSteps,
@@ -104,6 +105,29 @@ describe('interactions', () => {
     expect(buttons).toHaveLength(1)
     await userEvent.click(buttons[0])
     expect(onRestore).toHaveBeenCalledOnce()
+  })
+
+  it('GitLine shows branch, short sha, title and author, and each part is optional', () => {
+    const { container, rerender } = render(<GitLine branch="main" sha="a1b2c3d4e5f6" message="Agrega fotos" author="ana-ruiz" />)
+    expect(container).toHaveTextContent('main')
+    expect(container).toHaveTextContent('a1b2c3d')
+    expect(container).not.toHaveTextContent('a1b2c3d4')
+    expect(container).toHaveTextContent('Agrega fotos')
+    expect(container).toHaveTextContent('ana-ruiz')
+    rerender(<GitLine message="Agrega fotos" author="ana-ruiz" />)
+    expect(container).not.toHaveTextContent('main')
+    expect(container.querySelector('.font-mono')).toBeNull()
+  })
+
+  it('VersionRow from GitHub hides branch and sha unless technical', () => {
+    const git = { branch: 'main', sha: 'a1b2c3d4e5', author: 'ana-ruiz' }
+    const row = (technical: boolean) => <ul><VersionRow technical={technical} version={{ id: '1', kind: 'live', message: 'Agrega fotos', when: 'hace 2 h', by: 'ti', git }} /></ul>
+    const { container, rerender } = render(row(false))
+    expect(container).toHaveTextContent('ana-ruiz')
+    expect(container).not.toHaveTextContent('a1b2c3d')
+    rerender(row(true))
+    expect(container).toHaveTextContent('a1b2c3d')
+    expect(container).toHaveTextContent('main')
   })
 
   it('locked rules cannot be toggled', () => {

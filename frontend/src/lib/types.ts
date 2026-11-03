@@ -55,3 +55,15 @@ export type AuditVerification = Schemas['AuditVerification']
 export type AuditQuery = NonNullable<operations['listAuditEntries']['parameters']['query']>
 
 export type PublicConfig = Schemas['PublicConfig']
+
+/** GitHub: the App's installations on the organization's accounts, and each app's repository. */
+export type GitHubInfo = Schemas['GitHubInfo']
+export type GitHubInstallation = Schemas['GitHubInstallation']
+export type GitHubInstallationClaimed = Schemas['GitHubInstallationClaimed']
+export type GitHubRepository = Schemas['GitHubRepository']
+export type GitHubBranch = Schemas['GitHubBranch']
+export type RepositoryConnection = Schemas['RepositoryConnection']
+export type ConnectRepository = Schemas['ConnectRepository']
+export type GitHubPush = Schemas['GitHubPush']
+export type PushStatus = Schemas['PushStatus']
+export type GitRef = Schemas['GitRef']

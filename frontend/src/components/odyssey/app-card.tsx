@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
-import { GitBranch, GitCommitHorizontal, Users } from 'lucide-react'
+import { Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { GitLine } from './git-line'
 import { AppStatus, type AppStatusKind } from './status'
 
 /**
@@ -35,19 +36,6 @@ export function AppThumbnail({ kind = 'chart', off, mini, className }: { kind?: 
         </div>
       )}
     </div>
-  )
-}
-
-/** Branch + short SHA + message. Technical mode only (UX v3 §2). */
-export function GitLine({ branch = 'main', sha, message, className }: { branch?: string; sha: string; message?: ReactNode; className?: string }) {
-  return (
-    <span className={cn('flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground', className)}>
-      <GitBranch className="size-[13px] shrink-0" aria-hidden />
-      <span className="font-mono">{branch}</span>
-      <GitCommitHorizontal className="size-[13px] shrink-0" aria-hidden />
-      <span className="font-mono">{sha.slice(0, 7)}</span>
-      {message && <span className="truncate text-foreground">{message}</span>}
-    </span>
   )
 }
 
@@ -89,7 +77,7 @@ export function AppCard({ app, technical, resources, href, linkAs: Link = 'a' }:
           <span className="flex-1" />
           <span className="text-xs text-muted-foreground">{app.updated}</span>
         </div>
-        {technical && app.git && <GitLine {...app.git} />}
+        {technical && app.git && <GitLine branch="main" {...app.git} />}
         <div className="mt-0.5 flex items-center gap-2 border-t pt-2.5 text-xs text-muted-foreground">
           <Users className="size-[13px]" aria-hidden />
           <span className="flex-1 truncate">

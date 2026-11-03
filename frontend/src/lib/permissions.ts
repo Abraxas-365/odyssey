@@ -8,6 +8,7 @@ export const permissions = {
   deploymentsRollback: 'odyssey:deployments:rollback',
   clustersRead: 'odyssey:clusters:read',
   clustersManage: 'odyssey:clusters:manage',
+  integrationsManage: 'odyssey:integrations:manage',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]

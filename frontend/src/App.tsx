@@ -7,6 +7,7 @@ import { AssistantPage } from '@/pages/assistant'
 import { AuthCallbackPage } from '@/pages/auth-callback'
 import { ClustersPage } from '@/pages/clusters'
 import { ConsoleLayout } from '@/pages/console-layout'
+import { GitHubSettingsPage } from '@/pages/github-settings'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
 
@@ -24,6 +25,7 @@ export function App() {
           <Route path="asistente" element={<AssistantPage />} />
           <Route path="apps/:id" element={<AppOverviewPage />} />
           <Route path="infraestructura/clusteres" element={<ClustersPage />} />
+          <Route path="configuracion/github" element={<GitHubSettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
