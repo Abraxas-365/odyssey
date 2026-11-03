@@ -111,9 +111,26 @@ export function useProjectRepository(project: string, enabled = true) {
 export const pushActive = (s: PushStatus | undefined) => s === 'queued' || s === 'importing'
 
 /**
- * Newest push first. Polls like the deployments do while the newest is
- * queued or importing, and refreshes the environment once it settles: a
- * deployed push is a new version that the overview has to pick up.
+ * How often the pushes are asked for: every 2 s while the newest is on its
+ * way, otherwise every 15 s, because a push can arrive from GitHub at any moment
+ * (a webhook or the reconcile poll) and the page has to notice it without a
+ * reload. Background tabs do not poll (React Query's default).
+ */
+export const PUSHES_IDLE_POLL_MS = 15_000
+export const pushesPollMs = (newest: PushStatus | undefined) => (pushActive(newest) ? PUBLISHING_POLL_MS : PUSHES_IDLE_POLL_MS)
+
+/** Identity of the newest push and where it is: a change to a settled one means a new version may be online. */
+export const pushMark = (p: Pick<GitHubPush, 'id' | 'status'> | undefined) => (p ? `${p.id}:${p.status}` : '')
+
+/** Did the newest push settle since `prev` (first load excluded)? Then the overview must refresh. */
+export const pushSettled = (prev: string | undefined, next: Pick<GitHubPush, 'id' | 'status'> | undefined) =>
+  prev !== undefined && !!next && !pushActive(next.status) && pushMark(next) !== prev
+
+/**
+ * Newest push first. Polls (see pushesPollMs) and refreshes the environment
+ * whenever the newest push settles, including one that was queued and deployed
+ * between two polls: a deployed push is a new version that the overview has to
+ * pick up.
  */
 export function usePushes(project: string, enabled = true) {
   const qc = useQueryClient()
@@ -121,14 +138,16 @@ export function usePushes(project: string, enabled = true) {
     queryKey: githubKeys.pushes(project),
     queryFn: ({ signal }) => api<List<GitHubPush>>(`${repoPath(project)}/pushes${params({ limit: 10 })}`, { signal }),
     enabled,
-    refetchInterval: q => (pushActive(q.state.data?.items[0]?.status) ? PUBLISHING_POLL_MS : false),
+    refetchInterval: q => pushesPollMs(q.state.data?.items[0]?.status),
   })
-  const active = pushActive(query.data?.items[0]?.status)
-  const was = useRef(active)
+  const newest = query.data?.items[0]
+  const mark = query.data ? pushMark(newest) : undefined
+  const prev = useRef<string | undefined>(undefined)
   useEffect(() => {
-    if (was.current && !active) void qc.invalidateQueries({ queryKey: releaseKeys.environments(project) })
-    was.current = active
-  }, [active, project, qc])
+    if (mark === undefined) return
+    if (pushSettled(prev.current, newest)) void qc.invalidateQueries({ queryKey: releaseKeys.environments(project) })
+    prev.current = mark
+  }, [mark, newest, project, qc])
   return query
 }
 

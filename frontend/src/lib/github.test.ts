@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, errorMessage } from './api'
 import { githubErrorText, githubMessages } from './github-errors'
-import { connectBody, manageOnGitHubURL, pushActive, safeReturnTo } from './github'
+import { connectBody, manageOnGitHubURL, pushActive, pushesPollMs, pushMark, pushSettled, PUSHES_IDLE_POLL_MS, safeReturnTo } from './github'
+import { PUBLISHING_POLL_MS } from './releases'
 import type { GitHubRepository } from './types'
 
 describe('GitHub error codes', () => {
@@ -38,7 +39,24 @@ describe('connecting', () => {
   it('sends the installation, repository id, branch and trimmed folder; the API picks the port', () => {
     expect(connectBody(repo, 'dev', ' apps/web ')).toEqual({ installation_id: 'inst', repository_id: 42, branch: 'dev', root: 'apps/web' })
   })
-  it('polls only while a push is on its way', () => {
+  it('a push is on its way while queued or importing', () => {
     expect(['queued', 'importing', 'deployed', 'failed', 'skipped', undefined].map(s => pushActive(s as never))).toEqual([true, true, false, false, false, false])
+  })
+})
+
+describe('watching for pushes', () => {
+  it('polls fast while a push is on its way and slowly otherwise, so a new push shows without a reload', () => {
+    expect(pushesPollMs('queued')).toBe(PUBLISHING_POLL_MS)
+    expect(pushesPollMs('importing')).toBe(PUBLISHING_POLL_MS)
+    for (const s of ['deployed', 'failed', 'skipped', undefined] as const) expect(pushesPollMs(s)).toBe(PUSHES_IDLE_POLL_MS)
+  })
+  it('refreshes the overview when the newest push settles, also one queued and deployed between two polls', () => {
+    const a = { id: 'a', status: 'deployed' } as const
+    expect(pushSettled(undefined, a)).toBe(false) // first load: nothing changed
+    expect(pushSettled(pushMark(a), a)).toBe(false) // same push, same state
+    expect(pushSettled(pushMark(a), { id: 'b', status: 'deployed' })).toBe(true) // a new push, already deployed
+    expect(pushSettled(pushMark(a), { id: 'b', status: 'queued' })).toBe(false) // still on its way
+    expect(pushSettled(pushMark({ id: 'b', status: 'importing' }), { id: 'b', status: 'failed' })).toBe(true)
+    expect(pushSettled(pushMark(a), undefined)).toBe(false)
   })
 })
