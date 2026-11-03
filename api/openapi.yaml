@@ -1060,6 +1060,56 @@ paths:
               required: true
               schema: { type: string }
 
+  /webhooks/github:
+    post:
+      tags: [github]
+      operationId: receiveGitHubWebhook
+      summary: Where GitHub delivers the App's webhooks
+      description: >-
+        Public: the only proof is the HMAC-SHA256 signature of the exact body in `X-Hub-Signature-256` (401 when it
+        does not hold; checked before anything else). Answers `202 {"status":"accepted"}` for everything it
+        understood, including a delivery it had seen (`X-GitHub-Delivery` is remembered 7 days) and the events it
+        ignores. `push` queues the new head of every connected project on that branch (once per commit);
+        `installation` and `installation_repositories` refresh, suspend or unlink the installation and disconnect the
+        projects whose repository was removed. 400 for a malformed delivery; `GITHUB_NOT_CONFIGURED` (422) when this
+        installation has no GitHub App. Not under `/api/v1`: no token, no CORS.
+      security: []
+      parameters:
+        - name: X-GitHub-Delivery
+          in: header
+          required: true
+          description: The delivery's unique id.
+          schema: { type: string, maxLength: 100 }
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          description: "`push`, `installation`, `installation_repositories`, `ping`... Others are accepted and ignored."
+          schema: { type: string, maxLength: 100 }
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          description: "`sha256=<hex HMAC-SHA256 of the body with the App's webhook secret>`."
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Accepted (also for a repeated delivery).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [accepted] }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
 components:
   securitySchemes:
     bearer:
@@ -1795,7 +1845,7 @@ components:
         project_id: { type: string, format: uuid }
         installation_id: { type: string, format: uuid }
         repository_id: { type: integer, format: int64, description: GitHub's numeric repository id. }
-        repository: { type: string, description: '"owner/name", refreshed on every push.' }
+        repository: { type: string, description: '"owner/name" as of the last (re)connect (repository_id survives a rename).' }
         branch: { type: string }
         root: { type: string, description: 'The app''s folder inside the repository; "" for its root.' }
         config: { $ref: "#/components/schemas/ReleaseConfig" }

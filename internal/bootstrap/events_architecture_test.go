@@ -142,7 +142,8 @@ var eventSinks = map[string]string{
 // these domains get the exemption, so renaming a write cannot escape the
 // rule.
 var observers = map[string]string{
-	"fleet": "heartbeats and app statuses reported by agents; deployment events carry their outcome",
+	"fleet":  "heartbeats and app statuses reported by agents; deployment events carry their outcome",
+	"source": "webhook deliveries seen and branch heads polled; the push events carry the outcome",
 }
 
 func isRead(name string) bool {

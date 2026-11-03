@@ -319,7 +319,7 @@ func newEnv(t *testing.T, disabled bool) *env {
 		})
 	}
 	e.svc = sourcesvc.New(e.repo, provider, e.builder, e.deployer, e.projects, e.engine, txn.Postgres{DB: db}, e.events,
-		sourcesvc.Options{StateKey: []byte("0123456789abcdef0123456789abcdef"), ImportAttempts: 3,
+		sourcesvc.Options{StateKey: []byte("0123456789abcdef0123456789abcdef"), ImportAttempts: 3, ConsoleURL: "https://console.test",
 			Now: func() time.Time { return time.Now().Add(e.offset) }})
 	e.defs = map[string]workflow.Definition{}
 	for _, d := range e.svc.Workflows() {

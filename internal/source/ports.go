@@ -40,6 +40,22 @@ type Commands interface {
 	Disconnect(ctx context.Context, organization identity.OrganizationID, project project.ID, input Disconnect) error
 	// Publish asks to publish the connected branch's head now.
 	Publish(ctx context.Context, organization identity.OrganizationID, project project.ID, input Publish) (Push, error)
+
+	// Receive handles a provider webhook delivery (public: it proves itself
+	// with the signature, checked first; a bad one is Unauthorized). A
+	// delivery seen before does nothing. Everything one delivery causes
+	// happens in one transaction.
+	Receive(ctx context.Context, input Webhook) error
+	// Reconcile compares the connected branches with their last commit (the
+	// poll: webhooks may be lost, or unable to reach Odyssey) and queues the
+	// ones that moved; the number of commits queued. A provider outage stops
+	// the round with its error.
+	Reconcile(ctx context.Context) (int, error)
+	// Report shows the status of a push (or of the deployment it became) on
+	// the provider's commit. Best effort: provider errors are logged, not
+	// returned, so a late status is never retried; nil for a deployment not
+	// published from git.
+	Report(ctx context.Context, organization identity.OrganizationID, input Report) error
 }
 
 // Queries are the read operations, implemented by sourcesvc.Service.
@@ -115,12 +131,17 @@ type Deployer interface {
 
 // Repository is the persistence contract; only the service depends on it.
 // Every statement filters by organization (another tenant's row is
-// NotFound), but for the lookups a webhook needs, which know only the
-// provider's ids.
+// NotFound), but for three lookups that know only the provider's ids or run
+// across tenants: FindInstallationByExternal, ListConnectionsByRepository
+// and ListConnectionsToReconcile. They are cross-org: callers take the
+// organization from the installation or connection row they return, keep
+// using the org-scoped Lock* methods, and must check that
+// connection.Organization == installation.Organization.
 type Repository interface {
 	UpsertInstallation(ctx context.Context, installation Installation) (Installation, error)
 	FindInstallation(ctx context.Context, organization identity.OrganizationID, installation InstallationID) (Installation, error)
-	// FindInstallationByExternal is unscoped: webhooks name GitHub's id.
+	// FindInstallationByExternal is unscoped (cross-org): webhooks name
+	// GitHub's id. Use the returned row's organization from then on.
 	FindInstallationByExternal(ctx context.Context, external int64) (Installation, error)
 	ListInstallations(ctx context.Context, organization identity.OrganizationID) ([]Installation, error)
 	DeleteInstallation(ctx context.Context, organization identity.OrganizationID, installation InstallationID) error
@@ -132,12 +153,13 @@ type Repository interface {
 	FindConnection(ctx context.Context, organization identity.OrganizationID, project project.ID) (Connection, error)
 	// LockConnection is FindConnection FOR UPDATE (inside txn.Runner.Do).
 	LockConnection(ctx context.Context, organization identity.OrganizationID, project project.ID) (Connection, error)
-	// ListConnectionsByRepository is unscoped: a push webhook names the
-	// repository id (every connection of it, whatever the branch).
+	// ListConnectionsByRepository is unscoped (cross-org): a push webhook
+	// names the repository id (every connection of it, whatever the branch,
+	// ordered by id). Check each one's organization against the installation's.
 	ListConnectionsByRepository(ctx context.Context, installation InstallationID, repository int64) ([]Connection, error)
 	// ListConnectionsToReconcile returns connections whose last check is
 	// older than before (or never), oldest first, at most limit, skipping
-	// suspended installations (unscoped, the poll).
+	// suspended installations (unscoped, cross-org: the poll).
 	ListConnectionsToReconcile(ctx context.Context, before time.Time, limit int) ([]Connection, error)
 	DeleteConnection(ctx context.Context, organization identity.OrganizationID, project project.ID) error
 	// DeleteConnectionsOfInstallation deletes the installation's
@@ -165,9 +187,9 @@ type Repository interface {
 	// UpdatePush writes a push's status, deployment and error.
 	UpdatePush(ctx context.Context, push Push) error
 
-	// SeeDelivery records a webhook delivery id; false when seen before.
-	SeeDelivery(ctx context.Context, delivery string) (bool, error)
-	// ForgetDeliveries drops delivery ids recorded before cutoff (the
-	// provider stops redelivering long before); the number dropped.
-	ForgetDeliveries(ctx context.Context, cutoff time.Time) (int, error)
+	// ObserveDelivery records a webhook delivery id and reports whether it
+	// is new (false when seen before). In the same call it forgets up to
+	// 1000 ids seen before forgetBefore (the provider stops redelivering
+	// long before), so no separate sweep is needed.
+	ObserveDelivery(ctx context.Context, delivery string, forgetBefore time.Time) (bool, error)
 }

@@ -369,6 +369,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
+	p.Sources.Subscribe(bus)
 	bus.Seal()
 	p.Releases.Register(registry)
 	p.Builds.Register(registry)

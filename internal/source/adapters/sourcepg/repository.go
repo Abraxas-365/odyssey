@@ -398,26 +398,24 @@ func (r *Repository) UpdatePush(ctx context.Context, p source.Push) error {
 
 // ---- deliveries ----
 
-func (r *Repository) SeeDelivery(ctx context.Context, delivery string) (bool, error) {
+// ObserveDelivery records a delivery id (false when seen before) and, in the
+// same statement, forgets up to 1000 ids seen before forgetBefore. The id
+// itself is never among the forgotten.
+func (r *Repository) ObserveDelivery(ctx context.Context, delivery string, forgetBefore time.Time) (bool, error) {
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
-		`INSERT INTO source.deliveries (id) VALUES ($1) ON CONFLICT DO NOTHING`, delivery)
+		`WITH forgotten AS (
+		     DELETE FROM source.deliveries WHERE id IN (
+		         SELECT id FROM source.deliveries WHERE seen_at < $2 AND id <> $1 ORDER BY seen_at LIMIT 1000)
+		 )
+		 INSERT INTO source.deliveries (id) VALUES ($1) ON CONFLICT DO NOTHING`, delivery, forgetBefore)
 	if err != nil {
-		return false, pgerr.MapWith(err, "see delivery", messages)
+		return false, pgerr.MapWith(err, "observe delivery", messages)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, pgerr.MapWith(err, "see delivery", messages)
+		return false, pgerr.MapWith(err, "observe delivery", messages)
 	}
 	return n == 1, nil
-}
-
-func (r *Repository) ForgetDeliveries(ctx context.Context, cutoff time.Time) (int, error) {
-	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `DELETE FROM source.deliveries WHERE seen_at < $1`, cutoff)
-	if err != nil {
-		return 0, pgerr.MapWith(err, "forget deliveries", messages)
-	}
-	n, err := res.RowsAffected()
-	return int(n), pgerr.MapWith(err, "forget deliveries", messages)
 }
 
 // ---- helpers ----

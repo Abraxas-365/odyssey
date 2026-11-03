@@ -55,7 +55,7 @@ type Connection struct {
 	Installation InstallationID          `json:"installation_id" db:"installation_id"`
 	// RepositoryID is GitHub's numeric id: it survives a rename or transfer.
 	RepositoryID int64  `json:"repository_id" db:"repository_id"`
-	Repository   string `json:"repository" db:"repository"` // "owner/name", refreshed on push
+	Repository   string `json:"repository" db:"repository"` // "owner/name" as of the last (re)connect; a push does not rename it
 	Branch       string `json:"branch" db:"branch"`
 	// Root is the folder of the app inside the repository ("" for its root).
 	Root   string         `json:"root" db:"root"`
@@ -314,13 +314,15 @@ func (f PushFilter) Validate() error {
 	return nil
 }
 
-// Webhook is a delivery from the provider, already authenticated by its
-// signature (the adapter checks it before anything else).
+// Webhook is a delivery from the provider. Receive verifies Signature (over
+// Payload) before anything else.
 type Webhook struct {
 	// Delivery is the provider's delivery id: a redelivery is ignored.
 	Delivery string
 	Event    string // "push", "installation", "installation_repositories", "ping"
-	Payload  []byte
+	// Signature is the provider's signature of Payload (X-Hub-Signature-256).
+	Signature string
+	Payload   []byte
 }
 
 func (w Webhook) Validate() error {

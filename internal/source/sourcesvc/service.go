@@ -45,6 +45,9 @@ type Options struct {
 	ImportAttempts int
 	// Now is the clock (tests).
 	Now func() time.Time
+	// ConsoleURL is the console's base URL: commit statuses link to
+	// <ConsoleURL>/apps/<project id> (no link when empty).
+	ConsoleURL string
 }
 
 type Service struct {
@@ -209,22 +212,28 @@ func (s *Service) Unlink(ctx context.Context, organization identity.Organization
 		if err != nil {
 			return err
 		}
-		gone, err := s.repo.DeleteConnectionsOfInstallation(ctx, organization, id, nil)
-		if err != nil {
-			return err
-		}
-		if err := s.repo.DeleteInstallation(ctx, organization, id); err != nil {
-			return err
-		}
-		evs := make([]event.Event, 0, len(gone)+1)
-		ids := make([]source.ConnectionID, 0, len(gone))
-		for _, c := range gone {
-			ids = append(ids, c.ID)
-			evs = append(evs, source.NewDisconnected(c, input.UnlinkedBy, source.ReasonUnlinked))
-		}
-		evs = append(evs, source.NewInstallationUnlinked(inst, input.UnlinkedBy, ids))
-		return s.events.Publish(ctx, evs...)
+		return s.removeInstallation(ctx, inst, input.UnlinkedBy, source.ReasonUnlinked)
 	})
+}
+
+// removeInstallation deletes an installation and its connections and
+// publishes what stopped, in the caller's transaction.
+func (s *Service) removeInstallation(ctx context.Context, inst source.Installation, actor identity.UserID, reason string) error {
+	gone, err := s.repo.DeleteConnectionsOfInstallation(ctx, inst.Organization, inst.ID, nil)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.DeleteInstallation(ctx, inst.Organization, inst.ID); err != nil {
+		return err
+	}
+	evs := make([]event.Event, 0, len(gone)+1)
+	ids := make([]source.ConnectionID, 0, len(gone))
+	for _, c := range gone {
+		ids = append(ids, c.ID)
+		evs = append(evs, source.NewDisconnected(c, actor, reason))
+	}
+	evs = append(evs, source.NewInstallationUnlinked(inst, actor, ids))
+	return s.events.Publish(ctx, evs...)
 }
 
 // ---- connections ----

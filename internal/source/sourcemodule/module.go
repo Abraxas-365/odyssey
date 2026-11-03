@@ -5,15 +5,18 @@
 package sourcemodule
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/config"
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -66,6 +69,9 @@ func New(deps Deps) (Module, error) {
 		}
 	}
 	opts := deps.Options
+	if opts.ConsoleURL == "" {
+		opts.ConsoleURL = deps.GitHub.ConsoleURL
+	}
 	if provider.Enabled() && len(opts.StateKey) == 0 {
 		key, err := stateKey(deps.GitHub)
 		if err != nil {
@@ -114,11 +120,86 @@ func stateKey(cfg config.GitHub) ([]byte, error) {
 	return m.Sum(nil), nil
 }
 
-// Register adds the module's workflows (the import workflow) to r.
+// Register adds the module's workflows (the import workflow) and the poll
+// that catches the commits webhooks missed.
 func (m Module) Register(r *workflow.Registry) {
 	for _, d := range m.workflows.Workflows() {
 		r.Define(d)
 	}
+	r.Every(workflow.Schedule{Name: "source.reconcile", Every: source.ReconcileEvery, Run: func(ctx context.Context) error {
+		n, err := m.Commands.Reconcile(ctx)
+		if n > 0 {
+			slog.Info("queued commits found by polling", "count", n)
+		}
+		return err
+	}})
+}
+
+// CommitStatuses is the subscription that shows a push's progress on its
+// commit in the git host.
+const CommitStatuses = "source.commit_status"
+
+// Subscribe wires the commit statuses: the push and its deployment's events
+// become statuses on the commit, in order per organization (so an older
+// status never lands after a newer one).
+func (m Module) Subscribe(bus *event.Bus) {
+	report := func(ctx context.Context, e event.Event, r source.Report) error {
+		return m.Commands.Report(ctx, e.Organization, r)
+	}
+	bus.Add(event.Subscription{
+		Name:    CommitStatuses,
+		Ordered: true,
+		Types: []string{source.EventPushReceived, source.EventPushFailed, release.EventDeploymentStarted,
+			release.EventDeploymentReady, release.EventDeploymentFailed, release.EventDeploymentCancelled},
+		Handle: func(ctx context.Context, e event.Event) error {
+			if e.Version != 1 {
+				return nil
+			}
+			switch e.Type {
+			case source.EventPushReceived:
+				p, err := event.Decode[source.PushReceived](e)
+				if err != nil {
+					return decodeError(e, err)
+				}
+				return report(ctx, e, source.Report{Push: p.Push, Status: source.PreparingStatus()})
+			case source.EventPushFailed:
+				p, err := event.Decode[source.PushFailed](e)
+				if err != nil {
+					return decodeError(e, err)
+				}
+				return report(ctx, e, source.Report{Push: p.Push, Status: source.PushFailedStatus(p.Message)})
+			case release.EventDeploymentStarted:
+				p, err := event.Decode[release.DeploymentStarted](e)
+				if err != nil {
+					return decodeError(e, err)
+				}
+				return report(ctx, e, source.Report{Deployment: p.Deployment, Status: source.PublishingStatus()})
+			case release.EventDeploymentReady:
+				p, err := event.Decode[release.DeploymentReady](e)
+				if err != nil {
+					return decodeError(e, err)
+				}
+				return report(ctx, e, source.Report{Deployment: p.Deployment, Status: source.LiveStatus()})
+			case release.EventDeploymentFailed:
+				p, err := event.Decode[release.DeploymentFailed](e)
+				if err != nil {
+					return decodeError(e, err)
+				}
+				return report(ctx, e, source.Report{Deployment: p.Deployment, Status: source.DeploymentFailedStatus(p.Message)})
+			case release.EventDeploymentCancelled:
+				p, err := event.Decode[release.DeploymentCancelled](e)
+				if err != nil {
+					return decodeError(e, err)
+				}
+				return report(ctx, e, source.Report{Deployment: p.Deployment, Status: source.ReplacedStatus()})
+			}
+			return nil
+		},
+	})
+}
+
+func decodeError(e event.Event, err error) error {
+	return errx.Wrap(err, fmt.Sprintf("decode %s v%d", e.Type, e.Version), errx.TypeInternal)
 }
 
 // Schema is the module's Postgres schema and migration owner.

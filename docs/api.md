@@ -335,3 +335,16 @@ entry's `hash` covers its content and the previous entry's `hash`).
   `search` (summary).
 - **Verify** re-hashes the whole chain; `broken_at` is the `seq` of the first
   entry that does not match (`null` when `valid`).
+
+### GitHub webhooks (public: `POST /webhooks/github`)
+
+Not under `/api/v1`: no token and no CORS. GitHub calls it with
+`X-GitHub-Delivery`, `X-GitHub-Event` and `X-Hub-Signature-256` (HMAC-SHA256
+of the exact body with the App's webhook secret); the signature is the only
+proof and is checked first (`401`). Everything understood answers `202
+{"status":"accepted"}`, including a repeated delivery id (remembered 7 days) and
+events that are ignored (`ping`, `created`, other repositories or branches).
+`push` queues the branch's new head once per commit (`trigger: webhook`);
+`installation` / `installation_repositories` suspend, refresh or unlink the
+installation. A missed webhook is caught by a 2-minute poll (`trigger:
+reconcile`). `422 GITHUB_NOT_CONFIGURED` without a GitHub App.

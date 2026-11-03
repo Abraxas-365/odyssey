@@ -10,8 +10,11 @@ import (
 const (
 	EventInstallationLinked   = "source.installation_linked"
 	EventInstallationUnlinked = "source.installation_unlinked"
-	EventConnected            = "source.connected"
-	EventDisconnected         = "source.disconnected"
+	// EventInstallationChanged: GitHub reported the installation suspended,
+	// resumed, or with other permissions or repositories.
+	EventInstallationChanged = "source.installation_changed"
+	EventConnected           = "source.connected"
+	EventDisconnected        = "source.disconnected"
 	// EventPushReceived: a commit to publish was queued (the worker imports it).
 	EventPushReceived = "source.push_received"
 	EventPushDeployed = "source.push_deployed"
@@ -38,6 +41,14 @@ type InstallationUnlinked struct {
 	Installation InstallationID `json:"installation_id"`
 	Account      string         `json:"account"`
 	Connections  []ConnectionID `json:"connection_ids"`
+}
+
+// InstallationChanged v1: the installation as it is after the change.
+type InstallationChanged struct {
+	Installation    InstallationID `json:"installation_id"`
+	Account         string         `json:"account"`
+	Suspended       bool           `json:"suspended"`
+	AllRepositories bool           `json:"all_repositories"`
 }
 
 // Connected v1 (also on a reconnect with another repository or branch).
@@ -110,6 +121,27 @@ func NewInstallationUnlinked(i Installation, actor identity.UserID, connections 
 	return event.New(EventInstallationUnlinked, 1, i.Organization, actor,
 		event.Subject(InstallationSubjectKind, i.ID), "Se desconectó GitHub ("+i.Account+")",
 		InstallationUnlinked{Installation: i.ID, Account: i.Account, Connections: connections})
+}
+
+// Actions of an installation webhook that NewInstallationChanged words.
+const (
+	ActionSuspend   = "suspend"
+	ActionUnsuspend = "unsuspend"
+)
+
+// NewInstallationChanged is the installation after the provider's action
+// (suspend, unsuspend, or any other change of permissions or repositories).
+func NewInstallationChanged(i Installation, action string) event.Event {
+	summary := "GitHub (" + i.Account + ") cambió sus repositorios"
+	switch action {
+	case ActionSuspend:
+		summary = "GitHub (" + i.Account + ") quedó suspendido"
+	case ActionUnsuspend:
+		summary = "GitHub (" + i.Account + ") se reanudó"
+	}
+	return event.New(EventInstallationChanged, 1, i.Organization, identity.UserID{},
+		event.Subject(InstallationSubjectKind, i.ID), summary,
+		InstallationChanged{Installation: i.ID, Account: i.Account, Suspended: i.Suspended, AllRepositories: i.AllRepositories})
 }
 
 // Connection events.

@@ -12,6 +12,11 @@ package bootstrap_test
 //     source came from), and source reaches release's operations only
 //     through its Deployer port: release.Commands is named only in the
 //     sourcerelease adapter and in sourcemodule.
+//  4. The repository's cross-org queries (webhooks and the poll know only
+//     the provider's ids) are called only by the service, and the function
+//     that resolves a repository's connections compares their organization
+//     with the installation's: a connection of another tenant is never
+//     acted on.
 
 import (
 	"go/ast"
@@ -50,6 +55,66 @@ func TestGitHubStaysInItsAdapter(t *testing.T) {
 func TestPublicRoutesAreDeclared(t *testing.T) { report(t, publicRouteViolations(sources(t, false))) }
 func TestReleaseDoesNotKnowSources(t *testing.T) {
 	report(t, sourceReleaseViolations(sources(t, false)))
+}
+func TestCrossOrgQueriesStayChecked(t *testing.T) { report(t, crossOrgViolations(sources(t, false))) }
+
+// crossOrgQueries are the source.Repository methods that are not scoped by
+// organization. Only sourcesvc calls them; the second set must be followed by
+// an organization comparison in the same function.
+var crossOrgQueries = map[string]bool{
+	"FindInstallationByExternal":  true,
+	"ListConnectionsByRepository": true,
+	"ListConnectionsToReconcile":  true,
+}
+var needsOrgComparison = map[string]bool{"ListConnectionsByRepository": true}
+
+func crossOrgViolations(files []goFile) []string {
+	var out []string
+	for _, f := range files {
+		dir := path.Dir(f.rel)
+		if !strings.HasPrefix(dir, "source/") && dir != "source" || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		for _, decl := range f.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			var calls []*ast.CallExpr
+			compares := false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.CallExpr:
+					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && crossOrgQueries[sel.Sel.Name] {
+						calls = append(calls, x)
+					}
+				case *ast.BinaryExpr:
+					if x.Op != token.EQL && x.Op != token.NEQ {
+						break
+					}
+					l, lok := x.X.(*ast.SelectorExpr)
+					r, rok := x.Y.(*ast.SelectorExpr)
+					compares = compares || lok && rok && l.Sel.Name == "Organization" && r.Sel.Name == "Organization"
+				}
+				return true
+			})
+			for _, call := range calls {
+				name := call.Fun.(*ast.SelectorExpr).Sel.Name
+				pos := f.fset.Position(call.Pos()).String()
+				switch {
+				case dir == "source/adapters/sourcepg" || dir == "source":
+					// the repository and its port declare them
+				case dir != "source/sourcesvc":
+					out = append(out, pos+": "+dir+" calls "+name+", which is not scoped by organization; only source/sourcesvc may")
+				case needsOrgComparison[name] && !compares:
+					out = append(out, pos+": "+fn.Name.Name+" calls "+name+
+						" without comparing the connection's Organization with the installation's")
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // repoRootSources parses the Go files (tests included) under the repo-root
@@ -289,7 +354,25 @@ func (x *All) RegisterPublic(r fiber.Router) { r.All("/github/setup", x.d) }`,
 		"source/adapters/sourcepg/dot.go": `package sourcepg; import . "` + m + `errx"`,
 		"cmd/odyssey-api/main.go":         `package main; import _ "github.com/google/go-github/v93/github"`,
 		"pkg/srcarchive/jwt.go":           `package srcarchive; import _ "github.com/golang-jwt/jwt/v5"`,
+
+		// cross-org queries: correct
+		"source/sourcesvc/hook_ok.go": `package sourcesvc
+func (s *S) push(ctx C) { inst, _ := s.repo.FindInstallationByExternal(ctx, 1); conns, _ := s.repo.ListConnectionsByRepository(ctx, inst.ID, 2)
+	for _, c := range conns { if c.Organization != inst.Organization { continue } } }
+func (s *S) poll(ctx C) { s.repo.ListConnectionsToReconcile(ctx, t, 200) }`,
+		"source/adapters/sourcepg/repo.go": `package sourcepg
+func (r *R) FindInstallationByExternal(ctx C, id int64) {}`,
+
+		// cross-org queries: violations
+		"source/sourcesvc/hook_bad.go": `package sourcesvc
+func (s *S) push(ctx C) { inst, _ := s.repo.FindInstallationByExternal(ctx, 1); s.repo.ListConnectionsByRepository(ctx, inst.ID, 2) }`,
+		"source/sourcemodule/peek.go": `package sourcemodule
+func (m M) peek(ctx C) { m.repo.ListConnectionsToReconcile(ctx, t, 1) }`,
 	})
+	expectViolations(t, crossOrgViolations(files),
+		"source/sourcesvc/hook_bad.go: push calls ListConnectionsByRepository without comparing",
+		"source/sourcemodule/peek.go: source/sourcemodule calls ListConnectionsToReconcile",
+	)
 	expectViolations(t, gitHubSDKViolations(files),
 		"build/adapters/buildgit/g.go: build/adapters/buildgit imports github.com/google/go-github/v93/github",
 		"source/sourcesvc/jwt.go: source/sourcesvc imports github.com/golang-jwt/jwt/v5",

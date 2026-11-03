@@ -296,16 +296,52 @@ func TestPushes(t *testing.T) {
 func TestDeliveries(t *testing.T) {
 	e := setup(t)
 	ctx, repo := e.ctx, e.repo
-	if first, err := repo.SeeDelivery(ctx, "d-1"); err != nil || !first {
+	never := time.Time{} // forgets nothing
+	if first, err := repo.ObserveDelivery(ctx, "d-1", never); err != nil || !first {
 		t.Fatalf("first %v %v", first, err)
 	}
-	if first, err := repo.SeeDelivery(ctx, "d-1"); err != nil || first {
+	if first, err := repo.ObserveDelivery(ctx, "d-1", never); err != nil || first {
 		t.Fatalf("again %v %v", first, err)
 	}
-	if n, err := repo.ForgetDeliveries(ctx, time.Now().Add(time.Minute)); err != nil || n != 1 {
-		t.Fatalf("forget %d %v", n, err)
+	if _, err := repo.ObserveDelivery(ctx, "d-2", never); err != nil {
+		t.Fatal(err)
 	}
-	if first, _ := repo.SeeDelivery(ctx, "d-1"); !first {
+
+	// recording a new id forgets the old ones, never itself
+	future := time.Now().Add(time.Minute)
+	if first, err := repo.ObserveDelivery(ctx, "d-3", future); err != nil || !first {
+		t.Fatalf("d-3 %v %v", first, err)
+	}
+	if first, _ := repo.ObserveDelivery(ctx, "d-1", never); !first {
 		t.Fatal("forgotten delivery still seen")
+	}
+	if first, _ := repo.ObserveDelivery(ctx, "d-3", never); first {
+		t.Fatal("the delivery just recorded was forgotten")
+	}
+}
+
+func TestObserveDeliveryForgetsAtMost1000(t *testing.T) {
+	e := setup(t)
+	ctx := e.ctx
+	if _, err := e.db.ExecContext(ctx, `INSERT INTO source.deliveries (id, seen_at)
+		SELECT 'old-' || n, now() - interval '30 days' FROM generate_series(1, 1005) n`); err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	if first, err := e.repo.ObserveDelivery(ctx, "new", cutoff); err != nil || !first {
+		t.Fatalf("new %v %v", first, err)
+	}
+	var left int
+	if err := e.db.GetContext(ctx, &left, `SELECT count(*) FROM source.deliveries WHERE id LIKE 'old-%'`); err != nil {
+		t.Fatal(err)
+	}
+	if left != 5 {
+		t.Fatalf("%d old deliveries left, want 5", left)
+	}
+	if _, err := e.repo.ObserveDelivery(ctx, "newer", cutoff); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.GetContext(ctx, &left, `SELECT count(*) FROM source.deliveries WHERE id LIKE 'old-%'`); err != nil || left != 0 {
+		t.Fatalf("%d old deliveries left, want 0 (%v)", left, err)
 	}
 }

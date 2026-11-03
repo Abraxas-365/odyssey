@@ -22,7 +22,7 @@ import (
 
 // PublicRoutes are the unauthenticated routes (the provider calls them, or
 // sends the browser to them); each checks its own proof.
-var PublicRoutes = []string{"GET /github/setup"}
+var PublicRoutes = []string{"GET /github/setup", "POST /webhooks/github"}
 
 type Handler struct {
 	commands source.Commands
@@ -58,6 +58,23 @@ func (h *Handler) Register(r fiber.Router) {
 // RegisterPublic mounts PublicRoutes on the app's root, outside auth.
 func (h *Handler) RegisterPublic(r fiber.Router) {
 	r.Get("/github/setup", h.setup)
+	r.Post("/webhooks/github", h.webhook)
+}
+
+// webhook receives GitHub's deliveries. The signature over the exact body is
+// the only proof (checked by the service before anything else); a delivery
+// seen before is accepted too, so GitHub does not redeliver it.
+func (h *Handler) webhook(c *fiber.Ctx) error {
+	err := h.commands.Receive(c.UserContext(), source.Webhook{
+		Delivery:  c.Get("X-GitHub-Delivery"),
+		Event:     c.Get("X-GitHub-Event"),
+		Signature: c.Get("X-Hub-Signature-256"),
+		Payload:   c.Body(),
+	})
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "accepted"})
 }
 
 // ---- installations ----

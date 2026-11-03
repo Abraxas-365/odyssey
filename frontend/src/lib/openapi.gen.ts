@@ -701,6 +701,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Where GitHub delivers the App's webhooks
+         * @description Public: the only proof is the HMAC-SHA256 signature of the exact body in `X-Hub-Signature-256` (401 when it does not hold; checked before anything else). Answers `202 {"status":"accepted"}` for everything it understood, including a delivery it had seen (`X-GitHub-Delivery` is remembered 7 days) and the events it ignores. `push` queues the new head of every connected project on that branch (once per commit); `installation` and `installation_repositories` refresh, suspend or unlink the installation and disconnect the projects whose repository was removed. 400 for a malformed delivery; `GITHUB_NOT_CONFIGURED` (422) when this installation has no GitHub App. Not under `/api/v1`: no token, no CORS.
+         */
+        post: operations["receiveGitHubWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1238,7 +1258,7 @@ export interface components {
              * @description GitHub's numeric repository id.
              */
             repository_id: number;
-            /** @description "owner/name", refreshed on every push. */
+            /** @description "owner/name" as of the last (re)connect (repository_id survives a rename). */
             repository: string;
             branch: string;
             /** @description The app's folder inside the repository; "" for its root. */
@@ -2549,6 +2569,46 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    receiveGitHubWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The delivery's unique id. */
+                "X-GitHub-Delivery": string;
+                /** @description `push`, `installation`, `installation_repositories`, `ping`... Others are accepted and ignored. */
+                "X-GitHub-Event": string;
+                /** @description `sha256=<hex HMAC-SHA256 of the body with the App's webhook secret>`. */
+                "X-Hub-Signature-256": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted (also for a repeated delivery). */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "accepted";
+                    };
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
         };
     };
 }
