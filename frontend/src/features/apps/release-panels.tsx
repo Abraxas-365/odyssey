@@ -104,7 +104,7 @@ export function VersionsPanel({ items, loading, error, onRetry, technical, proje
   )
 }
 
-/** Builds default to 8080: the agent sets $PORT for the app (plan 1b). */
+/** Prefills the (technical) port field with the API's default, 8080: the agent sets $PORT for the app. */
 const BUILD_PORT = '8080'
 
 /**

@@ -111,8 +111,11 @@ func TestGitHubPushDeploys(t *testing.T) {
 	proj := httpxtest.JSON[project.Project](t, res)
 	projPath := "/api/v1/projects/" + proj.ID.String()
 	res = checked(t, app, http.MethodPut, projPath+"/repository", token,
-		map[string]any{"installation_id": inst.ID, "repository_id": 42, "port": 3000, "health_path": "/"})
+		map[string]any{"installation_id": inst.ID, "repository_id": 42}) // no port: the API's default
 	httpxtest.Want(t, res, http.StatusOK)
+	if c := httpxtest.JSON[source.Connection](t, res); c.Config.Port != release.DefaultPort || c.Config.HealthPath != "/" || c.Config.Replicas != 1 {
+		t.Fatalf("connection defaults = %s", res.Body)
+	}
 
 	pushes := func(wantCount int) []source.Push {
 		t.Helper()

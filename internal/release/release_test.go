@@ -56,6 +56,18 @@ func TestDeployValidation(t *testing.T) {
 	if err := ok.Validate(); err != nil || ok.HealthPath != "/" || ok.Replicas != 1 || ok.Env == nil {
 		t.Fatalf("%+v %v", ok, err)
 	}
+	// No port: the platform's default, the same one the agent puts in $PORT.
+	if d := (release.Deploy{Image: ok.Image}).Normalize(); d.Validate() != nil || d.Port != release.DefaultPort || release.DefaultPort != 8080 {
+		t.Fatalf("default port: %+v", d)
+	}
+	for _, c := range []release.Config{
+		release.DeploySource{}.Normalize().Config,
+		release.DeployUploaded{}.Normalize().Config,
+	} {
+		if c.Port != release.DefaultPort {
+			t.Fatalf("default port: %+v", c)
+		}
+	}
 	for field, d := range map[string]release.Deploy{
 		"image":       {Image: "ghcr.io/inedge/visitas:latest", Config: release.Config{Port: 3000}},
 		"port":        {Image: ok.Image, Config: release.Config{Port: 70000}},

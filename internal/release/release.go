@@ -45,6 +45,10 @@ const (
 	MaxEnv      = 100
 	MaxEnvValue = 4096
 	MaxHealth   = 200
+	// DefaultPort is the port an app listens on when the request names none:
+	// the agent also sets $PORT to it, which builds (Railpack) honor. One
+	// default for every client (console, API, MCP).
+	DefaultPort = 8080
 	// ReservedEnvPrefix is set by the platform (ODYSSEY_URL, ...).
 	ReservedEnvPrefix = "ODYSSEY_"
 )
@@ -61,8 +65,11 @@ var (
 // a release must name exactly one image forever.
 func ValidImage(s string) bool { return len(s) <= MaxImage && imagePattern.MatchString(s) }
 
-// Normalize fills the defaults (one replica, health at "/").
+// Normalize fills the defaults (port 8080, one replica, health at "/").
 func (c Config) Normalize() Config {
+	if c.Port == 0 {
+		c.Port = DefaultPort
+	}
 	c.HealthPath = strings.TrimSpace(c.HealthPath)
 	if c.HealthPath == "" {
 		c.HealthPath = "/"

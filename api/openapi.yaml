@@ -1369,14 +1369,14 @@ components:
     DeployRequest:
       type: object
       additionalProperties: false
-      required: [image, port]
+      required: [image]
       properties:
         image:
           type: string
           maxLength: 512
           description: "`registry/repository@sha256:<64 hex>`. Tags are refused: a release names one image forever."
           example: ghcr.io/inedge/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-        port: { type: integer, minimum: 1, maximum: 65535, description: The port the app listens on. }
+        port: { type: integer, minimum: 1, maximum: 65535, description: "The port the app listens on (also set as `$PORT`). Default 8080." }
         health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
         replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
         env:
@@ -1389,10 +1389,9 @@ components:
       type: object
       additionalProperties: false
       description: The `config` part of a deployment from source (at most 256 KiB).
-      required: [port]
       properties:
         name: { type: string, maxLength: 200, description: "Names the source. Default: the uploaded file's name." }
-        port: { type: integer, minimum: 1, maximum: 65535, description: The port the app listens on. }
+        port: { type: integer, minimum: 1, maximum: 65535, description: "The port the app listens on (also set as `$PORT`). Default 8080." }
         health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
         replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
         env:
@@ -1857,7 +1856,7 @@ components:
     ConnectRepository:
       type: object
       additionalProperties: false
-      required: [installation_id, repository_id, port]
+      required: [installation_id, repository_id]
       properties:
         installation_id: { type: string, format: uuid, description: A linked installation of the organization. }
         repository_id: { type: integer, format: int64, minimum: 1, description: GitHub's numeric repository id. }
@@ -1866,7 +1865,7 @@ components:
           type: string
           maxLength: 200
           description: 'The app''s folder inside the repository, relative, without `.` or `..` parts. Default "" (the root).'
-        port: { type: integer, minimum: 1, maximum: 65535, description: The port the app listens on. }
+        port: { type: integer, minimum: 1, maximum: 65535, description: "The port the app listens on (also set as `$PORT`). Default 8080." }
         health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
         replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
         env:

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, errorMessage } from './api'
 import { githubErrorText, githubMessages } from './github-errors'
-import { connectBody, DEFAULT_PORT, manageOnGitHubURL, pushActive, safeReturnTo } from './github'
+import { connectBody, manageOnGitHubURL, pushActive, safeReturnTo } from './github'
 import type { GitHubRepository } from './types'
 
 describe('GitHub error codes', () => {
@@ -35,8 +35,8 @@ describe('GitHub links', () => {
 
 describe('connecting', () => {
   const repo = { id: 42, full_name: 'acme/visitas', default_branch: 'main', private: true, installation_id: 'inst' } as GitHubRepository
-  it('sends the installation, repository id, branch and trimmed folder', () => {
-    expect(connectBody(repo, 'dev', ' apps/web ')).toEqual({ installation_id: 'inst', repository_id: 42, branch: 'dev', root: 'apps/web', port: DEFAULT_PORT })
+  it('sends the installation, repository id, branch and trimmed folder; the API picks the port', () => {
+    expect(connectBody(repo, 'dev', ' apps/web ')).toEqual({ installation_id: 'inst', repository_id: 42, branch: 'dev', root: 'apps/web' })
   })
   it('polls only while a push is on its way', () => {
     expect(['queued', 'importing', 'deployed', 'failed', 'skipped', undefined].map(s => pushActive(s as never))).toEqual([true, true, false, false, false, false])

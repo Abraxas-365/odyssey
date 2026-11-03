@@ -18,9 +18,6 @@ import type {
 const enc = encodeURIComponent
 const repoPath = (project: string) => `/projects/${enc(project)}/repository`
 
-/** The port the build gives the app (`$PORT`, plan 1b); the API requires one to connect. */
-export const DEFAULT_PORT = 8080
-
 export const githubKeys = {
   all: ['github'] as const,
   info: ['github', 'info'] as const,
@@ -169,9 +166,9 @@ export function usePublishNow(project: string) {
   })
 }
 
-/** The default connection body for a picked repository and branch. */
+/** The connection body for a picked repository and branch; the API fills the port (8080) and health path. */
 export function connectBody(repo: GitHubRepository, branch: string, root: string): ConnectRepository {
-  return { installation_id: repo.installation_id, repository_id: repo.id, branch, root: root.trim(), port: DEFAULT_PORT }
+  return { installation_id: repo.installation_id, repository_id: repo.id, branch, root: root.trim() }
 }
 
 /** Plain words for where a push is (UX v3: no "importing", no "webhook"). */

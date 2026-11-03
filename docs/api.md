@@ -207,13 +207,15 @@ environment serves. The console calls both "versión".
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
 
-- **Deploy** takes `{image, port, health_path?, replicas?, env?}`. `image` must
+- **Deploy** takes `{image, port?, health_path?, replicas?, env?}`. `image` must
   be `registry/repository@sha256:<64 hex>`: tags are refused (400, field
-  `image`). Defaults: `health_path` `/`, `replicas` 1. `env` holds non-secret
+  `image`). Defaults: `port` 8080 (the agent also sets `$PORT` to it),
+  `health_path` `/`, `replicas` 1 — the same for every body that carries a
+  release config (deploy from source, connect a repository). `env` holds non-secret
   values; `ODYSSEY_*` names are reserved. Its values never reach events or
   the audit trail (only the names do).
 - **Deploy from source** sends the same endpoint `multipart/form-data` (§6):
-  part `config` = `{port, health_path?, replicas?, env?}` (no `image`), then
+  part `config` = `{port?, health_path?, replicas?, env?}` (no `image`), then
   part `source` = a `.tar.gz` of the app's folder. The archive is checked
   before anything starts: no absolute paths, `..`, links or devices, within
   the limits of §9; otherwise 400 `SOURCE_INVALID` (field `source`). The

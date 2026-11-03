@@ -849,8 +849,8 @@ export interface components {
              * @example ghcr.io/inedge/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
              */
             image: string;
-            /** @description The port the app listens on. */
-            port: number;
+            /** @description The port the app listens on (also set as `$PORT`). Default 8080. */
+            port?: number;
             /** @description Answers 2xx when the app is healthy. Default `/`. */
             health_path?: string;
             /** @description Default 1. */
@@ -864,8 +864,8 @@ export interface components {
         DeploySourceConfig: {
             /** @description Names the source. Default: the uploaded file's name. */
             name?: string;
-            /** @description The port the app listens on. */
-            port: number;
+            /** @description The port the app listens on (also set as `$PORT`). Default 8080. */
+            port?: number;
             /** @description Answers 2xx when the app is healthy. Default `/`. */
             health_path?: string;
             /** @description Default 1. */
@@ -1288,8 +1288,8 @@ export interface components {
             branch?: string;
             /** @description The app's folder inside the repository, relative, without `.` or `..` parts. Default "" (the root). */
             root?: string;
-            /** @description The port the app listens on. */
-            port: number;
+            /** @description The port the app listens on (also set as `$PORT`). Default 8080. */
+            port?: number;
             /** @description Answers 2xx when the app is healthy. Default `/`. */
             health_path?: string;
             /** @description Default 1. */

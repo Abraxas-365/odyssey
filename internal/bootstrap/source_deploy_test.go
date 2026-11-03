@@ -362,7 +362,7 @@ func TestDeployFromSource(t *testing.T) {
 	if httpxtest.Want(t, res, http.StatusBadRequest); httpxtest.ErrorField(res) != "source" {
 		t.Fatalf("no source: %s", res.Body)
 	}
-	res = upload(t, app, base+"/deployments", token, configPart(t, map[string]any{"port": 0}), part{name: "source", file: "a.tar.gz", body: folder(t, "x")})
+	res = upload(t, app, base+"/deployments", token, configPart(t, map[string]any{"port": 70000}), part{name: "source", file: "a.tar.gz", body: folder(t, "x")})
 	if httpxtest.Want(t, res, http.StatusBadRequest); httpxtest.ErrorField(res) != "port" {
 		t.Fatalf("bad config: %s", res.Body)
 	}
