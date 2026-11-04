@@ -40,7 +40,7 @@ func assemble(t *testing.T) *bootstrap.Platform {
 // module, Postgres with all migrations) with only IAMKit faked.
 func TestServerRoundTrip(t *testing.T) {
 	platform := assemble(t)
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.AuditRead)
 

@@ -12,7 +12,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -31,9 +33,13 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/fleet/fleetmodule"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
+	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
+	"github.com/Abraxas-365/odyssey/internal/permission"
+	"github.com/Abraxas-365/odyssey/internal/project/adapters/projectmcp"
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasemcp"
 	"github.com/Abraxas-365/odyssey/internal/release/releasemodule"
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
 	"github.com/Abraxas-365/odyssey/internal/server"
@@ -449,17 +455,36 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a.closers = append(a.closers, p.Close)
 	iam := authclient.New(cfg.IAM.URL, authclient.WithHTTPClient(&http.Client{Timeout: 5 * time.Second}))
-	a.HTTP = NewServer(p, cfg, httpx.Authenticate(iam, cfg.IAM))
+	var mcpAuth *httpx.MCPAuth
+	if cfg.MCP.Enabled() {
+		if mcpAuth, err = httpx.NewMCPAuth(cfg.IAM, cfg.MCP, permission.All); err != nil {
+			a.Close()
+			return nil, err
+		}
+		// The tools hand agents console links; a default of localhost on a
+		// real host sends users nowhere.
+		if u, perr := url.Parse(cfg.ConsoleURL); perr == nil && u.Hostname() == "localhost" && !strings.Contains(cfg.IAM.Audience, "://localhost") {
+			slog.Warn("MCP tools link to the console at " + cfg.ConsoleURL + ": set ODYSSEY_CONSOLE_URL")
+		}
+	} else {
+		slog.Warn("MCP is off: set IAMKIT_INTROSPECTION_CLIENT_ID and its secret (make seed provisions them)")
+	}
+	a.HTTP = NewServer(p, cfg, httpx.Authenticate(iam, cfg.IAM), mcpAuth)
 	return a, nil
 }
 
 // NewServer assembles the modules behind auth. Tests call it with a fake
-// authenticator; production passes httpx.Authenticate.
-func NewServer(p *Platform, cfg config.Config, auth fiber.Handler) *fiber.App {
+// authenticator; production passes httpx.Authenticate. mcpAuth nil leaves
+// /mcp unmounted.
+func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *httpx.MCPAuth) *fiber.App {
+	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP}}
+	if mcpAuth != nil {
+		opts.MCP = &server.MCP{Auth: mcpAuth, Handler: NewMCPHandler(p, cfg)}
+	}
 	return server.New(
 		func() error { return p.DB.Ping() },
 		server.PublicConfig{IAMURL: cfg.IAM.PublicURL, ClientID: cfg.IAM.WebClientID, Environment: cfg.IAM.Environment},
-		server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP}},
+		opts,
 		[]fiber.Handler{auth},
 		p.Projects.HTTP,
 		p.Releases.HTTP,
@@ -468,6 +493,36 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler) *fiber.App {
 		p.Fleet.HTTP,
 		p.Audit.HTTP,
 	)
+}
+
+// MCPTools are every domain's tools for coding agents: the one MCP server
+// (mcpx) lists them, each still gated by its permissions.
+func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
+	github := cfg.GitHub.Enabled()
+	return slices.Concat(
+		projectmcp.Tools(p.Projects.Queries, projectmcp.Options{ConsoleURL: cfg.ConsoleURL,
+			GitHubEnabled: func(context.Context) bool { return github }}),
+		releasemcp.Tools(p.Projects.Queries, p.Releases.Queries, releasemcp.Options{ConsoleURL: cfg.ConsoleURL}),
+	)
+}
+
+// NewMCPHandler serves MCPTools (the caller authenticates first). A tool
+// requiring a permission outside iam/permissions.json is a programming error
+// (nobody could ever hold it): it panics at start, and tests catch it.
+func NewMCPHandler(p *Platform, cfg config.Config) http.Handler {
+	tools := MCPTools(p, cfg)
+	for _, t := range tools {
+		for _, perm := range t.Permissions {
+			if !slices.Contains(permission.All, perm) {
+				panic(fmt.Sprintf("bootstrap: MCP tool %s requires %q, which is not in iam/permissions.json", t.Name, perm))
+			}
+		}
+	}
+	reg, err := mcpx.NewRegistry(tools)
+	if err != nil {
+		panic(err) // a programming error: the tools are static, tests catch it
+	}
+	return mcpx.NewHandler(reg, mcpx.Options{})
 }
 
 // sessionTimeouts bound every pooled connection (docs/api.md §9). A value

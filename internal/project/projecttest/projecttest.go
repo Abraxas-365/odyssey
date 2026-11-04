@@ -5,6 +5,7 @@ package projecttest
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +96,17 @@ func (m *Repo) Find(_ context.Context, org identity.OrganizationID, id project.I
 	return p, nil
 }
 
+func (m *Repo) FindBySlug(_ context.Context, org identity.OrganizationID, slug string) (project.Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.rows {
+		if p.Organization == org && p.Slug == slug {
+			return p, nil
+		}
+	}
+	return project.Project{}, errx.NotFound("project not found")
+}
+
 func (m *Repo) FindForUpdate(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
 	return m.Find(ctx, org, id)
 }
@@ -106,15 +118,31 @@ func (m *Repo) FindForShare(ctx context.Context, org identity.OrganizationID, id
 func (m *Repo) List(_ context.Context, org identity.OrganizationID, f project.Filter, p query.Pagination) (query.Paginated[project.Project], error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	items := []project.Project{}
+	matches := []project.Project{}
+	search := strings.ToLower(p.Search)
 	for _, r := range m.rows {
-		for _, s := range f.Status {
-			if r.Organization == org && r.Status == s {
-				items = append(items, r)
-			}
+		if r.Organization != org || !slices.Contains(f.Status, r.Status) {
+			continue
 		}
+		if search != "" && !strings.Contains(strings.ToLower(r.Name), search) && !strings.Contains(r.Slug, search) {
+			continue
+		}
+		matches = append(matches, r)
 	}
-	return query.NewPaginated(items, len(items), p), nil
+	// Same order as the Postgres repository: name (case-insensitive), then id.
+	slices.SortFunc(matches, func(a, b project.Project) int {
+		if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID.String(), b.ID.String())
+	})
+	total := len(matches)
+	from := min(max(p.Offset, 0), total)
+	to := total
+	if p.Limit > 0 {
+		to = min(from+p.Limit, total)
+	}
+	return query.NewPaginated(matches[from:to], total, p), nil
 }
 
 func (m *Repo) Update(ctx context.Context, org identity.OrganizationID, id project.ID, in project.Update) error {

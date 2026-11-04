@@ -32,6 +32,7 @@ var foundation = map[string]bool{
 	"txn": true, "event": true, "blob": true, "permission": true,
 	"httpx": true, "pgerr": true, "text": true, "optional": true,
 	"migrate": true, "pgtest": true, "workflow": true, "telemetry": true,
+	"mcpx": true,
 }
 
 // iamkitSDK may be imported only by adapters, httpx (authentication) and the

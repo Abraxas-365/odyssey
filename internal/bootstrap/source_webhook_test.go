@@ -80,7 +80,7 @@ func TestGitHubPushDeploys(t *testing.T) {
 		}
 	}()
 
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead,
 		permission.DeploymentsCreate, permission.IntegrationsManage, permission.AuditRead)
@@ -264,7 +264,7 @@ func TestGitHubWebhookDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = platform.Close() })
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	res := httpxtest.DoWithHeaders(t, app, http.MethodPost, "/webhooks/github", "", []byte(`{}`), map[string]string{
 		"X-GitHub-Delivery": "d", "X-GitHub-Event": "push", "X-Hub-Signature-256": "sha256=00"})
 	validate(t, http.MethodPost, "/webhooks/github", res)

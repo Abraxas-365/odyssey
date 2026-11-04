@@ -21,6 +21,9 @@ type Commands interface {
 // Queries are the read operations, implemented by projectsvc.Service.
 type Queries interface {
 	Find(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
+	// FindBySlug is Find by the URL slug (unique per organization; archived
+	// projects keep theirs): how agents and people name an app.
+	FindBySlug(ctx context.Context, organization identity.OrganizationID, slug string) (Project, error)
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Project], error)
 	FindEnvironment(ctx context.Context, organization identity.OrganizationID, project ID, environment EnvironmentID) (Environment, error)
 	// FindEnvironmentBySlug resolves "production" (or another slug) of a project.
@@ -40,6 +43,7 @@ type Queries interface {
 type Repository interface {
 	Create(ctx context.Context, organization identity.OrganizationID, project ID, input Create) error
 	Find(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
+	FindBySlug(ctx context.Context, organization identity.OrganizationID, slug string) (Project, error)
 	// FindForUpdate is Find that locks the row until the transaction in ctx
 	// ends (SELECT … FOR UPDATE); call it inside txn.Runner.Do.
 	FindForUpdate(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)

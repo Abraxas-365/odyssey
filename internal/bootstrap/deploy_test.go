@@ -82,7 +82,7 @@ func TestDeployWorkflow(t *testing.T) {
 		}
 	}()
 
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead,
 		permission.DeploymentsCreate, permission.DeploymentsRollback, permission.AuditRead)

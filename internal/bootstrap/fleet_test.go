@@ -360,7 +360,7 @@ func TestFleetTunnel(t *testing.T) {
 // enrolling between the calls.
 func TestClustersOverHTTP(t *testing.T) {
 	h := startFleet(t)
-	app := bootstrap.NewServer(h.platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(h.platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
 	manage := httpxtest.Token(org, permission.ClustersRead, permission.ClustersManage)
 	read := httpxtest.Token(org, permission.ClustersRead)

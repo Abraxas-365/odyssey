@@ -17,6 +17,21 @@
 #      (spec .service_account) -> secret written to OUT once
 #   7. optional first user (OWNER_EMAIL [+ OWNER_PASSWORD]): member of the
 #      organization with the first role of the spec
+#   8. optional MCP protected resource (MCP_PRESETS set): the resource of step 3
+#      becomes an OAuth 2.1 / RFC 8707 resource server for MCP assistants.
+#        - protected resource "Odicea MCP" (consent per user, client metadata
+#          documents on, dynamic registration off, admission by allowlist,
+#          short access tokens), converged on every run;
+#        - the assistants of MCP_PRESETS are admitted: metadata-document
+#          presets (claude_code, codex, vscode, …) join the allowlist, template
+#          presets (antigravity, cursor, gemini_cli) get their registered client;
+#        - a confidential client (token-exchange grant only, never used to sign
+#          anyone in) whose only job is calling /oauth/introspect: its id and
+#          secret go to OUT as IAMKIT_INTROSPECTION_CLIENT_ID/_SECRET.
+#      The protected resource's URI is the resource's audience, which is
+#      immutable: AUDIENCE must already be the MCP endpoint URL (e.g.
+#      https://odicea.example.com/mcp). On an older resource with another
+#      audience the step is skipped with a WARNING (recreate the resource).
 #
 # Spec / permission manifest (SPEC=path, JSON) — the single source of the app's
 # permissions (see references/permissions-as-code.md):
@@ -52,9 +67,17 @@
 #   HOSTED_LOGIN      1 = IAMKit's hosted sign-in pages, 0 = custom UI  [1]
 #   OWNER_EMAIL / OWNER_PASSWORD (12-72 chars) / OWNER_NAME
 #   OUT               env file receiving the settings               [.iamkit.env]
+#   MCP_PRESETS       comma-separated assistants to admit (step 8); empty = no MCP
+#                     e.g. claude_code,codex,vscode,antigravity (see
+#                     GET /management/v1/environments/<env>/oauth-client-presets)
+#   MCP_SCOPES        comma-separated default scopes of the MCP resource
+#                     [<prefix>:projects:read,<prefix>:projects:write,
+#                      <prefix>:deployments:read,<prefix>:deployments:create]
+#   MCP_TOKEN_TTL     access token lifetime in seconds, 60-3600      [300]
 #
-# Secrets (service account) exist only at creation: they are kept in OUT
-# (mode 600). If OUT lost one, revoke the account in IAMKit and re-run.
+# Secrets (service account, introspection client) exist only at creation: they
+# are kept in OUT (mode 600). If OUT lost one, revoke the account / disable the
+# client in IAMKit and re-run.
 # Never run with `set -x`: the key and secrets are in play.
 set -euo pipefail
 
@@ -72,7 +95,7 @@ done
 
 IAMKIT_URL=${IAMKIT_URL:-http://localhost:8080}; IAMKIT_URL=${IAMKIT_URL%/}
 APP_URL=${APP_URL:-http://localhost:3000}; APP_URL=${APP_URL%/}
-AUDIENCE=${AUDIENCE:-$APP_URL}
+AUDIENCE=${AUDIENCE:-$APP_URL}; AUDIENCE_WANTED=$AUDIENCE
 CALLBACK_PATH=${CALLBACK_PATH:-/auth/callback}
 SPEC=${SPEC:-iam/permissions.json}
 PROJECT_NAME=${PROJECT_NAME:-My App}
@@ -81,6 +104,9 @@ ORG_NAME=${ORG_NAME:-Demo Org}
 APP_NAME=${APP_NAME:-Web}
 HOSTED_LOGIN=${HOSTED_LOGIN:-1}
 OUT=${OUT:-.iamkit.env}
+MCP_PRESETS=$(tr -d '[:space:]' <<<"${MCP_PRESETS:-}")
+MCP_TOKEN_TTL=${MCP_TOKEN_TTL:-300}
+[[ "$MCP_TOKEN_TTL" =~ ^[0-9]+$ ]] || { echo "MCP_TOKEN_TTL must be a number of seconds" >&2; exit 1; }
 
 KEY=${IAMKIT_KEY:-}
 if [[ -z "$KEY" && -n "${IAMKIT_KEY_FILE:-}" ]]; then KEY=$(jq -er .management_key "$IAMKIT_KEY_FILE"); fi
@@ -99,9 +125,11 @@ problems=$(jq -r '
 [[ -z "$problems" ]] || { echo "Spec $SPEC is invalid:" >&2; sed 's/^/  /' <<<"$problems" >&2; exit 1; }
 
 # Secrets created earlier survive a re-run.
-IAMKIT_SERVICE_ACCOUNT_SECRET=""
+IAMKIT_SERVICE_ACCOUNT_SECRET="" IAMKIT_INTROSPECTION_CLIENT_ID="" IAMKIT_INTROSPECTION_CLIENT_SECRET=""
 if [[ -f "$OUT" ]]; then
   IAMKIT_SERVICE_ACCOUNT_SECRET=$(sed -n 's/^IAMKIT_SERVICE_ACCOUNT_SECRET=//p' "$OUT" | tail -1)
+  IAMKIT_INTROSPECTION_CLIENT_ID=$(sed -n 's/^IAMKIT_INTROSPECTION_CLIENT_ID=//p' "$OUT" | tail -1)
+  IAMKIT_INTROSPECTION_CLIENT_SECRET=$(sed -n 's/^IAMKIT_INTROSPECTION_CLIENT_SECRET=//p' "$OUT" | tail -1)
 fi
 
 log() { echo "  $*" >&2; }
@@ -237,7 +265,7 @@ hosted=$([[ "$HOSTED_LOGIN" == 1 ]] && echo true || echo false)
 web_body=$(jq -c --arg cb "$CALLBACK_PATH" --argjson h "$hosted" \
   '{redirect_uris: map(. + $cb), post_logout_redirect_uris: map(. + "/"), allowed_origins: ., hosted_login: $h}' <<<"$origins")
 clients=$(all "$e/oauth-clients?application_id=$application")
-web=$(pick "$clients" ".public == true and .resource_id == $(q "$resource")")
+web=$(pick "$clients" ".public == true and .resource_id == $(q "$resource") and ((.preset // \"\") == \"\")")
 if [[ -z "$web" ]]; then
   web=$(jq -c --arg a "$application" --arg r "$resource" \
     '. + {application_id:$a, resource_id:$r, public:true, grant_types:["authorization_code","refresh_token"]}' <<<"$web_body" |
@@ -310,6 +338,114 @@ if [[ -n "${OWNER_EMAIL:-}" ]]; then
   fi
 fi
 
+mcp_lines=()
+if [[ -n "$MCP_PRESETS" ]]; then
+  step "8. MCP protected resource (assistants: $MCP_PRESETS)"
+  if [[ "$AUDIENCE" != "$AUDIENCE_WANTED" ]]; then
+    # The protected resource's URI is the resource's audience, immutable.
+    log "WARNING: resource audience is $AUDIENCE but the MCP endpoint is $AUDIENCE_WANTED: step skipped."
+    log "         Recreate the resource (local dev: make reset && make seed; elsewhere delete the resource in IAMKit and re-run)."
+  else
+    # The application <-> resource link of step 3 is what lets the
+    # application's clients ask for this resource.
+    default_scopes="$prefix:projects:read,$prefix:projects:write,$prefix:deployments:read,$prefix:deployments:create"
+    mcp_scopes=$(jq -cn --arg s "${MCP_SCOPES:-$default_scopes}" '$s | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) | unique')
+    outside=$(jq -cn --argjson s "$mcp_scopes" --argjson w "$wanted" '$s - $w')
+    [[ "$outside" == "[]" ]] || { echo "MCP_SCOPES not in the catalog: $outside" >&2; exit 1; }
+    # idle/max TTL: how long an assistant stays signed in without / with refresh.
+    want=$(jq -cn --argjson s "$mcp_scopes" --argjson t "$MCP_TOKEN_TTL" \
+      '{default_scopes:$s, access_token_ttl_seconds:$t, consent_mode:"per_user", allow_client_metadata:true, allow_dynamic_registration:false, client_admission:"allowlist"}')
+
+    # a. The protected resource of (application, resource).
+    protected=$(all "$e/protected-resources")
+    pr=$(pick "$protected" ".application_id == $(q "$application") and .resource_id == $(q "$resource")")
+    if [[ -z "$pr" ]]; then
+      created=$(jq -n --arg a "$application" --arg r "$resource" --argjson w "$want" \
+        '{application_id:$a, resource_id:$r, name:"Odicea MCP", default_scopes:$w.default_scopes,
+          consent_mode:$w.consent_mode, access_token_ttl_seconds:$w.access_token_ttl_seconds,
+          idle_ttl_seconds:604800, max_ttl_seconds:2592000}' | write POST "$e/protected-resources")
+      pr=$(jq -er .id <<<"$created"); change "created protected resource $pr (audience $AUDIENCE, access token ${MCP_TOKEN_TTL}s)"
+      # Creation takes only some fields; the rest (admission, metadata
+      # documents, registration) are converged below, before anyone can ask.
+      have=$(jq -c 'if .id == "dry-run" then {} else . end' <<<"$created")
+    else
+      have=$(jq -c --arg id "$pr" '.[] | select(.id == $id)' <<<"$protected")
+    fi
+    # Converge: only what differs is sent (default_scopes compared as a set).
+    diff=$(jq -cn --argjson h "$have" --argjson w "$want" '
+      ($h | .default_scopes = ((.default_scopes // []) | sort)) as $h
+      | $w | with_entries(select(.value != $h[.key]))')
+    if [[ "$diff" != "{}" ]]; then
+      write PATCH "$e/protected-resources/$pr" <<<"$diff" >/dev/null
+      change "protected resource: $(jq -r 'to_entries | map("\(.key)=\(.value | tostring)") | join(" ")' <<<"$diff")"
+    else log "protected resource $pr, unchanged"; fi
+    mcp_lines+=("IAMKIT_PROTECTED_RESOURCE_ID=$pr")
+
+    # b. The assistants IT admits. Metadata-document presets go to the
+    #    allowlist; template presets are registered public clients.
+    catalog=$(get "$e/oauth-client-presets" | jq -c 'if type == "object" then .items else . end')
+    allowlist=$(all "$e/oauth-client-allowlist?protected_resource_id=$pr")
+    registered=$(all "$e/oauth-clients?application_id=$application")
+    while IFS= read -r preset; do
+      [[ -n "$preset" ]] || continue
+      mechanism=$(jq -r --arg k "$preset" '[.[] | select(.key == $k)][0].mechanism // empty' <<<"$catalog")
+      # A dry run of a brand-new environment has no catalog to read: assume a document.
+      [[ -n "$mechanism" || "$catalog" != "[]" ]] || mechanism=metadata_document
+      [[ -n "$mechanism" ]] || { echo "unknown MCP preset '$preset' (known: $(jq -r 'map(.key) | join(", ")' <<<"$catalog"))" >&2; exit 1; }
+      if [[ "$mechanism" == template ]]; then
+        client=$(pick "$registered" ".preset == $(q "$preset") and .resource_id == $(q "$resource")")
+        if [[ -z "$client" ]]; then
+          client=$(jq -n --arg p "$preset" '{preset:$p}' | write POST "$e/protected-resources/$pr/client-templates" | jq -er .client.client_id) || client=dry-run
+          change "created $preset client $client"
+        else log "$preset client $client"; fi
+        mcp_lines+=("IAMKIT_MCP_CLIENT_$(tr '[:lower:]' '[:upper:]' <<<"$preset")_ID=$client")
+      else
+        # An entry of the whole environment (no protected resource) admits it too.
+        if [[ -z "$(jq -r --arg k "$preset" '[.[] | select(.preset == $k)][0].id // empty' <<<"$allowlist")" ]]; then
+          jq -n --arg p "$preset" --arg r "$pr" '{preset:$p, protected_resource_id:$r}' | write POST "$e/oauth-client-presets" >/dev/null
+          change "admitted $preset"
+        else log "$preset admitted"; fi
+      fi
+    done < <(tr ',' '\n' <<<"$MCP_PRESETS")
+    # Taking an assistant out of MCP_PRESETS does not revoke it (users may be
+    # signed in with it): say so, and how.
+    wanted_presets=$(jq -cn --arg p "$MCP_PRESETS" '$p | split(",") | map(select(. != ""))')
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && log "WARNING: $line is still admitted but not in MCP_PRESETS: revoke it in IAMKit to stop it"
+    done < <(jq -r --argjson w "$wanted_presets" '.[] | select(.preset != null and (.preset | IN($w[]) | not)) | "\(.preset) (allowlist entry \(.id))"' <<<"$allowlist"
+             jq -r --argjson w "$wanted_presets" --arg r "$resource" '.[] | select(.preset != null and .resource_id == $r and (.preset | IN($w[]) | not)) | "\(.preset) (client \(.id))"' <<<"$registered"; true)
+    # c. The introspection client. IAMKit has no client names, so it is a
+    #    confidential client of this resource that only holds the token
+    #    exchange grant (nothing signs in with it). Its secret exists only at
+    #    creation: only the client whose secret OUT keeps is reused; without
+    #    it a new one is created and the others are listed to disable.
+    exchange="urn:ietf:params:oauth:grant-type:token-exchange"
+    candidates=$(jq -c --arg r "$resource" --arg g "$exchange" \
+      '[.[] | select(.resource_id == $r and .public == false and .active == true and .grant_types == [$g])]' <<<"$registered")
+    client=""
+    if [[ -n "$IAMKIT_INTROSPECTION_CLIENT_SECRET" ]]; then
+      client=$(jq -r --arg id "$IAMKIT_INTROSPECTION_CLIENT_ID" 'map(select(.id == $id))[0].id // empty' <<<"$candidates")
+    fi
+    if [[ -z "$client" ]]; then
+      created=$(jq -n --arg a "$application" --arg r "$resource" --arg g "$exchange" \
+        '{application_id:$a, resource_id:$r, public:false, hosted_login:false, grant_types:[$g]}' | write POST "$e/oauth-clients")
+      client=$(jq -er .client_id <<<"$created"); IAMKIT_INTROSPECTION_CLIENT_SECRET=$(jq -r '.client_secret // ""' <<<"$created")
+      change "created introspection client $client (secret saved to $OUT)"
+    else log "introspection client $client"; fi
+    while IFS= read -r orphan; do
+      [[ -n "$orphan" && "$orphan" != "$client" ]] || continue
+      log "WARNING: introspection client $orphan has no saved secret: disable it in IAMKit (DELETE $e/oauth-clients/$orphan)"
+    done < <(jq -r '.[].id' <<<"$candidates")
+    IAMKIT_INTROSPECTION_CLIENT_ID=$client
+  fi
+fi
+# The introspection client's id and secret are written together or not at
+# all (the API refuses half of one), and survive a run that skips step 8
+# (the secret exists nowhere else).
+if [[ -n "$IAMKIT_INTROSPECTION_CLIENT_ID" && -n "$IAMKIT_INTROSPECTION_CLIENT_SECRET" ]]; then
+  mcp_lines+=("IAMKIT_INTROSPECTION_CLIENT_ID=$IAMKIT_INTROSPECTION_CLIENT_ID" "IAMKIT_INTROSPECTION_CLIENT_SECRET=$IAMKIT_INTROSPECTION_CLIENT_SECRET")
+fi
+
 if [[ "$(jq length <<<"$stale")" != 0 ]]; then
   if (( PRUNE )); then step "Pruned (no longer in $SPEC): $(jq -r 'join(", ")' <<<"$stale")"
   else step "Kept (no longer in $SPEC; remove with --prune once no deployed code checks them): $(jq -r 'join(", ")' <<<"$stale")"; fi
@@ -328,7 +464,7 @@ umask 077
   echo "IAMKIT_RESOURCE_ID=$resource"
   echo "IAMKIT_AUDIENCE=$AUDIENCE"
   echo "IAMKIT_WEB_CLIENT_ID=$web"
-  for l in "${role_lines[@]+"${role_lines[@]}"}" "${service_lines[@]+"${service_lines[@]}"}"; do echo "$l"; done
+  for l in "${role_lines[@]+"${role_lines[@]}"}" "${service_lines[@]+"${service_lines[@]}"}" "${mcp_lines[@]+"${mcp_lines[@]}"}"; do echo "$l"; done
 } >"$OUT"
 chmod 600 "$OUT"
 step "Done -> $OUT"

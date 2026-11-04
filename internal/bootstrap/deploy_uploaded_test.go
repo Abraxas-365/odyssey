@@ -64,7 +64,7 @@ func TestDeployUploaded(t *testing.T) {
 		}
 	}()
 
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org, user := identity.NewOrganizationID(), identity.MustParseUserID(uuid.NewString())
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead,
 		permission.DeploymentsCreate)

@@ -48,6 +48,18 @@ func TestRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// FindBySlug is tenant-scoped: the other org's "portal" is a different project
+	bySlug, err := repo.FindBySlug(ctx, org, "portal")
+	if err != nil || bySlug.ID != id {
+		t.Fatalf("find by slug %+v %v", bySlug, err)
+	}
+	if _, err := repo.FindBySlug(ctx, org, "nope"); errType(err) != errx.TypeNotFound {
+		t.Fatalf("unknown slug: %v", err)
+	}
+	if _, err := repo.FindBySlug(ctx, identity.NewOrganizationID(), "portal"); errType(err) != errx.TypeNotFound {
+		t.Fatalf("slug of an org without it: %v", err)
+	}
+
 	// tenant isolation on every statement
 	name := "Hack"
 	if _, err := repo.Find(ctx, other, id); errType(err) != errx.TypeNotFound {

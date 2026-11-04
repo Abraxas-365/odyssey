@@ -2,7 +2,10 @@ package httpx
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
@@ -29,8 +32,51 @@ func Authenticate(iam Introspector, b config.IAM) fiber.Handler {
 	return AuthenticateWith(func(ctx context.Context, token string) (*authclient.Claims, error) {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		return iam.Introspect(ctx, token, b.Issuer, b.Audience, b.Environment, b.Application, b.Resource)
+		claims, err := iam.Introspect(ctx, token, b.Issuer, b.Audience, b.Environment, b.Application, b.Resource)
+		if err != nil {
+			return nil, err
+		}
+		if resourceBound(token) || !consoleClient(claims.OAuthClientID, b) {
+			return nil, errNotConsole
+		}
+		return claims, nil
 	})
+}
+
+// errNotConsole refuses a valid token that was not issued to the console.
+var errNotConsole = errors.New("token was not issued to the console")
+
+// consoleClient: the REST API takes only tokens of the console's OAuth client
+// (or of a direct sign-in, with none). Every other client of the resource is
+// a coding agent's, consented for the MCP tools only: a registered (template)
+// agent client that leaves out RFC 8707's resource gets a token without the
+// claim, so the claim alone cannot tell them apart.
+func consoleClient(client string, b config.IAM) bool {
+	return client == "" || (b.WebClientID != "" && client == b.WebClientID)
+}
+
+// resourceBound reports whether a token carries the RFC 8707 resource
+// claim: a coding agent's token for /mcp (same audience as the REST API).
+// The agent's grant was consented for the MCP tools and checked by them;
+// the REST API takes only the console's tokens, so a leaked agent token
+// reaches nothing beyond its tools. The token was already verified, its
+// payload is only read.
+func resourceBound(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return true // verified but unreadable: refuse
+	}
+	var payload struct {
+		Resource json.RawMessage `json:"resource"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return true
+	}
+	return len(payload.Resource) > 0 && string(payload.Resource) != "null"
 }
 
 // AuthenticateWith authenticates bearer tokens with verify, answering

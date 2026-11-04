@@ -24,6 +24,7 @@ import (
 	"github.com/Abraxas-365/odyssey/api"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
 	"github.com/Abraxas-365/odyssey/internal/config"
+	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
@@ -39,6 +40,9 @@ type operation struct {
 	method, path string // path in Fiber syntax (/projects/:id)
 	permissions  []string
 	public       bool
+	// mcp: secured by the agents' OAuth resource (scheme "mcp"), whose
+	// permissions are per tool (mcp_tools_test), not per route.
+	mcp bool
 }
 
 var spec struct {
@@ -94,6 +98,11 @@ func operations(t *testing.T) []operation {
 		for method, op := range item.GetOperations().FromOldest() {
 			o := operation{method: strings.ToUpper(method), path: fiberPath}
 			o.public = op.Security != nil && len(op.Security) == 0 || !globalSecured
+			for _, req := range op.Security {
+				if _, ok := req.Requirements.Get("mcp"); ok {
+					o.mcp = true
+				}
+			}
 			if node, ok := op.Extensions.Get("x-permissions"); ok {
 				if err := node.Decode(&o.permissions); err != nil {
 					t.Fatalf("%s %s: x-permissions: %v", method, path, err)
@@ -119,7 +128,20 @@ func routeApp(t *testing.T) *fiber.App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = p.Close() })
-	return bootstrap.NewServer(p, config.Config{}, httpxtest.Auth())
+	return bootstrap.NewServer(p, config.Config{}, httpxtest.Auth(), testMCPAuth(t))
+}
+
+// testMCPAuth is a real MCP authenticator whose IAMKit is unreachable: it
+// mounts /mcp and its metadata, and refuses every token (401 without one).
+func testMCPAuth(t *testing.T) *httpx.MCPAuth {
+	t.Helper()
+	auth, err := httpx.NewMCPAuth(config.IAM{URL: "http://127.0.0.1:1", Issuer: "http://127.0.0.1:1", Audience: "http://localhost:8095/mcp",
+		Environment: "env-1", Application: "app-1", Resource: "res-1"},
+		config.MCP{IntrospectionClientID: "rs", IntrospectionClientSecret: "secret"}, permission.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return auth
 }
 
 func TestRoutesMatchTheOpenAPISpec(t *testing.T) {
@@ -196,6 +218,19 @@ func TestOperationPermissionsMatchTheRoutes(t *testing.T) {
 			}
 			if s := probe(o, ""); s == http.StatusUnauthorized || s == http.StatusForbidden {
 				t.Errorf("%s is public in the spec but answers %d without a token", name, s)
+			}
+			continue
+		}
+		if o.mcp {
+			if len(o.permissions) > 0 {
+				t.Errorf("%s: MCP permissions are per tool, not x-permissions", name)
+			}
+			if s := probe(o, ""); s != http.StatusUnauthorized {
+				t.Errorf("%s without a token: %d, want 401", name, s)
+			}
+			// A console token is not for this resource.
+			if s := probe(o, httpxtest.Token(org, permission.All...)); s != http.StatusUnauthorized {
+				t.Errorf("%s with a console token: %d, want 401", name, s)
 			}
 			continue
 		}

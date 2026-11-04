@@ -61,6 +61,10 @@ services:
       IAMKIT_APPLICATION_ID: ${IAMKIT_APPLICATION_ID:-}
       IAMKIT_RESOURCE_ID: ${IAMKIT_RESOURCE_ID:-}
       IAMKIT_WEB_CLIENT_ID: ${IAMKIT_WEB_CLIENT_ID:-}
+      # /mcp: the confidential client that introspects assistants' tokens
+      # (make seed creates it; without it /mcp is not mounted).
+      IAMKIT_INTROSPECTION_CLIENT_ID: ${IAMKIT_INTROSPECTION_CLIENT_ID:-}
+      IAMKIT_INTROSPECTION_CLIENT_SECRET: ${IAMKIT_INTROSPECTION_CLIENT_SECRET:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       # Registers clusters: tokens name the gateway as a k3d cluster sees it.
       FLEET_CA_CERT: /secrets/fleet/ca.crt

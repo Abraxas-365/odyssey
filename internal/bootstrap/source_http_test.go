@@ -81,7 +81,7 @@ func TestGitHubHTTP(t *testing.T) {
 		}
 	}()
 
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead,
 		permission.DeploymentsCreate, permission.IntegrationsManage)
@@ -350,7 +350,7 @@ func TestGitHubHTTPDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = platform.Close() })
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth())
+	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	token := httpxtest.Token(identity.NewOrganizationID(), permission.ProjectsRead, permission.ProjectsWrite, permission.IntegrationsManage)
 
 	res := checked(t, app, http.MethodGet, "/api/v1/github", token, nil)

@@ -35,6 +35,8 @@ tags:
     description: The organization's tamper-evident activity trail.
   - name: github
     description: Connecting apps to their GitHub repositories.
+  - name: mcp
+    description: The endpoint coding agents use (Model Context Protocol), with its own OAuth resource.
 
 paths:
   /health:
@@ -1110,6 +1112,119 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcp
+      summary: The MCP endpoint coding agents connect to (Claude Code, Codex, VS Code, Antigravity)
+      description: >-
+        Model Context Protocol, Streamable HTTP transport, stateless with JSON responses (no session, no GET
+        stream). Its own OAuth protected resource (RFC 9728) of IAMKit: the token must be issued for this
+        resource (RFC 8707 `resource` claim, audience `<odicea>/mcp`) and IAMKit's introspection must say it is
+        live. Console tokens are refused here, and these tokens are refused by `/api/v1`. Without a valid token:
+        401 with `WWW-Authenticate: Bearer resource_metadata="…"`, which starts the agent's sign-in. 503 with
+        `Retry-After` when IAMKit cannot be asked (fails closed). Each tool requires its own permissions
+        (`tools/list` shows only those the user holds); the tools call the same operations as this API. Mounted
+        only when the introspection client is configured.
+      security:
+        - mcp: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: A JSON-RPC 2.0 message or batch (MCP).
+              type: [object, array]
+      responses:
+        "200":
+          description: The JSON-RPC response.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "202":
+          description: A notification or response from the client was accepted.
+        "400":
+          description: Malformed MCP message.
+        "401":
+          description: No valid token for this resource; the challenge names the metadata.
+          headers:
+            WWW-Authenticate:
+              schema: { type: string }
+        "403":
+          description: The token lacks a scope the request needs.
+        "503":
+          description: IAMKit could not check the token; retry later.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+    get:
+      tags: [mcp]
+      operationId: mcpStream
+      summary: Not served - the endpoint is stateless (no server-initiated stream)
+      description: "Always 405 with `Allow: POST`, before any token check; MCP clients probe it and fall back to POST."
+      security: []
+      responses:
+        "405":
+          description: Only POST is served.
+          headers:
+            Allow:
+              schema: { type: string, enum: [POST] }
+    delete:
+      tags: [mcp]
+      operationId: mcpEndSession
+      summary: Not served - the endpoint is stateless (no session to end)
+      description: "Always 405 with `Allow: POST`, before any token check."
+      security: []
+      responses:
+        "405":
+          description: Only POST is served.
+          headers:
+            Allow:
+              schema: { type: string, enum: [POST] }
+
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      tags: [mcp]
+      operationId: mcpResourceMetadata
+      summary: Protected resource metadata of /mcp (RFC 9728)
+      description: Public, CORS `*`. Names IAMKit as the authorization server and the permissions as scopes.
+      security: []
+      responses:
+        "200":
+          description: The metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
+    options:
+      tags: [mcp]
+      operationId: mcpResourceMetadataPreflight
+      summary: CORS preflight of the metadata
+      security: []
+      responses:
+        "204":
+          description: Allowed from any origin.
+
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [mcp]
+      operationId: mcpRootResourceMetadata
+      summary: The same metadata at the root well-known path (some clients probe it first)
+      security: []
+      responses:
+        "200":
+          description: The metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedResourceMetadata" }
+    options:
+      tags: [mcp]
+      operationId: mcpRootResourceMetadataPreflight
+      summary: CORS preflight of the metadata
+      security: []
+      responses:
+        "204":
+          description: Allowed from any origin.
+
 components:
   securitySchemes:
     bearer:
@@ -1117,6 +1232,13 @@ components:
       scheme: bearer
       bearerFormat: IAMKit access token
       description: The organization comes only from the token (docs/api.md §1).
+    mcp:
+      type: http
+      scheme: bearer
+      bearerFormat: IAMKit access token for the /mcp resource
+      description: >-
+        OAuth 2.1 with IAMKit (authorization code + PKCE, RFC 8707 resource). The agent discovers it from the
+        protected resource metadata; admitted clients and consent are set in IAMKit.
 
   parameters:
     ID:
@@ -1220,6 +1342,18 @@ components:
         iam_url: { type: string, description: "IAMKit's browser-facing base URL." }
         client_id: { type: string, description: 'Public OAuth client (code + PKCE); "" when not configured.' }
         environment_id: { type: string }
+
+    ProtectedResourceMetadata:
+      type: object
+      required: [resource, authorization_servers]
+      description: RFC 9728 protected resource metadata.
+      properties:
+        resource: { type: string, description: "The canonical resource URI (the tokens' audience): `<odicea>/mcp`." }
+        authorization_servers: { type: array, items: { type: string }, description: IAMKit's issuer. }
+        scopes_supported: { type: array, items: { type: string }, description: The permission catalog. }
+        bearer_methods_supported: { type: array, items: { type: string } }
+        resource_name: { type: string }
+        resource_documentation: { type: string }
 
     ErrorBody:
       type: object

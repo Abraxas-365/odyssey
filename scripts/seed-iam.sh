@@ -6,6 +6,10 @@
 # Idempotent: run it again after changing iam/permissions.json (make iam-sync).
 # Arguments go to provision-iam.sh: --dry-run, --prune.
 #
+# The IAMKIT_INTROSPECTION_CLIENT_* the API needs for /mcp land in .env with
+# the other IAMKIT_* values (the secret is created once and kept in
+# .dev-secrets/iamkit.env, so re-runs keep it).
+#
 # The demo user (DEMO_EMAIL / DEMO_PASSWORD) joins the demo organization with
 # the manifest's first role (TI).
 #
@@ -29,11 +33,17 @@ fi
 dry_run=0
 for arg in "$@"; do [[ "$arg" != --dry-run ]] || dry_run=1; done
 
+# The resource audience is the MCP endpoint's URL (RFC 8707: the audience of an
+# MCP token is the server it is for) and is immutable in IAMKit. It is NOT read
+# from IAMKIT_AUDIENCE: that is what an earlier seed wrote into .env, so it
+# could never reveal a resource created with another audience.
+# MCP_PRESETS names the assistants admitted to it (empty = no MCP resource).
 IAMKIT_URL="http://localhost:${IAMKIT_PORT:-8085}" \
 IAMKIT_KEY_FILE=.dev-secrets/owner.json \
 SPEC=iam/permissions.json \
 APP_URL="${APP_URL:-http://localhost:5178}" \
-AUDIENCE="${IAMKIT_AUDIENCE:-http://localhost:${ODYSSEY_PORT:-8095}}" \
+AUDIENCE="${ODYSSEY_MCP_URL:-http://localhost:${ODYSSEY_PORT:-8095}/mcp}" \
+MCP_PRESETS="${MCP_PRESETS-claude_code,codex,vscode,antigravity}" \
 PROJECT_NAME="Odyssey" ENVIRONMENT_NAME=Development ORG_NAME="${ORG_NAME:-Demo inEdge}" APP_NAME="Odyssey Console" \
 OWNER_EMAIL="$DEMO_EMAIL" OWNER_PASSWORD="$DEMO_PASSWORD" OWNER_NAME="Demo TI" \
 OUT=.dev-secrets/iamkit.env \

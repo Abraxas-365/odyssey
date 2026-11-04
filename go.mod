@@ -3,7 +3,7 @@ module github.com/Abraxas-365/odyssey
 go 1.26.8
 
 require (
-	github.com/Abraxas-365/iamkit/sdk v0.0.0-20261010060809-44dea49700ac
+	github.com/Abraxas-365/iamkit/sdk v0.0.0-20261031202708-daacde6d1158
 	github.com/go-logr/logr v1.4.4
 	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -12,6 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.12.3
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pb33f/libopenapi v0.41.7
 	github.com/pb33f/libopenapi-validator v0.16.1
 	github.com/railwayapp/railpack v0.43.0
@@ -113,6 +114,7 @@ require (
 	github.com/gobuffalo/flect v1.0.3 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/wire v0.7.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.24.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -158,6 +160,8 @@ require (
 	github.com/riverqueue/river/rivershared v0.50.0 // indirect
 	github.com/riverqueue/river/rivertype v0.50.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.6 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
@@ -175,6 +179,7 @@ require (
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xo/terminfo v1.2.0 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect

@@ -171,7 +171,7 @@ func TestKubeBuild(t *testing.T) {
 		t.Fatalf("announced builder %+v", b)
 	}
 
-	k.app = bootstrap.NewServer(h.platform, config.Config{}, httpxtest.Auth())
+	k.app = bootstrap.NewServer(h.platform, config.Config{}, httpxtest.Auth(), nil)
 	k.token = httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate)
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:6]
 

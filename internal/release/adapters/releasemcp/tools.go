@@ -1,0 +1,270 @@
+// Package releasemcp is the release domain's MCP tools: an app's state
+// (get_app) and its history (list_versions). They call the same
+// project.Queries and release.Queries as the REST API.
+package releasemcp
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/mcpx"
+	"github.com/Abraxas-365/odyssey/internal/permission"
+	"github.com/Abraxas-365/odyssey/internal/project"
+	"github.com/Abraxas-365/odyssey/internal/query"
+	"github.com/Abraxas-365/odyssey/internal/release"
+)
+
+// Options are the deployment facts the tools link to.
+type Options struct {
+	// ConsoleURL is the console's base URL (links for the user).
+	ConsoleURL string
+}
+
+// Tools are get_app and list_versions.
+func Tools(projects project.Queries, queries release.Queries, opts Options) []mcpx.Tool {
+	opts.ConsoleURL = strings.TrimRight(opts.ConsoleURL, "/")
+	t := tools{projects: projects, queries: queries, opts: opts}
+	return []mcpx.Tool{
+		mcpx.Typed(mcpx.Tool{
+			Name:  "get_app",
+			Title: "Estado de una app",
+			Description: "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), " +
+				"la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. " +
+				"Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), " +
+				"the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. " +
+				"app is the slug (see list_apps) or the id.",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsRead, permission.DeploymentsRead},
+			Risk:        mcpx.RiskRead,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.getApp),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "list_versions",
+			Title: "Versiones de una app",
+			Description: "Lista el historial de versiones (publicaciones) de una app, de la más reciente a la más antigua, con su estado, " +
+				"commit, autor y quién la publicó; marca la que está en línea. Úsala para elegir a qué versión volver o ver qué falló. " +
+				"Lists an app's version (deployment) history, newest first, with status, commit, author and who published it; " +
+				"it marks the one that is online. Use it to pick a version to go back to or to see what failed. " +
+				"app is the slug (see list_apps) or the id. Paginated: pass next_offset as offset to read more.",
+			Toolset:     "versions",
+			Permissions: []string{permission.DeploymentsRead, permission.ProjectsRead},
+			Risk:        mcpx.RiskRead,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.listVersions),
+	}
+}
+
+type tools struct {
+	projects project.Queries
+	queries  release.Queries
+	opts     Options
+}
+
+// resolve finds the app by slug or id in the caller's organization, and its
+// production environment (the one agents publish to).
+func (t tools) resolve(ctx context.Context, org identity.OrganizationID, app string) (project.Project, project.Environment, error) {
+	app = strings.TrimSpace(app)
+	if app == "" {
+		return project.Project{}, project.Environment{}, errx.InvalidField("app", "app is required: the slug or id of the app")
+	}
+	var (
+		p   project.Project
+		err error
+	)
+	if id, perr := project.ParseID(app); perr == nil {
+		p, err = t.projects.Find(ctx, org, id)
+	} else {
+		p, err = t.projects.FindBySlug(ctx, org, strings.ToLower(app))
+	}
+	if err != nil {
+		if errx.IsType(err, errx.TypeNotFound) {
+			return project.Project{}, project.Environment{}, mcpx.NextStep(
+				errx.NotFound("app not found").WithField("app"), "Usa list_apps para ver los slugs de tu organización.")
+		}
+		return project.Project{}, project.Environment{}, err
+	}
+	env, err := t.projects.FindEnvironmentBySlug(ctx, org, p.ID, project.ProductionSlug)
+	if err != nil {
+		return project.Project{}, project.Environment{}, err
+	}
+	return p, env, nil
+}
+
+// Failure is why a publication did not go live.
+type Failure struct {
+	Code    string `json:"code"`
+	Message string `json:"message" jsonschema:"qué pasó, en español claro"`
+	Detail  string `json:"detail,omitempty" jsonschema:"las palabras del clúster o del build, si dijo algo"`
+}
+
+// Version is one publication of an app.
+type Version struct {
+	DeploymentID string     `json:"deployment_id"`
+	Status       string     `json:"status" jsonschema:"building, pending, applying, verifying, ready, failed o cancelled"`
+	Step         string     `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló): build, apply, wait_ready, promote"`
+	Reason       string     `json:"reason" jsonschema:"deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)"`
+	Image        string     `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
+	Repository   string     `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
+	Branch       string     `json:"branch,omitempty"`
+	Commit       string     `json:"commit,omitempty" jsonschema:"SHA completo del commit si vino de GitHub"`
+	Title        string     `json:"title,omitempty" jsonschema:"primera línea del mensaje del commit"`
+	Author       string     `json:"author,omitempty" jsonschema:"autor del commit"`
+	CreatedBy    string     `json:"created_by,omitempty" jsonschema:"usuario que la publicó; vacío si la inició la plataforma"`
+	Error        *Failure   `json:"error,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	IsCurrent    bool       `json:"is_current" jsonschema:"si es la versión que está en línea ahora"`
+}
+
+func version(d release.Deployment, current *release.Deployment) Version {
+	v := Version{
+		DeploymentID: d.ID.String(),
+		Status:       string(d.Status),
+		Step:         d.Step,
+		Reason:       string(d.Reason),
+		Image:        shortImage(d.Image),
+		CreatedAt:    d.CreatedAt,
+		FinishedAt:   d.FinishedAt,
+		IsCurrent:    current != nil && current.ID == d.ID,
+	}
+	if !d.RequestedBy.IsZero() {
+		v.CreatedBy = d.RequestedBy.String()
+	}
+	if d.Source != nil && d.Source.Git != nil {
+		g := d.Source.Git
+		v.Repository, v.Branch, v.Commit, v.Title, v.Author = g.Repository, g.Branch, g.Commit, g.Title, g.Author
+	}
+	if d.Error != nil {
+		v.Error = &Failure{Code: d.Error.Code, Message: d.Error.Message, Detail: d.Error.Detail}
+	}
+	return v
+}
+
+// shortImage drops the registry path so a version reads "visitas:abc123".
+func shortImage(image string) string {
+	if i := strings.LastIndex(image, "/"); i >= 0 {
+		image = image[i+1:]
+	}
+	if len(image) > 80 {
+		image = image[:80]
+	}
+	return image
+}
+
+// GetAppIn is get_app's input.
+type GetAppIn struct {
+	App string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
+}
+
+// GetAppOut is get_app's result.
+type GetAppOut struct {
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status" jsonschema:"estado del proyecto: active o archived"`
+	ConsoleURL  string `json:"console_url" jsonschema:"enlace a la app en la consola"`
+	// State is what a user sees: online, publishing, failed or not_published.
+	State string `json:"state" jsonschema:"online (hay una versión en línea), publishing (se está publicando una versión), failed (nunca estuvo en línea y la última publicación falló) o not_published (aún sin publicar)"`
+	URL   string `json:"url,omitempty" jsonschema:"dirección pública de la app; vacía hasta que se publica"`
+	// NeedsAttention is true when the latest publication failed.
+	NeedsAttention bool     `json:"needs_attention" jsonschema:"true si la última publicación falló: mira last_deployment.error"`
+	Current        *Version `json:"current,omitempty" jsonschema:"la versión que está en línea"`
+	Active         *Version `json:"active,omitempty" jsonschema:"la publicación en curso, si hay"`
+	LastDeployment *Version `json:"last_deployment,omitempty" jsonschema:"la publicación más reciente, termine como termine"`
+}
+
+func (t tools) getApp(ctx context.Context, caller mcpx.Principal, in GetAppIn) (GetAppOut, error) {
+	p, env, err := t.resolve(ctx, caller.Organization, in.App)
+	if err != nil {
+		return GetAppOut{}, err
+	}
+	cur, err := t.queries.Current(ctx, caller.Organization, p.ID, env.ID)
+	if err != nil {
+		return GetAppOut{}, err
+	}
+	last, err := t.queries.ListDeployments(ctx, caller.Organization, p.ID, env.ID, release.DeploymentFilter{}, query.Pagination{Limit: 1}.Normalize())
+	if err != nil {
+		return GetAppOut{}, err
+	}
+	out := GetAppOut{ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description, Status: string(p.Status),
+		ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String(), State: "not_published"}
+	if cur.Deployment != nil {
+		v := version(*cur.Deployment, cur.Deployment)
+		out.Current, out.State, out.URL = &v, "online", cur.URL
+	}
+	if cur.Active != nil {
+		v := version(*cur.Active, cur.Deployment)
+		out.Active, out.State = &v, "publishing"
+	}
+	if len(last.Items) > 0 {
+		d := last.Items[0]
+		v := version(d, cur.Deployment)
+		out.LastDeployment = &v
+		if d.Status == release.StatusFailed {
+			out.NeedsAttention = true
+			if out.State == "not_published" {
+				out.State = "failed"
+			}
+		}
+	}
+	return out, nil
+}
+
+// Version listing limits.
+const (
+	defaultVersions = 10
+	maxVersions     = 50
+)
+
+// ListVersionsIn is list_versions's input.
+type ListVersionsIn struct {
+	App    string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"cuántas versiones devolver (por defecto 10, máximo 50)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"desde qué posición seguir (usa next_offset de la respuesta anterior)"`
+}
+
+// ListVersionsOut is list_versions's result.
+type ListVersionsOut struct {
+	App        string    `json:"app" jsonschema:"slug de la app"`
+	Items      []Version `json:"items" jsonschema:"de la más reciente a la más antigua"`
+	Total      int       `json:"total"`
+	Limit      int       `json:"limit"`
+	Offset     int       `json:"offset"`
+	NextOffset *int      `json:"next_offset,omitempty" jsonschema:"offset para pedir la siguiente página; ausente si no hay más"`
+}
+
+func (t tools) listVersions(ctx context.Context, caller mcpx.Principal, in ListVersionsIn) (ListVersionsOut, error) {
+	if in.Limit < 0 || in.Offset < 0 {
+		return ListVersionsOut{}, errx.InvalidField("limit", "limit and offset cannot be negative")
+	}
+	limit := in.Limit
+	if limit == 0 {
+		limit = defaultVersions
+	}
+	limit = min(limit, maxVersions)
+	p, env, err := t.resolve(ctx, caller.Organization, in.App)
+	if err != nil {
+		return ListVersionsOut{}, err
+	}
+	cur, err := t.queries.Current(ctx, caller.Organization, p.ID, env.ID)
+	if err != nil {
+		return ListVersionsOut{}, err
+	}
+	page, err := t.queries.ListDeployments(ctx, caller.Organization, p.ID, env.ID, release.DeploymentFilter{},
+		query.Pagination{Limit: limit, Offset: in.Offset}.Normalize())
+	if err != nil {
+		return ListVersionsOut{}, err
+	}
+	out := ListVersionsOut{App: p.Slug, Items: make([]Version, 0, len(page.Items)), Total: page.Page.Total, Limit: page.Page.Limit, Offset: page.Page.Offset}
+	for _, d := range page.Items {
+		out.Items = append(out.Items, version(d, cur.Deployment))
+	}
+	if next := out.Offset + len(page.Items); len(page.Items) > 0 && next < out.Total {
+		out.NextOffset = &next
+	}
+	return out, nil
+}

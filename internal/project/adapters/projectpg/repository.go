@@ -61,6 +61,19 @@ func (r *Repository) Find(ctx context.Context, organization identity.Organizatio
 	return r.find(ctx, organization, id, "")
 }
 
+func (r *Repository) FindBySlug(ctx context.Context, organization identity.OrganizationID, slug string) (project.Project, error) {
+	var p project.Project
+	err := txn.Q(ctx, r.db).GetContext(ctx, &p,
+		`SELECT `+columns+` FROM project.projects WHERE organization_id = $1 AND slug = $2`, organization, slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return project.Project{}, notFound()
+	}
+	if err != nil {
+		return project.Project{}, pgerr.MapWith(err, "find project by slug", messages)
+	}
+	return p, nil
+}
+
 func (r *Repository) FindForUpdate(ctx context.Context, organization identity.OrganizationID, id project.ID) (project.Project, error) {
 	if _, ok := txn.Tx(ctx); !ok {
 		return project.Project{}, errx.Internal("FindForUpdate needs a transaction")

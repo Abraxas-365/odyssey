@@ -95,6 +95,12 @@ func (q projects) Find(_ context.Context, org identity.OrganizationID, id projec
 	}
 	return q.p, nil
 }
+func (q projects) FindBySlug(_ context.Context, org identity.OrganizationID, slug string) (project.Project, error) {
+	if org != q.p.Organization || slug != q.p.Slug {
+		return project.Project{}, errx.NotFound("project not found")
+	}
+	return q.p, nil
+}
 func (q projects) FindEnvironment(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID) (project.Environment, error) {
 	if _, err := q.Find(ctx, org, id); err != nil || env != q.e.ID {
 		return project.Environment{}, errx.NotFound("environment not found")

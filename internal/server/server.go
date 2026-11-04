@@ -2,6 +2,7 @@
 package server
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -41,6 +42,16 @@ type Options struct {
 	CORSOrigins []string
 	// Public mount their unauthenticated routes on the root, outside /api/v1.
 	Public []PublicRoutes
+	// MCP, when set, serves coding agents at POST /mcp and its protected
+	// resource metadata. Nil leaves both unmounted.
+	MCP *MCP
+}
+
+// MCP is the agents' endpoint: Auth authenticates (its own OAuth resource,
+// not the console's chain) and Handler serves the tools (mcpx.NewHandler).
+type MCP struct {
+	Auth    *httpx.MCPAuth
+	Handler http.Handler
 }
 
 // New returns the app. Every domain route sits under /api/v1 behind the auth chain.
@@ -64,8 +75,8 @@ func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler,
 		app.Use(cors.New(cors.Config{
 			AllowOrigins:  strings.Join(opts.CORSOrigins, ","),
 			AllowMethods:  "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-			AllowHeaders:  "Authorization,Content-Type,X-Request-ID",
-			ExposeHeaders: "Location,X-Request-ID",
+			AllowHeaders:  "Authorization,Content-Type,X-Request-ID,Mcp-Protocol-Version,Mcp-Session-Id",
+			ExposeHeaders: "Location,X-Request-ID,WWW-Authenticate",
 			MaxAge:        600,
 		}))
 	}
@@ -81,6 +92,17 @@ func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler,
 	})
 	for _, p := range opts.Public {
 		p.RegisterPublic(app)
+	}
+	if m := opts.MCP; m != nil {
+		for _, path := range m.Auth.MetadataPaths() {
+			app.Get(path, m.Auth.Metadata())
+			app.Options(path, m.Auth.Metadata())
+		}
+		// Stateless: POST only. MCP clients probe GET (stream) and DELETE
+		// (session): both must get 405, which tells them there is neither.
+		app.Post(httpx.MCPPath, m.Auth.Protect(m.Handler))
+		app.Get(httpx.MCPPath, m.Auth.Protect(m.Handler))
+		app.Delete(httpx.MCPPath, m.Auth.Protect(m.Handler))
 	}
 
 	api := app.Group("/api/v1", append(append([]fiber.Handler{}, auth...), httpx.Provenance)...)

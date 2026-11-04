@@ -137,6 +137,16 @@ func (q *projects) Find(_ context.Context, org identity.OrganizationID, id proje
 	}
 	return *p, nil
 }
+func (q *projects) FindBySlug(_ context.Context, org identity.OrganizationID, slug string) (project.Project, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, p := range q.list {
+		if p.Organization == org && p.Slug == slug {
+			return *p, nil
+		}
+	}
+	return project.Project{}, errx.NotFound("project not found")
+}
 func (q *projects) Hold(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
 	return q.Find(ctx, org, id)
 }

@@ -30,6 +30,44 @@ type Config struct {
 	Builder Builder
 	// GitHub is the App that connects repositories (optional).
 	GitHub GitHub
+	// MCP is the endpoint coding agents connect to (optional).
+	MCP MCP
+	// ConsoleURL is ODYSSEY_CONSOLE_URL: the console's base URL, for links
+	// (MCP answers, the GitHub setup callback, commit statuses).
+	ConsoleURL string
+}
+
+// MCP is POST /mcp, an OAuth protected resource of IAMKit: its audience is
+// IAM.Audience (https://<odicea>/mcp), and a confidential client of the
+// environment introspects every token (revocation within seconds). Without
+// the client the endpoint is not mounted.
+type MCP struct {
+	// IntrospectionClientID is IAMKIT_INTROSPECTION_CLIENT_ID.
+	IntrospectionClientID string
+	// IntrospectionClientSecret is IAMKIT_INTROSPECTION_CLIENT_SECRET, or
+	// the contents of IAMKIT_INTROSPECTION_CLIENT_SECRET_FILE.
+	IntrospectionClientSecret string
+}
+
+// Enabled reports whether /mcp is served.
+func (m MCP) Enabled() bool { return m.IntrospectionClientID != "" }
+
+func loadMCP() (MCP, error) {
+	m := MCP{IntrospectionClientID: os.Getenv("IAMKIT_INTROSPECTION_CLIENT_ID"), IntrospectionClientSecret: os.Getenv("IAMKIT_INTROSPECTION_CLIENT_SECRET")}
+	if file := os.Getenv("IAMKIT_INTROSPECTION_CLIENT_SECRET_FILE"); file != "" {
+		if m.IntrospectionClientSecret != "" {
+			return MCP{}, errx.Validation("set IAMKIT_INTROSPECTION_CLIENT_SECRET or its _FILE, not both")
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return MCP{}, errx.Validation("IAMKIT_INTROSPECTION_CLIENT_SECRET_FILE cannot be read")
+		}
+		m.IntrospectionClientSecret = strings.TrimSpace(string(raw))
+	}
+	if (m.IntrospectionClientID == "") != (m.IntrospectionClientSecret == "") {
+		return MCP{}, errx.Validation("IAMKIT_INTROSPECTION_CLIENT_ID and its secret go together")
+	}
+	return m, nil
 }
 
 // Blob is the object storage shared by the API and the worker.
@@ -167,6 +205,10 @@ func Load() (Config, error) {
 	if cfg.GitHub, err = loadGitHub(); err != nil {
 		return Config{}, err
 	}
+	if cfg.MCP, err = loadMCP(); err != nil {
+		return Config{}, err
+	}
+	cfg.ConsoleURL = cfg.GitHub.ConsoleURL
 	return cfg, nil
 }
 

@@ -1,0 +1,338 @@
+package releasemcp_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
+	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/mcpx"
+	"github.com/Abraxas-365/odyssey/internal/permission"
+	"github.com/Abraxas-365/odyssey/internal/project"
+	"github.com/Abraxas-365/odyssey/internal/project/projectsvc"
+	"github.com/Abraxas-365/odyssey/internal/project/projecttest"
+	"github.com/Abraxas-365/odyssey/internal/query"
+	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasemcp"
+	"github.com/Abraxas-365/odyssey/internal/txn"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+var (
+	user  = identity.MustParseUserID("11111111-1111-4111-8111-111111111111")
+	other = identity.MustParseUserID("22222222-2222-4222-8222-222222222222")
+	t0    = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+)
+
+// releases is a release.Queries over the deployments of one environment,
+// newest first, scoped by organization like the service.
+type releases struct {
+	org         identity.OrganizationID
+	env         project.EnvironmentID
+	url         string
+	current     *release.Deployment
+	active      *release.Deployment
+	deployments []release.Deployment // newest first
+}
+
+func (r *releases) place(org identity.OrganizationID, env project.EnvironmentID) error {
+	if org != r.org || env != r.env {
+		return errx.NotFound("environment not found")
+	}
+	return nil
+}
+
+func (r *releases) Current(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Current, error) {
+	if err := r.place(org, env); err != nil {
+		return release.Current{}, err
+	}
+	return release.Current{Environment: env, URL: r.url, Deployment: r.current, Active: r.active}, nil
+}
+
+func (r *releases) FindDeployment(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.DeploymentID) (release.Deployment, error) {
+	return release.Deployment{}, errx.NotFound("deployment not found")
+}
+
+func (r *releases) ListDeployments(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID, _ release.DeploymentFilter, page query.Pagination) (query.Paginated[release.Deployment], error) {
+	if err := r.place(org, env); err != nil {
+		return query.Paginated[release.Deployment]{}, err
+	}
+	from := min(page.Offset, len(r.deployments))
+	to := min(from+page.Limit, len(r.deployments))
+	return query.NewPaginated(r.deployments[from:to], len(r.deployments), page), nil
+}
+
+func (r *releases) FindRelease(context.Context, identity.OrganizationID, project.ID, release.ID) (release.Release, error) {
+	return release.Release{}, errx.NotFound("release not found")
+}
+
+type fixture struct {
+	projects *projectsvc.Service
+	releases *releases
+	org      identity.OrganizationID
+	app      project.ID
+	env      project.EnvironmentID
+}
+
+// newFixture has an app "cotizador" in org with three deployments: v1 (ready,
+// from a folder), v2 (ready, from a commit, serving) and v3 (failed).
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := &fixture{projects: projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{}), org: identity.NewOrganizationID()}
+	var err error
+	if f.app, err = f.projects.Create(context.Background(), f.org, project.Create{Name: "Cotizador comercial", Slug: "cotizador", CreatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	env, err := f.projects.FindEnvironmentBySlug(context.Background(), f.org, f.app, project.ProductionSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.env = env.ID
+	dep := func(n int, status release.Status, mod func(*release.Deployment)) release.Deployment {
+		d := release.Deployment{ID: release.NewDeploymentID(), Organization: f.org, Project: f.app, Environment: f.env, Status: status,
+			Reason: release.ReasonDeploy, Step: release.StepPromote, Image: "registry.local:5000/acme/cotizador:v" + string(rune('0'+n)),
+			RequestedBy: user, CreatedAt: t0.Add(time.Duration(n) * time.Hour)}
+		if mod != nil {
+			mod(&d)
+		}
+		return d
+	}
+	v1 := dep(1, release.StatusReady, func(d *release.Deployment) {
+		d.Source = &release.DeploymentSource{Name: "cotizador.tar.gz"}
+	})
+	v2 := dep(2, release.StatusReady, func(d *release.Deployment) {
+		d.RequestedBy = other
+		d.Source = &release.DeploymentSource{Name: "repo", Git: &build.GitRef{Provider: "github", Repository: "acme/cotizador", Branch: "main",
+			Commit: strings.Repeat("ab", 20), Title: "Descuento del 20%", Author: "diego"}}
+	})
+	v3 := dep(3, release.StatusFailed, func(d *release.Deployment) {
+		d.Step = release.StepWaitReady
+		d.Error = &release.Failure{Code: release.CodeUnhealthy, Message: "La app no respondió en /health.", Detail: "connection refused"}
+	})
+	f.releases = &releases{org: f.org, env: f.env, url: "https://cotizador.apps.test", current: &v2, deployments: []release.Deployment{v3, v2, v1}}
+	return f
+}
+
+func (f *fixture) connect(t *testing.T, org identity.OrganizationID, perms ...string) *mcp.ClientSession {
+	t.Helper()
+	reg, err := mcpx.NewRegistry(releasemcp.Tools(f.projects, f.releases, releasemcp.Options{ConsoleURL: "https://odicea.test/"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := mcpx.NewHandler(reg, mcpx.Options{})
+	p := mcpx.Principal{Organization: org, User: user, Client: "https://claude.ai/cimd", Permissions: perms}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := event.WithMeta(mcpx.WithPrincipal(r.Context(), p), event.Meta{CorrelationID: "req-1", Client: "mcp:" + p.Client})
+		h.ServeHTTP(w, r.WithContext(ctx))
+	}))
+	t.Cleanup(srv.Close)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(context.Background(),
+		&mcp.StreamableClientTransport{Endpoint: srv.URL, HTTPClient: &http.Client{Transport: bearer{}}, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cs.Close() })
+	return cs
+}
+
+type bearer struct{}
+
+func (bearer) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer opaque")
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func call[Out any](t *testing.T, cs *mcp.ClientSession, name string, args map[string]any) (out Out, res *mcp.CallToolResult) {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if !res.IsError {
+		b, _ := json.Marshal(res.StructuredContent)
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return out, res
+}
+
+func errorBody(t *testing.T, res *mcp.CallToolResult) map[string]string {
+	t.Helper()
+	if !res.IsError {
+		t.Fatalf("want an error result, got %+v", res.StructuredContent)
+	}
+	var body struct{ Error map[string]string }
+	if err := json.Unmarshal([]byte(res.Content[0].(*mcp.TextContent).Text), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body.Error
+}
+
+var reader = []string{permission.ProjectsRead, permission.DeploymentsRead}
+
+func TestToolsAreListedOnlyWithBothPermissions(t *testing.T) {
+	f := newFixture(t)
+	list := func(perms ...string) []string {
+		res, err := f.connect(t, f.org, perms...).ListTools(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, tool := range res.Tools {
+			names = append(names, tool.Name)
+			if tool.OutputSchema == nil || tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Fatalf("%s: want an output schema and a read-only hint", tool.Name)
+			}
+		}
+		slices.Sort(names)
+		return names
+	}
+	if got := list(reader...); !slices.Equal(got, []string{"get_app", "list_versions"}) {
+		t.Fatalf("reader lists %v", got)
+	}
+	if got := list(permission.ProjectsRead); len(got) != 0 {
+		t.Fatalf("projects:read alone lists %v", got)
+	}
+	if got := list(permission.DeploymentsRead); len(got) != 0 {
+		t.Fatalf("deployments:read alone lists %v", got)
+	}
+}
+
+func TestGetAppBySlugAndByID(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, reader...)
+	for _, ref := range []string{"cotizador", "  Cotizador ", f.app.String()} {
+		out, res := call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": ref})
+		if res.IsError {
+			t.Fatalf("%q: %+v", ref, res.Content)
+		}
+		if out.ID != f.app.String() || out.Slug != "cotizador" || out.Name != "Cotizador comercial" || out.ConsoleURL != "https://odicea.test/apps/"+f.app.String() {
+			t.Fatalf("%q: %+v", ref, out)
+		}
+	}
+}
+
+func TestGetAppShowsWhatServesAndWhatFailed(t *testing.T) {
+	f := newFixture(t)
+	out, _ := call[releasemcp.GetAppOut](t, f.connect(t, f.org, reader...), "get_app", map[string]any{"app": "cotizador"})
+	if out.State != "online" || out.URL != "https://cotizador.apps.test" || !out.NeedsAttention || out.Active != nil {
+		t.Fatalf("state: %+v", out)
+	}
+	cur := out.Current
+	if cur == nil || !cur.IsCurrent || cur.Status != "ready" || cur.Commit != strings.Repeat("ab", 20) || cur.Author != "diego" ||
+		cur.Title != "Descuento del 20%" || cur.Repository != "acme/cotizador" || cur.CreatedBy != other.String() || cur.Image != "cotizador:v2" {
+		t.Fatalf("current: %+v", cur)
+	}
+	last := out.LastDeployment
+	if last == nil || last.Status != "failed" || last.IsCurrent || last.Step != "wait_ready" || last.Error == nil ||
+		last.Error.Code != release.CodeUnhealthy || last.Error.Detail != "connection refused" {
+		t.Fatalf("last: %+v", last)
+	}
+}
+
+func TestGetAppStates(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, reader...)
+
+	f.releases.active = &release.Deployment{ID: release.NewDeploymentID(), Status: release.StatusBuilding, Step: release.StepBuild, Reason: release.ReasonDeploy, CreatedAt: t0}
+	if out, _ := call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"}); out.State != "publishing" || out.Active == nil || out.Active.Status != "building" {
+		t.Fatalf("publishing: %+v", out)
+	}
+
+	f.releases.active, f.releases.current = nil, nil // never went live, last attempt failed
+	if out, _ := call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"}); out.State != "failed" || out.URL != "" || out.Current != nil || !out.NeedsAttention {
+		t.Fatalf("failed: %+v", out)
+	}
+
+	f.releases.deployments = nil
+	if out, _ := call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"}); out.State != "not_published" || out.LastDeployment != nil || out.NeedsAttention {
+		t.Fatalf("not published: %+v", out)
+	}
+}
+
+func TestAnotherOrganizationsAppIsNotFound(t *testing.T) {
+	f := newFixture(t)
+	stranger := f.connect(t, identity.NewOrganizationID(), reader...)
+	for _, tool := range []string{"get_app", "list_versions"} {
+		for _, ref := range []string{"cotizador", f.app.String()} {
+			_, res := call[releasemcp.GetAppOut](t, stranger, tool, map[string]any{"app": ref})
+			body := errorBody(t, res)
+			if body["code"] != "NOT_FOUND" || body["field"] != "app" || !strings.Contains(body["next_step"], "list_apps") {
+				t.Fatalf("%s %q: %v", tool, ref, body)
+			}
+		}
+	}
+	_, res := call[releasemcp.GetAppOut](t, f.connect(t, f.org, reader...), "get_app", map[string]any{"app": "no-existe"})
+	if body := errorBody(t, res); body["code"] != "NOT_FOUND" || !strings.Contains(body["next_step"], "list_apps") {
+		t.Fatalf("unknown slug: %v", body)
+	}
+}
+
+func TestGetAppNeedsAnApp(t *testing.T) {
+	f := newFixture(t)
+	_, res := call[releasemcp.GetAppOut](t, f.connect(t, f.org, reader...), "get_app", map[string]any{"app": " "})
+	if body := errorBody(t, res); body["field"] != "app" || body["code"] == "" {
+		t.Fatalf("blank app: %v", body)
+	}
+}
+
+func TestListVersions(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, reader...)
+	out, res := call[releasemcp.ListVersionsOut](t, cs, "list_versions", map[string]any{"app": "cotizador"})
+	if res.IsError || out.App != "cotizador" || out.Total != 3 || len(out.Items) != 3 || out.NextOffset != nil || out.Limit != 10 {
+		t.Fatalf("list: %+v", out)
+	}
+	if got := []string{out.Items[0].Status, out.Items[1].Status, out.Items[2].Status}; !slices.Equal(got, []string{"failed", "ready", "ready"}) {
+		t.Fatalf("order: %v", got)
+	}
+	if out.Items[0].IsCurrent || !out.Items[1].IsCurrent || out.Items[2].IsCurrent {
+		t.Fatalf("is_current: %+v", out.Items)
+	}
+	if v := out.Items[2]; v.CreatedBy != user.String() || v.Commit != "" || v.Image != "cotizador:v1" || v.Reason != "deploy" || !v.CreatedAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("folder version: %+v", v)
+	}
+
+	page, _ := call[releasemcp.ListVersionsOut](t, cs, "list_versions", map[string]any{"app": f.app.String(), "limit": 2})
+	if len(page.Items) != 2 || page.NextOffset == nil || *page.NextOffset != 2 || page.Total != 3 {
+		t.Fatalf("page 1: %+v", page)
+	}
+	rest, _ := call[releasemcp.ListVersionsOut](t, cs, "list_versions", map[string]any{"app": "cotizador", "limit": 2, "offset": 2})
+	if len(rest.Items) != 1 || rest.NextOffset != nil || rest.Items[0].Status != "ready" {
+		t.Fatalf("page 2: %+v", rest)
+	}
+}
+
+func TestListVersionsCapsTheLimit(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, reader...)
+	out, _ := call[releasemcp.ListVersionsOut](t, cs, "list_versions", map[string]any{"app": "cotizador", "limit": 5000})
+	if out.Limit != 50 {
+		t.Fatalf("limit not capped: %+v", out)
+	}
+	_, res := call[releasemcp.ListVersionsOut](t, cs, "list_versions", map[string]any{"app": "cotizador", "offset": -1})
+	if !res.IsError {
+		t.Fatal("negative offset accepted")
+	}
+}
+
+func TestPlatformStartedVersionsHaveNoUser(t *testing.T) {
+	f := newFixture(t)
+	auto := release.Deployment{ID: release.NewDeploymentID(), Status: release.StatusReady, Reason: release.ReasonAutoRollback, Image: "reg/x:v1", CreatedAt: t0}
+	f.releases.deployments = []release.Deployment{auto}
+	out, _ := call[releasemcp.ListVersionsOut](t, f.connect(t, f.org, reader...), "list_versions", map[string]any{"app": "cotizador"})
+	if v := out.Items[0]; v.CreatedBy != "" || v.Reason != "auto_rollback" {
+		t.Fatalf("auto rollback: %+v", v)
+	}
+}

@@ -1,0 +1,714 @@
+{
+  "roles": {
+    "Builder": [
+      "get_app",
+      "list_apps",
+      "list_versions",
+      "whoami"
+    ],
+    "Lector": [
+      "get_app",
+      "list_apps",
+      "list_versions",
+      "whoami"
+    ],
+    "TI": [
+      "get_app",
+      "list_apps",
+      "list_versions",
+      "whoami"
+    ]
+  },
+  "tools": [
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Estado de una app"
+      },
+      "description": "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. app is the slug (see list_apps) or the id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "get_app",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "additionalProperties": false,
+            "description": "la publicación en curso, si hay",
+            "properties": {
+              "author": {
+                "description": "autor del commit",
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "description": "SHA completo del commit si vino de GitHub",
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "created_by": {
+                "description": "usuario que la publicó; vacío si la inició la plataforma",
+                "type": "string"
+              },
+              "deployment_id": {
+                "type": "string"
+              },
+              "error": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "description": "las palabras del clúster o del build, si dijo algo",
+                    "type": "string"
+                  },
+                  "message": {
+                    "description": "qué pasó, en español claro",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "finished_at": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "image": {
+                "description": "imagen corta; vacía mientras se construye",
+                "type": "string"
+              },
+              "is_current": {
+                "description": "si es la versión que está en línea ahora",
+                "type": "boolean"
+              },
+              "reason": {
+                "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                "type": "string"
+              },
+              "repository": {
+                "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "status": {
+                "description": "building, pending, applying, verifying, ready, failed o cancelled",
+                "type": "string"
+              },
+              "step": {
+                "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+                "type": "string"
+              },
+              "title": {
+                "description": "primera línea del mensaje del commit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "deployment_id",
+              "status",
+              "reason",
+              "created_at",
+              "is_current"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "current": {
+            "additionalProperties": false,
+            "description": "la versión que está en línea",
+            "properties": {
+              "author": {
+                "description": "autor del commit",
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "description": "SHA completo del commit si vino de GitHub",
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "created_by": {
+                "description": "usuario que la publicó; vacío si la inició la plataforma",
+                "type": "string"
+              },
+              "deployment_id": {
+                "type": "string"
+              },
+              "error": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "description": "las palabras del clúster o del build, si dijo algo",
+                    "type": "string"
+                  },
+                  "message": {
+                    "description": "qué pasó, en español claro",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "finished_at": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "image": {
+                "description": "imagen corta; vacía mientras se construye",
+                "type": "string"
+              },
+              "is_current": {
+                "description": "si es la versión que está en línea ahora",
+                "type": "boolean"
+              },
+              "reason": {
+                "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                "type": "string"
+              },
+              "repository": {
+                "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "status": {
+                "description": "building, pending, applying, verifying, ready, failed o cancelled",
+                "type": "string"
+              },
+              "step": {
+                "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+                "type": "string"
+              },
+              "title": {
+                "description": "primera línea del mensaje del commit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "deployment_id",
+              "status",
+              "reason",
+              "created_at",
+              "is_current"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_deployment": {
+            "additionalProperties": false,
+            "description": "la publicación más reciente, termine como termine",
+            "properties": {
+              "author": {
+                "description": "autor del commit",
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "description": "SHA completo del commit si vino de GitHub",
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "created_by": {
+                "description": "usuario que la publicó; vacío si la inició la plataforma",
+                "type": "string"
+              },
+              "deployment_id": {
+                "type": "string"
+              },
+              "error": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "description": "las palabras del clúster o del build, si dijo algo",
+                    "type": "string"
+                  },
+                  "message": {
+                    "description": "qué pasó, en español claro",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "finished_at": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "image": {
+                "description": "imagen corta; vacía mientras se construye",
+                "type": "string"
+              },
+              "is_current": {
+                "description": "si es la versión que está en línea ahora",
+                "type": "boolean"
+              },
+              "reason": {
+                "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                "type": "string"
+              },
+              "repository": {
+                "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "status": {
+                "description": "building, pending, applying, verifying, ready, failed o cancelled",
+                "type": "string"
+              },
+              "step": {
+                "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+                "type": "string"
+              },
+              "title": {
+                "description": "primera línea del mensaje del commit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "deployment_id",
+              "status",
+              "reason",
+              "created_at",
+              "is_current"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "needs_attention": {
+            "description": "true si la última publicación falló: mira last_deployment.error",
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "description": "online (hay una versión en línea), publishing (se está publicando una versión), failed (nunca estuvo en línea y la última publicación falló) o not_published (aún sin publicar)",
+            "type": "string"
+          },
+          "status": {
+            "description": "estado del proyecto: active o archived",
+            "type": "string"
+          },
+          "url": {
+            "description": "dirección pública de la app; vacía hasta que se publica",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "status",
+          "console_url",
+          "state",
+          "needs_attention"
+        ],
+        "type": "object"
+      },
+      "title": "Estado de una app"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Listar apps"
+      },
+      "description": "Lista las apps de la organización con su slug, nombre, estado y enlace a la consola. Úsala para encontrar el slug de una app antes de pedir su estado o sus versiones; por defecto solo las activas (status=archived para las archivadas). Lists the organization's apps with slug, name, status and console link. Use it to find an app's slug before asking for its state or versions; active apps only by default (status=archived for archived ones). Paginated: pass next_offset as offset to read more.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "cuántas apps devolver (por defecto 20, máximo 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "desde qué posición seguir (usa next_offset de la respuesta anterior)",
+            "type": "integer"
+          },
+          "search": {
+            "description": "texto a buscar en el nombre o el slug",
+            "type": "string"
+          },
+          "status": {
+            "description": "active (por defecto) o archived",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_apps",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "console_url": {
+                  "description": "enlace a la app en la consola",
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "slug": {
+                  "description": "nombre corto de la app: lo que pasas como app a las demás herramientas",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "active o archived",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "slug",
+                "name",
+                "description",
+                "status",
+                "console_url",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "next_offset": {
+            "description": "offset para pedir la siguiente página; ausente si no hay más",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "description": "cuántas apps coinciden en total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "title": "Listar apps"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Versiones de una app"
+      },
+      "description": "Lista el historial de versiones (publicaciones) de una app, de la más reciente a la más antigua, con su estado, commit, autor y quién la publicó; marca la que está en línea. Úsala para elegir a qué versión volver o ver qué falló. Lists an app's version (deployment) history, newest first, with status, commit, author and who published it; it marks the one that is online. Use it to pick a version to go back to or to see what failed. app is the slug (see list_apps) or the id. Paginated: pass next_offset as offset to read more.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "cuántas versiones devolver (por defecto 10, máximo 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "desde qué posición seguir (usa next_offset de la respuesta anterior)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "list_versions",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "items": {
+            "description": "de la más reciente a la más antigua",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "author": {
+                  "description": "autor del commit",
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "commit": {
+                  "description": "SHA completo del commit si vino de GitHub",
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "created_by": {
+                  "description": "usuario que la publicó; vacío si la inició la plataforma",
+                  "type": "string"
+                },
+                "deployment_id": {
+                  "type": "string"
+                },
+                "error": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "description": "las palabras del clúster o del build, si dijo algo",
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "qué pasó, en español claro",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "finished_at": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "image": {
+                  "description": "imagen corta; vacía mientras se construye",
+                  "type": "string"
+                },
+                "is_current": {
+                  "description": "si es la versión que está en línea ahora",
+                  "type": "boolean"
+                },
+                "reason": {
+                  "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                  "type": "string"
+                },
+                "repository": {
+                  "description": "repo de GitHub de donde vino (owner/nombre)",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "building, pending, applying, verifying, ready, failed o cancelled",
+                  "type": "string"
+                },
+                "step": {
+                  "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+                  "type": "string"
+                },
+                "title": {
+                  "description": "primera línea del mensaje del commit",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "deployment_id",
+                "status",
+                "reason",
+                "created_at",
+                "is_current"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "next_offset": {
+            "description": "offset para pedir la siguiente página; ausente si no hay más",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app",
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "title": "Versiones de una app"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Quién soy en Odicea"
+      },
+      "description": "Muestra con qué cuenta y permisos está conectado este asistente a Odicea: organización, usuario, permisos efectivos, dirección de la consola y si GitHub está habilitado. Úsala primero si no sabes qué puedes hacer o cuando una herramienta falla por permisos. Shows which account and permissions this assistant is connected with: organization, user, effective permissions, console URL and whether GitHub is enabled. Use it first when unsure what you may do, or when a tool fails on permissions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "whoami",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "client": {
+            "description": "asistente (cliente MCP) con el que se conectó",
+            "type": "string"
+          },
+          "console_url": {
+            "description": "dirección de la consola de Odicea",
+            "type": "string"
+          },
+          "github_enabled": {
+            "description": "si se pueden conectar repos de GitHub en esta instalación",
+            "type": "boolean"
+          },
+          "organization_id": {
+            "description": "organización a la que pertenece esta conexión",
+            "type": "string"
+          },
+          "permissions": {
+            "description": "permisos efectivos de esta conexión: lo que el usuario consintió y todavía tiene",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "user_id": {
+            "description": "usuario que autorizó al asistente",
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "user_id",
+          "client",
+          "permissions",
+          "console_url",
+          "github_enabled"
+        ],
+        "type": "object"
+      },
+      "title": "Quién soy en Odicea"
+    }
+  ]
+}

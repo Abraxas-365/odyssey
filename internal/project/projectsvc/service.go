@@ -101,6 +101,11 @@ func (s *Service) Find(ctx context.Context, organization identity.OrganizationID
 	return s.repo.Find(ctx, organization, id)
 }
 
+// FindBySlug resolves an app by its URL slug.
+func (s *Service) FindBySlug(ctx context.Context, organization identity.OrganizationID, slug string) (project.Project, error) {
+	return s.repo.FindBySlug(ctx, organization, slug)
+}
+
 // Hold joins the caller's transaction (it is a read for another domain's
 // write, so it opens none of its own).
 func (s *Service) Hold(ctx context.Context, organization identity.OrganizationID, id project.ID) (project.Project, error) {
