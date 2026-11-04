@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io/fs"
 	"strconv"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -305,4 +306,78 @@ func affected(res sql.Result, err error, op, notFound string) error {
 		return errx.NotFound(notFound)
 	}
 	return nil
+}
+
+// ---- upload tickets ----
+
+const ticketColumns = `id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by,
+	created_at, expires_at, used_at, deployment_id`
+
+type ticketRow struct {
+	release.UploadTicket
+	RawConfig []byte `db:"config"`
+}
+
+func (t ticketRow) ticket() (release.UploadTicket, error) {
+	out := t.UploadTicket
+	if err := json.Unmarshal(t.RawConfig, &out.Config); err != nil {
+		return release.UploadTicket{}, errx.Wrap(err, "decode upload ticket config", errx.TypeInternal)
+	}
+	return out, nil
+}
+
+// CreateUploadTicket stores the ticket by its token hash; the token itself
+// (ticket.Token) is never written.
+func (r *Repository) CreateUploadTicket(ctx context.Context, t release.UploadTicket) error {
+	cfg, err := json.Marshal(t.Config)
+	if err != nil {
+		return errx.Wrap(err, "marshal upload ticket config", errx.TypeInternal)
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = time.Now()
+	}
+	_, err = txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.upload_tickets
+		(id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		t.ID, t.Organization, t.Project, t.Environment, t.TokenHash, t.Name, cfg, t.Client, t.RequestedBy, t.CreatedAt, t.ExpiresAt)
+	return pgerr.MapWith(err, "create upload ticket", pgerr.Messages{Unique: "this upload ticket already exists"})
+}
+
+// ConsumeUploadTicket is the single-use guarantee: one UPDATE flips used_at
+// for an unused, unexpired ticket. It is not scoped by organization.
+func (r *Repository) ConsumeUploadTicket(ctx context.Context, hash []byte, now time.Time) (release.UploadTicket, error) {
+	var row ticketRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `UPDATE release.upload_tickets SET used_at = $2
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2
+		RETURNING `+ticketColumns, hash, now)
+	if errors.Is(err, sql.ErrNoRows) {
+		return release.UploadTicket{}, errx.NotFound("upload ticket not found")
+	}
+	if err != nil {
+		return release.UploadTicket{}, pgerr.Map(err, "consume upload ticket")
+	}
+	return row.ticket()
+}
+
+func (r *Repository) FindUploadTicketByHash(ctx context.Context, hash []byte) (release.UploadTicket, error) {
+	var row ticketRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `SELECT `+ticketColumns+` FROM release.upload_tickets WHERE token_hash = $1`, hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return release.UploadTicket{}, errx.NotFound("upload ticket not found")
+	}
+	if err != nil {
+		return release.UploadTicket{}, pgerr.Map(err, "find upload ticket")
+	}
+	return row.ticket()
+}
+
+func (r *Repository) SetUploadDeployment(ctx context.Context, organization identity.OrganizationID, ticket release.UploadTicketID, deployment release.DeploymentID) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.upload_tickets SET deployment_id = $3
+		WHERE organization_id = $1 AND id = $2 AND used_at IS NOT NULL`, organization, ticket, deployment)
+	return affected(res, err, "record upload deployment", "upload ticket not found or not used")
+}
+
+func (r *Repository) DeleteUploadTickets(ctx context.Context, organization identity.OrganizationID, cutoff time.Time) error {
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `DELETE FROM release.upload_tickets WHERE organization_id = $1 AND expires_at < $2`, organization, cutoff)
+	return pgerr.Map(err, "delete upload tickets")
 }

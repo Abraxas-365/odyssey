@@ -40,8 +40,11 @@ type releases struct {
 	env         project.EnvironmentID
 	url         string
 	current     *release.Deployment
+	release     *release.Release // the serving release
 	active      *release.Deployment
 	deployments []release.Deployment // newest first
+	finds       int                  // FindDeployment calls
+	onFind      func(n int)          // runs at the start of the nth FindDeployment
 }
 
 func (r *releases) place(org identity.OrganizationID, env project.EnvironmentID) error {
@@ -55,20 +58,38 @@ func (r *releases) Current(_ context.Context, org identity.OrganizationID, _ pro
 	if err := r.place(org, env); err != nil {
 		return release.Current{}, err
 	}
-	return release.Current{Environment: env, URL: r.url, Deployment: r.current, Active: r.active}, nil
+	return release.Current{Environment: env, URL: r.url, Release: r.release, Deployment: r.current, Active: r.active}, nil
 }
 
-func (r *releases) FindDeployment(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.DeploymentID) (release.Deployment, error) {
+func (r *releases) FindDeployment(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID, id release.DeploymentID) (release.Deployment, error) {
+	if err := r.place(org, env); err != nil {
+		return release.Deployment{}, err
+	}
+	r.finds++
+	if r.onFind != nil {
+		r.onFind(r.finds)
+	}
+	for _, d := range r.deployments {
+		if d.ID == id {
+			return d, nil
+		}
+	}
 	return release.Deployment{}, errx.NotFound("deployment not found")
 }
 
-func (r *releases) ListDeployments(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID, _ release.DeploymentFilter, page query.Pagination) (query.Paginated[release.Deployment], error) {
+func (r *releases) ListDeployments(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID, filter release.DeploymentFilter, page query.Pagination) (query.Paginated[release.Deployment], error) {
 	if err := r.place(org, env); err != nil {
 		return query.Paginated[release.Deployment]{}, err
 	}
-	from := min(page.Offset, len(r.deployments))
-	to := min(from+page.Limit, len(r.deployments))
-	return query.NewPaginated(r.deployments[from:to], len(r.deployments), page), nil
+	var all []release.Deployment
+	for _, d := range r.deployments {
+		if len(filter.Status) == 0 || slices.Contains(filter.Status, d.Status) {
+			all = append(all, d)
+		}
+	}
+	from := min(page.Offset, len(all))
+	to := min(from+page.Limit, len(all))
+	return query.NewPaginated(all[from:to], len(all), page), nil
 }
 
 func (r *releases) FindRelease(context.Context, identity.OrganizationID, project.ID, release.ID) (release.Release, error) {
@@ -78,6 +99,9 @@ func (r *releases) FindRelease(context.Context, identity.OrganizationID, project
 type fixture struct {
 	projects *projectsvc.Service
 	releases *releases
+	commands *commands
+	builds   *builds
+	options  releasemcp.Options
 	org      identity.OrganizationID
 	app      project.ID
 	env      project.EnvironmentID
@@ -118,13 +142,16 @@ func newFixture(t *testing.T) *fixture {
 		d.Step = release.StepWaitReady
 		d.Error = &release.Failure{Code: release.CodeUnhealthy, Message: "La app no respondió en /health.", Detail: "connection refused"}
 	})
+	f.commands = &commands{}
+	f.builds = &builds{org: f.org, project: f.app}
+	f.options = releasemcp.Options{ConsoleURL: "https://odicea.test/", APIURL: "https://api.odicea.test/", PollInterval: 5 * time.Millisecond}
 	f.releases = &releases{org: f.org, env: f.env, url: "https://cotizador.apps.test", current: &v2, deployments: []release.Deployment{v3, v2, v1}}
 	return f
 }
 
 func (f *fixture) connect(t *testing.T, org identity.OrganizationID, perms ...string) *mcp.ClientSession {
 	t.Helper()
-	reg, err := mcpx.NewRegistry(releasemcp.Tools(f.projects, f.releases, releasemcp.Options{ConsoleURL: "https://odicea.test/"}))
+	reg, err := mcpx.NewRegistry(releasemcp.Tools(f.projects, f.commands, f.releases, f.builds, f.options))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +225,7 @@ func TestToolsAreListedOnlyWithBothPermissions(t *testing.T) {
 		slices.Sort(names)
 		return names
 	}
-	if got := list(reader...); !slices.Equal(got, []string{"get_app", "list_versions"}) {
+	if got := list(reader...); !slices.Equal(got, []string{"get_app", "get_build_logs", "get_deployment", "list_versions"}) {
 		t.Fatalf("reader lists %v", got)
 	}
 	if got := list(permission.ProjectsRead); len(got) != 0 {
@@ -263,10 +290,14 @@ func TestGetAppStates(t *testing.T) {
 
 func TestAnotherOrganizationsAppIsNotFound(t *testing.T) {
 	f := newFixture(t)
-	stranger := f.connect(t, identity.NewOrganizationID(), reader...)
-	for _, tool := range []string{"get_app", "list_versions"} {
+	stranger := f.connect(t, identity.NewOrganizationID(), writer...)
+	for _, tool := range []string{"get_app", "list_versions", "get_deployment", "get_build_logs", "rollback", "deploy_folder", "deploy_image"} {
 		for _, ref := range []string{"cotizador", f.app.String()} {
-			_, res := call[releasemcp.GetAppOut](t, stranger, tool, map[string]any{"app": ref})
+			args := map[string]any{"app": ref}
+			if tool == "deploy_image" {
+				args["image"] = "reg/x@sha256:" + strings.Repeat("a", 64)
+			}
+			_, res := call[releasemcp.GetAppOut](t, stranger, tool, args)
 			body := errorBody(t, res)
 			if body["code"] != "NOT_FOUND" || body["field"] != "app" || !strings.Contains(body["next_step"], "list_apps") {
 				t.Fatalf("%s %q: %v", tool, ref, body)

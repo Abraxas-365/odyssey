@@ -4,6 +4,7 @@ package bootstrap_test
 // api/openapi.yaml.
 //
 //   - every tool's permissions are in iam/permissions.json;
+//   - a tool whose risk is not read needs a permission that is not :read;
 //   - names are unique snake_case (mcpx.NewRegistry);
 //   - testdata/mcp/tools.golden.json is what `tools/list` answers for TI
 //     (every tool: names, schemas, annotations) and which tools each role
@@ -18,6 +19,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
@@ -82,6 +84,11 @@ func TestMCPToolsContract(t *testing.T) {
 			if !slices.Contains(permission.All, perm) {
 				t.Errorf("tool %s requires %q, which is not in iam/permissions.json", tool.Name, perm)
 			}
+		}
+		// A tool that changes something is never open to a read-only role.
+		if tool.Risk != mcpx.RiskRead && !slices.ContainsFunc(tool.Permissions, func(p string) bool { return !strings.HasSuffix(p, ":read") }) {
+			t.Errorf("tool %s has risk %s but only read permissions %v: it needs the permission the REST route for the same change requires",
+				tool.Name, tool.Risk, tool.Permissions)
 		}
 	}
 

@@ -36,6 +36,29 @@ func (h *Handler) Register(r fiber.Router) {
 	r.Get("/projects/:id/releases/:release", httpx.RequirePermissions(permission.DeploymentsRead), h.findRelease)
 }
 
+// RegisterPublic mounts the unauthenticated routes on the app's root: the
+// upload ticket in the path is the only credential.
+func (h *Handler) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", h.upload) }
+
+// upload redeems an upload ticket (deploy_folder's command): the body is the
+// folder as a raw tar.gz, streamed to storage. The ticket is spent even if
+// the archive is refused; a fresh one is the retry.
+func (h *Handler) upload(c *fiber.Ctx) error {
+	body, err := httpx.StreamBody(c, build.MaxSourceBytes)
+	if err != nil {
+		return err
+	}
+	d, err := h.commands.RedeemUpload(httpx.PublicContext(c), c.Params("ticket"), body)
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"deployment_id": d.ID,
+		"status":        d.Status,
+		"next_step":     "Sigue la publicación con get_deployment (app y wait_seconds).",
+	})
+}
+
 type place struct {
 	project     project.ID
 	environment project.EnvironmentID

@@ -1,6 +1,7 @@
 // Package projectmcp is the project domain's MCP tools: who the caller is
-// (whoami) and which apps their organization has (list_apps). They call the
-// same project.Queries as the REST API.
+// (whoami), which apps their organization has (list_apps) and creating one
+// (create_app). They call the same project.Commands and project.Queries as
+// the REST API.
 package projectmcp
 
 import (
@@ -24,10 +25,10 @@ type Options struct {
 	GitHubEnabled func(ctx context.Context) bool
 }
 
-// Tools are whoami and list_apps.
-func Tools(queries project.Queries, opts Options) []mcpx.Tool {
+// Tools are whoami, list_apps and create_app.
+func Tools(commands project.Commands, queries project.Queries, opts Options) []mcpx.Tool {
 	opts.ConsoleURL = strings.TrimRight(opts.ConsoleURL, "/")
-	t := tools{queries: queries, opts: opts}
+	t := tools{commands: commands, queries: queries, opts: opts}
 	return []mcpx.Tool{
 		mcpx.Typed(mcpx.Tool{
 			Name:  "whoami",
@@ -55,12 +56,60 @@ func Tools(queries project.Queries, opts Options) []mcpx.Tool {
 			Risk:        mcpx.RiskRead,
 			Annotations: mcpx.Annotations{Idempotent: true},
 		}, t.listApps),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "create_app",
+			Title: "Crear una app",
+			Description: "Crea una app vacía en la organización a partir de un nombre (el slug sale del nombre si no lo das). " +
+				"Después se publica con deploy_folder (una carpeta) o connect_repository (un repo de GitHub). Si el slug ya existe, " +
+				"el error lo dice: usa get_app para verla o elige otro slug. " +
+				"Creates an empty app in the organization from a name (the slug is derived from the name unless given). " +
+				"Publish it afterwards with deploy_folder (a folder) or connect_repository (a GitHub repo). If the slug already exists " +
+				"the error says so: use get_app to see it or pick another slug.",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsWrite},
+			Risk:        mcpx.RiskWrite,
+		}, t.createApp),
 	}
 }
 
 type tools struct {
-	queries project.Queries
-	opts    Options
+	commands project.Commands
+	queries  project.Queries
+	opts     Options
+}
+
+// CreateAppIn is create_app's input.
+type CreateAppIn struct {
+	Name        string `json:"name" jsonschema:"nombre de la app, como lo verá la gente (por ejemplo: Visitas a clientes)"`
+	Description string `json:"description,omitempty" jsonschema:"para qué sirve la app (opcional)"`
+	Slug        string `json:"slug,omitempty" jsonschema:"nombre corto en minúsculas para la dirección y para las demás herramientas; si falta sale del nombre"`
+}
+
+// CreateAppOut is create_app's result.
+type CreateAppOut struct {
+	ID         string `json:"id"`
+	Slug       string `json:"slug" jsonschema:"lo que pasas como app a las demás herramientas"`
+	Name       string `json:"name"`
+	ConsoleURL string `json:"console_url" jsonschema:"enlace a la app en la consola"`
+	NextStep   string `json:"next_step" jsonschema:"qué hacer ahora"`
+}
+
+func (t tools) createApp(ctx context.Context, caller mcpx.Principal, in CreateAppIn) (CreateAppOut, error) {
+	id, err := t.commands.Create(ctx, caller.Organization, project.Create{
+		Name: strings.TrimSpace(in.Name), Slug: strings.TrimSpace(in.Slug), Description: strings.TrimSpace(in.Description), CreatedBy: caller.User})
+	if err != nil {
+		if errx.IsType(err, errx.TypeConflict) {
+			return CreateAppOut{}, mcpx.NextStep(errx.Conflict("an app with this slug already exists").WithField("slug"),
+				"Ya existe una app con ese slug: usa get_app para verla o elige otro slug.")
+		}
+		return CreateAppOut{}, err
+	}
+	p, err := t.queries.Find(ctx, caller.Organization, id)
+	if err != nil {
+		return CreateAppOut{}, err
+	}
+	return CreateAppOut{ID: p.ID.String(), Slug: p.Slug, Name: p.Name, ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String(),
+		NextStep: "Publica con deploy_folder (app=" + p.Slug + ")."}, nil
 }
 
 // WhoamiOut is whoami's result.

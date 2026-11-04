@@ -721,6 +721,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/uploads/{ticket}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Publish a folder with an upload ticket (what deploy_folder's command calls)
+         * @description Public: the ticket in the path (`odu_…`, issued by the MCP tool `deploy_folder`) is the only credential, so no `Authorization` header is involved. The body is the folder as a raw tar.gz (`Content-Type: application/gzip`; `application/octet-stream` is also taken), streamed to storage, at most 100 MiB compressed (413). The ticket is good for one upload within 10 minutes: it is spent when this request arrives, even if the archive is then refused (ask `deploy_folder` for another). Starts a deployment from source exactly like `POST …/deployments` with a folder, with the ticket's app, environment, user and configuration, attributed to the MCP client that asked for the ticket. 404 for an unknown or malformed ticket; 409 `UPLOAD_TICKET_USED` for one used already (`details.deployment_id` when known); 422 `UPLOAD_TICKET_EXPIRED` for one past its 10 minutes (and the business errors of publishing a folder, e.g. `PROJECT_ARCHIVED`); 400 `SOURCE_INVALID` for an archive that is not a usable source. Not under `/api/v1`: no token, no CORS.
+         */
+        put: operations["uploadFolder"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Not served - the endpoint is stateless (no server-initiated stream)
+         * @description Always 405 with `Allow: POST`, before any token check; MCP clients probe it and fall back to POST.
+         */
+        get: operations["mcpStream"];
+        put?: never;
+        /**
+         * The MCP endpoint coding agents connect to (Claude Code, Codex, VS Code, Antigravity)
+         * @description Model Context Protocol, Streamable HTTP transport, stateless with JSON responses (no session, no GET stream). Its own OAuth protected resource (RFC 9728) of IAMKit: the token must be issued for this resource (RFC 8707 `resource` claim, audience `<odicea>/mcp`) and IAMKit's introspection must say it is live. Console tokens are refused here, and these tokens are refused by `/api/v1`. Without a valid token: 401 with `WWW-Authenticate: Bearer resource_metadata="…"`, which starts the agent's sign-in. 503 with `Retry-After` when IAMKit cannot be asked (fails closed). Each tool requires its own permissions (`tools/list` shows only those the user holds); the tools call the same operations as this API. Mounted only when the introspection client is configured.
+         */
+        post: operations["mcp"];
+        /**
+         * Not served - the endpoint is stateless (no session to end)
+         * @description Always 405 with `Allow: POST`, before any token check.
+         */
+        delete: operations["mcpEndSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/oauth-protected-resource/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Protected resource metadata of /mcp (RFC 9728)
+         * @description Public, CORS `*`. Names IAMKit as the authorization server and the permissions as scopes.
+         */
+        get: operations["mcpResourceMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        /** CORS preflight of the metadata */
+        options: operations["mcpResourceMetadataPreflight"];
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/oauth-protected-resource": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The same metadata at the root well-known path (some clients probe it first) */
+        get: operations["mcpRootResourceMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        /** CORS preflight of the metadata */
+        options: operations["mcpRootResourceMetadataPreflight"];
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -735,6 +822,18 @@ export interface components {
             /** @description Public OAuth client (code + PKCE); "" when not configured. */
             client_id: string;
             environment_id: string;
+        };
+        /** @description RFC 9728 protected resource metadata. */
+        ProtectedResourceMetadata: {
+            /** @description The canonical resource URI (the tokens' audience): `<odicea>/mcp`. */
+            resource: string;
+            /** @description IAMKit's issuer. */
+            authorization_servers: string[];
+            /** @description The permission catalog. */
+            scopes_supported?: string[];
+            bearer_methods_supported?: string[];
+            resource_name?: string;
+            resource_documentation?: string;
         };
         ErrorBody: {
             error: components["schemas"]["Error"];
@@ -2609,6 +2708,223 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
+        };
+    };
+    uploadFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The upload ticket (`odu_` and 43 URL-safe base64 characters). */
+                ticket: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/gzip": string;
+            };
+        };
+        responses: {
+            /** @description The folder was received and the deployment started (it builds in the worker). */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        deployment_id: string;
+                        status: components["schemas"]["DeploymentStatus"];
+                        /** @description What to do next */
+                        next_step: string;
+                    };
+                };
+            };
+            400: components["responses"]["Validation"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    mcpStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Only POST is served. */
+            405: {
+                headers: {
+                    Allow?: "POST";
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mcp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never> | unknown[];
+            };
+        };
+        responses: {
+            /** @description The JSON-RPC response. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description A notification or response from the client was accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed MCP message. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No valid token for this resource; the challenge names the metadata. */
+            401: {
+                headers: {
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The token lacks a scope the request needs. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description IAMKit could not check the token; retry later. */
+            503: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mcpEndSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Only POST is served. */
+            405: {
+                headers: {
+                    Allow?: "POST";
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mcpResourceMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProtectedResourceMetadata"];
+                };
+            };
+        };
+    };
+    mcpResourceMetadataPreflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Allowed from any origin. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mcpRootResourceMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProtectedResourceMetadata"];
+                };
+            };
+        };
+    };
+    mcpRootResourceMetadataPreflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Allowed from any origin. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

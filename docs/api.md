@@ -104,6 +104,11 @@ reaches Postgres as a 500.
   buffered whole: a small JSON part first (strict as above, ≤ 256 KiB), then
   the file. A body over the endpoint's limit is 413, without reading it
   into memory.
+- **Raw archive** (`application/gzip`, or `application/octet-stream`) is
+  accepted only by `PUT /uploads/:ticket` (§11). It streams like multipart:
+  never buffered, 413 beyond the limit (by `Content-Length`, or by counting
+  when chunked), and the connection closes after the response. Any JSON route
+  refuses it with 415.
 
 ## 7. Response fields
 
@@ -350,3 +355,27 @@ events that are ignored (`ping`, `created`, other repositories or branches).
 `installation` / `installation_repositories` suspend, refresh or unlink the
 installation. A missed webhook is caught by a 2-minute poll (`trigger:
 reconcile`). `422 GITHUB_NOT_CONFIGURED` without a GitHub App.
+
+### Upload tickets (public: `PUT /uploads/:ticket`)
+
+Not under `/api/v1`: no token and no CORS. This is where the command that the
+MCP tool `deploy_folder` returns uploads the folder
+(`… | curl --fail-with-body -H 'Content-Type: application/gzip' -T - <url>`),
+so the agent's own token never leaves its MCP client. The ticket in the path
+(`odu_` + 43 URL-safe base64 characters; only its SHA-256 is stored) is the
+only credential: it names the app, environment, user, MCP client and
+configuration, is good for **one** upload within **10 minutes**, and is spent
+the moment the request arrives, even if the archive is then refused (ask for
+another).
+
+The body is the folder as a raw `.tar.gz` (≤ 100 MiB; the same checks as
+deploy from source, §11 Deployments). It starts the same deployment from
+source, attributed to the user and the MCP client of the ticket, and answers
+`202 {"deployment_id", "status", "next_step"}`; follow it with `get_deployment`
+(MCP) or `GET …/deployments/:deployment`. Errors: `404` unknown or malformed
+ticket; `409 UPLOAD_TICKET_USED` (`details.deployment_id` when the upload
+started one); `422 UPLOAD_TICKET_EXPIRED`; `413` over the limit; `415` for a
+Content-Type that is not `application/gzip` / `application/octet-stream`;
+`400 SOURCE_INVALID` and the other errors of deploy from source.
+Tickets are kept 24 h after they expire so a late upload still hears
+"expired".

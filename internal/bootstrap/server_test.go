@@ -1,14 +1,21 @@
 package bootstrap_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 
 	"github.com/Abraxas-365/odyssey/internal/audit"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
 	"github.com/Abraxas-365/odyssey/internal/config"
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -16,6 +23,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/pgtest"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
+	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
 )
 
@@ -102,4 +110,60 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 	// the trail is its own permission, and per organization
 	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/audit", other, nil), http.StatusForbidden)
+
+	// An upload ticket (what deploy_folder issues) is the only credential of
+	// PUT /uploads/:ticket: it publishes a folder once, attributed to the
+	// MCP client that asked for it.
+	res = checked(t, app, http.MethodPost, "/api/v1/projects", token, map[string]any{"name": "Subida"})
+	httpxtest.Want(t, res, http.StatusCreated)
+	up := httpxtest.JSON[project.Project](t, res)
+	res = checked(t, app, http.MethodGet, "/api/v1/projects/"+up.ID.String()+"/environments", token, nil)
+	env := httpxtest.JSON[query.Paginated[project.Environment]](t, res).Items[0]
+	user := identity.MustParseUserID(httpxtest.User)
+	ticket, err := platform.Releases.Commands.IssueUpload(event.WithMeta(context.Background(), event.Meta{Client: "mcp:test"}),
+		org, up.ID, env.ID, release.IssueUpload{Name: "subida", Config: release.Config{Port: 3000}, RequestedBy: user})
+	if err != nil || !release.ValidUploadToken(ticket.Token) || ticket.Client != "mcp:test" {
+		t.Fatalf("issue %+v %v", ticket, err)
+	}
+	archive := folder(t, "uploaded")
+	res = uploadRaw(t, app, "/uploads/"+ticket.Token, "application/gzip", archive)
+	httpxtest.Want(t, res, http.StatusAccepted)
+	accepted := httpxtest.JSON[struct {
+		Deployment string `json:"deployment_id"`
+		Status     string `json:"status"`
+		NextStep   string `json:"next_step"`
+	}](t, res)
+	if accepted.Deployment == "" || accepted.Status != string(release.StatusBuilding) || accepted.NextStep == "" {
+		t.Fatalf("accepted %+v", accepted)
+	}
+	d, err := platform.Releases.Queries.FindDeployment(context.Background(), org, up.ID, env.ID, release.MustParseDeploymentID(accepted.Deployment))
+	if err != nil || d.RequestedBy != user || d.Source == nil {
+		t.Fatalf("deployment %+v %v", d, err)
+	}
+	res = uploadRaw(t, app, "/uploads/"+ticket.Token, "application/gzip", archive) // spent
+	httpxtest.Want(t, res, http.StatusConflict)
+	if httpxtest.ErrorCode(res) != release.CodeUploadTicketUsed || !strings.Contains(string(res.Body), accepted.Deployment) {
+		t.Fatalf("reused ticket: %s", res.Body)
+	}
+	for _, bad := range []string{"nope", "odu_" + strings.Repeat("A", 43), release.UploadTicketPrefix} {
+		httpxtest.Want(t, uploadRaw(t, app, "/uploads/"+bad, "application/gzip", archive), http.StatusNotFound)
+	}
+	httpxtest.Want(t, uploadRaw(t, app, "/uploads/"+ticket.Token, "application/json", archive), http.StatusUnsupportedMediaType)
+}
+
+// uploadRaw PUTs a raw body (no Authorization) and validates the response
+// against the documented operation.
+func uploadRaw(t *testing.T, app *fiber.App, path, contentType string, body []byte) httpxtest.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	res, err := app.Test(req, 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	out, _ := io.ReadAll(res.Body)
+	r := httpxtest.Response{Status: res.StatusCode, Header: res.Header, Body: out}
+	validate(t, http.MethodPut, path, r)
+	return r
 }

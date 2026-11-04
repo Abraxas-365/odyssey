@@ -3,6 +3,9 @@ package server_test
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -27,6 +30,28 @@ func (routes) Register(r fiber.Router) {
 			return err
 		}
 		return c.JSON(fiber.Map{"keys": len(v)})
+	})
+	r.Put("/raw", func(c *fiber.Ctx) error {
+		body, err := httpx.StreamBody(c, 2<<20)
+		if err != nil {
+			return err
+		}
+		n, err := io.Copy(io.Discard, body)
+		if err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{"bytes": n})
+	})
+	r.Put("/raw-sum", func(c *fiber.Ctx) error {
+		body, err := httpx.StreamBody(c, 2<<20)
+		if err != nil {
+			return err
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, body); err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{"sha256": hex.EncodeToString(h.Sum(nil))})
 	})
 	r.Post("/upload", func(c *fiber.Ctx) error {
 		u, err := httpx.NewUpload(c, 2<<20)
@@ -72,6 +97,11 @@ func listen(t *testing.T) string {
 // the body chunked.
 func post(t *testing.T, url, contentType string, body io.Reader, length int64) (int, string) {
 	t.Helper()
+	return send(t, http.MethodPost, url, contentType, body, length)
+}
+
+func send(t *testing.T, method, url, contentType string, body io.Reader, length int64) (int, string) {
+	t.Helper()
 	rest := strings.TrimPrefix(url, "http://")
 	host, path, _ := strings.Cut(rest, "/")
 	conn, err := net.DialTimeout("tcp", host, time.Second)
@@ -82,7 +112,7 @@ func post(t *testing.T, url, contentType string, body io.Reader, length int64) (
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	go func() {
 		w := bufio.NewWriter(conn)
-		fmt.Fprintf(w, "POST /%s HTTP/1.1\r\nHost: x\r\nContent-Type: %s\r\n", path, contentType)
+		fmt.Fprintf(w, "%s /%s HTTP/1.1\r\nHost: x\r\nContent-Type: %s\r\n", method, path, contentType)
 		if length < 0 {
 			fmt.Fprintf(w, "Transfer-Encoding: chunked\r\n\r\n")
 			buf := make([]byte, 32<<10)
@@ -176,6 +206,65 @@ func TestBodies(t *testing.T) {
 	// A JSON route refuses a multipart body without reading it.
 	if code, _ := post(t, base+"/json", ct, bytes.NewReader(data), int64(len(data))); code != 415 {
 		t.Fatalf("multipart to a json route: %d", code)
+	}
+}
+
+// TestRawBodies: an application/gzip or octet-stream body streams like a
+// multipart one (capped, never buffered), and nothing else does.
+func TestRawBodies(t *testing.T) {
+	base := listen(t)
+	put := func(ct string, body io.Reader, length int64) (int, string) {
+		t.Helper()
+		return send(t, http.MethodPut, base+"/raw", ct, body, length)
+	}
+	for _, ct := range []string{"application/gzip", "application/octet-stream", "application/gzip; charset=binary"} {
+		// well past MaxJSONBody: it is not buffered by LimitBody
+		if code, body := put(ct, io.LimitReader(zeros{}, 1500<<10), 1500<<10); code != 200 || !strings.Contains(body, fmt.Sprintf(`"bytes":%d`, 1500<<10)) {
+			t.Fatalf("%s: %d %s", ct, code, body)
+		}
+		if code, body := put(ct, io.LimitReader(zeros{}, 1500<<10), -1); code != 200 || !strings.Contains(body, fmt.Sprintf(`"bytes":%d`, 1500<<10)) {
+			t.Fatalf("chunked %s: %d %s", ct, code, body)
+		}
+	}
+	// Over the route's cap: by length up front, by counting when chunked.
+	if code, _ := put("application/gzip", io.LimitReader(zeros{}, 3<<20), 3<<20); code != 413 {
+		t.Fatalf("big raw body: %d", code)
+	}
+	if code, _ := put("application/gzip", io.LimitReader(zeros{}, 3<<20), -1); code != 413 {
+		t.Fatalf("big chunked raw body: %d", code)
+	}
+	// Over every upload's cap: refused before reading.
+	if code, _ := put("application/gzip", io.LimitReader(zeros{}, httpx.MaxUploadBody+1), httpx.MaxUploadBody+1); code != 413 {
+		t.Fatalf("huge raw body: %d", code)
+	}
+	// Another type is not a raw upload; a JSON route refuses a raw one.
+	if code, _ := put("text/plain", strings.NewReader("x"), 1); code != 415 {
+		t.Fatalf("text to a raw route: %d", code)
+	}
+	if code, _ := post(t, base+"/json", "application/gzip", strings.NewReader("x"), 1); code != 415 {
+		t.Fatalf("gzip to a json route: %d", code)
+	}
+	if code, _ := post(t, base+"/json", "application/octet-stream", strings.NewReader("{}"), 2); code != 415 {
+		t.Fatalf("octet-stream to a json route: %d", code)
+	}
+}
+
+// TestRawBodiesArriveIntact: the handler reads exactly the bytes sent (a
+// small archive fits fasthttp's prefetch; a big one streams), by length and
+// chunked (curl -T - sends chunked).
+func TestRawBodiesArriveIntact(t *testing.T) {
+	base := listen(t)
+	for _, size := range []int{1, 300, 8 << 10, 70 << 10, 1500 << 10} {
+		data := make([]byte, size)
+		_, _ = rand.Read(data)
+		sum := sha256.Sum256(data)
+		want := hex.EncodeToString(sum[:])
+		for _, length := range []int64{int64(size), -1} {
+			code, body := send(t, http.MethodPut, base+"/raw-sum", "application/gzip", bytes.NewReader(data), length)
+			if code != 200 || !strings.Contains(body, want) {
+				t.Errorf("size %d length %d: %d %s (want sha256 %s)", size, length, code, body, want)
+			}
+		}
 	}
 }
 

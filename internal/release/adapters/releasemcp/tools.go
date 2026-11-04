@@ -1,6 +1,8 @@
 // Package releasemcp is the release domain's MCP tools: an app's state
-// (get_app) and its history (list_versions). They call the same
-// project.Queries and release.Queries as the REST API.
+// (get_app) and its history (list_versions), and publishing it: deploy_folder
+// (an upload ticket and the command that uses it), deploy_image,
+// get_deployment (which can wait), get_build_logs and rollback. They call the
+// same project, release and build Commands/Queries as the REST API.
 package releasemcp
 
 import (
@@ -8,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
@@ -21,12 +24,35 @@ import (
 type Options struct {
 	// ConsoleURL is the console's base URL (links for the user).
 	ConsoleURL string
+	// APIURL is the API's public base URL: where upload links point
+	// (deploy_folder gives <APIURL>/uploads/<ticket>).
+	APIURL string
+	// Repository is the repository connected to an app, for get_app. Nil, or
+	// a nil result, means none. Release does not know sources: the
+	// composition root builds it over source.Queries.FindConnection.
+	Repository func(ctx context.Context, org identity.OrganizationID, app project.ID) (*ConnectedRepo, error)
+	// PollInterval is how often get_deployment re-reads a deployment while
+	// it waits (1 s by default; tests shorten it).
+	PollInterval time.Duration
 }
 
-// Tools are get_app and list_versions.
-func Tools(projects project.Queries, queries release.Queries, opts Options) []mcpx.Tool {
+// ConnectedRepo is the repository an app publishes from.
+type ConnectedRepo struct {
+	Repository string `json:"repository" jsonschema:"owner/nombre en GitHub"`
+	Branch     string `json:"branch" jsonschema:"rama que se publica con cada push"`
+	Root       string `json:"root,omitempty" jsonschema:"carpeta de la app dentro del repo; vacía si es la raíz"`
+	LastCommit string `json:"last_commit,omitempty" jsonschema:"último commit visto en la rama"`
+}
+
+// Tools are get_app, list_versions, deploy_folder, deploy_image,
+// get_deployment, get_build_logs and rollback.
+func Tools(projects project.Queries, commands release.Commands, queries release.Queries, builds build.Queries, opts Options) []mcpx.Tool {
 	opts.ConsoleURL = strings.TrimRight(opts.ConsoleURL, "/")
-	t := tools{projects: projects, queries: queries, opts: opts}
+	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = time.Second
+	}
+	t := tools{projects: projects, commands: commands, queries: queries, builds: builds, opts: opts}
 	return []mcpx.Tool{
 		mcpx.Typed(mcpx.Tool{
 			Name:  "get_app",
@@ -54,12 +80,82 @@ func Tools(projects project.Queries, queries release.Queries, opts Options) []mc
 			Risk:        mcpx.RiskRead,
 			Annotations: mcpx.Annotations{Idempotent: true},
 		}, t.listVersions),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "deploy_folder",
+			Title: "Publicar una carpeta",
+			Description: "Publica la carpeta de código de la máquina del usuario como una versión nueva de la app. Esta herramienta NO recibe archivos: " +
+				"crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, " +
+				"dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. " +
+				"No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. " +
+				"Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: " +
+				"it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, " +
+				"inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. " +
+				"Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. " +
+				"app is the slug (see list_apps) or the id; env only takes non-secret values.",
+			Toolset:     "versions",
+			Permissions: []string{permission.DeploymentsCreate, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+		}, t.deployFolder),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "deploy_image",
+			Title: "Publicar una imagen",
+			Description: "Publica una imagen de contenedor ya construida (por ejemplo por el CI del equipo) como una versión nueva de la app. " +
+				"La imagen debe estar fijada por digest: registro/repositorio@sha256:<64 hex>. Para código fuente usa deploy_folder. " +
+				"Publishes an already-built container image (for example from the team's CI) as a new version of the app. " +
+				"The image must be pinned by digest: registry/repository@sha256:<64 hex>. For source code use deploy_folder. " +
+				"app is the slug (see list_apps) or the id; env only takes non-secret values.",
+			Toolset:     "versions",
+			Permissions: []string{permission.DeploymentsCreate, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+		}, t.deployImage),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "get_deployment",
+			Title: "Estado de una publicación",
+			Description: "Muestra una publicación de la app: paso actual, resultado, dirección cuando está en línea y el error con qué hacer si falló. " +
+				"Sin deployment_id es la que está en curso o, si no hay, la que está en línea. Con wait_seconds (hasta 45) espera a que termine antes de responder: " +
+				"úsala después de publicar, repitiéndola mientras done sea false. " +
+				"Shows one publication of the app: current step, outcome, its URL once online and the error with what to do if it failed. " +
+				"Without deployment_id it is the one in progress or, if none, the one online. With wait_seconds (up to 45) it waits for it to finish before answering: " +
+				"use it after publishing, repeating while done is false. app is the slug (see list_apps) or the id.",
+			Toolset:     "versions",
+			Permissions: []string{permission.DeploymentsRead, permission.ProjectsRead},
+			Risk:        mcpx.RiskRead,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.getDeployment),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "get_build_logs",
+			Title: "Logs del build",
+			Description: "Muestra el log del build de una publicación hecha desde código (carpeta o GitHub): por defecto las últimas 200 líneas, para no llenar el contexto. " +
+				"Úsala cuando get_deployment diga que el build falló. Con after (el next de la respuesta anterior) sigue leyendo desde ahí. " +
+				"Shows the build log of a publication made from source (folder or GitHub): the last 200 lines by default, to spare context. " +
+				"Use it when get_deployment says the build failed. With after (the previous answer's next) it keeps reading from there. " +
+				"app is the slug (see list_apps) or the id; without deployment_id it is the same publication get_deployment shows.",
+			Toolset:     "versions",
+			Permissions: []string{permission.DeploymentsRead, permission.ProjectsRead},
+			Risk:        mcpx.RiskRead,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.getBuildLogs),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "rollback",
+			Title: "Volver a una versión anterior",
+			Description: "Vuelve a una versión anterior de la app que ya estuvo en línea; la versión actual deja de servirse. " +
+				"Sin deployment_id elige la última versión en línea distinta de la actual (list_versions muestra el historial). " +
+				"Goes back to an earlier version of the app that was online; the current version stops being served. " +
+				"Without deployment_id it picks the newest online version other than the current one (list_versions shows the history). " +
+				"app is the slug (see list_apps) or the id. Follow with get_deployment.",
+			Toolset:     "versions",
+			Permissions: []string{permission.DeploymentsRollback, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+			Annotations: mcpx.Annotations{Destructive: true},
+		}, t.rollback),
 	}
 }
 
 type tools struct {
 	projects project.Queries
+	commands release.Commands
 	queries  release.Queries
+	builds   build.Queries
 	opts     Options
 }
 
@@ -175,6 +271,8 @@ type GetAppOut struct {
 	Current        *Version `json:"current,omitempty" jsonschema:"la versión que está en línea"`
 	Active         *Version `json:"active,omitempty" jsonschema:"la publicación en curso, si hay"`
 	LastDeployment *Version `json:"last_deployment,omitempty" jsonschema:"la publicación más reciente, termine como termine"`
+	// Repository is the GitHub repository the app publishes from, if connected.
+	Repository *ConnectedRepo `json:"repository,omitempty" jsonschema:"repo de GitHub conectado: cada push a su rama publica la app"`
 }
 
 func (t tools) getApp(ctx context.Context, caller mcpx.Principal, in GetAppIn) (GetAppOut, error) {
@@ -209,6 +307,15 @@ func (t tools) getApp(ctx context.Context, caller mcpx.Principal, in GetAppIn) (
 			if out.State == "not_published" {
 				out.State = "failed"
 			}
+		}
+	}
+	if t.opts.Repository != nil {
+		repo, err := t.opts.Repository(ctx, caller.Organization, p.ID)
+		if err != nil && !errx.IsType(err, errx.TypeNotFound) {
+			return GetAppOut{}, err
+		}
+		if err == nil {
+			out.Repository = repo
 		}
 	}
 	return out, nil

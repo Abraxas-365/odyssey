@@ -168,3 +168,10 @@ func Provenance(c *fiber.Ctx) error {
 	c.SetUserContext(event.WithMeta(c.UserContext(), meta))
 	return c.Next()
 }
+
+// PublicContext is the user context of a route that has no authenticated
+// caller (a webhook, an upload ticket): events published under it correlate
+// to the X-Request-ID and name no OAuth client.
+func PublicContext(c *fiber.Ctx) context.Context {
+	return event.WithMeta(c.UserContext(), event.Meta{CorrelationID: ensureRequestID(c)})
+}

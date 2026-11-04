@@ -24,12 +24,16 @@ Odicea publishes the company's internal apps on its own infrastructure, with the
 
 Flujo / flow:
 1. whoami: tu organización y lo que puedes hacer. list_apps / get_app: las apps y su estado.
-2. Publicar: create_app → deploy_folder → ejecuta el comando que devuelve en la carpeta del proyecto → get_deployment(wait_seconds) hasta "ready" → comparte la URL.
-3. list_versions: el historial; rollback vuelve a una versión anterior.
+2. Publicar: create_app → deploy_folder → ejecuta tú el comando que devuelve, en la carpeta del proyecto → get_deployment(wait_seconds) hasta done=true → comparte la URL.
+   Si el build falla: get_build_logs, corrige y vuelve a publicar.
+3. Desde GitHub: list_repositories → connect_repository (cada push publica) → publish_now para publicar ya.
+4. Una imagen ya construida (fijada por digest): deploy_image.
+5. list_versions: el historial; rollback vuelve a una versión anterior.
 
 Reglas para que una app funcione en Odicea:
 - Escucha en el puerto $PORT (8080 si no está) y responde en "/".
-- Nada de secretos en el código: TI los configura aparte.
+- Nada de secretos en el código ni en env: TI los configura aparte.
+- El enlace de subida es de un solo uso: no lo muestres ni lo guardes.
 - Si una tool falla, lee "next_step" en el error: dice qué hacer.`
 
 var toolName = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)

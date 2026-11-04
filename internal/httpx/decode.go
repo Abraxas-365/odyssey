@@ -24,7 +24,7 @@ const MaxJSONBody = 1 << 20
 //   - unknown fields are an error naming the field (400);
 //   - exactly one JSON value, nothing after it (400).
 func DecodeJSON(c *fiber.Ctx, into any) error {
-	if isMultipart(c) { // a stream up to MaxUploadBody: never buffer it here
+	if isStreamed(c) { // a stream up to MaxUploadBody: never buffer it here
 		return errx.UnsupportedMediaType("Content-Type must be application/json")
 	}
 	body := c.Body()

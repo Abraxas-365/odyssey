@@ -1,25 +1,432 @@
 {
   "roles": {
     "Builder": [
+      "connect_repository",
+      "create_app",
+      "deploy_folder",
+      "deploy_image",
       "get_app",
+      "get_build_logs",
+      "get_deployment",
       "list_apps",
+      "list_repositories",
       "list_versions",
+      "publish_now",
+      "rollback",
       "whoami"
     ],
     "Lector": [
       "get_app",
+      "get_build_logs",
+      "get_deployment",
       "list_apps",
       "list_versions",
       "whoami"
     ],
     "TI": [
+      "connect_repository",
+      "create_app",
+      "deploy_folder",
+      "deploy_image",
       "get_app",
+      "get_build_logs",
+      "get_deployment",
       "list_apps",
+      "list_repositories",
       "list_versions",
+      "publish_now",
+      "rollback",
       "whoami"
     ]
   },
   "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Conectar un repositorio"
+      },
+      "description": "Conecta un repositorio de GitHub a una app: desde ahora cada push a la rama publica la app, y se publica el último commit ya. repository es owner/nombre (o el id numérico de list_repositories); branch por defecto es la rama principal del repo; root es la carpeta de la app dentro del repo (vacía si es la raíz). Espera unos segundos a que empiece la publicación y la devuelve. Connects a GitHub repository to an app: from now on every push to the branch publishes the app, and the latest commit is published right away. repository is owner/name (or the numeric id from list_repositories); branch defaults to the repository's main branch; root is the app's folder inside the repository (empty for its root). It waits a few seconds for the publication to start and returns it. app is the slug (see list_apps) or the id; env only takes non-secret values.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "branch": {
+            "description": "rama que publica la app (por defecto la principal del repositorio)",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "variables de entorno; SOLO valores que no son secretos (no pongas contraseñas ni llaves)",
+            "type": "object"
+          },
+          "health_path": {
+            "description": "ruta que responde 200 cuando la app está sana (por defecto /)",
+            "type": "string"
+          },
+          "port": {
+            "description": "puerto en el que escucha la app (por defecto 8080; también llega como $PORT)",
+            "type": "integer"
+          },
+          "replicas": {
+            "description": "cuántas copias correr, de 1 a 10 (por defecto 1)",
+            "type": "integer"
+          },
+          "repository": {
+            "description": "owner/nombre del repositorio en GitHub, o su id numérico (list_repositories)",
+            "type": "string"
+          },
+          "root": {
+            "description": "carpeta de la app dentro del repositorio (vacía si es la raíz)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "repository"
+        ],
+        "type": "object"
+      },
+      "name": "connect_repository",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "la publicación del último commit, si ya empezó",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "repository": {
+            "description": "owner/nombre",
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "repository",
+          "branch",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Conectar un repositorio"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Crear una app"
+      },
+      "description": "Crea una app vacía en la organización a partir de un nombre (el slug sale del nombre si no lo das). Después se publica con deploy_folder (una carpeta) o connect_repository (un repo de GitHub). Si el slug ya existe, el error lo dice: usa get_app para verla o elige otro slug. Creates an empty app in the organization from a name (the slug is derived from the name unless given). Publish it afterwards with deploy_folder (a folder) or connect_repository (a GitHub repo). If the slug already exists the error says so: use get_app to see it or pick another slug.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "para qué sirve la app (opcional)",
+            "type": "string"
+          },
+          "name": {
+            "description": "nombre de la app, como lo verá la gente (por ejemplo: Visitas a clientes)",
+            "type": "string"
+          },
+          "slug": {
+            "description": "nombre corto en minúsculas para la dirección y para las demás herramientas; si falta sale del nombre",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "create_app",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "slug": {
+            "description": "lo que pasas como app a las demás herramientas",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Crear una app"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Publicar una carpeta"
+      },
+      "description": "Publica la carpeta de código de la máquina del usuario como una versión nueva de la app. Esta herramienta NO recibe archivos: crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. app is the slug (see list_apps) or the id; env only takes non-secret values.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "variables de entorno; SOLO valores que no son secretos (no pongas contraseñas ni llaves)",
+            "type": "object"
+          },
+          "health_path": {
+            "description": "ruta que responde 200 cuando la app está sana (por defecto /)",
+            "type": "string"
+          },
+          "name": {
+            "description": "nombre de esta versión (opcional)",
+            "type": "string"
+          },
+          "port": {
+            "description": "puerto en el que escucha la app (por defecto 8080; también llega como $PORT)",
+            "type": "integer"
+          },
+          "replicas": {
+            "description": "cuántas copias correr, de 1 a 10 (por defecto 1)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "deploy_folder",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "command": {
+            "description": "comando para ejecutar tú mismo en una shell, dentro de la carpeta de la app",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "cuándo vence el enlace (10 minutos)",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "upload_url": {
+            "description": "enlace de subida de un solo uso; no lo muestres ni lo guardes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "upload_url",
+          "expires_at",
+          "command",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Publicar una carpeta"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Publicar una imagen"
+      },
+      "description": "Publica una imagen de contenedor ya construida (por ejemplo por el CI del equipo) como una versión nueva de la app. La imagen debe estar fijada por digest: registro/repositorio@sha256:\u003c64 hex\u003e. Para código fuente usa deploy_folder. Publishes an already-built container image (for example from the team's CI) as a new version of the app. The image must be pinned by digest: registry/repository@sha256:\u003c64 hex\u003e. For source code use deploy_folder. app is the slug (see list_apps) or the id; env only takes non-secret values.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "variables de entorno; SOLO valores que no son secretos (no pongas contraseñas ni llaves)",
+            "type": "object"
+          },
+          "health_path": {
+            "description": "ruta que responde 200 cuando la app está sana (por defecto /)",
+            "type": "string"
+          },
+          "image": {
+            "description": "imagen fijada por digest: registro/repositorio@sha256:\u003c64 hex\u003e",
+            "type": "string"
+          },
+          "port": {
+            "description": "puerto en el que escucha la app (por defecto 8080; también llega como $PORT)",
+            "type": "integer"
+          },
+          "replicas": {
+            "description": "cuántas copias correr, de 1 a 10 (por defecto 1)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app",
+          "image"
+        ],
+        "type": "object"
+      },
+      "name": "deploy_image",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "author": {
+            "description": "autor del commit",
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "commit": {
+            "description": "SHA completo del commit si vino de GitHub",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "description": "usuario que la publicó; vacío si la inició la plataforma",
+            "type": "string"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "description": "las palabras del clúster o del build, si dijo algo",
+                "type": "string"
+              },
+              "message": {
+                "description": "qué pasó, en español claro",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "image": {
+            "description": "imagen corta; vacía mientras se construye",
+            "type": "string"
+          },
+          "is_current": {
+            "description": "si es la versión que está en línea ahora",
+            "type": "boolean"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "reason": {
+            "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+            "type": "string"
+          },
+          "repository": {
+            "description": "repo de GitHub de donde vino (owner/nombre)",
+            "type": "string"
+          },
+          "status": {
+            "description": "building, pending, applying, verifying, ready, failed o cancelled",
+            "type": "string"
+          },
+          "step": {
+            "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+            "type": "string"
+          },
+          "title": {
+            "description": "primera línea del mensaje del commit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "deployment_id",
+          "status",
+          "reason",
+          "created_at",
+          "is_current",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Publicar una imagen"
+    },
     {
       "annotations": {
         "idempotentHint": true,
@@ -350,6 +757,36 @@
             "description": "true si la última publicación falló: mira last_deployment.error",
             "type": "boolean"
           },
+          "repository": {
+            "additionalProperties": false,
+            "description": "repo de GitHub conectado: cada push a su rama publica la app",
+            "properties": {
+              "branch": {
+                "description": "rama que se publica con cada push",
+                "type": "string"
+              },
+              "last_commit": {
+                "description": "último commit visto en la rama",
+                "type": "string"
+              },
+              "repository": {
+                "description": "owner/nombre en GitHub",
+                "type": "string"
+              },
+              "root": {
+                "description": "carpeta de la app dentro del repo; vacía si es la raíz",
+                "type": "string"
+              }
+            },
+            "required": [
+              "repository",
+              "branch"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "slug": {
             "type": "string"
           },
@@ -379,6 +816,267 @@
         "type": "object"
       },
       "title": "Estado de una app"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Logs del build"
+      },
+      "description": "Muestra el log del build de una publicación hecha desde código (carpeta o GitHub): por defecto las últimas 200 líneas, para no llenar el contexto. Úsala cuando get_deployment diga que el build falló. Con after (el next de la respuesta anterior) sigue leyendo desde ahí. Shows the build log of a publication made from source (folder or GitHub): the last 200 lines by default, to spare context. Use it when get_deployment says the build failed. With after (the previous answer's next) it keeps reading from there. app is the slug (see list_apps) or the id; without deployment_id it is the same publication get_deployment shows.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "description": "seguir leyendo después de este cursor (el next de la respuesta anterior); si falta, devuelve las últimas líneas",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "publicación cuyo build leer; si falta, la misma que mostraría get_deployment",
+            "type": "string"
+          },
+          "limit": {
+            "description": "cuántas líneas devolver (por defecto 200, máximo 1000)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "get_build_logs",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "build_status": {
+            "description": "queued, running, succeeded, failed o cancelled",
+            "type": "string"
+          },
+          "failure": {
+            "additionalProperties": false,
+            "description": "por qué falló el build",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "description": "las palabras del clúster o del build, si dijo algo",
+                "type": "string"
+              },
+              "message": {
+                "description": "qué pasó, en español claro",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "finished": {
+            "description": "true si el build terminó y el log llega a su final",
+            "type": "boolean"
+          },
+          "log": {
+            "description": "las líneas del log, una por renglón",
+            "type": "string"
+          },
+          "next": {
+            "description": "cursor para pasar como after y leer lo que sigue",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "true si el log era tan largo que no se leyó completo: lo que falta está después de next",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "app",
+          "build_id",
+          "build_status",
+          "log",
+          "next",
+          "finished",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "title": "Logs del build"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Estado de una publicación"
+      },
+      "description": "Muestra una publicación de la app: paso actual, resultado, dirección cuando está en línea y el error con qué hacer si falló. Sin deployment_id es la que está en curso o, si no hay, la que está en línea. Con wait_seconds (hasta 45) espera a que termine antes de responder: úsala después de publicar, repitiéndola mientras done sea false. Shows one publication of the app: current step, outcome, its URL once online and the error with what to do if it failed. Without deployment_id it is the one in progress or, if none, the one online. With wait_seconds (up to 45) it waits for it to finish before answering: use it after publishing, repeating while done is false. app is the slug (see list_apps) or the id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "publicación a mirar; si falta, la que está en curso o la que está en línea",
+            "type": "string"
+          },
+          "wait_seconds": {
+            "description": "esperar hasta tantos segundos (0 a 45) a que la publicación termine antes de responder",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "get_deployment",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "commit": {
+            "description": "SHA completo del commit si vino de GitHub",
+            "type": "string"
+          },
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "done": {
+            "description": "true cuando ya terminó (en línea, falló o fue reemplazada); si es false vuelve a llamar con wait_seconds",
+            "type": "boolean"
+          },
+          "failure": {
+            "additionalProperties": false,
+            "description": "por qué no quedó en línea",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "description": "las palabras del clúster o del build, si dijo algo",
+                "type": "string"
+              },
+              "message": {
+                "description": "qué pasó, en español claro",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "image": {
+            "description": "imagen corta; vacía mientras se construye",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "reason": {
+            "description": "deploy, rollback o auto_rollback",
+            "type": "string"
+          },
+          "repository": {
+            "description": "repo de GitHub de donde vino (owner/nombre)",
+            "type": "string"
+          },
+          "status": {
+            "description": "building, pending, applying, verifying, ready, failed o cancelled",
+            "type": "string"
+          },
+          "step": {
+            "description": "paso en el que está (o en el que falló)",
+            "type": "string"
+          },
+          "steps": {
+            "description": "los pasos de la publicación y cómo va cada uno",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "description": "build, apply, wait_ready o promote",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "pending, running, done, failed o skipped",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "url": {
+            "description": "dirección pública de la app, cuando esta versión está en línea",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "deployment_id",
+          "status",
+          "steps",
+          "reason",
+          "done",
+          "created_at",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Estado de una publicación"
     },
     {
       "annotations": {
@@ -486,6 +1184,99 @@
         "type": "object"
       },
       "title": "Listar apps"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Repositorios de GitHub"
+      },
+      "description": "Lista los repositorios de GitHub a los que llega la organización (los de las cuentas donde está instalada la GitHub App de Odicea), con su rama por defecto. Úsala para encontrar el repositorio antes de connect_repository. Si no hay ninguna cuenta conectada, el next_step trae el enlace de la consola para instalarla (requiere un navegador). Lists the GitHub repositories the organization reaches (those of the accounts where Odicea's GitHub App is installed), with their default branch. Use it to find the repository before connect_repository. If no account is connected, next_step carries the console link to install it (it needs a browser). Paginated: pass next_offset as offset to read more.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "cuántos devolver (por defecto 20, máximo 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "desde qué posición seguir (usa next_offset de la respuesta anterior)",
+            "type": "integer"
+          },
+          "search": {
+            "description": "texto a buscar en owner/nombre",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_repositories",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "default_branch": {
+                  "type": "string"
+                },
+                "full_name": {
+                  "description": "owner/nombre",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "id numérico en GitHub",
+                  "type": "integer"
+                },
+                "private": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "full_name",
+                "default_branch",
+                "private"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "next_offset": {
+            "description": "offset para pedir la siguiente página; ausente si no hay más",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "title": "Repositorios de GitHub"
     },
     {
       "annotations": {
@@ -650,6 +1441,195 @@
         "type": "object"
       },
       "title": "Versiones de una app"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Publicar ahora"
+      },
+      "description": "Publica ya el último commit de la rama conectada de la app, sin esperar un push. Espera unos segundos a que empiece la publicación y la devuelve. Publishes the latest commit of the app's connected branch right now, without waiting for a push. It waits a few seconds for the publication to start and returns it. app is the slug (see list_apps) or the id. The app needs a connected repository (connect_repository).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "publish_now",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "commit": {
+            "description": "SHA del commit que se publica",
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "la publicación, si ya empezó",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "repository": {
+            "description": "owner/nombre",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Publicar ahora"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Volver a una versión anterior"
+      },
+      "description": "Vuelve a una versión anterior de la app que ya estuvo en línea; la versión actual deja de servirse. Sin deployment_id elige la última versión en línea distinta de la actual (list_versions muestra el historial). Goes back to an earlier version of the app that was online; the current version stops being served. Without deployment_id it picks the newest online version other than the current one (list_versions shows the history). app is the slug (see list_apps) or the id. Follow with get_deployment.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "versión a la que volver (list_versions); si falta, la última que estuvo en línea antes de la actual",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "rollback",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "author": {
+            "description": "autor del commit",
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "commit": {
+            "description": "SHA completo del commit si vino de GitHub",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "description": "usuario que la publicó; vacío si la inició la plataforma",
+            "type": "string"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "description": "las palabras del clúster o del build, si dijo algo",
+                "type": "string"
+              },
+              "message": {
+                "description": "qué pasó, en español claro",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "image": {
+            "description": "imagen corta; vacía mientras se construye",
+            "type": "string"
+          },
+          "is_current": {
+            "description": "si es la versión que está en línea ahora",
+            "type": "boolean"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "reason": {
+            "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+            "type": "string"
+          },
+          "repository": {
+            "description": "repo de GitHub de donde vino (owner/nombre)",
+            "type": "string"
+          },
+          "status": {
+            "description": "building, pending, applying, verifying, ready, failed o cancelled",
+            "type": "string"
+          },
+          "step": {
+            "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+            "type": "string"
+          },
+          "title": {
+            "description": "primera línea del mensaje del commit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "deployment_id",
+          "status",
+          "reason",
+          "created_at",
+          "is_current",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Volver a una versión anterior"
     },
     {
       "annotations": {

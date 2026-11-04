@@ -5,9 +5,10 @@ package bootstrap_test
 //  1. The GitHub SDK (google/go-github) and the JWT library (golang-jwt)
 //     stay inside source/adapters/sourcegithub: the domain speaks only the
 //     GitProvider port, so another git host is another adapter.
-//  2. Unauthenticated routes are few and declared: only sourcehttp
-//     implements RegisterPublic, it mounts exactly publicRoutes there, and
-//     only the server mounts them (the composition root hands them over).
+//  2. Unauthenticated routes are few and declared: only sourcehttp and
+//     releasehttp implement RegisterPublic, each mounts exactly its own
+//     publicRoutes entry, and only the server mounts them (the composition
+//     root hands them over).
 //  3. release never depends on source (a deployment does not know where its
 //     source came from), and source reaches release's operations only
 //     through its Deployer port: release.Commands is named only in the
@@ -34,6 +35,7 @@ import (
 const (
 	sourceGitHubAdapter = "source/adapters/sourcegithub"
 	sourceHTTPAdapter   = "source/adapters/sourcehttp"
+	releaseHTTPAdapter  = "release/adapters/releasehttp"
 	sourceReleaseAdapt  = "source/adapters/sourcerelease"
 	sourceModule        = "source/sourcemodule"
 	serverPkg           = "server"
@@ -43,10 +45,17 @@ const (
 var confinedToGitHub = []string{"github.com/google/go-github/", "github.com/golang-jwt/jwt"}
 
 // publicRoutes are every unauthenticated route of the API besides /health
-// and /api/config (each documented with `security: []`).
-var publicRoutes = map[string]bool{
-	"GET /github/setup":     true,
-	"POST /webhooks/github": true,
+// and /api/config (each documented with `security: []`), per adapter that
+// may mount them: GitHub's setup redirect and webhooks, and the upload
+// ticket (the ticket in the path is the only credential).
+var publicRoutes = map[string]map[string]bool{
+	sourceHTTPAdapter: {
+		"GET /github/setup":     true,
+		"POST /webhooks/github": true,
+	},
+	releaseHTTPAdapter: {
+		"PUT /uploads/:ticket": true,
+	},
 }
 
 func TestGitHubStaysInItsAdapter(t *testing.T) {
@@ -178,12 +187,12 @@ func publicRouteViolations(files []goFile) []string {
 			if !ok || fn.Name.Name != "RegisterPublic" || fn.Body == nil {
 				continue
 			}
-			if dir != sourceHTTPAdapter {
+			if publicRoutes[dir] == nil {
 				out = append(out, f.fset.Position(fn.Pos()).String()+": "+dir+
-					" declares RegisterPublic; unauthenticated routes live only in "+sourceHTTPAdapter)
+					" declares RegisterPublic; unauthenticated routes live only in "+sourceHTTPAdapter+" and "+releaseHTTPAdapter)
 				continue
 			}
-			out = append(out, undeclaredRoutes(f, fn)...)
+			out = append(out, undeclaredRoutes(f, fn, publicRoutes[dir])...)
 		}
 		if dir == serverPkg {
 			continue
@@ -208,7 +217,7 @@ func publicRouteViolations(files []goFile) []string {
 // literal, declared public route. The body is read strictly: every statement
 // must be `<x>.<Get|Post|...>("<literal path>", ...)` so no helper, loop or
 // computed path can register a route the rule cannot see.
-func undeclaredRoutes(f goFile, fn *ast.FuncDecl) []string {
+func undeclaredRoutes(f goFile, fn *ast.FuncDecl, declared map[string]bool) []string {
 	var out []string
 	for _, stmt := range fn.Body.List {
 		pos := f.fset.Position(stmt.Pos()).String()
@@ -218,7 +227,7 @@ func undeclaredRoutes(f goFile, fn *ast.FuncDecl) []string {
 				"no helpers, loops, groups, middleware or computed paths")
 			continue
 		}
-		if !publicRoutes[method+" "+route] {
+		if !declared[method+" "+route] {
 			out = append(out, pos+": RegisterPublic mounts "+method+" "+route+", which is not a declared public route")
 		}
 	}
@@ -322,6 +331,8 @@ func TestSourceRulesCatchViolations(t *testing.T) {
 		"source/adapters/sourcegithub/p.go": `package sourcegithub; import (_ "github.com/google/go-github/v93/github"; _ "github.com/golang-jwt/jwt/v5")`,
 		"source/adapters/sourcehttp/h.go": `package sourcehttp
 func (h *Handler) RegisterPublic(r fiber.Router) { r.Get("/github/setup", h.setup); r.Post("/webhooks/github", h.hook) }`,
+		"release/adapters/releasehttp/h.go": `package releasehttp
+func (h *Handler) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", h.upload) }`,
 		"server/server.go":                   `package server; func New(p PublicRoutes, app *fiber.App) { p.RegisterPublic(app) }`,
 		"source/adapters/sourcerelease/d.go": `package sourcerelease; import "` + m + `release"; type D struct{ c release.Commands }`,
 		"source/sourcemodule/m.go":           `package sourcemodule; import "` + m + `release"; type Deps struct{ R release.Commands }`,
@@ -347,6 +358,14 @@ func (x *Loop) RegisterPublic(r fiber.Router) { for _, p := range paths { r.Get(
 func (x *Chain) RegisterPublic(r fiber.Router) { r.Group("/x").Get("/github/setup", x.d) }`,
 		"source/adapters/sourcehttp/all.go": `package sourcehttp
 func (x *All) RegisterPublic(r fiber.Router) { r.All("/github/setup", x.d) }`,
+		"release/adapters/releasehttp/more.go": `package releasehttp
+func (x *More) RegisterPublic(r fiber.Router) { r.Get("/uploads/:ticket", x.d) }`,
+		"release/adapters/releasehttp/webhook.go": `package releasehttp
+func (x *Hook) RegisterPublic(r fiber.Router) { r.Post("/webhooks/github", x.d) }`,
+		"source/adapters/sourcehttp/upload.go": `package sourcehttp
+func (x *Upload) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", x.d) }`,
+		"release/adapters/releasehttp/group.go": `package releasehttp
+func (x *Group) RegisterPublic(r fiber.Router) { r.Group("/uploads").Put("/:ticket", x.d) }`,
 		"bootstrap/b.go":                  `package bootstrap; func wire(h *sourcehttp.Handler, app *fiber.App) { h.RegisterPublic(app) }`,
 		"release/releasesvc/s.go":         `package releasesvc; import _ "` + m + `source"`,
 		"source/sourcesvc/cross.go":       `package sourcesvc; import rel "` + m + `release"; type S struct{ r rel.Commands }`,
@@ -388,6 +407,10 @@ func (m M) peek(ctx C) { m.repo.ListConnectionsToReconcile(ctx, t, 1) }`,
 		"source/adapters/sourcehttp/loop.go: RegisterPublic may only register literal routes",
 		"source/adapters/sourcehttp/chain.go: RegisterPublic may only register literal routes",
 		"source/adapters/sourcehttp/all.go: RegisterPublic mounts ALL /github/setup",
+		"release/adapters/releasehttp/more.go: RegisterPublic mounts GET /uploads/:ticket",
+		"release/adapters/releasehttp/webhook.go: RegisterPublic mounts POST /webhooks/github",
+		"source/adapters/sourcehttp/upload.go: RegisterPublic mounts PUT /uploads/:ticket",
+		"release/adapters/releasehttp/group.go: RegisterPublic may only register literal routes",
 		"bootstrap/b.go: bootstrap calls RegisterPublic",
 	)
 	expectViolations(t, sourceReleaseViolations(files),

@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -27,6 +28,16 @@ type Commands interface {
 	DeployUploaded(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input DeployUploaded) (Deployment, error)
 	// Rollback deploys again the release of an earlier deployment that went live.
 	Rollback(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, deployment DeploymentID, input Rollback) (Deployment, error)
+	// IssueUpload issues a one-use ticket to publish a folder to the
+	// environment (see UploadTicket); the returned ticket carries its token.
+	// The ticket names the request's client (event.Meta).
+	IssueUpload(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input IssueUpload) (UploadTicket, error)
+	// RedeemUpload uses a ticket: it publishes archive like DeploySource, for
+	// the ticket's organization, app, environment, user, configuration and
+	// client. The token is the only credential (a public route): unknown is
+	// NotFound, used is CodeUploadTicketUsed, expired CodeUploadTicketExpired.
+	// A ticket is used even when the upload then fails.
+	RedeemUpload(ctx context.Context, token string, archive io.Reader) (Deployment, error)
 }
 
 // Queries are the read operations, implemented by releasesvc.Service.
@@ -105,4 +116,19 @@ type Repository interface {
 	// Promote makes the deployment's release the one the environment serves.
 	// Only the deploy workflow's promote step calls it (architecture test).
 	Promote(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deployment Deployment, url string) error
+
+	CreateUploadTicket(ctx context.Context, ticket UploadTicket) error
+	// ConsumeUploadTicket marks the unused, unexpired ticket with hash used
+	// at now and returns it (NotFound otherwise). It is not scoped by
+	// organization (the token is all the caller has): only releasesvc calls
+	// it (architecture test).
+	ConsumeUploadTicket(ctx context.Context, hash []byte, now time.Time) (UploadTicket, error)
+	// FindUploadTicketByHash tells why a ticket could not be consumed
+	// (cross-org like ConsumeUploadTicket).
+	FindUploadTicketByHash(ctx context.Context, hash []byte) (UploadTicket, error)
+	// SetUploadDeployment records the deployment a ticket's upload started.
+	SetUploadDeployment(ctx context.Context, organization identity.OrganizationID, ticket UploadTicketID, deployment DeploymentID) error
+	// DeleteUploadTickets deletes the organization's tickets that expired
+	// before cutoff.
+	DeleteUploadTickets(ctx context.Context, organization identity.OrganizationID, cutoff time.Time) error
 }

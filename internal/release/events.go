@@ -2,6 +2,7 @@ package release
 
 import (
 	"sort"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -15,12 +16,15 @@ const (
 	EventDeploymentReady     = "deployment.ready"
 	EventDeploymentFailed    = "deployment.failed"
 	EventDeploymentCancelled = "deployment.cancelled"
+	EventUploadTicketIssued  = "upload_ticket.issued"
+	EventUploadTicketUsed    = "upload_ticket.used"
 )
 
 // Subject kinds ("release/<id>", "deployment/<id>").
 const (
-	SubjectKind           = "release"
-	DeploymentSubjectKind = "deployment"
+	SubjectKind             = "release"
+	DeploymentSubjectKind   = "deployment"
+	UploadTicketSubjectKind = "upload_ticket"
 )
 
 // Names are the human names events are summarised with.
@@ -148,4 +152,34 @@ func NewDeploymentCancelled(org identity.OrganizationID, actor identity.UserID, 
 	return event.New(EventDeploymentCancelled, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID),
 		"Se canceló una publicación de "+n.where()+" (la reemplazó otra)",
 		DeploymentCancelled{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release, SupersededBy: by})
+}
+
+// UploadTicketIssued v1. Neither the token nor its hash is ever in the trail.
+type UploadTicketIssued struct {
+	Ticket      UploadTicketID `json:"ticket_id"`
+	Project     string         `json:"project_id"`
+	Environment string         `json:"environment_id"`
+	Client      string         `json:"client"`
+	ExpiresAt   time.Time      `json:"expires_at"`
+}
+
+// UploadTicketUsed v1: the ticket was redeemed (the upload may still fail;
+// the ticket is spent either way).
+type UploadTicketUsed struct {
+	Ticket      UploadTicketID `json:"ticket_id"`
+	Project     string         `json:"project_id"`
+	Environment string         `json:"environment_id"`
+	Client      string         `json:"client"`
+}
+
+func NewUploadTicketIssued(t UploadTicket, n Names) event.Event {
+	return event.New(EventUploadTicketIssued, 1, t.Organization, t.RequestedBy, event.Subject(UploadTicketSubjectKind, t.ID),
+		"Pidió subir una carpeta a "+n.where(),
+		UploadTicketIssued{Ticket: t.ID, Project: t.Project.String(), Environment: t.Environment.String(), Client: t.Client, ExpiresAt: t.ExpiresAt.UTC()})
+}
+
+func NewUploadTicketUsed(t UploadTicket, n Names) event.Event {
+	return event.New(EventUploadTicketUsed, 1, t.Organization, t.RequestedBy, event.Subject(UploadTicketSubjectKind, t.ID),
+		"Subió una carpeta a "+n.where(),
+		UploadTicketUsed{Ticket: t.ID, Project: t.Project.String(), Environment: t.Environment.String(), Client: t.Client})
 }

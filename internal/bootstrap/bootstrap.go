@@ -33,9 +33,11 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/fleet/fleetmodule"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/permission"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projectmcp"
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -44,6 +46,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
 	"github.com/Abraxas-365/odyssey/internal/server"
 	"github.com/Abraxas-365/odyssey/internal/source"
+	"github.com/Abraxas-365/odyssey/internal/source/adapters/sourcemcp"
 	"github.com/Abraxas-365/odyssey/internal/source/sourcemodule"
 	"github.com/Abraxas-365/odyssey/internal/source/sourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
@@ -477,7 +480,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 // authenticator; production passes httpx.Authenticate. mcpAuth nil leaves
 // /mcp unmounted.
 func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *httpx.MCPAuth) *fiber.App {
-	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP}}
+	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP, p.Releases.HTTP}}
 	if mcpAuth != nil {
 		opts.MCP = &server.MCP{Auth: mcpAuth, Handler: NewMCPHandler(p, cfg)}
 	}
@@ -499,11 +502,33 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 // (mcpx) lists them, each still gated by its permissions.
 func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
 	github := cfg.GitHub.Enabled()
+	sources := p.Sources.Queries
 	return slices.Concat(
-		projectmcp.Tools(p.Projects.Queries, projectmcp.Options{ConsoleURL: cfg.ConsoleURL,
+		projectmcp.Tools(p.Projects.Commands, p.Projects.Queries, projectmcp.Options{ConsoleURL: cfg.ConsoleURL,
 			GitHubEnabled: func(context.Context) bool { return github }}),
-		releasemcp.Tools(p.Projects.Queries, p.Releases.Queries, releasemcp.Options{ConsoleURL: cfg.ConsoleURL}),
+		releasemcp.Tools(p.Projects.Queries, p.Releases.Commands, p.Releases.Queries, p.Builds.Queries, releasemcp.Options{
+			ConsoleURL: cfg.ConsoleURL, APIURL: PublicAPIURL(cfg),
+			// release does not know where a source came from; the
+			// composition root tells get_app which repository publishes it.
+			Repository: func(ctx context.Context, org identity.OrganizationID, app project.ID) (*releasemcp.ConnectedRepo, error) {
+				c, err := sources.FindConnection(ctx, org, app)
+				if errx.IsType(err, errx.TypeNotFound) {
+					return nil, nil
+				}
+				if err != nil {
+					return nil, err
+				}
+				return &releasemcp.ConnectedRepo{Repository: c.Repository, Branch: c.Branch, Root: c.Root, LastCommit: c.LastCommit}, nil
+			}}),
+		sourcemcp.Tools(p.Projects.Queries, p.Sources.Commands, sources, sourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
 	)
+}
+
+// PublicAPIURL is the API's address as agents reach it: the MCP resource
+// (IAMKIT_AUDIENCE, https://<odicea>/mcp) without /mcp. Upload links point
+// there ("" when MCP is not configured).
+func PublicAPIURL(cfg config.Config) string {
+	return strings.TrimSuffix(strings.TrimRight(cfg.IAM.Audience, "/"), httpx.MCPPath)
 }
 
 // NewMCPHandler serves MCPTools (the caller authenticates first). A tool

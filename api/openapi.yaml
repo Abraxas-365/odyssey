@@ -1112,6 +1112,55 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /uploads/{ticket}:
+    put:
+      tags: [deployments]
+      operationId: uploadFolder
+      summary: Publish a folder with an upload ticket (what deploy_folder's command calls)
+      description: >-
+        Public: the ticket in the path (`odu_…`, issued by the MCP tool `deploy_folder`) is the only credential, so
+        no `Authorization` header is involved. The body is the folder as a raw tar.gz (`Content-Type: application/gzip`;
+        `application/octet-stream` is also taken), streamed to storage, at most 100 MiB compressed (413). The ticket
+        is good for one upload within 10 minutes: it is spent when this request arrives, even if the archive is then
+        refused (ask `deploy_folder` for another). Starts a deployment from source exactly like
+        `POST …/deployments` with a folder, with the ticket's app, environment, user and configuration, attributed
+        to the MCP client that asked for the ticket. 404 for an unknown or malformed ticket; 409
+        `UPLOAD_TICKET_USED` for one used already (`details.deployment_id` when known); 422 `UPLOAD_TICKET_EXPIRED`
+        for one past its 10 minutes (and the business errors of publishing a folder, e.g. `PROJECT_ARCHIVED`);
+        400 `SOURCE_INVALID` for an archive that is not a usable source. Not under `/api/v1`: no token, no CORS.
+      security: []
+      parameters:
+        - name: ticket
+          in: path
+          required: true
+          description: The upload ticket (`odu_` and 43 URL-safe base64 characters).
+          schema: { type: string, maxLength: 100 }
+      requestBody:
+        required: true
+        content:
+          application/gzip:
+            schema: { type: string, format: binary }
+      responses:
+        "202":
+          description: The folder was received and the deployment started (it builds in the worker).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [deployment_id, status, next_step]
+                properties:
+                  deployment_id: { type: string, format: uuid }
+                  status: { $ref: "#/components/schemas/DeploymentStatus" }
+                  next_step: { type: string, description: What to do next, worded for an agent. }
+        "400": { $ref: "#/components/responses/Validation" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /mcp:
     post:
       tags: [mcp]

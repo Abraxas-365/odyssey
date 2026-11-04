@@ -18,6 +18,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projectmcp"
 	"github.com/Abraxas-365/odyssey/internal/project/projectsvc"
 	"github.com/Abraxas-365/odyssey/internal/project/projecttest"
+	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -25,13 +26,15 @@ import (
 var user = identity.MustParseUserID("11111111-1111-4111-8111-111111111111")
 
 type fixture struct {
-	svc *projectsvc.Service
-	org identity.OrganizationID
+	svc    *projectsvc.Service
+	events *eventtest.Recorder
+	org    identity.OrganizationID
 }
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	return fixture{svc: projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{}), org: identity.NewOrganizationID()}
+	rec := &eventtest.Recorder{}
+	return fixture{svc: projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, rec), events: rec, org: identity.NewOrganizationID()}
 }
 
 func (f fixture) create(t *testing.T, org identity.OrganizationID, name, slug string) project.ID {
@@ -45,7 +48,7 @@ func (f fixture) create(t *testing.T, org identity.OrganizationID, name, slug st
 
 func (f fixture) connect(t *testing.T, opts projectmcp.Options, perms ...string) *mcp.ClientSession {
 	t.Helper()
-	reg, err := mcpx.NewRegistry(projectmcp.Tools(f.svc, opts))
+	reg, err := mcpx.NewRegistry(projectmcp.Tools(f.svc, f.svc, opts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,5 +184,108 @@ func TestListAppsRejectsBadInput(t *testing.T) {
 	}
 	if res := call(t, cs, "list_apps", map[string]any{"offset": -1}, nil); !res.IsError {
 		t.Fatal("negative offset accepted")
+	}
+}
+
+func TestCreateAppIsListedOnlyWithProjectsWrite(t *testing.T) {
+	f := newFixture(t)
+	list := func(perms ...string) []string {
+		res, err := f.connect(t, projectmcp.Options{}, perms...).ListTools(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, tool := range res.Tools {
+			names = append(names, tool.Name)
+		}
+		slices.Sort(names)
+		return names
+	}
+	if got := list(permission.ProjectsRead, permission.DeploymentsRead); slices.Contains(got, "create_app") {
+		t.Fatalf("a reader sees create_app: %v", got)
+	}
+	if got := list(permission.ProjectsRead, permission.ProjectsWrite); !slices.Equal(got, []string{"create_app", "list_apps", "whoami"}) {
+		t.Fatalf("a writer lists %v", got)
+	}
+	// Calling it anyway is refused and creates nothing.
+	cs := f.connect(t, projectmcp.Options{}, permission.ProjectsRead)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "create_app", Arguments: map[string]any{"name": "Visitas"}})
+	if err == nil && !res.IsError {
+		t.Fatalf("create_app ran without projects:write: %+v", res)
+	}
+	if page, _ := f.svc.List(context.Background(), f.org, project.Filter{}, query.Pagination{}.Normalize()); page.Page.Total != 0 {
+		t.Fatalf("an app was created: %+v", page)
+	}
+}
+
+func TestCreateApp(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, projectmcp.Options{ConsoleURL: "https://odicea.test/"}, permission.ProjectsWrite)
+	var out projectmcp.CreateAppOut
+	res := call(t, cs, "create_app", map[string]any{"name": "Visitas a clientes", "description": "Registro de visitas"}, &out)
+	if res.IsError {
+		t.Fatalf("create: %+v", res.Content)
+	}
+	if out.Slug != "visitas-a-clientes" || out.Name != "Visitas a clientes" || out.ID == "" || out.ConsoleURL != "https://odicea.test/apps/"+out.ID ||
+		out.NextStep != "Publica con deploy_folder (app=visitas-a-clientes)." {
+		t.Fatalf("create: %+v", out)
+	}
+	id, err := project.ParseID(out.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.svc.Find(context.Background(), f.org, id)
+	if err != nil || p.Description != "Registro de visitas" || p.CreatedBy != user {
+		t.Fatalf("stored: %+v %v", p, err)
+	}
+
+	// An explicit slug.
+	call(t, cs, "create_app", map[string]any{"name": "Otra", "slug": "mi-app"}, &out)
+	if out.Slug != "mi-app" || out.NextStep != "Publica con deploy_folder (app=mi-app)." {
+		t.Fatalf("explicit slug: %+v", out)
+	}
+}
+
+func TestCreateAppIsAttributedToTheMCPClient(t *testing.T) {
+	f := newFixture(t)
+	call(t, f.connect(t, projectmcp.Options{}, permission.ProjectsWrite), "create_app", map[string]any{"name": "Visitas"}, nil)
+	events := f.events.Events()
+	if len(events) == 0 {
+		t.Fatal("no events published")
+	}
+	for _, e := range events {
+		if e.Client != "mcp:https://claude.ai/cimd" {
+			t.Fatalf("%s carries client %q", e.Type, e.Client)
+		}
+	}
+}
+
+func TestCreateAppSlugConflictSuggestsGetApp(t *testing.T) {
+	f := newFixture(t)
+	f.create(t, f.org, "Visitas", "visitas")
+	cs := f.connect(t, projectmcp.Options{}, permission.ProjectsWrite)
+	res := call(t, cs, "create_app", map[string]any{"name": "Otra cosa", "slug": "visitas"}, nil)
+	if !res.IsError {
+		t.Fatal("duplicate slug accepted")
+	}
+	text := res.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "CONFLICT") || !strings.Contains(text, "get_app") || !strings.Contains(text, "next_step") {
+		t.Fatalf("conflict: %s", text)
+	}
+	// The same slug in another organization is fine.
+	g := newFixture(t)
+	g.create(t, g.org, "Visitas", "visitas")
+	if res := call(t, f.connect(t, projectmcp.Options{}, permission.ProjectsWrite), "create_app", map[string]any{"name": "Visitas 2", "slug": "visitas-2"}, nil); res.IsError {
+		t.Fatalf("%+v", res.Content)
+	}
+}
+
+func TestCreateAppRejectsBadInput(t *testing.T) {
+	cs := newFixture(t).connect(t, projectmcp.Options{}, permission.ProjectsWrite)
+	for _, args := range []map[string]any{{"name": " "}, {"name": "Ok", "slug": "Mal Slug!"}} {
+		res := call(t, cs, "create_app", args, nil)
+		if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "VALIDATION") {
+			t.Fatalf("%v: %+v", args, res)
+		}
 	}
 }

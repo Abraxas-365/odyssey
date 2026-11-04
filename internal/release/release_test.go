@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -31,12 +32,17 @@ func TestEventContracts(t *testing.T) {
 		Error: &release.Failure{Code: release.CodeUnhealthy, Message: "La app arrancó pero no responde en su ruta de salud.", Detail: "GET /health 503"}}
 	restore := release.MustParseDeploymentID("00000000-0000-4000-8000-0000000000d2")
 	n := release.Names{Project: "Visitas", Environment: "production"}
+	ticket := release.UploadTicket{ID: release.MustParseUploadTicketID("00000000-0000-4000-8000-0000000000e1"), Organization: org,
+		Project: r.Project, Environment: d.Environment, Token: "odu_secret", TokenHash: []byte("secret-hash"), Client: "mcp:claude",
+		RequestedBy: user, ExpiresAt: time.Date(2026, 11, 3, 12, 10, 0, 0, time.UTC)}
 	for _, e := range []event.Event{
 		release.NewCreated(org, user, r, n),
 		release.NewDeploymentStarted(org, user, d, n),
 		release.NewDeploymentReady(org, user, d, "https://visitas.apps.example.com", n),
 		release.NewDeploymentFailed(org, user, d, &restore, n),
 		release.NewDeploymentCancelled(org, user, d, restore, n),
+		release.NewUploadTicketIssued(ticket, n),
+		release.NewUploadTicketUsed(ticket, n),
 	} {
 		eventtest.Golden(t, e)
 	}
@@ -184,3 +190,26 @@ func TestUnready(t *testing.T) {
 
 // workflowFail wraps like workflow.Fail does (the domain test cannot import it).
 func workflowFail(err error) error { return fmt.Errorf("workflow: %w", err) }
+
+func TestUploadTicketEventsNeverCarryTheToken(t *testing.T) {
+	token, hash := release.NewUploadToken()
+	ticket := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: identity.NewOrganizationID(), Token: token, TokenHash: hash,
+		Client: "mcp:x", ExpiresAt: time.Now().Add(release.UploadTicketTTL)}
+	for _, e := range []event.Event{release.NewUploadTicketIssued(ticket, release.Names{}), release.NewUploadTicketUsed(ticket, release.Names{})} {
+		if strings.Contains(string(e.Payload)+e.Summary, token) || strings.Contains(string(e.Payload), fmt.Sprintf("%x", hash)) {
+			t.Fatalf("%s leaks the ticket: %s", e.Type, e.Payload)
+		}
+	}
+}
+
+func TestUploadToken(t *testing.T) {
+	token, hash := release.NewUploadToken()
+	if !release.ValidUploadToken(token) || len(hash) != 32 || string(release.HashUploadToken(token)) != string(hash) {
+		t.Fatalf("token %q", token)
+	}
+	for _, bad := range []string{"", "odu_", "odu_short", strings.Repeat("a", 47), "odu_" + strings.Repeat("!", 43), token + "x"} {
+		if release.ValidUploadToken(bad) {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+}

@@ -404,3 +404,108 @@ func (s *Service) Current(ctx context.Context, organization identity.Organizatio
 	}
 	return out, nil
 }
+
+// ---- upload tickets ----
+
+// ticketRetention is how long an expired ticket is kept (so the person who
+// used it late still hears "expired", not "unknown"); the next ticket its
+// organization issues sweeps older ones.
+const ticketRetention = 24 * time.Hour
+
+// IssueUpload issues a ticket to publish a folder to the environment. The
+// token is returned once, only here: the database keeps its hash.
+func (s *Service) IssueUpload(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, input release.IssueUpload) (release.UploadTicket, error) {
+	input = input.Normalize()
+	if err := input.Validate(); err != nil {
+		return release.UploadTicket{}, err
+	}
+	p, e, err := s.place(ctx, organization, id, env)
+	if err != nil {
+		return release.UploadTicket{}, err
+	}
+	if err := archived(p); err != nil {
+		return release.UploadTicket{}, err
+	}
+	token, hash := release.NewUploadToken()
+	now := time.Now().UTC()
+	t := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: organization, Project: id, Environment: e.ID,
+		TokenHash: hash, Name: input.Name, Config: input.Config, Client: event.MetaFrom(ctx).Client,
+		RequestedBy: input.RequestedBy, CreatedAt: now, ExpiresAt: now.Add(release.UploadTicketTTL)}
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.DeleteUploadTickets(ctx, organization, now.Add(-ticketRetention)); err != nil {
+			return err
+		}
+		if err := s.repo.CreateUploadTicket(ctx, t); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, release.NewUploadTicketIssued(t, names(p, e)))
+	})
+	if err != nil {
+		return release.UploadTicket{}, err
+	}
+	t.Token = token
+	return t, nil
+}
+
+// RedeemUpload spends the ticket token and publishes the archive it carries
+// as the ticket says. The ticket is spent even when the archive is refused:
+// asking for another one is the retry.
+func (s *Service) RedeemUpload(ctx context.Context, token string, archive io.Reader) (release.Deployment, error) {
+	if !release.ValidUploadToken(token) {
+		return release.Deployment{}, errx.NotFound("upload ticket not found")
+	}
+	hash := release.HashUploadToken(token)
+	var t release.UploadTicket
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		now := time.Now().UTC()
+		var err error
+		t, err = s.repo.ConsumeUploadTicket(ctx, hash, now)
+		if err == nil { // the event names the client the ticket was issued to
+			by := event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: t.Client})
+			return s.events.Publish(by, release.NewUploadTicketUsed(t, s.ticketNames(ctx, t)))
+		}
+		if !errx.IsType(err, errx.TypeNotFound) {
+			return err
+		}
+		found, ferr := s.repo.FindUploadTicketByHash(ctx, hash) // unknown, used or expired?
+		if ferr != nil {
+			return ferr
+		}
+		switch {
+		case found.UsedAt != nil:
+			e := errx.Conflict("this upload ticket was used already: ask deploy_folder for a new one").WithCode(release.CodeUploadTicketUsed)
+			if found.Deployment != nil {
+				e = e.WithDetail("deployment_id", found.Deployment.String())
+			}
+			return e
+		case found.Expired(now):
+			return errx.Business("this upload ticket expired: ask deploy_folder for a new one").WithCode(release.CodeUploadTicketExpired)
+		}
+		return err // consumed by a concurrent request between the two statements
+	})
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	// The deployment is attributed to the client the ticket was issued to,
+	// in the same chain as this request.
+	ctx = event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: t.Client})
+	d, err := s.DeploySource(ctx, t.Organization, t.Project, t.Environment,
+		release.DeploySource{Name: t.Name, Config: t.Config, RequestedBy: t.RequestedBy}, archive)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	if err := s.repo.SetUploadDeployment(context.WithoutCancel(ctx), t.Organization, t.ID, d.ID); err != nil {
+		slog.Warn("could not record the deployment an upload ticket started", "ticket", t.ID, "deployment", d.ID, "error", err)
+	}
+	return d, nil
+}
+
+// ticketNames words the ticket's event; a project that cannot be read
+// leaves the names empty (the event still carries the IDs).
+func (s *Service) ticketNames(ctx context.Context, t release.UploadTicket) release.Names {
+	p, e, err := s.place(ctx, t.Organization, t.Project, t.Environment)
+	if err != nil {
+		return release.Names{}
+	}
+	return names(p, e)
+}

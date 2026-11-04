@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -217,5 +220,119 @@ func TestRepository(t *testing.T) {
 	}
 	if got, err = repo.FindDeployment(ctx, org, third.ID); err != nil || got.Source == nil || got.Source.Git != nil {
 		t.Fatalf("a folder deployment has no git: %+v %v", got, err)
+	}
+}
+
+func TestUploadTickets(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
+	repo := releasepg.New(db)
+	tx := txn.Postgres{DB: db}
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	user := identity.MustParseUserID(uuid.NewString())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	issue := func(org identity.OrganizationID, ttl time.Duration) (release.UploadTicket, string) {
+		t.Helper()
+		token, hash := release.NewUploadToken()
+		tk := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: org, Project: project.NewID(), Environment: project.NewEnvironmentID(),
+			TokenHash: hash, Name: "visitas", Config: release.Config{Port: 3000, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}},
+			Client: "mcp:claude", RequestedBy: user, CreatedAt: now, ExpiresAt: now.Add(ttl)}
+		if err := repo.CreateUploadTicket(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+		return tk, token
+	}
+
+	tk, _ := issue(org, 10*time.Minute)
+	// a duplicate hash is refused
+	dup := tk
+	dup.ID = release.NewUploadTicketID()
+	if err := repo.CreateUploadTicket(ctx, dup); !errx.IsType(err, errx.TypeConflict) {
+		t.Fatalf("duplicate hash: %v", err)
+	}
+	// a hash is 32 bytes
+	bad := tk
+	bad.ID, bad.TokenHash = release.NewUploadTicketID(), []byte("short")
+	if err := repo.CreateUploadTicket(ctx, bad); err == nil {
+		t.Fatal("a short hash was stored")
+	}
+
+	found, err := repo.FindUploadTicketByHash(ctx, tk.TokenHash)
+	if err != nil || found.ID != tk.ID || found.UsedAt != nil || found.Deployment != nil || found.Config.Env["TZ"] != "America/Lima" ||
+		found.Config.Port != 3000 || found.Client != "mcp:claude" || found.RequestedBy != user || found.Name != "visitas" || !found.ExpiresAt.Equal(tk.ExpiresAt) {
+		t.Fatalf("find %+v %v", found, err)
+	}
+	if _, err := repo.FindUploadTicketByHash(ctx, release.HashUploadToken("odu_unknown")); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("unknown ticket: %v", err)
+	}
+
+	// consume: once, only before it expires, whatever the organization
+	if _, err := repo.ConsumeUploadTicket(ctx, tk.TokenHash, now.Add(11*time.Minute)); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("expired consume: %v", err)
+	}
+	got, err := repo.ConsumeUploadTicket(ctx, tk.TokenHash, now.Add(time.Minute))
+	if err != nil || got.ID != tk.ID || got.UsedAt == nil || !got.UsedAt.Equal(now.Add(time.Minute)) || got.Organization != org ||
+		got.Project != tk.Project || got.Environment != tk.Environment || got.Config.Replicas != 2 {
+		t.Fatalf("consume %+v %v", got, err)
+	}
+	if _, err := repo.ConsumeUploadTicket(ctx, tk.TokenHash, now.Add(2*time.Minute)); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("second consume: %v", err)
+	}
+	if used, err := repo.FindUploadTicketByHash(ctx, tk.TokenHash); err != nil || used.UsedAt == nil {
+		t.Fatalf("used ticket %+v %v", used, err)
+	}
+
+	// concurrent redemptions: exactly one wins
+	racing, _ := issue(org, 10*time.Minute)
+	wins := make(chan bool, 8)
+	for i := 0; i < 8; i++ {
+		go func() {
+			_, err := repo.ConsumeUploadTicket(ctx, racing.TokenHash, now)
+			wins <- err == nil
+		}()
+	}
+	won := 0
+	for i := 0; i < 8; i++ {
+		if <-wins {
+			won++
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d concurrent consumes won", won)
+	}
+
+	// the deployment an upload started is recorded, in its own organization only
+	dep := release.NewDeploymentID()
+	if err := repo.SetUploadDeployment(ctx, other, tk.ID, dep); !errx.IsType(err, errx.TypeNotFound) && err != nil {
+		t.Fatalf("cross-tenant set deployment: %v", err)
+	}
+	if after, _ := repo.FindUploadTicketByHash(ctx, tk.TokenHash); after.Deployment != nil {
+		t.Fatalf("another organization recorded a deployment: %+v", after)
+	}
+	if err := repo.SetUploadDeployment(ctx, org, tk.ID, dep); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := repo.FindUploadTicketByHash(ctx, tk.TokenHash); err != nil || after.Deployment == nil || *after.Deployment != dep {
+		t.Fatalf("recorded deployment %+v %v", after, err)
+	}
+
+	// the sweep deletes the organization's tickets that expired before the cutoff, nobody else's
+	oldMine, _ := issue(org, time.Minute)
+	oldTheirs, _ := issue(other, time.Minute)
+	fresh, _ := issue(org, time.Hour)
+	if err := tx.Do(ctx, func(ctx context.Context) error {
+		return repo.DeleteUploadTickets(ctx, org, now.Add(30*time.Minute))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		tk   release.UploadTicket
+		want bool
+	}{{oldMine, false}, {oldTheirs, true}, {fresh, true}, {tk, false}} {
+		_, err := repo.FindUploadTicketByHash(ctx, c.tk.TokenHash)
+		if (err == nil) != c.want {
+			t.Fatalf("after the sweep ticket %s present=%v, want %v (%v)", c.tk.ID, err == nil, c.want, err)
+		}
 	}
 }
