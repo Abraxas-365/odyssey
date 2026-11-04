@@ -48,6 +48,9 @@ type Options struct {
 	// ConsoleURL is the console's base URL: commit statuses link to
 	// <ConsoleURL>/apps/<project id> (no link when empty).
 	ConsoleURL string
+	// AntigravityClientID is IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID, to name that
+	// assistant in a deployment's requested_via.
+	AntigravityClientID string
 }
 
 type Service struct {
@@ -376,6 +379,9 @@ func (s *Service) queue(ctx context.Context, c source.Connection, head source.Co
 		Git: build.GitRef{Provider: build.ProviderGitHub, Repository: c.Repository, Branch: c.Branch, Commit: head.SHA,
 			Title: head.Title, Author: head.Author}.Normalize(),
 		Trigger: trigger, Status: source.StatusQueued, RequestedBy: by}
+	if !by.IsZero() { // a webhook or the poll has no requester, so no client
+		push.RequestedClient = event.MetaFrom(ctx).Client
+	}
 	if err := push.Git.Validate(); err != nil {
 		return source.Push{}, errx.Wrap(err, "the provider described the commit badly", errx.TypeExternal)
 	}
@@ -622,7 +628,7 @@ func (s *Service) deploy(ctx context.Context, st *workflow.State) (any, error) {
 			return err
 		}
 		d, err := s.deployer.DeployUploaded(ctx, push.Organization, push.Project, env.ID,
-			release_(out.Source, conn, push.RequestedBy))
+			s.release(out.Source, conn, push))
 		if err != nil {
 			return err
 		}

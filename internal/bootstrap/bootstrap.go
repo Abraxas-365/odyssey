@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/audit/auditmodule"
 	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/blob/adapters/gocloudblob"
@@ -51,6 +52,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/source/sourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
+	"github.com/Abraxas-365/odyssey/skills"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -441,7 +443,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	a.closers = append(a.closers, blobs.Close)
-	opts := Options{Gateway: cfg.Fleet.Gateway, Blobs: blobs, BuilderConfig: cfg.Builder,
+	opts := Options{Release: releasesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID},
+		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, BuilderConfig: cfg.Builder,
 		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
@@ -480,7 +483,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 // authenticator; production passes httpx.Authenticate. mcpAuth nil leaves
 // /mcp unmounted.
 func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *httpx.MCPAuth) *fiber.App {
-	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP, p.Releases.HTTP}}
+	skill := skills.Default()
+	assistantRoutes := server.Assistant{
+		Info:    assistant.Build(cfg.MCP.Enabled(), cfg.IAM.Audience, PublicAPIURL(cfg)+"/skills/"+skills.Name+".tar.gz", skill.Version, cfg.MCP.AntigravityClientID, cfg.MCP.Clients),
+		Archive: skill.Archive, Version: skill.Version,
+	}
+	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP, p.Releases.HTTP, assistantRoutes}}
 	if mcpAuth != nil {
 		opts.MCP = &server.MCP{Auth: mcpAuth, Handler: NewMCPHandler(p, cfg)}
 	}
@@ -495,6 +503,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.Sources.HTTP,
 		p.Fleet.HTTP,
 		p.Audit.HTTP,
+		assistantRoutes,
 	)
 }
 

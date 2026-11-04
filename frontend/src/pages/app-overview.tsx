@@ -42,6 +42,14 @@ export function AppOverviewPage() {
   return <Overview project={project.data} />
 }
 
+/** Copies the sentence to say to the assistant, then the link takes them to connect it. */
+function copyPublishPrompt(slug: string) {
+  navigator.clipboard.writeText(`Publica esta carpeta en la app ${slug} de Odicea`).then(
+    () => toast.success('Copiamos lo que debes decirle a tu asistente.'),
+    () => toast.error('No se pudo copiar. Dile: “Publica esta carpeta en la app ' + slug + ' de Odicea”.'),
+  )
+}
+
 function Overview({ project: p }: { project: Project }) {
   const { technical } = usePreferences()
   const { can, user } = useAuth()
@@ -78,7 +86,7 @@ function Overview({ project: p }: { project: Project }) {
                 <Pencil />
                 Editar
               </Button>
-              <ButtonLink render={<Link to="/asistente" />}>
+              <ButtonLink render={<Link to="/asistente" />} onClick={() => copyPublishPrompt(p.slug)}>
                 <Bot />
                 Publicar con mi asistente
               </ButtonLink>

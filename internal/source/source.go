@@ -115,8 +115,12 @@ type Push struct {
 	Error      *Failure              `json:"error" db:"-"`
 	// RequestedBy is zero for a webhook or the poll.
 	RequestedBy identity.UserID `json:"requested_by" db:"requested_by"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
+	// RequestedClient is the client of the request that queued it ("mcp:<id>"
+	// for an assistant, the console's id, "" for a webhook or the poll). The
+	// deployment's requested_via says who asked, not where the code lives.
+	RequestedClient string    `json:"-" db:"requested_client"`
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // Failure is why a push was not published, in plain Spanish (Message) and

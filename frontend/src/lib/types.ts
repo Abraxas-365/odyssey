@@ -56,6 +56,10 @@ export type AuditQuery = NonNullable<operations['listAuditEntries']['parameters'
 
 export type PublicConfig = Schemas['PublicConfig']
 
+/** "Conecta tu asistente": the MCP address, the downloadable skill, and each assistant's steps. */
+export type Assistant = Schemas['Assistant']
+export type AssistantClient = Schemas['AssistantClient']
+
 /** GitHub: the App's installations on the organization's accounts, and each app's repository. */
 export type GitHubInfo = Schemas['GitHubInfo']
 export type GitHubInstallation = Schemas['GitHubInstallation']

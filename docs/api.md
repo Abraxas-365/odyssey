@@ -22,7 +22,9 @@ they are stale). Change an endpoint → edit the spec in the same change.
 - Authentication: `Authorization: Bearer <IAMKit access token>`. Each route
   requires permissions from `iam/permissions.json` (`odyssey:<resource>:<action>`).
 - Unauthenticated: `GET /health` and `GET /api/config`, which returns the
-  dashboard's sign-in settings (`iam_url`, `client_id`, `environment_id`).
+  dashboard's sign-in settings (`iam_url`, `client_id`, `environment_id`);
+  and the few public routes of §11 (`GET /github/setup`, `POST
+  /webhooks/github`, `PUT /uploads/:ticket`, `GET /skills/odicea.tar.gz`).
 
 | Operation | Success | Body |
 |---|---|---|
@@ -212,6 +214,17 @@ environment serves. The console calls both "versión".
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
 
+- **`requested_via`** (on every deployment) says where the request came from.
+  The server derives it; no request body can set it: `console`,
+  `assistant:<preset>` (`claude_code`, `codex`, `vscode`, `antigravity`, or
+  `other` for an MCP client with no preset; read from the request's OAuth
+  client), `github` (nobody asked: a push or the poll of a connected
+  repository) or `platform` (`auto_rollback`). It follows the requester, not
+  where the code lives: `publish_now` / connecting a repository carries the
+  client of the request that queued the push (`source.pushes.requested_client`),
+  so it is `assistant:<preset>` from an assistant and `console` from the
+  console. `""` for deployments made before it existed. It is not an
+  authorization input, only attribution.
 - **Deploy** takes `{image, port?, health_path?, replicas?, env?}`. `image` must
   be `registry/repository@sha256:<64 hex>`: tags are refused (400, field
   `image`). Defaults: `port` 8080 (the agent also sets `$PORT` to it),
@@ -379,3 +392,28 @@ Content-Type that is not `application/gzip` / `application/octet-stream`;
 `400 SOURCE_INVALID` and the other errors of deploy from source.
 Tickets are kept 24 h after they expire so a late upload still hears
 "expired".
+
+### Assistant (`odyssey:projects:read`: `GET /api/v1/assistant`)
+
+"Conecta tu asistente" in the console. No secrets, the same for everyone with
+`projects:read`. `200 {available, mcp_url, skill: {url, version, name},
+clients: [{key, name, install, skill_install, notes}]}`: `available` is
+`false` and `clients` empty when the MCP endpoint is not enabled. `mcp_url` is
+the MCP audience (`IAMKIT_AUDIENCE`); `clients` follow `ODYSSEY_MCP_CLIENTS`
+(keys `claude_code`, `codex`, `vscode`, `antigravity`; unknown keys are
+ignored; `antigravity` is offered only when `IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID`
+is set, since it cannot register itself and its JSON snippet carries
+`oauth.clientId`). `install` registers the MCP server `odicea` (a command, or the JSON
+for the client's MCP config); `skill_install` downloads and unpacks the skill
+into the client's skills folder.
+
+### Skill download (public: `GET /skills/odicea.tar.gz`)
+
+Not under `/api/v1`: no token and no CORS. The `odicea` skill (what teaches an
+assistant to prepare, publish and diagnose apps; `skills/odicea/`) as a
+deterministic `application/gzip` archive with one top directory, `odicea/`
+(`SKILL.md`, `references/`). Built once at startup from the files compiled
+into the binary. `ETag` is the version (a quoted hash of the archive; the same
+bytes always give the same version); `If-None-Match` naming it (a list, `*` and
+weak `W/"…"` validators included) answers `304`;
+`Cache-Control: public, max-age=300`.

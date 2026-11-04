@@ -18,7 +18,9 @@ import (
 const ServerName = "odicea"
 
 // Instructions reach every client in initialize: how to publish on Odicea,
-// without installing anything. The odicea skill (phase 1d-3) goes deeper.
+// without installing anything. The downloadable odicea skill ("Conecta tu
+// asistente" in the console) goes deeper. Keep the "todavía no" paragraph in
+// step with the skill's «Lo que Odicea todavía no ofrece» section.
 const Instructions = `Odicea publica apps internas de la empresa en su propia infraestructura, con la seguridad que configuró TI.
 Odicea publishes the company's internal apps on its own infrastructure, with the security IT configured.
 
@@ -32,9 +34,14 @@ Flujo / flow:
 
 Reglas para que una app funcione en Odicea:
 - Escucha en el puerto $PORT (8080 si no está) y responde en "/".
-- Nada de secretos en el código ni en env: TI los configura aparte.
+- Nada de secretos en el código, en env ni en commits.
 - El enlace de subida es de un solo uso: no lo muestres ni lo guardes.
-- Si una tool falla, lee "next_step" en el error: dice qué hacer.`
+- Si una tool falla, lee "next_step" en el error: dice qué hacer.
+
+Todavía no / not yet: Odicea aún no entrega bases de datos, secretos ni llaves de IA a las apps. Si la app las necesita, NO las crees en servicios externos (Supabase, Firebase, Vercel, etc.): dile al usuario que Odicea todavía no las ofrece y que TI puede conectar una que ya exista.
+Odicea does not provide databases, secrets or AI keys to apps yet: if the app needs one, do not create it in an external service; tell the user and ask IT to connect an existing one.
+
+Skill: la skill "odicea" (descarga en la consola, «Conecta tu asistente») explica cómo preparar y diagnosticar apps. / The "odicea" skill (console, "Conecta tu asistente") covers preparing and troubleshooting apps.`
 
 var toolName = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 

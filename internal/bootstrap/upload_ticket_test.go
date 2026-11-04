@@ -110,6 +110,9 @@ func TestUploadTickets(t *testing.T) {
 		d.Config == nil || d.Config.Port != 3000 || d.Source.Name != "visitas" {
 		t.Fatalf("deployment %+v", d)
 	}
+	if d.RequestedVia != "assistant:other" { // "mcp:claude" is no known preset
+		t.Fatalf("requested_via %q", d.RequestedVia)
+	}
 	if got := clientOf(release.EventDeploymentStarted, "deployment/"+d.ID.String()); len(got) != 1 || got[0] != "mcp:claude" {
 		t.Fatalf("deployment.started clients %v (want the ticket's)", got)
 	}

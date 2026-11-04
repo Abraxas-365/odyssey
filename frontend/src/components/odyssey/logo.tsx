@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 
 /** The Odicea mark from the mockup: rounded square with a hexagonal ring. */
-export function Logo({ className, title = 'Odyssey' }: { className?: string; title?: string }) {
+export function Logo({ className, title = 'Odicea' }: { className?: string; title?: string }) {
   return (
     <svg viewBox="0 0 64 64" role="img" aria-label={title} className={cn('size-[26px] text-foreground', className)}>
       <path
@@ -17,7 +17,7 @@ export function Wordmark({ className }: { className?: string }) {
   return (
     <span className={cn('flex items-center gap-2.5', className)}>
       <Logo />
-      <span className="font-heading text-lg font-bold tracking-tight">Odyssey</span>
+      <span className="font-heading text-lg font-bold tracking-tight">Odicea</span>
     </span>
   )
 }

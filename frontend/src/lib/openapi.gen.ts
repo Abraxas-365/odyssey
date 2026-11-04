@@ -741,6 +741,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How to connect an AI assistant to Odicea ("Conecta tu asistente")
+         * @description Holds no secrets and is the same for everyone. `available` is false (and `clients` empty) when the MCP endpoint is not enabled on this installation. `mcp_url` is the endpoint to register (the MCP audience); `skill` is the downloadable `odicea` skill (`GET /skills/odicea.tar.gz`, `version` changes when its files do); `clients` are the assistants this installation offers (`ODYSSEY_MCP_CLIENTS`, in that order; Antigravity only when its OAuth client id is configured, since it cannot register itself), each with the command or JSON that registers the MCP server (`install`), the command that installs the skill (`skill_install`) and plain-Spanish `notes` on signing in.
+         */
+        get: operations["getAssistant"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/odicea.tar.gz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The `odicea` skill for coding assistants (tar.gz)
+         * @description Public: the skill holds no secrets and the assistant's installer fetches it with `curl`. A deterministic tar.gz with one top directory, `odicea/` (`SKILL.md` and `references/`), built once at startup from the files compiled into the API. `ETag` is the skill's version (quoted); `If-None-Match` naming it (a list, `*` or a weak `W/"…"` validator too) answers 304. `Cache-Control: public, max-age=300`. Not under `/api/v1`: no token, no CORS.
+         */
+        get: operations["getOdiceaSkill"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mcp": {
         parameters: {
             query?: never;
@@ -1110,6 +1150,8 @@ export interface components {
             run_id: string;
             /** @description "" when the platform started it. */
             requested_by: string;
+            /** @description Who asked, set by the server (never by the caller): `console`, `assistant:<preset>` (`claude_code`, `codex`, `vscode`, `antigravity`, or `other`), `github` (nobody did: a push or the poll of a connected repository) or `platform` (the automatic restore after a failure). It follows the requester, not where the code lives: "Publicar ahora" from the console is `console`, from an assistant `assistant:<preset>`. `""` for versions published before this was recorded. */
+            requested_via: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1260,6 +1302,33 @@ export interface components {
         AuditEntryList: {
             items: components["schemas"]["AuditEntry"][];
             page: components["schemas"]["Page"];
+        };
+        AssistantClient: {
+            /** @enum {string} */
+            key: "claude_code" | "codex" | "vscode" | "antigravity";
+            /** @description The assistant as people know it ("Claude Code"). */
+            name: string;
+            /** @description The command (or JSON for the client's MCP config) that registers the MCP server `odicea`. */
+            install: string;
+            /** @description The command that downloads and unpacks the `odicea` skill into the client's skills folder. */
+            skill_install: string;
+            /** @description Plain Spanish: how to sign in with the company account, and where the config lives. */
+            notes: string;
+        };
+        Assistant: {
+            /** @description False when the MCP endpoint is not enabled here (then `clients` is empty). */
+            available: boolean;
+            /** @description The MCP endpoint (IAMKIT_AUDIENCE), e.g. https://odicea.example.com/mcp. */
+            mcp_url: string;
+            skill: {
+                /** @description Where to download the skill (`GET /skills/odicea.tar.gz`). */
+                url: string;
+                /** @description A short hash of the archive; it changes when the skill does. */
+                version: string;
+                /** @enum {string} */
+                name: "odicea";
+            };
+            clients: components["schemas"]["AssistantClient"][];
         };
         AuditVerification: {
             valid: boolean;
@@ -2748,6 +2817,61 @@ export interface operations {
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
+        };
+    };
+    getAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assistant setup. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assistant"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getOdiceaSkill: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-None-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skill's archive. */
+            200: {
+                headers: {
+                    /** @description The skill's version, quoted. */
+                    ETag?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            /** @description The client's copy is current. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     mcpStream: {

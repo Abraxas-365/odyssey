@@ -161,6 +161,9 @@ type DeployUploaded struct {
 	Source build.SourceID `json:"source_id"`
 	Config
 	RequestedBy identity.UserID `json:"-"`
+	// Via names the requester when it is not the caller's own client (the
+	// source domain's pushes: ViaGitHub); "" derives it from the request.
+	Via string `json:"-"`
 }
 
 func (d DeployUploaded) Normalize() DeployUploaded {

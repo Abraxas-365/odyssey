@@ -60,7 +60,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
     }
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
-    throw new ApiError('No hay conexión con Odyssey. Revisa tu red e intenta de nuevo.', 0, 'NETWORK')
+    throw new ApiError('No hay conexión con Odicea. Revisa tu red e intenta de nuevo.', 0, 'NETWORK')
   }
   if (res.status === 401) window.dispatchEvent(new Event('session-expired'))
   if (!res.ok) {
@@ -90,7 +90,7 @@ const messages: Record<string, string> = {
   CLUSTER_REVOKED: 'Ese clúster fue revocado. Conecta uno nuevo.',
   INVALID_MOVE_TARGET: 'Las apps solo pueden ir a otro clúster conectado. Elige otro.',
   CLUSTER_NOT_REVOKED: 'Solo se mueven las apps de un clúster revocado.',
-  FLEET_DISABLED: 'Esta instalación de Odyssey todavía no puede conectar clústeres. Pídele a TI que configure el gateway.',
+  FLEET_DISABLED: 'Esta instalación de Odicea todavía no puede conectar clústeres. Pídele a TI que configure el gateway.',
 }
 
 export function errorMessage(error: unknown): string {

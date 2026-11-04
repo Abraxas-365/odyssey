@@ -44,7 +44,7 @@ function Chrome() {
 
   return (
     <AppShell
-      team={<Crumb to="/">{auth.organization ? 'Mi equipo' : 'Odyssey'}</Crumb>}
+      team={<Crumb to="/">{auth.organization ? 'Mi equipo' : 'Odicea'}</Crumb>}
       project={appId && <Crumb to={`/apps/${appId}`}>{project.data?.name ?? '…'}</Crumb>}
       tabs={tabs}
       search={<CommandPalette entries={commands} />}

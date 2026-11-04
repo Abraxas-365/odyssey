@@ -65,6 +65,9 @@ func (e *env) push(c source.Connection, commit string, trigger source.Trigger) s
 	p := source.Push{ID: source.NewPushID(), Organization: c.Organization, Project: c.Project, Connection: c.ID,
 		Git:     build.GitRef{Provider: build.ProviderGitHub, Repository: c.Repository, Branch: c.Branch, Commit: commit, Title: "fix", Author: "ana"},
 		Trigger: trigger, Status: source.StatusQueued}
+	if trigger == source.TriggerManual { // someone asked, through an assistant
+		p.RequestedBy, p.RequestedClient = identity.MustParseUserID(uuid.NewString()), "mcp:client-1"
+	}
 	if err := e.repo.CreatePush(e.ctx, p); err != nil {
 		e.t.Fatal(err)
 	}
@@ -231,6 +234,13 @@ func TestPushes(t *testing.T) {
 	}
 	_, err = repo.FindPush(ctx, other, a.ID)
 	notFound(t, "cross-tenant find", err)
+	// the requesting client is stored with the push; a webhook has none
+	if got.RequestedClient != "" {
+		t.Fatalf("webhook push client %q", got.RequestedClient)
+	}
+	if got, err := repo.FindPush(ctx, org, m.ID); err != nil || got.RequestedClient != "mcp:client-1" || got.RequestedBy != m.RequestedBy {
+		t.Fatalf("manual push client %+v %v", got, err)
+	}
 	if _, err := repo.LockPush(ctx, org, a.ID); err == nil {
 		t.Fatal("lock outside a transaction")
 	}

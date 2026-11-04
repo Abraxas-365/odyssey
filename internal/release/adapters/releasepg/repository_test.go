@@ -51,7 +51,7 @@ func TestRepository(t *testing.T) {
 		t.Helper()
 		d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env,
 			Release: &r.ID, Image: r.Image, Status: release.StatusPending, Reason: release.ReasonDeploy,
-			Step: release.StepApply, Revision: revision, Run: workflow.NewRunID()}
+			Step: release.StepApply, Revision: revision, Run: workflow.NewRunID(), RequestedVia: release.ViaAssistantPrefix + "codex"}
 		err := tx.Do(ctx, func(ctx context.Context) error {
 			if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"}); err != nil {
 				return err
@@ -67,6 +67,14 @@ func TestRepository(t *testing.T) {
 		return d
 	}
 	first := begin(1)
+	// requested_via is stored with the deployment, and read back in lists too;
+	// a tenant that does not own it sees neither
+	if got, err := repo.FindDeployment(ctx, org, first.ID); err != nil || got.RequestedVia != "assistant:codex" {
+		t.Fatalf("requested_via %+v %v", got.RequestedVia, err)
+	}
+	if _, err := repo.FindDeployment(ctx, other, first.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("cross-tenant deployment: %v", err)
+	}
 	if err := repo.SetProgress(ctx, org, first.ID, release.StatusVerifying, release.StepWaitReady); err != nil {
 		t.Fatal(err)
 	}

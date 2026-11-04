@@ -47,13 +47,26 @@ type MCP struct {
 	// IntrospectionClientSecret is IAMKIT_INTROSPECTION_CLIENT_SECRET, or
 	// the contents of IAMKIT_INTROSPECTION_CLIENT_SECRET_FILE.
 	IntrospectionClientSecret string
+	// Clients are the assistants the console offers to connect
+	// (ODYSSEY_MCP_CLIENTS, comma-separated keys: claude_code, codex,
+	// vscode, antigravity). Unknown keys are ignored by the assistant API.
+	Clients []string
+	// AntigravityClientID is IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID: the client
+	// IAMKit registered for Antigravity (it has no metadata document), used
+	// to tell its deployments apart.
+	AntigravityClientID string
 }
+
+// DefaultMCPClients is what ODYSSEY_MCP_CLIENTS offers when unset.
+const DefaultMCPClients = "claude_code,codex,vscode,antigravity"
 
 // Enabled reports whether /mcp is served.
 func (m MCP) Enabled() bool { return m.IntrospectionClientID != "" }
 
 func loadMCP() (MCP, error) {
-	m := MCP{IntrospectionClientID: os.Getenv("IAMKIT_INTROSPECTION_CLIENT_ID"), IntrospectionClientSecret: os.Getenv("IAMKIT_INTROSPECTION_CLIENT_SECRET")}
+	m := MCP{IntrospectionClientID: os.Getenv("IAMKIT_INTROSPECTION_CLIENT_ID"), IntrospectionClientSecret: os.Getenv("IAMKIT_INTROSPECTION_CLIENT_SECRET"),
+		Clients:             splitList(env("ODYSSEY_MCP_CLIENTS", DefaultMCPClients)),
+		AntigravityClientID: strings.TrimSpace(os.Getenv("IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID"))}
 	if file := os.Getenv("IAMKIT_INTROSPECTION_CLIENT_SECRET_FILE"); file != "" {
 		if m.IntrospectionClientSecret != "" {
 			return MCP{}, errx.Validation("set IAMKIT_INTROSPECTION_CLIENT_SECRET or its _FILE, not both")

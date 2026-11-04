@@ -213,3 +213,28 @@ func TestUploadToken(t *testing.T) {
 		}
 	}
 }
+
+func TestViaFor(t *testing.T) {
+	const agy = "agy-client"
+	for name, c := range map[string]struct {
+		reason release.Reason
+		client string
+		want   string
+	}{
+		"console":           {release.ReasonDeploy, "web-client", "console"},
+		"no client":         {release.ReasonDeploy, "", "console"},
+		"claude code":       {release.ReasonDeploy, "mcp:https://claude.ai/oauth/claude-code-client-metadata", "assistant:claude_code"},
+		"codex":             {release.ReasonRollback, "mcp:https://chatgpt.com/oauth/codex/client.json", "assistant:codex"},
+		"vscode":            {release.ReasonDeploy, "mcp:https://vscode.dev/oauth/client-metadata.json", "assistant:vscode"},
+		"antigravity":       {release.ReasonDeploy, "mcp:" + agy, "assistant:antigravity"},
+		"unknown assistant": {release.ReasonDeploy, "mcp:other-client", "assistant:other"},
+		"auto rollback":     {release.ReasonAutoRollback, "", "platform"},
+		"auto rollback mcp": {release.ReasonAutoRollback, "mcp:" + agy, "platform"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := release.ViaFor(c.reason, c.client, agy); got != c.want {
+				t.Fatalf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}

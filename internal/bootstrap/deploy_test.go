@@ -171,6 +171,10 @@ func TestDeployWorkflow(t *testing.T) {
 		*c.Deployment.RollbackOf != bad.ID || cluster.Running(target, "visitas") != image("1") {
 		t.Fatalf("current after auto-rollback %+v", c)
 	}
+	// who asked is derived by the server: the platform for its own restore, the console for a person
+	if c.Deployment.RequestedVia != release.ViaPlatform || bad.RequestedVia != release.ViaConsole {
+		t.Fatalf("requested_via: auto-rollback %q, console deployment %q", c.Deployment.RequestedVia, bad.RequestedVia)
+	}
 
 	// 3. "Volver a esta": publish v2, then go back to v1
 	v2 := await(deploy(image("2")).ID, release.StatusReady)
@@ -179,6 +183,9 @@ func TestDeployWorkflow(t *testing.T) {
 	back := httpxtest.JSON[release.Deployment](t, res)
 	if back.Reason != release.ReasonRollback || rel(back) != rel(v1) || res.Header.Get("Location") != base+"/deployments/"+back.ID.String() {
 		t.Fatalf("rollback %+v at %q", back, res.Header.Get("Location"))
+	}
+	if back.RequestedVia != release.ViaConsole {
+		t.Fatalf("rollback requested_via %q", back.RequestedVia)
 	}
 	await(back.ID, release.StatusReady)
 	if c = settled(); c.Release.ID != rel(v1) || cluster.Running(target, "visitas") != image("1") {

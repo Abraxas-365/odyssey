@@ -83,7 +83,9 @@ deploy/k3d/              local cluster extras: registry/ (zot in ns odyssey-regi
 agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), deployment
 internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
 internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp
-internal/server/          Fiber app: middleware, /health, /api/config, /api/v1
+internal/server/          Fiber app: middleware, /health, /api/config, /api/v1; assistant.go: GET /api/v1/assistant + public GET /skills/odicea.tar.gz
+internal/assistant/       foundation: the assistants (claude_code, codex, vscode, antigravity) — install/skill commands for the console, and Preset (OAuth client → assistant key) for `requested_via`
+skills/                   the `odicea` skill (SKILL.md + references/, go:embed) → deterministic tar.gz served at /skills/odicea.tar.gz; its tool names are checked against the MCP tools
 internal/<domain>/        domain types + ports.go; <domain>svc, <domain>module, adapters/<domain>{http,pg}
 internal/event/           event envelope + Bus; adapters/outboxpg: transactional outbox + dispatcher
 internal/workflow/        durable workflow port + Registry; adapters/workflowpg: River-backed engine
@@ -146,7 +148,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | An upload ticket is spent in one place: `ConsumeUploadTicket` / `FindUploadTicketByHash` (by token hash, cross-org) are called only by `release/releasesvc`; `Commands.RedeemUpload` only by the public route in `releasehttp` (tests aside), never by an MCP tool | `TestUploadTicketsAreSpentInOnePlace` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
-| `go-github` and `golang-jwt` only in `source/adapters/sourcegithub`; unauthenticated routes only via `RegisterPublic` of `sourcehttp` (`GET /github/setup`, `POST /webhooks/github`) and `releasehttp` (`PUT /uploads/:ticket`), each one declared per adapter, mounted only by `server`; `release` never imports `source`, and `source` names `release.Commands` only in `sourcerelease`/`sourcemodule` (its `Deployer` port); the cross-org lookups webhooks/poll need (`FindInstallationByExternal`, `ListConnectionsByRepository`, `ListConnectionsToReconcile`) are called only by `sourcesvc`, which re-checks the installation's organization | `TestGitHubStaysInItsAdapter`, `TestPublicRoutesAreDeclared`, `TestReleaseDoesNotKnowSources`, `TestCrossOrgQueriesStayChecked` |
+| `go-github` and `golang-jwt` only in `source/adapters/sourcegithub`; unauthenticated routes only via `RegisterPublic` of `sourcehttp` (`GET /github/setup`, `POST /webhooks/github`), `releasehttp` (`PUT /uploads/:ticket`) and `server` itself (`GET /skills/odicea.tar.gz`), each one declared per adapter, mounted only by `server`; `release` never imports `source`, and `source` names `release.Commands` only in `sourcerelease`/`sourcemodule` (its `Deployer` port); the cross-org lookups webhooks/poll need (`FindInstallationByExternal`, `ListConnectionsByRepository`, `ListConnectionsToReconcile`) are called only by `sourcesvc`, which re-checks the installation's organization | `TestGitHubStaysInItsAdapter`, `TestPublicRoutesAreDeclared`, `TestReleaseDoesNotKnowSources`, `TestCrossOrgQueriesStayChecked` |
 | A svc's `Observe*` repo writes skip the publish rule only in observer domains (`fleet`: heartbeats; `source`: webhook deliveries, polled heads) | `TestWritesPublishEvents` (`observers`) |
 
 When you adopt a new pattern (blob, telemetry, …), add an arch rule
@@ -192,6 +194,16 @@ Other rules:
   `IMAGE_PULL_FAILED`, `APP_CRASHED`, `HEALTH_CHECK_FAILED`, `APPLY_FAILED` in
   `release.Unready`. A CRD change is additive within `v1alpha1`; run
   `make gen` and re-apply `agent/install/crd`.
+- **Assistants & skill**: `skills/odicea/` must name only real MCP tools
+  (`TestSkillNamesRealTools`) and its `SKILL.md` frontmatter is `name` +
+  one-line `description`; the archive is deterministic (its hash is the
+  version). `ODYSSEY_MCP_CLIENTS` picks the assistants the console offers;
+  `IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID` lets `assistant.Preset` recognise
+  Antigravity (and, with the id, puts `oauth.clientId` in its snippet; without
+  it Antigravity is not offered). `Deployment.requested_via` is derived by the
+  server and follows the requester: `release.ViaFor` from the event client
+  (`source.pushes.requested_client` carries it for `publish_now`), `github`
+  when a push has no requester; never read from a request.
 - **New permission**: add it to `iam/permissions.json`, run `make gen`, use
   `permission.X`, then run `make iam-sync`.
 - **Endpoint change**: update `api/openapi.yaml` (shapes + `x-permissions`)

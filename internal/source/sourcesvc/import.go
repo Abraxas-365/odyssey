@@ -6,7 +6,6 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
-	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/source"
 	"github.com/Abraxas-365/odyssey/internal/source/tarball"
@@ -32,10 +31,16 @@ func repack(r io.Reader, w io.Writer, root string, limits srcarchive.Limits) (ta
 	return sum, err
 }
 
-// release_ is the deployment request of an imported source with the
-// connection's configuration.
-func release_(src build.SourceID, c source.Connection, by identity.UserID) release.DeployUploaded {
-	return release.DeployUploaded{Source: src, Config: c.Config, RequestedBy: by}.Normalize()
+// release builds the deployment request of an imported source with the
+// connection's configuration. Its requested_via says who asked: GitHub when
+// nobody did (a webhook or the poll), otherwise the client that queued the
+// push (an assistant, or the console).
+func (s *Service) release(src build.SourceID, c source.Connection, push source.Push) release.DeployUploaded {
+	via := release.ViaGitHub
+	if !push.RequestedBy.IsZero() {
+		via = release.ViaFor(release.ReasonDeploy, push.RequestedClient, s.opts.AntigravityClientID)
+	}
+	return release.DeployUploaded{Source: src, Config: c.Config, RequestedBy: push.RequestedBy, Via: via}.Normalize()
 }
 
 // retryable sorts an import error: a refusal (the commit, the folder, the

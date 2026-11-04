@@ -46,7 +46,7 @@ export function ConnectClusterDialog({ open, onOpenChange, issued: given }: { op
             <DialogHeader>
               <DialogTitle>Conectar un clúster</DialogTitle>
               <DialogDescription>
-                Un clúster de Kubernetes de tu empresa donde correrán las apps. El clúster se conecta a Odyssey por su cuenta: no hace falta abrirle puertos.
+                Un clúster de Kubernetes de tu empresa donde correrán las apps. El clúster se conecta a Odicea por su cuenta: no hace falta abrirle puertos.
               </DialogDescription>
             </DialogHeader>
             <FieldGroup>
@@ -99,7 +99,7 @@ function Install({ issued, onDone }: { issued: Issued; onDone: () => void }) {
         <li className="flex items-start gap-3">
           <StepNumber n={2} />
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <span>{issued.reconnect ? 'Si el agente ya está instalado, reinícialo; si no, instálalo' : 'Instala el agente'} <span className="text-muted-foreground">(desde el repositorio de Odyssey)</span></span>
+            <span>{issued.reconnect ? 'Si el agente ya está instalado, reinícialo; si no, instálalo' : 'Instala el agente'} <span className="text-muted-foreground">(desde el repositorio de Odicea)</span></span>
             <CodeLine code={issued.reconnect ? `${AGENT_INSTALL}\nkubectl -n odyssey-system rollout restart deployment/odyssey-agent` : AGENT_INSTALL} />
           </div>
         </li>

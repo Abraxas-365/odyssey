@@ -1161,6 +1161,59 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/assistant:
+    get:
+      tags: [mcp]
+      operationId: getAssistant
+      summary: How to connect an AI assistant to Odicea ("Conecta tu asistente")
+      description: >-
+        Holds no secrets and is the same for everyone. `available` is false (and `clients` empty) when the MCP
+        endpoint is not enabled on this installation. `mcp_url` is the endpoint to register (the MCP audience);
+        `skill` is the downloadable `odicea` skill (`GET /skills/odicea.tar.gz`, `version` changes when its files do);
+        `clients` are the assistants this installation offers (`ODYSSEY_MCP_CLIENTS`, in that order; Antigravity only
+        when its OAuth client id is configured, since it cannot register itself), each with the
+        command or JSON that registers the MCP server (`install`), the command that installs the skill
+        (`skill_install`) and plain-Spanish `notes` on signing in.
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The assistant setup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Assistant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /skills/odicea.tar.gz:
+    get:
+      tags: [mcp]
+      operationId: getOdiceaSkill
+      summary: The `odicea` skill for coding assistants (tar.gz)
+      description: >-
+        Public: the skill holds no secrets and the assistant's installer fetches it with `curl`. A deterministic
+        tar.gz with one top directory, `odicea/` (`SKILL.md` and `references/`), built once at startup from the
+        files compiled into the API. `ETag` is the skill's version (quoted); `If-None-Match` naming it (a list, `*` or a
+        weak `W/"…"` validator too) answers 304.
+        `Cache-Control: public, max-age=300`. Not under `/api/v1`: no token, no CORS.
+      security: []
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The skill's archive.
+          headers:
+            ETag: { schema: { type: string }, description: "The skill's version, quoted." }
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        "304":
+          description: The client's copy is current.
+
   /mcp:
     post:
       tags: [mcp]
@@ -1666,7 +1719,7 @@ components:
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
       required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, status, reason, step, steps,
-                 revision, previous_release_id, rollback_of, error, run_id, requested_by, created_at, updated_at, finished_at]
+                 revision, previous_release_id, rollback_of, error, run_id, requested_by, requested_via, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -1729,6 +1782,14 @@ components:
                 detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }
         requested_by: { type: string, description: '"" when the platform started it.' }
+        requested_via:
+          type: string
+          description: >-
+            Who asked, set by the server (never by the caller): `console`, `assistant:<preset>` (`claude_code`,
+            `codex`, `vscode`, `antigravity`, or `other`), `github` (nobody did: a push or the poll of a connected
+            repository) or `platform` (the automatic restore after a failure). It follows the requester, not where
+            the code lives: "Publicar ahora" from the console is `console`, from an assistant `assistant:<preset>`.
+            `""` for versions published before this was recorded.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
@@ -1911,6 +1972,34 @@ components:
           items: { $ref: "#/components/schemas/AuditEntry" }
         page: { $ref: "#/components/schemas/Page" }
 
+    AssistantClient:
+      type: object
+      additionalProperties: false
+      required: [key, name, install, skill_install, notes]
+      properties:
+        key: { type: string, enum: [claude_code, codex, vscode, antigravity] }
+        name: { type: string, description: "The assistant as people know it (\"Claude Code\")." }
+        install: { type: string, description: The command (or JSON for the client's MCP config) that registers the MCP server `odicea`. }
+        skill_install: { type: string, description: The command that downloads and unpacks the `odicea` skill into the client's skills folder. }
+        notes: { type: string, description: "Plain Spanish: how to sign in with the company account, and where the config lives." }
+    Assistant:
+      type: object
+      additionalProperties: false
+      required: [available, mcp_url, skill, clients]
+      properties:
+        available: { type: boolean, description: False when the MCP endpoint is not enabled here (then `clients` is empty). }
+        mcp_url: { type: string, description: "The MCP endpoint (IAMKIT_AUDIENCE), e.g. https://odicea.example.com/mcp." }
+        skill:
+          type: object
+          additionalProperties: false
+          required: [url, version, name]
+          properties:
+            url: { type: string, description: Where to download the skill (`GET /skills/odicea.tar.gz`). }
+            version: { type: string, description: A short hash of the archive; it changes when the skill does. }
+            name: { type: string, enum: [odicea] }
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/AssistantClient" }
     AuditVerification:
       type: object
       additionalProperties: false

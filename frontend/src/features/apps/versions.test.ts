@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, Deployment } from '@/lib/types'
-import { appStatus, lastProblem, progressSteps, versionMessage, versions } from './versions'
+import { appStatus, attribution, lastProblem, progressSteps, versionMessage, versions } from './versions'
 
 let n = 0
 function dep(over: Partial<Deployment>): Deployment {
@@ -28,6 +28,7 @@ function dep(over: Partial<Deployment>): Deployment {
     error: null,
     run_id: 'run',
     requested_by: 'me',
+    requested_via: 'console',
     created_at: `2026-10-27T10:${String(n).padStart(2, '0')}:00Z`,
     updated_at: '2026-10-27T10:00:00Z',
     finished_at: `2026-10-27T10:${String(n).padStart(2, '0')}:30Z`,
@@ -67,6 +68,23 @@ describe('versions', () => {
     const items = versions([restore, bad, v1], current(restore), 'me')
     expect(items.map(i => i.restorable)).toEqual([false, false, false]) // v1 is the release online
     expect(versions(history, current(v2), 'me').filter(i => i.restorable).map(i => i.id)).toEqual([restore.id, v1.id])
+  })
+})
+
+describe('attribution', () => {
+  it('words who published and through what, from the server\'s requested_via', () => {
+    const by = (requested_by: string, requested_via: string) => attribution({ requested_by, requested_via }, 'me')
+    expect(by('me', 'console')).toBe('ti')
+    expect(by('ana', 'console')).toBe('tu equipo')
+    expect(by('me', 'assistant:claude_code')).toBe('ti · con Claude Code')
+    expect(by('ana', 'assistant:codex')).toBe('tu equipo · con Codex')
+    expect(by('me', 'assistant:antigravity')).toBe('ti · con Antigravity')
+    expect(by('me', 'assistant:other')).toBe('ti · con un asistente')
+    expect(by('', 'github')).toBe('tu equipo · desde GitHub')
+    expect(by('me', 'github')).toBe('ti · desde GitHub')
+    expect(by('', 'platform')).toBe('la plataforma')
+    expect(by('', '')).toBe('la plataforma') // before requested_via existed
+    expect(by('me', '')).toBe('ti')
   })
 })
 

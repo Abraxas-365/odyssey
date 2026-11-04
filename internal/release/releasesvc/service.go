@@ -31,6 +31,9 @@ type Options struct {
 	ReadyTimeout time.Duration
 	// PollEvery is how often wait_ready asks the cluster (default 2 s).
 	PollEvery time.Duration
+	// AntigravityClientID is IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID: the OAuth
+	// client of Antigravity, to name it in a deployment's requested_via.
+	AntigravityClientID string
 }
 
 type Service struct {
@@ -148,7 +151,7 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 	if err != nil {
 		return release.Deployment{}, err
 	}
-	d, err := s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy)
+	d, err := s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy, "")
 	if err != nil {
 		if derr := s.builder.Discard(context.WithoutCancel(ctx), organization, src.ID); derr != nil {
 			slog.Warn("could not discard the source of a deployment that did not start; the sweep will", "source", src.ID, "error", derr)
@@ -184,13 +187,13 @@ func (s *Service) DeployUploaded(ctx context.Context, organization identity.Orga
 	if src.Expired() {
 		return release.Deployment{}, errx.Business(build.Message(build.CodeSourceExpired)).WithCode(build.CodeSourceExpired)
 	}
-	return s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy)
+	return s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy, input.Via)
 }
 
 // startSource writes the deployment that builds src with cfg, holding the
 // project so it cannot have been archived meanwhile, and stops the one it
 // superseded.
-func (s *Service) startSource(ctx context.Context, organization identity.OrganizationID, id project.ID, e project.Environment, src build.Source, cfg release.Config, by identity.UserID) (release.Deployment, error) {
+func (s *Service) startSource(ctx context.Context, organization identity.OrganizationID, id project.ID, e project.Environment, src build.Source, cfg release.Config, by identity.UserID, via string) (release.Deployment, error) {
 	b := build.NewID()
 	var d release.Deployment
 	var superseded *release.Deployment
@@ -208,7 +211,7 @@ func (s *Service) startSource(ctx context.Context, organization identity.Organiz
 		}
 		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &b,
 			Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size, Git: src.Git}, Config: &cfg,
-			Reason: release.ReasonDeploy, RequestedBy: by})
+			Reason: release.ReasonDeploy, RequestedBy: by, RequestedVia: via})
 		return err
 	})
 	if err != nil {
@@ -278,6 +281,9 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 		d.Status, d.Step = release.StatusBuilding, release.StepBuild
 	}
 	d.Revision, d.Previous = state.Revision+1, state.Current
+	if d.RequestedVia == "" {
+		d.RequestedVia = release.ViaFor(d.Reason, event.MetaFrom(ctx).Client, s.opts.AntigravityClientID)
+	}
 	actor := d.RequestedBy
 	var superseded *release.Deployment
 	if state.Active != nil {

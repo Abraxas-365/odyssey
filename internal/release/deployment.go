@@ -3,6 +3,7 @@ package release
 import (
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -76,6 +77,30 @@ const (
 	// other build failures keep the build's code (build.Code*).
 	CodeBuildInternal = "BUILD_INTERNAL"
 )
+
+// Where a deployment was requested from (Deployment.RequestedVia).
+const (
+	ViaConsole  = "console"  // someone in the console (or the API)
+	ViaGitHub   = "github"   // a push, the poll or "Publicar ahora" on a connected repository
+	ViaPlatform = "platform" // the platform itself (the automatic restore)
+	// ViaAssistantPrefix + an assistant key (claude_code, codex, vscode,
+	// antigravity, other): an AI assistant through the MCP endpoint.
+	ViaAssistantPrefix = "assistant:"
+)
+
+// ViaFor names where a request came from: the platform for an automatic
+// restore; an assistant when the event client is an MCP one ("mcp:<oauth
+// client id>", antigravityID being the id IAMKit gave Antigravity); the
+// console otherwise.
+func ViaFor(reason Reason, client, antigravityID string) string {
+	if reason == ReasonAutoRollback {
+		return ViaPlatform
+	}
+	if key, ok := assistant.Preset(client, antigravityID); ok {
+		return ViaAssistantPrefix + key
+	}
+	return ViaConsole
+}
 
 // WorkflowDeploy is the workflow that drives a deployment (releasesvc).
 const WorkflowDeploy = "release.deploy"
@@ -175,9 +200,13 @@ type Deployment struct {
 	Run        workflow.RunID `json:"run_id" db:"run_id"`
 	// RequestedBy is zero when the platform started it (auto_rollback).
 	RequestedBy identity.UserID `json:"requested_by" db:"requested_by"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
-	FinishedAt  *time.Time      `json:"finished_at" db:"finished_at"`
+	// RequestedVia is where the request came from (see Via*), set by the
+	// service, never by the caller; "" for deployments made before it was
+	// recorded.
+	RequestedVia string     `json:"requested_via" db:"requested_via"`
+	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
+	FinishedAt   *time.Time `json:"finished_at" db:"finished_at"`
 }
 
 // EnvironmentState is what an environment serves and what is changing it.

@@ -119,6 +119,15 @@ func TestInitializeCarriesTheInstructions(t *testing.T) {
 	if init.ServerInfo.Name != mcpx.ServerName || !strings.Contains(init.Instructions, "deploy_folder") {
 		t.Fatalf("initialize: %+v", init)
 	}
+	// honest about what Odicea does not give apps yet, and points at the skill
+	for _, want := range []string{"Todavía no", "bases de datos", "NO las crees en servicios externos", "skill", "Conecta tu asistente"} {
+		if !strings.Contains(init.Instructions, want) {
+			t.Errorf("instructions do not say %q", want)
+		}
+	}
+	if strings.Contains(init.Instructions, "TI los configura aparte") {
+		t.Error("instructions still promise that IT configures secrets separately")
+	}
 }
 
 func call(t *testing.T, cs *mcp.ClientSession, name, text string) *mcp.CallToolResult {

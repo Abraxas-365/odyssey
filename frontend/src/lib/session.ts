@@ -38,14 +38,14 @@ let config: Promise<PublicConfig> | null = null
 export function loadConfig(): Promise<PublicConfig> {
   config ??= fetch('/api/config', { credentials: 'omit' })
     .then(async res => {
-      if (!res.ok) throw new SignInError('Odyssey no responde. Intenta de nuevo en unos segundos.')
+      if (!res.ok) throw new SignInError('Odicea no responde. Intenta de nuevo en unos segundos.')
       const cfg = (await res.json()) as PublicConfig
       if (!cfg.iam_url || !cfg.client_id || !cfg.environment_id) throw new SignInError('El inicio de sesión todavía no está configurado. Avísale a TI.')
       return cfg
     })
     .catch(e => {
       config = null
-      throw e instanceof SignInError ? e : new SignInError('Odyssey no responde. Intenta de nuevo en unos segundos.')
+      throw e instanceof SignInError ? e : new SignInError('Odicea no responde. Intenta de nuevo en unos segundos.')
     })
   return config
 }

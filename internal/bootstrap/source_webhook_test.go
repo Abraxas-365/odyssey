@@ -12,6 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/build/adapters/buildfake"
 	"github.com/Abraxas-365/odyssey/internal/build/buildsvc"
 	"github.com/Abraxas-365/odyssey/internal/config"
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -169,6 +170,15 @@ func TestGitHubPushDeploys(t *testing.T) {
 	res = checked(t, app, http.MethodGet, projPath+"/environments", token, nil)
 	env := httpxtest.JSON[query.Paginated[project.Environment]](t, res).Items[0]
 	depPath := projPath + "/environments/" + env.ID.String() + "/deployments/" + webhook.Deployment.String()
+	viaOf := func(id release.DeploymentID) string {
+		t.Helper()
+		res := checked(t, app, http.MethodGet, projPath+"/environments/"+env.ID.String()+"/deployments/"+id.String(), token, nil)
+		httpxtest.Want(t, res, http.StatusOK)
+		return httpxtest.JSON[release.Deployment](t, res).RequestedVia
+	}
+	if via := viaOf(*webhook.Deployment); via != release.ViaGitHub {
+		t.Fatalf("webhook deployment requested_via %q", via)
+	}
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 		if d := httpxtest.JSON[release.Deployment](t, checked(t, app, http.MethodGet, depPath, token, nil)); d.Status.Finished() {
 			if d.Status != release.StatusReady || d.Source == nil || d.Source.Git == nil || d.Source.Git.Commit != sha2 {
@@ -222,9 +232,39 @@ func TestGitHubPushDeploys(t *testing.T) {
 	if items[0].Git.Commit != sha3 || items[0].Trigger != source.TriggerReconcile || items[0].Status != source.StatusDeployed {
 		t.Fatalf("reconciled push = %+v", items[0])
 	}
+	if via := viaOf(*items[0].Deployment); via != release.ViaGitHub {
+		t.Fatalf("reconciled deployment requested_via %q", via)
+	}
 	waitStatus(sha3, source.CommitSuccess)
 	if n, err := platform.Sources.Commands.Reconcile(ctx); err != nil || n != 0 {
 		t.Fatalf("second reconcile = %d, %v", n, err)
+	}
+
+	// -- "Publicar ahora": the deployment says who asked, not that the code is on GitHub
+	user := identity.MustParseUserID(httpxtest.User)
+	publishAs := func(client string, want int) string {
+		t.Helper()
+		ctx := event.WithMeta(ctx, event.Meta{CorrelationID: "req-" + client, Client: client})
+		if _, err := platform.Sources.Commands.Publish(ctx, org, proj.ID, source.Publish{RequestedBy: user}); err != nil {
+			t.Fatal(err)
+		}
+		items := pushes(want)
+		if items[0].Trigger != source.TriggerManual || items[0].Status != source.StatusDeployed {
+			t.Fatalf("manual push = %+v", items[0])
+		}
+		return viaOf(*items[0].Deployment)
+	}
+	if via := publishAs("mcp:https://chatgpt.com/oauth/codex/client.json", 4); via != "assistant:codex" {
+		t.Fatalf("publish_now from Codex requested_via %q", via)
+	}
+	if via := publishAs("mcp:some-other-agent", 5); via != "assistant:other" {
+		t.Fatalf("publish_now from an unknown assistant requested_via %q", via)
+	}
+	if via := publishAs("web-console-client", 6); via != release.ViaConsole {
+		t.Fatalf("console publish requested_via %q", via)
+	}
+	if via := viaOf(*pushes(6)[3].Deployment); via != release.ViaGitHub { // the reconciled one is still github
+		t.Fatalf("earlier reconcile requested_via %q", via)
 	}
 
 	// -- the repository leaves the installation: the project is disconnected
@@ -244,7 +284,7 @@ func TestGitHubPushDeploys(t *testing.T) {
 	// and a later push finds nothing to deploy
 	late := push("main", sha4)
 	httpxtest.Want(t, deliver("d-7", "push", late, fake.Sign(late)), http.StatusAccepted)
-	if n := len(httpxtest.JSON[query.Paginated[source.Push]](t, checked(t, app, http.MethodGet, projPath+"/repository/pushes", token, nil)).Items); n != 3 {
+	if n := len(httpxtest.JSON[query.Paginated[source.Push]](t, checked(t, app, http.MethodGet, projPath+"/repository/pushes", token, nil)).Items); n != 6 {
 		t.Fatalf("pushes after the removal = %d", n)
 	}
 }

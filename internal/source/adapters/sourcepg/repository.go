@@ -249,7 +249,7 @@ func (r *Repository) ObserveHead(ctx context.Context, id source.ConnectionID, et
 // ---- pushes ----
 
 const pushColumns = `id, organization_id, project_id, connection_id, git, trigger, status, deployment_id, error,
-	requested_by, created_at, updated_at`
+	requested_by, requested_client, created_at, updated_at`
 
 type pushRow struct {
 	source.Push
@@ -305,12 +305,12 @@ func (r *Repository) CreatePush(ctx context.Context, p source.Push) error {
 	}
 	_, err = txn.Q(ctx, r.db).ExecContext(ctx,
 		`WITH push AS (
-		     INSERT INTO source.pushes (id, organization_id, project_id, connection_id, git, trigger, status, deployment_id, error, requested_by)
-		     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		     INSERT INTO source.pushes (id, organization_id, project_id, connection_id, git, trigger, status, deployment_id, error, requested_by, requested_client)
+		     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $12)
 		 )
 		 UPDATE source.connections SET last_commit = $11
 		 WHERE organization_id = $2 AND id = $4`,
-		p.ID, p.Organization, p.Project, p.Connection, git, p.Trigger, p.Status, p.Deployment, perr, p.RequestedBy, p.Git.Commit)
+		p.ID, p.Organization, p.Project, p.Connection, git, p.Trigger, p.Status, p.Deployment, perr, p.RequestedBy, p.Git.Commit, p.RequestedClient)
 	return pgerr.MapWith(err, "create push", messages)
 }
 
