@@ -36,7 +36,7 @@ type Deps struct {
 	// adapter from ClusterConfig.
 	Cluster release.Cluster
 	// ClusterConfig selects the adapter when Cluster is nil (the zero value
-	// is the in-memory fake: the API, which never calls the cluster).
+	// is the in-memory fake). The API and the worker pass the same one.
 	ClusterConfig config.Cluster
 	// Fleet runs apps on the organization's enrolled clusters (the fleet
 	// adapter).

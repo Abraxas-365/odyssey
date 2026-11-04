@@ -48,8 +48,24 @@ func TestEventContracts(t *testing.T) {
 			ImageRepository: "registry.local/" + org.String() + "/" + proj.String()}, false),
 		fleet.NewBuildReleased(org, fleet.DesiredBuild{ID: fleet.MustParseBuildID("00000000-0000-4000-8000-0000000000b1"),
 			Cluster: cluster, Final: true}),
+		fleet.NewSecretSent(org, user, c, secretDelivery, true),
+		fleet.NewSecretAcked(org, secretDelivery, ""),
+		fleet.NewSecretAcked(org, secretDelivery, "the value could not be opened with this cluster's key"),
 	} {
 		eventtest.Golden(t, e)
+	}
+}
+
+var secretDelivery = fleet.SecretDelivery{ID: mustDelivery("00000000-0000-4000-8000-0000000000f1"),
+	Organization: org, Project: proj, Environment: env, Cluster: cluster, App: "visitas", Name: "STRIPE_API_KEY", Version: 2,
+	KeyID: "k3yIdK3yIdK3yId0", Sealed: []byte("never in the trail"), CreatedBy: user}
+
+func TestSecretEventsNeverCarryTheSealedValue(t *testing.T) {
+	for _, e := range []event.Event{fleet.NewSecretSent(org, user, fleet.Cluster{ID: cluster}, secretDelivery, false),
+		fleet.NewSecretAcked(org, secretDelivery, ""), fleet.NewSecretAcked(org, secretDelivery, "x")} {
+		if strings.Contains(string(e.Payload), "never in the trail") || strings.Contains(string(e.Payload), "bmV2ZXIg") {
+			t.Fatalf("%s carries the sealed value: %s", e.Type, e.Payload)
+		}
 	}
 }
 
@@ -205,4 +221,12 @@ func TestAppAccessModes(t *testing.T) {
 			t.Errorf("access %q: valid=%v, want %v", mode, !valid, valid)
 		}
 	}
+}
+
+func mustDelivery(raw string) fleet.SecretDeliveryID {
+	id, err := fleet.ParseSecretDeliveryID(raw)
+	if err != nil {
+		panic(err)
+	}
+	return id
 }

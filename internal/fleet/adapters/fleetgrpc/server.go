@@ -171,7 +171,7 @@ func (s *Server) signal(sig fleet.Signal) {
 		t.close(fleet.Superseded())
 		return
 	}
-	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build}, false)
+	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build, secret: sig.Secret}, false)
 }
 
 func (s *Server) each(fn func(*tunnel)) {
@@ -226,11 +226,13 @@ func (s *Server) Recover(ctx context.Context, req *fleetv1.RecoverRequest) (*fle
 
 // ---- the tunnel -------------------------------------------------------
 
-// key is what changed: an app (environment and name) or a build.
+// key is what changed: an app (environment and name), a build or a secret
+// delivery.
 type key struct {
 	environment project.EnvironmentID
 	name        string
 	build       fleet.BuildID
+	secret      fleet.SecretDeliveryID
 }
 
 type tunnel struct {
@@ -442,6 +444,15 @@ func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slo
 					err = s.agents.LogBuild(ctx, t.agent, t.session, l)
 				}
 			}
+		case m.GetSecretAck() != nil:
+			if err = limit.Wait(ctx); err == nil {
+				var ack fleet.SecretAck
+				if ack, err = secretAckFromProto(m.GetSecretAck()); err != nil {
+					err = errx.Validation("secret ack with an unreadable delivery id")
+				} else {
+					err = s.agents.AckSecret(ctx, t.agent, t.session, ack)
+				}
+			}
 		default:
 			continue // unknown or repeated Hello: ignored (newer agents may send more)
 		}
@@ -461,6 +472,7 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 	pending, all := t.take()
 	var apps []fleet.App
 	var builds []fleet.DesiredBuild
+	var secrets []fleet.SecretDelivery
 	if all {
 		desired, err := s.agents.Desired(ctx, t.agent)
 		if err != nil {
@@ -470,8 +482,21 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 		if builds, err = s.agents.DesiredBuilds(ctx, t.agent); err != nil {
 			return err
 		}
+		if secrets, err = s.agents.DesiredSecrets(ctx, t.agent); err != nil {
+			return err
+		}
 	} else {
 		for k := range pending {
+			if !k.secret.IsZero() {
+				d, ok, err := s.agents.DesiredSecret(ctx, t.agent, k.secret)
+				if err != nil {
+					return err
+				}
+				if ok {
+					secrets = append(secrets, d)
+				}
+				continue
+			}
 			if !k.build.IsZero() {
 				b, ok, err := s.agents.DesiredBuild(ctx, t.agent, k.build)
 				if err != nil {
@@ -504,6 +529,12 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 			continue
 		}
 		if err := stream.Send(buildToProto(b)); err != nil {
+			return err
+		}
+	}
+	// values go after the apps that use them: the agent waits for them anyway
+	for _, d := range secrets {
+		if err := stream.Send(secretToProto(d)); err != nil {
 			return err
 		}
 	}

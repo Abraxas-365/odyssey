@@ -108,6 +108,13 @@ func (r *releases) AccessProtectionAvailable(context.Context, identity.Organizat
 	return true, nil
 }
 
+func (r *releases) Secrets(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Secrets, error) {
+	if err := r.place(org, env); err != nil {
+		return release.Secrets{}, err
+	}
+	return release.Secrets{Items: []release.SecretView{}}, nil
+}
+
 func (r *releases) FindRelease(context.Context, identity.OrganizationID, project.ID, release.ID) (release.Release, error) {
 	return release.Release{}, errx.NotFound("release not found")
 }

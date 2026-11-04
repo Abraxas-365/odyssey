@@ -322,6 +322,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments/{environment}/env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change the environment's plain variables
+         * @description Sets and removes plain (non-secret) variables as the environment's next
+         *     settings revision, applied like an access change (a `config`
+         *     deployment when a release is online). A name that is a secret is
+         *     refused (remove the secret first); setting a variable to the value it
+         *     has adds no revision. Values never appear in the trail: event
+         *     `env.changed` carries only the names.
+         */
+        patch: operations["setEnvironmentVariables"];
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Declare a secret
+         * @description `managed`: records that a person must load the value (200, the secret
+         *     in state `missing`; nothing reaches the cluster until it is loaded; a
+         *     secret that exists already is returned as it is). `external`: reads it
+         *     from the cluster's ClusterSecretStore (External Secrets Operator) as
+         *     the next settings revision (202, like an access change); needs
+         *     `odyssey:secrets:external` and a cluster with the operator and that
+         *     store. Event `secret.changed` (`requested` | `external`).
+         */
+        put: operations["putEnvironmentSecret"];
+        post?: never;
+        /**
+         * Remove a secret
+         * @description A new settings revision without it (the cluster prunes its value), and
+         *     any open request of that name. Removing a secret read from the
+         *     company's vault needs `odyssey:secrets:external` too (403 otherwise).
+         *     Event `secret.changed` (`removed`).
+         */
+        delete: operations["removeEnvironmentSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/secrets/{name}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Load a managed secret's value (sealed in the browser)
+         * @description Takes only ciphertext: the console seals the value to `secret_key`
+         *     (from the settings) with HPKE, binding it to the cluster, environment, app,
+         *     name and `version` (the secret's `next_version`: one more than the highest
+         *     it ever had here, so a stale page cannot overwrite a newer value and a
+         *     secret removed and added again never reuses a version; 409
+         *     `SECRET_VERSION_CONFLICT` otherwise). Replacing a secret read from the
+         *     company's vault needs `odyssey:secrets:external` (403). The
+         *     control plane cannot open it; it travels to the cluster's agent, which
+         *     opens and stores it, and is deleted when the agent answers. The
+         *     reference becomes the next settings revision, applied like an access
+         *     change. Fails closed: 422 `SECRET_KEY_CHANGED` when the cluster's key
+         *     changed meanwhile, `SECRETS_UNAVAILABLE` when the cluster has no key.
+         *     Event `secret.changed` (`loaded`).
+         */
+        put: operations["loadEnvironmentSecret"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/releases/{release}": {
         parameters: {
             query?: never;
@@ -1219,17 +1320,116 @@ export interface components {
             access: {
                 mode: components["schemas"]["AccessMode"];
             };
+            env: components["schemas"]["EnvironmentVariables"];
+            /** @description The environment's secrets judged against its cluster, then the open requests (state `missing`), by name. */
+            secrets: components["schemas"]["SecretView"][];
+            /** @description The cluster key a managed value is sealed to in the browser (pkg/secretbox; HPKE DHKEM-X25519, HKDF-SHA256, AES-256-GCM). Null when the environment has no cluster or its cluster cannot take managed secrets yet. */
+            secret_key: null | components["schemas"]["ClusterSecretKey"];
+            /** @description Whether the cluster has the External Secrets Operator. */
+            external_secrets: boolean;
+            /** @description The cluster's ClusterSecretStores an external secret can read from. */
+            secret_stores: string[];
+            /** @description True when the environment's cluster was revoked: that is why it offers no key nor stores (IT moves the environment to another cluster). */
+            secrets_cluster_revoked: boolean;
             access_login_available: boolean;
             /** @description Whether the environment's cluster can protect apps with the sign-in (its agent lists `odicea.access`). An environment not placed yet is judged by the organization's default cluster; false with no cluster. When false only `public` can be applied there. */
             access_protection_available: boolean;
         };
-        AccessChange: {
-            settings: {
-                revision: number;
-                access: {
-                    mode: components["schemas"]["AccessMode"];
-                };
+        /** @description Plain (non-secret) variables of the environment. They win over a release's env of the same name; a secret of the same name wins over both. Names starting with `ODYSSEY_` are reserved. */
+        EnvironmentVariables: {
+            [key: string]: string;
+        };
+        /** @description One revision of an environment's configuration (only references to secrets, never a value). */
+        SettingsRevision: {
+            revision: number;
+            access: {
+                mode: components["schemas"]["AccessMode"];
             };
+            env: components["schemas"]["EnvironmentVariables"];
+            secrets: components["schemas"]["SecretRef"][];
+        };
+        SettingsChange: {
+            settings: components["schemas"]["SettingsRevision"];
+            /** @description The config deployment applying the change (null when none started). */
+            deployment: null | components["schemas"]["Deployment"];
+        };
+        /** @description An environment variable name; names starting with `ODYSSEY_` are reserved. */
+        SecretName: string;
+        SecretRef: {
+            name: components["schemas"]["SecretName"];
+            /**
+             * @description `managed`: a person loads the value in the console; `external`: read from the company's vault.
+             * @enum {string}
+             */
+            source: "managed" | "external";
+            /** @description Managed: 1 for the first load, +1 per rotation (absent: not loaded). */
+            version?: number;
+            /** @description Managed: the cluster key the value was sealed to. */
+            key_id?: string;
+            /** Format: uuid */
+            loaded_by?: string;
+            /** Format: date-time */
+            loaded_at?: string;
+            /** @description External: the cluster's ClusterSecretStore. */
+            store?: string;
+            /** @description External: the key in the vault. */
+            key?: string;
+            /** @description External: the property of the key (optional). */
+            property?: string;
+        };
+        SecretView: {
+            name: components["schemas"]["SecretName"];
+            /** @enum {string} */
+            source: "managed" | "external";
+            version?: number;
+            key_id?: string;
+            /** Format: uuid */
+            loaded_by?: string;
+            /** Format: date-time */
+            loaded_at?: string;
+            store?: string;
+            key?: string;
+            property?: string;
+            /**
+             * @description `missing`: requested, nobody loaded it yet; `loaded`: in force; `reload`: sealed to a key the environment's cluster no longer has (load it again); `external`: read from the vault; `unavailable`: the cluster cannot take this kind of secret; `failed`: the value in force never reached the cluster (see `failure`; load it again).
+             * @enum {string}
+             */
+            state: "missing" | "loaded" | "reload" | "external" | "unavailable" | "failed";
+            /** @description The version a value loaded now must be sealed for (`PUT …/value`): one more than the highest this name ever had in the environment, also after it was removed (the cluster takes only newer versions). */
+            next_version: number;
+            /** @description Why the value in force did not arrive (state `failed`). */
+            failure?: {
+                version: number;
+                error: string;
+                /** Format: date-time */
+                failed_at: string;
+            };
+            request?: components["schemas"]["SecretRequest"];
+        };
+        SecretRequest: {
+            name: components["schemas"]["SecretName"];
+            note: string;
+            /** Format: uuid */
+            requested_by: string;
+            requested_via: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ClusterSecretKey: {
+            /** Format: uuid */
+            cluster_id: string;
+            /** @description The app (its name in the cluster) a value sealed now is bound to. */
+            app: string;
+            /** @description base64url(sha256(public_key)) cut to 16 characters. */
+            key_id: string;
+            /**
+             * Format: byte
+             * @description The X25519 public key, base64.
+             */
+            public_key: string;
+        };
+        AccessChange: {
+            settings: components["schemas"]["SettingsRevision"];
             deployment: null | components["schemas"]["Deployment"];
             access_login_available: boolean;
         };
@@ -2258,6 +2458,179 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    setEnvironmentVariables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    set?: {
+                        [key: string]: string;
+                    };
+                    unset?: components["schemas"]["SecretName"][];
+                };
+            };
+        };
+        responses: {
+            /** @description The settings stored and the deployment applying them, if one started. */
+            202: {
+                headers: {
+                    /** @description The config deployment, when there is one. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    putEnvironmentSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    source: "managed" | "external";
+                    /** @description Managed: what the value is for. */
+                    note?: string;
+                    /** @description External: the ClusterSecretStore. */
+                    store?: string;
+                    /** @description External: the key in the vault. */
+                    key?: string;
+                    /** @description External: the property (optional). */
+                    property?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The managed secret requested (or as it already was). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretView"];
+                };
+            };
+            /** @description The external secret stored and the deployment applying it, if one started. */
+            202: {
+                headers: {
+                    /** @description The config deployment, when there is one. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    removeEnvironmentSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings stored and the deployment applying them, if one started. */
+            202: {
+                headers: {
+                    /** @description The config deployment, when there is one. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    loadEnvironmentSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    version: number;
+                    key_id: string;
+                    /**
+                     * Format: byte
+                     * @description base64 of the HPKE encapsulated key + AES-256-GCM ciphertext.
+                     */
+                    sealed: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The reference stored and the deployment applying it, if one started. */
+            202: {
+                headers: {
+                    /** @description The config deployment, when there is one. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };

@@ -37,6 +37,51 @@ type OdysseyAppSpec struct {
 	// app in a cluster that cannot protect it.
 	// +optional
 	Access *AccessSpec `json:"access,omitempty"`
+	// Secrets are the app's secret variables: references only, never a value.
+	// Each becomes an environment variable of the same name that the pod reads
+	// from a Secret (a name here wins over the same name in env). The app does
+	// not start until every one of them is available.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=100
+	Secrets []SecretRefSpec `json:"secrets,omitempty"`
+}
+
+// SecretSource is where a secret's value comes from.
+// +kubebuilder:validation:Enum=managed;external
+type SecretSource string
+
+const (
+	// SecretManaged is a value a person loaded in the console, delivered
+	// sealed to this cluster's key and kept in the Secret <app>-secrets.
+	SecretManaged SecretSource = "managed"
+	// SecretExternal is a value the External Secrets Operator reads from a
+	// ClusterSecretStore.
+	SecretExternal SecretSource = "external"
+)
+
+// SecretRefSpec is one secret variable of an app.
+// +kubebuilder:validation:XValidation:rule="self.source != 'managed' || (has(self.version) && self.version >= 1)",message="a managed secret needs a version of at least 1"
+// +kubebuilder:validation:XValidation:rule="self.source != 'external' || (has(self.store) && size(self.store) > 0 && has(self.key) && size(self.key) > 0)",message="an external secret needs a store and a key"
+type SecretRefSpec struct {
+	// Name is the environment variable the app reads it as.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]{0,127}$`
+	Name   string       `json:"name"`
+	Source SecretSource `json:"source"`
+	// Version of a managed secret's value: the app does not start until the
+	// cluster holds this version or a newer one.
+	// +optional
+	Version int64 `json:"version,omitempty"`
+	// Store is the ClusterSecretStore an external secret is read from.
+	// +optional
+	Store string `json:"store,omitempty"`
+	// Key is the external secret's key in the store.
+	// +optional
+	Key string `json:"key,omitempty"`
+	// Property selects a field of the external secret (optional).
+	// +optional
+	Property string `json:"property,omitempty"`
 }
 
 // AccessMode is who may open an app.

@@ -300,8 +300,9 @@ type Options struct {
 	// a workflow through the real worker). Production leaves it nil.
 	Register func(*workflow.Registry)
 	// Cluster runs the apps; tests pass a configured fake. Nil picks the
-	// adapter from ClusterConfig (the worker's ODYSSEY_CLUSTER; the API never
-	// calls the cluster and leaves it as the in-memory fake).
+	// adapter from ClusterConfig (ODYSSEY_CLUSTER: the worker applies
+	// deployments with it, the API reads the cluster's secret key, sends
+	// sealed secrets and checks access; the gateway leaves it as the fake).
 	Cluster       release.Cluster
 	ClusterConfig config.Cluster
 	// Authority is the fleet CA: verify-only in the API, signing in the
@@ -403,6 +404,13 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	p.Releases.Register(registry)
 	p.Builds.Register(registry)
 	p.Sources.Register(registry)
+	registry.Every(workflow.Schedule{Name: "fleet.secret_sweep", Every: time.Hour, Run: func(ctx context.Context) error {
+		n, err := p.Fleet.Commands.SweepSecrets(ctx)
+		if n > 0 {
+			slog.Info("dropped expired secret deliveries", "count", n)
+		}
+		return err
+	}})
 
 	registry.Every(workflow.Schedule{Name: "event.purge", Every: 6 * time.Hour, Run: func(ctx context.Context) error {
 		n, err := p.Dispatcher(outboxpg.Options{}).Purge(ctx, time.Now().Add(-opts.EventRetention))
@@ -463,7 +471,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a.closers = append(a.closers, blobs.Close)
 	opts := Options{Release: releasesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID},
 		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder,
-		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub}
+		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub, ClusterConfig: cfg.Cluster}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
 		if err != nil {

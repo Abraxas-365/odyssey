@@ -162,6 +162,34 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 			Permissions: []string{permission.ProjectsWrite, permission.ProjectsRead},
 			Risk:        mcpx.RiskWrite,
 		}, t.setAccess),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "set_env",
+			Title: "Variables de la app",
+			Description: "Crea, cambia o quita variables de entorno de la app (configuración en texto, NO secretos: quien puede ver la app las ve). " +
+				"set es nombre → valor; unset, nombres a quitar. Si la app ya está en línea, se vuelve a publicar la misma versión con las variables nuevas. " +
+				"Para contraseñas, tokens o llaves usa request_secret. " +
+				"Creates, changes or removes the app's environment variables (plain configuration, NOT secrets: anyone who can see the app sees them). " +
+				"set is name → value; unset, names to remove. If the app is online, the same version is published again with the new variables. " +
+				"For passwords, tokens or keys use request_secret. app is the slug (see list_apps) or the id.",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsWrite, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+		}, t.setEnv),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "request_secret",
+			Title: "Pedir un secreto",
+			Description: "Pide que una persona cargue el valor de una variable secreta (contraseña, token, llave de API) en la consola. " +
+				"Tú nunca ves ni envías el valor: devuelve console_url, el enlace que le pasas al usuario; allí lo escribe y se cifra en su navegador. " +
+				"Cuando lo carga, la app se vuelve a publicar sola con el secreto. Si ya existe, dice en qué estado está. " +
+				"Asks a person to load a secret variable's value (password, token, API key) in the console. " +
+				"You never see nor send the value: it returns console_url, the link you give the user; they type it there and it is encrypted in their browser. " +
+				"Once loaded, the app is published again by itself with the secret. If it exists already, it tells its state. " +
+				"Never ask the user to paste a secret in the chat. app is the slug (see list_apps) or the id.",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsWrite, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.requestSecret),
 	}
 }
 

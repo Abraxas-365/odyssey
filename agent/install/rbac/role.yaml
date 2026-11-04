@@ -10,6 +10,8 @@ rules:
   - namespaces
   verbs:
   - create
+  - get
+  - list
 - apiGroups:
   - ""
   resources:
@@ -40,6 +42,22 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - external-secrets.io
+  resources:
+  - clustersecretstores
+  verbs:
+  - list
+- apiGroups:
+  - external-secrets.io
+  resources:
+  - externalsecrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
 - apiGroups:
   - networking.k8s.io
   resources:
@@ -76,6 +94,20 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - odyssey-agent-secrets
+  resources:
+  - clusterroles
+  verbs:
+  - bind
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
 - apiGroups:
   - storage.k8s.io
   resources:

@@ -350,8 +350,17 @@ func TestDesiredApps(t *testing.T) {
 	if found, _ := repo.FindCluster(ctx, org, c.ID); found.Apps != 1 {
 		t.Fatalf("apps on the cluster before move: %d", found.Apps)
 	}
+	// a value sealed to the old cluster's key waits there: the move drops it
+	waiting := fleet.SecretDelivery{ID: fleet.NewSecretDeliveryID(), Organization: org, Project: project.NewID(), Environment: environment,
+		Cluster: c.ID, App: "web", Name: "TOKEN", Version: 1, KeyID: "k3y", Sealed: make([]byte, 64), CreatedBy: e.user, CreatedAt: time.Now().UTC()}
+	if ok, err := repo.PutSecretDelivery(ctx, waiting); err != nil || !ok {
+		t.Fatalf("put delivery %v %v", ok, err)
+	}
 	if n, err := repo.MovePlacement(ctx, org, environment, c.ID, next.ID); err != nil || n != 1 {
 		t.Fatalf("move %d %v", n, err)
+	}
+	if got, err := repo.ListSecretDeliveries(ctx, org, c.ID, time.Time{}); err != nil || len(got) != 0 {
+		t.Fatalf("the old cluster's deliveries survived the move %+v %v", got, err)
 	}
 	if found, _ := repo.FindCluster(ctx, org, next.ID); found.Apps != 1 {
 		t.Fatalf("apps on the new cluster after move: %d", found.Apps)

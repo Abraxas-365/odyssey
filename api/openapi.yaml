@@ -481,6 +481,187 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/environments/{environment}/env:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    patch:
+      tags: [deployments]
+      operationId: setEnvironmentVariables
+      summary: Change the environment's plain variables
+      description: |
+        Sets and removes plain (non-secret) variables as the environment's next
+        settings revision, applied like an access change (a `config`
+        deployment when a release is online). A name that is a secret is
+        refused (remove the secret first); setting a variable to the value it
+        has adds no revision. Values never appear in the trail: event
+        `env.changed` carries only the names.
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                set:
+                  type: object
+                  additionalProperties: { type: string, maxLength: 4096 }
+                  maxProperties: 100
+                unset:
+                  type: array
+                  maxItems: 100
+                  items: { $ref: "#/components/schemas/SecretName" }
+      responses:
+        "202":
+          description: The settings stored and the deployment applying them, if one started.
+          headers:
+            Location: { schema: { type: string }, description: "The config deployment, when there is one." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - name: name
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/SecretName" }
+    put:
+      tags: [deployments]
+      operationId: putEnvironmentSecret
+      summary: Declare a secret
+      description: |
+        `managed`: records that a person must load the value (200, the secret
+        in state `missing`; nothing reaches the cluster until it is loaded; a
+        secret that exists already is returned as it is). `external`: reads it
+        from the cluster's ClusterSecretStore (External Secrets Operator) as
+        the next settings revision (202, like an access change); needs
+        `odyssey:secrets:external` and a cluster with the operator and that
+        store. Event `secret.changed` (`requested` | `external`).
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source]
+              properties:
+                source: { type: string, enum: [managed, external] }
+                note: { type: string, maxLength: 200, description: "Managed: what the value is for." }
+                store: { type: string, maxLength: 253, description: "External: the ClusterSecretStore." }
+                key: { type: string, maxLength: 512, description: "External: the key in the vault." }
+                property: { type: string, maxLength: 256, description: "External: the property (optional)." }
+      responses:
+        "200":
+          description: The managed secret requested (or as it already was).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretView" }
+        "202":
+          description: The external secret stored and the deployment applying it, if one started.
+          headers:
+            Location: { schema: { type: string }, description: "The config deployment, when there is one." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+    delete:
+      tags: [deployments]
+      operationId: removeEnvironmentSecret
+      summary: Remove a secret
+      description: |
+        A new settings revision without it (the cluster prunes its value), and
+        any open request of that name. Removing a secret read from the
+        company's vault needs `odyssey:secrets:external` too (403 otherwise).
+        Event `secret.changed` (`removed`).
+      x-permissions: [odyssey:projects:write]
+      responses:
+        "202":
+          description: The settings stored and the deployment applying them, if one started.
+          headers:
+            Location: { schema: { type: string }, description: "The config deployment, when there is one." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/secrets/{name}/value:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - name: name
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/SecretName" }
+    put:
+      tags: [deployments]
+      operationId: loadEnvironmentSecret
+      summary: Load a managed secret's value (sealed in the browser)
+      description: |
+        Takes only ciphertext: the console seals the value to `secret_key`
+        (from the settings) with HPKE, binding it to the cluster, environment, app,
+        name and `version` (the secret's `next_version`: one more than the highest
+        it ever had here, so a stale page cannot overwrite a newer value and a
+        secret removed and added again never reuses a version; 409
+        `SECRET_VERSION_CONFLICT` otherwise). Replacing a secret read from the
+        company's vault needs `odyssey:secrets:external` (403). The
+        control plane cannot open it; it travels to the cluster's agent, which
+        opens and stores it, and is deleted when the agent answers. The
+        reference becomes the next settings revision, applied like an access
+        change. Fails closed: 422 `SECRET_KEY_CHANGED` when the cluster's key
+        changed meanwhile, `SECRETS_UNAVAILABLE` when the cluster has no key.
+        Event `secret.changed` (`loaded`).
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, key_id, sealed]
+              properties:
+                version: { type: integer, minimum: 1 }
+                key_id: { type: string }
+                sealed: { type: string, format: byte, description: "base64 of the HPKE encapsulated key + AES-256-GCM ciphertext." }
+      responses:
+        "202":
+          description: The reference stored and the deployment applying it, if one started.
+          headers:
+            Location: { schema: { type: string }, description: "The config deployment, when there is one." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/projects/{id}/releases/{release}:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -1933,7 +2114,7 @@ components:
     EnvironmentSettings:
       type: object
       additionalProperties: false
-      required: [revision, access, access_login_available, access_protection_available]
+      required: [revision, access, env, secrets, secret_key, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available]
       properties:
         revision: { type: integer, description: "0: the defaults; every change adds one." }
         access:
@@ -1942,6 +2123,29 @@ components:
           required: [mode]
           properties:
             mode: { $ref: "#/components/schemas/AccessMode" }
+        env: { $ref: "#/components/schemas/EnvironmentVariables" }
+        secrets:
+          type: array
+          description: The environment's secrets judged against its cluster, then the open requests (state `missing`), by name.
+          items: { $ref: "#/components/schemas/SecretView" }
+        secret_key:
+          description: >-
+            The cluster key a managed value is sealed to in the browser (pkg/secretbox; HPKE DHKEM-X25519,
+            HKDF-SHA256, AES-256-GCM). Null when the environment has no cluster or its cluster cannot take
+            managed secrets yet.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ClusterSecretKey"
+        external_secrets: { type: boolean, description: "Whether the cluster has the External Secrets Operator." }
+        secret_stores:
+          type: array
+          description: The cluster's ClusterSecretStores an external secret can read from.
+          items: { type: string }
+        secrets_cluster_revoked:
+          type: boolean
+          description: >-
+            True when the environment's cluster was revoked: that is why it offers no key nor stores
+            (IT moves the environment to another cluster).
         access_login_available: { type: boolean }
         access_protection_available:
           type: boolean
@@ -1949,23 +2153,124 @@ components:
             Whether the environment's cluster can protect apps with the sign-in (its agent lists `odicea.access`).
             An environment not placed yet is judged by the organization's default cluster; false with no cluster.
             When false only `public` can be applied there.
+    EnvironmentVariables:
+      type: object
+      description: >-
+        Plain (non-secret) variables of the environment. They win over a release's env of the same name;
+        a secret of the same name wins over both. Names starting with `ODYSSEY_` are reserved.
+      additionalProperties: { type: string }
+    SettingsRevision:
+      type: object
+      additionalProperties: false
+      required: [revision, access, env, secrets]
+      description: One revision of an environment's configuration (only references to secrets, never a value).
+      properties:
+        revision: { type: integer }
+        access:
+          type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode: { $ref: "#/components/schemas/AccessMode" }
+        env: { $ref: "#/components/schemas/EnvironmentVariables" }
+        secrets:
+          type: array
+          items: { $ref: "#/components/schemas/SecretRef" }
+    SettingsChange:
+      type: object
+      additionalProperties: false
+      required: [settings, deployment]
+      properties:
+        settings: { $ref: "#/components/schemas/SettingsRevision" }
+        deployment:
+          description: The config deployment applying the change (null when none started).
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Deployment"
+    SecretName:
+      type: string
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+      description: An environment variable name; names starting with `ODYSSEY_` are reserved.
+    SecretRef:
+      type: object
+      additionalProperties: false
+      required: [name, source]
+      properties:
+        name: { $ref: "#/components/schemas/SecretName" }
+        source:
+          type: string
+          enum: [managed, external]
+          description: "`managed`: a person loads the value in the console; `external`: read from the company's vault."
+        version: { type: integer, description: "Managed: 1 for the first load, +1 per rotation (absent: not loaded)." }
+        key_id: { type: string, description: "Managed: the cluster key the value was sealed to." }
+        loaded_by: { type: string, format: uuid }
+        loaded_at: { type: string, format: date-time }
+        store: { type: string, description: "External: the cluster's ClusterSecretStore." }
+        key: { type: string, description: "External: the key in the vault." }
+        property: { type: string, description: "External: the property of the key (optional)." }
+    SecretView:
+      type: object
+      additionalProperties: false
+      required: [name, source, state, next_version]
+      properties:
+        name: { $ref: "#/components/schemas/SecretName" }
+        source: { type: string, enum: [managed, external] }
+        version: { type: integer }
+        key_id: { type: string }
+        loaded_by: { type: string, format: uuid }
+        loaded_at: { type: string, format: date-time }
+        store: { type: string }
+        key: { type: string }
+        property: { type: string }
+        state:
+          type: string
+          enum: [missing, loaded, reload, external, unavailable, failed]
+          description: >-
+            `missing`: requested, nobody loaded it yet; `loaded`: in force; `reload`: sealed to a key the
+            environment's cluster no longer has (load it again); `external`: read from the vault;
+            `unavailable`: the cluster cannot take this kind of secret; `failed`: the value in force never
+            reached the cluster (see `failure`; load it again).
+        next_version:
+          type: integer
+          minimum: 1
+          description: >-
+            The version a value loaded now must be sealed for (`PUT …/value`): one more than the highest this
+            name ever had in the environment, also after it was removed (the cluster takes only newer versions).
+        failure:
+          type: object
+          additionalProperties: false
+          required: [version, error, failed_at]
+          description: Why the value in force did not arrive (state `failed`).
+          properties:
+            version: { type: integer }
+            error: { type: string, maxLength: 500 }
+            failed_at: { type: string, format: date-time }
+        request: { $ref: "#/components/schemas/SecretRequest" }
+    SecretRequest:
+      type: object
+      additionalProperties: false
+      required: [name, note, requested_by, requested_via, created_at]
+      properties:
+        name: { $ref: "#/components/schemas/SecretName" }
+        note: { type: string, maxLength: 200 }
+        requested_by: { type: string, format: uuid }
+        requested_via: { type: string }
+        created_at: { type: string, format: date-time }
+    ClusterSecretKey:
+      type: object
+      additionalProperties: false
+      required: [cluster_id, key_id, public_key, app]
+      properties:
+        cluster_id: { type: string, format: uuid }
+        app: { type: string, description: "The app (its name in the cluster) a value sealed now is bound to." }
+        key_id: { type: string, description: "base64url(sha256(public_key)) cut to 16 characters." }
+        public_key: { type: string, format: byte, description: "The X25519 public key, base64." }
     AccessChange:
       type: object
       additionalProperties: false
       required: [settings, deployment, access_login_available]
       properties:
-        settings:
-          type: object
-          additionalProperties: false
-          required: [revision, access]
-          properties:
-            revision: { type: integer }
-            access:
-              type: object
-              additionalProperties: false
-              required: [mode]
-              properties:
-                mode: { $ref: "#/components/schemas/AccessMode" }
+        settings: { $ref: "#/components/schemas/SettingsRevision" }
         deployment:
           oneOf:
             - type: "null"

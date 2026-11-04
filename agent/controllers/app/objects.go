@@ -64,18 +64,29 @@ func labels(a *v1alpha1.OdysseyApp) map[string]string {
 	return l
 }
 
-// env is the spec's env, sorted, plus PORT unless the spec sets it.
+// env is the spec's env, sorted, then the secret variables (read from
+// Secrets; a secret replaces a plain variable of its name), plus PORT unless
+// the spec sets it either way.
 func env(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
+	secret := secretEnv(a)
+	secretNames := make(map[string]bool, len(secret))
+	for _, e := range secret {
+		secretNames[e.Name] = true
+	}
 	keys := make([]string, 0, len(a.Spec.Env))
 	for k := range a.Spec.Env {
-		keys = append(keys, k)
+		if !secretNames[k] {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
-	out := make([]corev1.EnvVar, 0, len(keys)+1)
+	out := make([]corev1.EnvVar, 0, len(keys)+len(secret)+1)
 	for _, k := range keys {
 		out = append(out, corev1.EnvVar{Name: k, Value: a.Spec.Env[k]})
 	}
-	if _, ok := a.Spec.Env["PORT"]; !ok {
+	out = append(out, secret...)
+	_, plain := a.Spec.Env["PORT"]
+	if !plain && !secretNames["PORT"] {
 		out = append(out, corev1.EnvVar{Name: "PORT", Value: strconv.Itoa(int(a.Spec.Port))})
 	}
 	return out
@@ -106,7 +117,7 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 	d.Spec.ProgressDeadlineSeconds = &deadline
 	d.Spec.RevisionHistoryLimit = ptr(int32(3))
 	d.Spec.Template = corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{Labels: pod},
+		ObjectMeta: metav1.ObjectMeta{Labels: pod, Annotations: podAnnotations(a)},
 		Spec: corev1.PodSpec{
 			AutomountServiceAccountToken: &no,
 			EnableServiceLinks:           &no,
@@ -138,6 +149,15 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 			}},
 		},
 	}
+}
+
+// podAnnotations roll the pods when the app's secrets change (none: apps
+// without secrets keep the template they had).
+func podAnnotations(a *v1alpha1.OdysseyApp) map[string]string {
+	if h := secretsHash(a); h != "" {
+		return map[string]string{AnnotationSecrets: h}
+	}
+	return nil
 }
 
 func mutateService(s *corev1.Service, a *v1alpha1.OdysseyApp) {

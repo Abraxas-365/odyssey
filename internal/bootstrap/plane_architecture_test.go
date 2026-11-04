@@ -85,6 +85,31 @@ func accessViolations(rel, p, pos string) []string {
 	return out
 }
 
+// secretstoreViolations: what the managed-secret store may not import. It
+// opens a sealed value and writes a Secret, so it stays small and auditable:
+// from this repository only agent/desired, pkg/secretbox and the fleet
+// proto; from outside it the standard library, Kubernetes and
+// controller-runtime (its tests may use any third-party library).
+func secretstoreViolations(rel, p, pos string) []string {
+	if !strings.HasPrefix(rel, "agent/secretstore/") {
+		return nil
+	}
+	if strings.HasPrefix(p, repoModule) {
+		for _, ok := range []string{"agent/desired", "pkg/secretbox", "proto/fleet/v1"} {
+			if p == repoModule+ok || strings.HasPrefix(p, repoModule+ok+"/") {
+				return nil
+			}
+		}
+		return []string{pos + ": agent/secretstore imports only agent/desired, pkg/secretbox and the fleet proto from this repository (" + p + ")"}
+	}
+	first, _, _ := strings.Cut(p, "/")
+	stdlib := !strings.Contains(first, ".")
+	if stdlib || strings.HasSuffix(rel, "_test.go") || strings.HasPrefix(p, "k8s.io/") || strings.HasPrefix(p, "sigs.k8s.io/") {
+		return nil
+	}
+	return []string{pos + ": agent/secretstore takes only the standard library, Kubernetes and controller-runtime from outside this repository (" + p + ")"}
+}
+
 // repoSources parses the .go files (tests included) of the given top-level
 // directories, with paths relative to the repository root.
 func repoSources(t *testing.T, dirs ...string) []goFile {
@@ -127,6 +152,7 @@ func planeViolations(files []goFile) []string {
 			pos := f.fset.Position(imp.Pos()).String()
 			out = append(out, builderViolations(f.rel, p, pos)...)
 			out = append(out, accessViolations(f.rel, p, pos)...)
+			out = append(out, secretstoreViolations(f.rel, p, pos)...)
 			if agentSide && (strings.HasPrefix(p, repoModule+"internal/") || strings.HasPrefix(p, repoModule+"cmd/")) {
 				out = append(out, pos+": the agent must not import the control plane ("+p+"); they talk through proto/")
 			}
@@ -190,7 +216,10 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"agent/controllers/build/j.go":                     `package build; import (_ "` + m + `agent/builder"; _ "k8s.io/api/batch/v1")`,
 		"internal/build/archive/a.go":                      `package archive; import _ "` + m + `pkg/srcarchive"`,
 		"agent/access/g.go":                                `package access; import (_ "github.com/golang-jwt/jwt/v5"; _ "k8s.io/client-go/kubernetes")`,
+		"agent/secretstore/s.go":                           `package secretstore; import (_ "encoding/json"; _ "` + m + `agent/desired"; _ "` + m + `pkg/secretbox"; _ "` + m + `proto/fleet/v1"; _ "k8s.io/api/core/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client")`,
+		"agent/secretstore/s_test.go":                      `package secretstore; import (_ "github.com/google/uuid"; _ "google.golang.org/protobuf/proto")`,
 		// violations
+		"agent/secretstore/bad.go":                   `package secretstore; import (_ "` + m + `agent/controllers/app"; _ "` + m + `pkg/srcarchive"; _ "github.com/google/uuid"; _ "google.golang.org/grpc")`,
 		"agent/access/bad.go":                        `package access; import (_ "` + m + `proto/fleet/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client"; _ "` + m + `agent/api/v1alpha1")`,
 		"agent/builder/k.go":                         `package builder; import (_ "k8s.io/client-go/kubernetes"; _ "` + m + `agent/api/v1alpha1"; _ "google.golang.org/grpc")`,
 		"agent/builds/r.go":                          `package builds; import _ "github.com/railwayapp/railpack/core/app"`,
@@ -226,5 +255,9 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"agent/access/bad.go: agent/access meets the control plane only through the ticket contract and imports only pkg/ (github.com/Abraxas-365/odyssey/proto",
 		"agent/access/bad.go: agent/access meets the control plane only through the ticket contract and imports only pkg/ (github.com/Abraxas-365/odyssey/agent/api",
 		"agent/access/bad.go: agent/access takes no wire format nor controller-runtime (sigs.k8s.io/",
+		"agent/secretstore/bad.go: agent/secretstore imports only agent/desired, pkg/secretbox and the fleet proto from this repository (github.com/Abraxas-365/odyssey/agent/controllers/app",
+		"agent/secretstore/bad.go: agent/secretstore imports only agent/desired, pkg/secretbox and the fleet proto from this repository (github.com/Abraxas-365/odyssey/pkg/srcarchive",
+		"agent/secretstore/bad.go: agent/secretstore takes only the standard library, Kubernetes and controller-runtime from outside this repository (github.com/google/uuid",
+		"agent/secretstore/bad.go: agent/secretstore takes only the standard library, Kubernetes and controller-runtime from outside this repository (google.golang.org/grpc",
 	)
 }

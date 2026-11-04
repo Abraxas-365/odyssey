@@ -12,7 +12,7 @@ Antes de `deploy_folder`, revisa esto en la carpeta del usuario. Odicea construy
    - Go: `go.mod` y un `main` que arranque el servidor.
    - Cualquier otra cosa: un `Dockerfile` que construya y arranque la app.
 4. **El código está completo.** La subida respeta `.gitignore` y excluye `.git`, `node_modules` y `.env*`: las dependencias se instalan en el build, no se suben. Verifica que el lockfile (`package-lock.json`, `poetry.lock`, `go.sum`…) esté en la carpeta.
-5. **Sin secretos.** Busca contraseñas, llaves y cadenas de conexión en el código y en archivos de configuración. Si las hay, sácalas a variables de entorno que se lean al arrancar y no pongas su valor en ninguna parte. Ver «Lo que Odicea todavía no ofrece» en [SKILL.md](../SKILL.md).
+5. **Sin secretos.** Busca contraseñas, llaves y cadenas de conexión en el código y en archivos de configuración. Si las hay, sácalas a variables de entorno que se lean al arrancar y no pongas su valor en ninguna parte. Si la app necesita uno, pídelo con `request_secret` (ver «Variables y secretos» en [SKILL.md](../SKILL.md)).
 6. **Sin servicios externos.** Si la app trae SDKs o configuración de Supabase, Firebase, Vercel, Neon, etc., no los conectes ni crees cuentas: avisa al usuario y a TI según [SKILL.md](../SKILL.md).
 7. **Estado.** El disco de la app no es permanente: no guardes datos importantes en archivos locales.
 

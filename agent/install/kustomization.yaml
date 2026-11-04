@@ -14,6 +14,7 @@ resources:
   - namespace.yaml
   - rbac/role.yaml
   - rbac.yaml
+  - policy.yaml
   - builds.yaml
   - deployment.yaml
   - access.yaml

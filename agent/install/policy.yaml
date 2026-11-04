@@ -1,0 +1,40 @@
+# The Secrets role (odyssey-agent-secrets, rbac.yaml) is bound only where
+# the agent keeps apps' Secrets: a RoleBinding of it is admitted in a
+# namespace Odyssey created for an environment (managed-by=odyssey) and only
+# for the agent's service account. So neither the agent nor a mistake can
+# grant it over the Secrets of the rest of the cluster (kube-system, other
+# teams). The agent cannot relabel an existing namespace (it may only create
+# namespaces), so it cannot make one of someone else's match.
+# ValidatingAdmissionPolicy is GA since Kubernetes 1.30.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: odyssey-agent-secrets
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [rolebindings]
+  matchConditions:
+    - name: binds-the-secrets-role
+      expression: object.roleRef.name == 'odyssey-agent-secrets'
+  validations:
+    - expression: >-
+        namespaceObject.metadata.name.startsWith('odyssey-') &&
+        namespaceObject.metadata.?labels[?'app.kubernetes.io/managed-by'].orValue('') == 'odyssey'
+      message: the odyssey-agent-secrets role may only be bound in a namespace Odyssey created for an environment
+    - expression: >-
+        object.roleRef.kind == 'ClusterRole' && size(object.subjects) == 1 &&
+        object.subjects.all(s, s.kind == 'ServiceAccount' && s.namespace == 'odyssey-system' && s.name == 'odyssey-agent')
+      message: the odyssey-agent-secrets role may only be bound to the odyssey-agent service account
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: odyssey-agent-secrets
+spec:
+  policyName: odyssey-agent-secrets
+  validationActions: [Deny]

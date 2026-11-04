@@ -19,6 +19,8 @@ const (
 	EventUploadTicketIssued  = "upload_ticket.issued"
 	EventUploadTicketUsed    = "upload_ticket.used"
 	EventAccessChanged       = "access.changed"
+	EventEnvChanged          = "env.changed"
+	EventSecretChanged       = "secret.changed"
 )
 
 // Subject kinds ("release/<id>", "deployment/<id>").
@@ -207,4 +209,63 @@ func NewAccessChanged(org identity.OrganizationID, actor identity.UserID, projec
 		"Cambió quién puede abrir "+n.where()+": "+AccessLabel(now.Access.Mode),
 		AccessChanged{Project: projectID, Environment: now.Environment.String(), Revision: now.Revision, Mode: now.Access.Mode,
 			PreviousMode: previous.Access.Mode, Deployment: deployment})
+}
+
+// EnvChanged v1: plain variables of an environment changed. Names only:
+// values may be configuration someone would rather not see in the trail.
+type EnvChanged struct {
+	Project     string        `json:"project_id"`
+	Environment string        `json:"environment_id"`
+	Revision    int64         `json:"revision"`
+	Set         []string      `json:"set"`
+	Unset       []string      `json:"unset"`
+	Deployment  *DeploymentID `json:"deployment_id"`
+}
+
+func NewEnvChanged(org identity.OrganizationID, actor identity.UserID, projectID string, now Settings, set, unset []string, deployment *DeploymentID, n Names) event.Event {
+	set, unset = sorted(set), sorted(unset)
+	return event.New(EventEnvChanged, 1, org, actor, event.Subject(AccessSubjectKind, now.Environment),
+		"Cambió las variables de "+n.where(),
+		EnvChanged{Project: projectID, Environment: now.Environment.String(), Revision: now.Revision, Set: set, Unset: unset, Deployment: deployment})
+}
+
+func sorted(s []string) []string {
+	out := append([]string{}, s...)
+	sort.Strings(out)
+	return out
+}
+
+// Secret changes (SecretChanged.Change).
+const (
+	SecretChangeRequested = "requested" // someone asked for a value nobody loaded yet
+	SecretChangeLoaded    = "loaded"    // a managed value was loaded (Version says which)
+	SecretChangeExternal  = "external"  // it now reads from the company's vault
+	SecretChangeRemoved   = "removed"   // the secret variable (or its request) is gone
+)
+
+// SecretChanged v1: a secret variable of an environment changed. Never a
+// value; for a load, which version and which cluster key it was sealed to.
+type SecretChanged struct {
+	Project     string        `json:"project_id"`
+	Environment string        `json:"environment_id"`
+	Name        string        `json:"name"`
+	Change      string        `json:"change"`
+	Source      SecretSource  `json:"source"`
+	Version     int64         `json:"version,omitempty"`
+	KeyID       string        `json:"key_id,omitempty"`
+	Store       string        `json:"store,omitempty"`
+	Revision    int64         `json:"revision"`
+	Deployment  *DeploymentID `json:"deployment_id"`
+}
+
+func NewSecretChanged(org identity.OrganizationID, actor identity.UserID, projectID string, env Settings, ref SecretRef, change string, deployment *DeploymentID, n Names) event.Event {
+	summary := map[string]string{
+		SecretChangeRequested: "Pidió el secreto " + ref.Name + " para " + n.where(),
+		SecretChangeLoaded:    "Cargó el secreto " + ref.Name + " de " + n.where(),
+		SecretChangeExternal:  "Conectó el secreto " + ref.Name + " de " + n.where() + " con el almacén " + ref.Store,
+		SecretChangeRemoved:   "Quitó el secreto " + ref.Name + " de " + n.where(),
+	}[change]
+	return event.New(EventSecretChanged, 1, org, actor, event.Subject(AccessSubjectKind, env.Environment), summary,
+		SecretChanged{Project: projectID, Environment: env.Environment.String(), Name: ref.Name, Change: change, Source: ref.Source,
+			Version: ref.Version, KeyID: ref.KeyID, Store: ref.Store, Revision: env.Revision, Deployment: deployment})
 }

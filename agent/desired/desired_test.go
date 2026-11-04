@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -292,5 +293,153 @@ func TestStatusIsStaleWhenTheSpecChangedAfterIt(t *testing.T) {
 	a.Status.ObservedGeneration = 2
 	if statusOf(a) == nil {
 		t.Error("a fresh status is reported")
+	}
+}
+
+func TestValidSecrets(t *testing.T) {
+	managed := func(name string, version int64) *fleetv1.SecretRef {
+		return &fleetv1.SecretRef{Name: name, Source: "managed", Version: version}
+	}
+	external := func(name, store, key string) *fleetv1.SecretRef {
+		return &fleetv1.SecretRef{Name: name, Source: "external", Store: store, Key: key}
+	}
+	many := make([]*fleetv1.SecretRef, 101)
+	for i := range many {
+		many[i] = managed("S"+strings.Repeat("x", i%5)+string(rune('a'+i/26))+string(rune('a'+i%26)), 1)
+	}
+	for name, c := range map[string]struct {
+		refs []*fleetv1.SecretRef
+		want string // "" = valid
+	}{
+		"none":                    {nil, ""},
+		"managed and external":    {[]*fleetv1.SecretRef{managed("DATABASE_URL", 3), external("API_KEY", "vault", "prod/api")}, ""},
+		"underscore first":        {[]*fleetv1.SecretRef{managed("_X1", 1)}, ""},
+		"name starts with digit":  {[]*fleetv1.SecretRef{managed("1X", 1)}, "environment variable"},
+		"name with dash":          {[]*fleetv1.SecretRef{managed("A-B", 1)}, "environment variable"},
+		"empty name":              {[]*fleetv1.SecretRef{managed("", 1)}, "environment variable"},
+		"name too long":           {[]*fleetv1.SecretRef{managed(strings.Repeat("A", 129), 1)}, "environment variable"},
+		"name of 128":             {[]*fleetv1.SecretRef{managed(strings.Repeat("A", 128), 1)}, ""},
+		"duplicate":               {[]*fleetv1.SecretRef{managed("A", 1), external("A", "vault", "k")}, "repeated"},
+		"unknown source":          {[]*fleetv1.SecretRef{{Name: "A", Source: "vault", Version: 1}}, "not managed or external"},
+		"empty source":            {[]*fleetv1.SecretRef{{Name: "A", Version: 1}}, "not managed or external"},
+		"managed without version": {[]*fleetv1.SecretRef{managed("A", 0)}, "version"},
+		"external without store":  {[]*fleetv1.SecretRef{external("A", "", "k")}, "store and a key"},
+		"external without key":    {[]*fleetv1.SecretRef{external("A", "vault", "")}, "store and a key"},
+		"store is not a name":     {[]*fleetv1.SecretRef{external("A", "Not A Name", "k")}, "store"},
+		"more than 100":           {many, "at most 100"},
+	} {
+		a := app(1)
+		a.Secrets = c.refs
+		err := Valid(a)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+func TestApplyMapsSecretsWithoutValues(t *testing.T) {
+	ctx := context.Background()
+	s, c := newSyncer(t, interceptor.Funcs{})
+	a := app(1)
+	a.Secrets = []*fleetv1.SecretRef{
+		{Name: "B_EXT", Source: "external", Store: "vault", Key: "prod/b", Property: "password", Version: 9},
+		{Name: "A_MAN", Source: "managed", Version: 4, Store: "ignored", Key: "ignored"},
+	}
+	if err := s.Apply(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	got := get(t, c).Spec.Secrets
+	want := []v1alpha1.SecretRefSpec{
+		{Name: "A_MAN", Source: v1alpha1.SecretManaged, Version: 4},
+		{Name: "B_EXT", Source: v1alpha1.SecretExternal, Store: "vault", Key: "prod/b", Property: "password"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("secrets: %+v, want %+v", got, want)
+	}
+
+	// A new version is a spec change at the same revision: it is applied.
+	a.Secrets[1].Version = 5
+	if err := s.Apply(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(t, c).Spec.Secrets; got[0].Version != 5 {
+		t.Errorf("version not updated: %+v", got)
+	}
+
+	bad := app(2)
+	bad.Secrets = []*fleetv1.SecretRef{{Name: "9", Source: "managed", Version: 1}}
+	if err := s.Apply(ctx, bad); !IsRejected(err) {
+		t.Errorf("an invalid secret must reject the app: %v", err)
+	}
+}
+
+func TestValidSecretDelivery(t *testing.T) {
+	ok := &fleetv1.Secret{OrganizationId: org, ProjectId: proj, EnvironmentId: env, App: "portal", Name: "A", Version: 1, KeyId: "k", Sealed: []byte{1}}
+	if err := ValidSecret(ok); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*fleetv1.Secret){
+		"organization": func(s *fleetv1.Secret) { s.OrganizationId = "x" },
+		"project":      func(s *fleetv1.Secret) { s.ProjectId = "" },
+		"environment":  func(s *fleetv1.Secret) { s.EnvironmentId = strings.ToUpper(s.EnvironmentId) },
+		"app":          func(s *fleetv1.Secret) { s.App = "a/b" },
+		"name":         func(s *fleetv1.Secret) { s.Name = "a-b" },
+		"version":      func(s *fleetv1.Secret) { s.Version = -1 },
+		"sealed":       func(s *fleetv1.Secret) { s.Sealed = nil },
+	} {
+		c := &fleetv1.Secret{}
+		c.OrganizationId, c.ProjectId, c.EnvironmentId, c.App, c.Name, c.Version, c.KeyId, c.Sealed =
+			ok.OrganizationId, ok.ProjectId, ok.EnvironmentId, ok.App, ok.Name, ok.Version, ok.KeyId, ok.Sealed
+		mutate(c)
+		if ValidSecret(c) == nil {
+			t.Errorf("%s: must be refused", name)
+		}
+	}
+}
+
+func TestSecretStoresCapability(t *testing.T) {
+	store := func(name string) client.Object {
+		u := &unstructured.Unstructured{}
+		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ClusterSecretStore"})
+		u.SetName(name)
+		return u
+	}
+	groups := func(names ...string) *fakediscovery.FakeDiscovery {
+		fd := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
+		for _, n := range names {
+			fd.Resources = append(fd.Resources, &metav1.APIResourceList{GroupVersion: n + "/v1"})
+		}
+		return fd
+	}
+
+	s, _ := newSyncer(t, interceptor.Funcs{}, store("vault"), store("aws"))
+	s.Discovery = groups("external-secrets.io")
+	if got := s.Capabilities(context.Background()).GetSecretStores(); strings.Join(got, ",") != "aws,vault" {
+		t.Errorf("stores: %v", got)
+	}
+
+	// Without the operator nothing is listed (and nothing is asked).
+	listed := false
+	s, _ = newSyncer(t, interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, l client.ObjectList, o ...client.ListOption) error {
+		if u, ok := l.(*unstructured.UnstructuredList); ok && u.GroupVersionKind().Group == "external-secrets.io" {
+			listed = true
+		}
+		return c.List(ctx, l, o...)
+	}}, store("vault"))
+	s.Discovery = groups("cert-manager.io")
+	if got := s.Capabilities(context.Background()).GetSecretStores(); got == nil || len(got) != 0 || listed {
+		t.Errorf("no operator: %#v listed=%v", got, listed)
+	}
+
+	// The operator is there but the list is refused: empty, the agent still connects.
+	s, _ = newSyncer(t, interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, l client.ObjectList, o ...client.ListOption) error {
+		if u, ok := l.(*unstructured.UnstructuredList); ok && u.GroupVersionKind().Group == "external-secrets.io" {
+			return apierrors.NewForbidden(schema.GroupResource{Group: "external-secrets.io", Resource: "clustersecretstores"}, "", errors.New("no"))
+		}
+		return c.List(ctx, l, o...)
+	}})
+	s.Discovery = groups("external-secrets.io")
+	if got := s.Capabilities(context.Background()); got.GetSecretStores() == nil || len(got.GetSecretStores()) != 0 || !slices.Contains(got.GetApis(), "external-secrets.io") {
+		t.Errorf("forbidden: %+v", got)
 	}
 }

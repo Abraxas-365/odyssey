@@ -15,8 +15,9 @@ Deployment + Service + Ingress) and the **web console** (`frontend/`). Domain
 modules today: `project` (the golden sample; apps and their environments),
 `release` (releases, deployments and the `release.deploy` workflow behind the
 `Cluster` port), `fleet` (clusters, enrolment, the fleet CA, desired state
-and what agents report) and `audit` (an event subscriber). The worker's
-`ODYSSEY_CLUSTER` picks the `Cluster` adapter: `fake` (default, in memory; an
+and what agents report) and `audit` (an event subscriber).
+`ODYSSEY_CLUSTER` (the API and the worker must agree) picks the `Cluster`
+adapter: `fake` (default, in memory; an
 image repository containing `unhealthy` / `reject` simulates a failed health
 check / a refused apply) or `fleet` (`releasefleet`: the environment's
 cluster, through `fleet.Dispatch`). The control plane holds no cluster
@@ -78,10 +79,11 @@ agent/builder/            what a build's pod runs: prepare (fetch, verify, Docke
 agent/builds/             tunnel ↔ OdysseyBuilds: start/cancel/status, follow the pod's log (seq = stream<<32|line)
 agent/source/             :8099 source server for build pods (per-build token) relaying FetchSource
 agent/access/             the sign-in gate (`odyssey-agent access`, its own Deployment `odyssey-access` behind Traefik forwardAuth): cookie + ticket (EdDSA JWT via JWKS) verification; imports only pkg/ and the stdlib/jwt/client-go. Contract: docs/access.md
+agent/secretstore/        managed secrets: opens a sealed value (pkg/secretbox) into `<app>-secrets` if its version is newer. Contract: docs/secrets.md
 agent/desired/            desired app (proto) → namespace + OdysseyApp; status/capabilities → proto
 agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports; builds.go: build queue, final status after its log
 deploy/k3d/              local cluster extras: registry/ (zot in ns odyssey-registry, Service ClusterIP 10.43.200.200), registries.yaml (k3s mirror so the node pulls the registry by its in-cluster name), agent/ (overlay of agent/install: ODYSSEY_REGISTRY + `builds-registry` NetworkPolicy)
-agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), access.yaml (the gate: Deployment replicas 1, Service, Role, NetworkPolicy), deployment
+agent/install/            kustomize: crd/ + rbac/role.yaml (generated), rbac.yaml (+ odyssey-agent-secrets, bound only per environment namespace), policy.yaml (VAP confining that binding), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), access.yaml (the gate: Deployment replicas 1, Service, Role, NetworkPolicy), deployment
 internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
 internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp
 internal/server/          Fiber app: middleware, /health, /api/config, /api/v1; assistant.go: GET /api/v1/assistant + public GET /skills/odicea.tar.gz
@@ -98,6 +100,7 @@ internal/{errx,identity,query,text,txn,pgerr,migrate,pgtest,config,httpx,permiss
 iam/permissions.json      the IAMKit permission manifest (source of internal/permission)
 api/openapi.yaml          HTTP contract, exact shapes (OpenAPI 3.1, hand-written, test-enforced)
 docs/api.md               HTTP contract rules; code cites its sections (§N)
+docs/secrets.md           variables y secretos, data plane: cluster key, delivery, OdysseyApp.spec.secrets, gating
 scripts/                  IAMKit provisioning, token, smoke
 frontend/                 web console (Vite + React + shadcn base-nova + Tailwind v4); see frontend/README.md
 ```

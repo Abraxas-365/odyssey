@@ -342,20 +342,29 @@ func affected(res sql.Result, err error, op, notFound string) error {
 
 // ---- environment settings ----
 
-const settingsColumns = `environment_id, organization_id, revision, access_mode, created_by, created_at`
+const settingsColumns = `environment_id, organization_id, revision, access_mode, env, secrets, created_by, created_at`
 
 type settingsRow struct {
 	Environment  project.EnvironmentID   `db:"environment_id"`
 	Organization identity.OrganizationID `db:"organization_id"`
 	Revision     int64                   `db:"revision"`
 	AccessMode   release.AccessMode      `db:"access_mode"`
+	Env          []byte                  `db:"env"`
+	Secrets      []byte                  `db:"secrets"`
 	CreatedBy    identity.UserID         `db:"created_by"`
 	CreatedAt    time.Time               `db:"created_at"`
 }
 
-func (s settingsRow) settings() release.Settings {
-	return release.Settings{Environment: s.Environment, Organization: s.Organization, Revision: s.Revision,
+func (s settingsRow) settings() (release.Settings, error) {
+	out := release.Settings{Environment: s.Environment, Organization: s.Organization, Revision: s.Revision,
 		Access: release.AccessSettings{Mode: s.AccessMode}, CreatedBy: s.CreatedBy, CreatedAt: s.CreatedAt}
+	if err := json.Unmarshal(s.Env, &out.Env); err != nil {
+		return release.Settings{}, errx.Wrap(err, "decode environment variables", errx.TypeInternal)
+	}
+	if err := json.Unmarshal(s.Secrets, &out.Secrets); err != nil {
+		return release.Settings{}, errx.Wrap(err, "decode environment secrets", errx.TypeInternal)
+	}
+	return out.Normalize(), nil
 }
 
 // FindSettings is the latest revision; an environment that never changed its
@@ -370,7 +379,7 @@ func (r *Repository) FindSettings(ctx context.Context, organization identity.Org
 	if err != nil {
 		return release.Settings{}, pgerr.MapWith(err, "find environment settings", messages)
 	}
-	return row.settings(), nil
+	return row.settings()
 }
 
 // FindSettingsRevision is one revision; 0 is the defaults.
@@ -387,20 +396,112 @@ func (r *Repository) FindSettingsRevision(ctx context.Context, organization iden
 	if err != nil {
 		return release.Settings{}, pgerr.MapWith(err, "find environment settings revision", messages)
 	}
-	return row.settings(), nil
+	return row.settings()
 }
 
 // AppendSettings writes s as the environment's next revision. Callers hold
 // the environment's state lock, so revisions never race.
 func (r *Repository) AppendSettings(ctx context.Context, s release.Settings) (release.Settings, error) {
+	s = s.Normalize()
+	env, err := json.Marshal(s.Env)
+	if err != nil {
+		return release.Settings{}, errx.Wrap(err, "encode environment variables", errx.TypeInternal)
+	}
+	secrets, err := json.Marshal(s.Secrets)
+	if err != nil {
+		return release.Settings{}, errx.Wrap(err, "encode environment secrets", errx.TypeInternal)
+	}
 	var row settingsRow
-	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, created_by)
-		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
-		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, s.CreatedBy)
+	err = txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, env, secrets, created_by)
+		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4, $5, $6 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
+		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, env, secrets, s.CreatedBy)
 	if err != nil {
 		return release.Settings{}, pgerr.MapWith(err, "append environment settings", messages)
 	}
-	return row.settings(), nil
+	if err := r.raiseSecretVersions(ctx, s); err != nil {
+		return release.Settings{}, err
+	}
+	return row.settings()
+}
+
+// raiseSecretVersions lifts the high-water mark of every managed secret of s
+// (in the revision's transaction, so the two never disagree). It only ever
+// raises: GREATEST keeps the old mark when the name came back with a lower
+// version or was removed. Another organization's row of the same environment
+// id is left alone (the WHERE), like PutSecretRequest.
+func (r *Repository) raiseSecretVersions(ctx context.Context, s release.Settings) error {
+	var names []string
+	var versions []int64
+	for _, ref := range s.Secrets {
+		if ref.Source == release.SecretManaged && ref.Version > 0 {
+			names, versions = append(names, ref.Name), append(versions, ref.Version)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.secret_versions (environment_id, organization_id, name, version)
+		SELECT $1, $2, n, v FROM unnest($3::text[], $4::bigint[]) AS u(n, v)
+		ON CONFLICT (environment_id, name) DO UPDATE SET version = GREATEST(release.secret_versions.version, EXCLUDED.version)
+		WHERE release.secret_versions.organization_id = EXCLUDED.organization_id`,
+		s.Environment, s.Organization, pq.Array(names), pq.Array(versions))
+	return pgerr.MapWith(err, "raise secret versions", messages)
+}
+
+// ---- secret requests ----
+
+const requestColumns = `environment_id, organization_id, name, note, requested_by, requested_via, created_at`
+
+// PutSecretRequest stores the request, or renews the one of the same name
+// (another person asked again: theirs is the note now).
+func (r *Repository) PutSecretRequest(ctx context.Context, q release.SecretRequest) error {
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.secret_requests (environment_id, organization_id, name, note, requested_by, requested_via)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (environment_id, name) DO UPDATE SET note = EXCLUDED.note, requested_by = EXCLUDED.requested_by,
+		    requested_via = EXCLUDED.requested_via, created_at = now()
+		WHERE release.secret_requests.organization_id = EXCLUDED.organization_id`,
+		q.Environment, q.Organization, q.Name, q.Note, q.RequestedBy, q.RequestedVia)
+	return pgerr.MapWith(err, "put secret request", messages)
+}
+
+func (r *Repository) ListSecretRequests(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID) ([]release.SecretRequest, error) {
+	out := []release.SecretRequest{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT `+requestColumns+` FROM release.secret_requests
+		WHERE organization_id = $1 AND environment_id = $2 ORDER BY name`, organization, env)
+	return out, pgerr.MapWith(err, "list secret requests", messages)
+}
+
+func (r *Repository) DeleteSecretRequest(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, name string) (bool, error) {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `DELETE FROM release.secret_requests
+		WHERE organization_id = $1 AND environment_id = $2 AND name = $3`, organization, env, name)
+	if err != nil {
+		return false, pgerr.MapWith(err, "delete secret request", messages)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, errx.Wrap(err, "delete secret request", errx.TypeInternal)
+	}
+	return n > 0, nil
+}
+
+// ListSecretVersions reads the high-water mark of every managed secret of the
+// environment (release.secret_versions, kept by AppendSettings). The mark
+// never goes down, whatever happens to the settings history.
+func (r *Repository) ListSecretVersions(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID) (map[string]int64, error) {
+	var rows []struct {
+		Name    string `db:"name"`
+		Version int64  `db:"version"`
+	}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT name, version FROM release.secret_versions
+		WHERE organization_id = $1 AND environment_id = $2`, organization, env)
+	if err != nil {
+		return nil, pgerr.MapWith(err, "read secret versions", messages)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, x := range rows {
+		out[x.Name] = x.Version
+	}
+	return out, nil
 }
 
 // ---- upload tickets ----

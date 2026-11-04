@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, EnvironmentSettings } from '@/lib/types'
 import { accessApplying, accessLabel, accessNotice, accessOptions, accessPending, canChoose, noticeText, optionDisabled } from './access'
 
-const settings = (revision: number, mode: EnvironmentSettings['access']['mode'] = 'team', extra: Partial<EnvironmentSettings> = {}): EnvironmentSettings => ({ revision, access: { mode }, access_login_available: true, access_protection_available: true, ...extra })
+const settings = (revision: number, mode: EnvironmentSettings['access']['mode'] = 'team', extra: Partial<EnvironmentSettings> = {}): EnvironmentSettings => ({ revision, access: { mode }, env: {}, secrets: [], secret_key: null, external_secrets: false, secret_stores: [], secrets_cluster_revoked: false, access_login_available: true, access_protection_available: true, ...extra })
 const online = (applied: number | null, active: unknown = null): CurrentRelease =>
   ({ environment_id: 'e', url: 'https://a.test', release: { id: 'r' }, deployment: { id: 'd' }, active, applied_settings_revision: applied }) as unknown as CurrentRelease
 

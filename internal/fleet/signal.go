@@ -14,6 +14,8 @@ type Signal struct {
 	Name        string
 	// Build is set when that desired build changed (dispatched or cancelled).
 	Build BuildID
+	// Secret is set when a managed value waits for the cluster.
+	Secret SecretDeliveryID
 	// Revoked: the cluster's certificate is no longer accepted.
 	Revoked bool
 	// Reenrolled: the cluster enrolled again with a new key; tunnels of the

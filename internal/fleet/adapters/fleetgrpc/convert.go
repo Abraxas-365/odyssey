@@ -14,6 +14,8 @@ func agentFromProto(h *fleetv1.Hello) fleet.Agent {
 		IngressClasses:    nonNil(c.GetIngressClasses()),
 		StorageClasses:    nonNil(c.GetStorageClasses()),
 		Builder:           builderFromProto(c.GetBuilder()),
+		SecretKey:         secretKeyFromProto(c.GetSecretKey()),
+		SecretStores:      nonNil(c.GetSecretStores()),
 	}}
 }
 
@@ -43,11 +45,38 @@ func reportFromProto(r *fleetv1.AppReport) (fleet.Report, error) {
 }
 
 func appToProto(a fleet.App) *fleetv1.App {
+	secrets := make([]*fleetv1.SecretRef, 0, len(a.Secrets))
+	for _, s := range a.Secrets {
+		secrets = append(secrets, &fleetv1.SecretRef{Name: s.Name, Source: s.Source, Version: s.Version,
+			Store: s.Store, Key: s.Key, Property: s.Property})
+	}
 	return &fleetv1.App{
 		OrganizationId: a.Organization.String(), ProjectId: a.Project.String(), EnvironmentId: a.Environment.String(),
 		Name: a.Name, Revision: a.Revision, Image: a.Image, Port: int32(a.Port), HealthPath: a.HealthPath,
-		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels, Access: &fleetv1.Access{Mode: a.Access},
+		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels, Access: &fleetv1.Access{Mode: a.Access}, Secrets: secrets,
 	}
+}
+
+func secretToProto(d fleet.SecretDelivery) *fleetv1.ControlMessage {
+	return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_Secret{Secret: &fleetv1.Secret{
+		DeliveryId: d.ID.String(), OrganizationId: d.Organization.String(), ProjectId: d.Project.String(),
+		EnvironmentId: d.Environment.String(), App: d.App, Name: d.Name, Version: d.Version, KeyId: d.KeyID, Sealed: d.Sealed,
+	}}}
+}
+
+func secretAckFromProto(a *fleetv1.SecretAck) (fleet.SecretAck, error) {
+	id, err := fleet.ParseSecretDeliveryID(a.GetDeliveryId())
+	if err != nil {
+		return fleet.SecretAck{}, err
+	}
+	return fleet.SecretAck{Delivery: id, Error: a.GetError()}, nil
+}
+
+func secretKeyFromProto(k *fleetv1.SecretKey) *fleet.SecretKey {
+	if k == nil {
+		return nil
+	}
+	return &fleet.SecretKey{KeyID: k.GetKeyId(), Public: k.GetPublicKey(), Suite: k.GetSuite()}
 }
 
 func builderFromProto(b *fleetv1.Builder) *fleet.Builder {

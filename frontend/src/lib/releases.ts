@@ -1,7 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, params } from './api'
-import type { AccessChange, AccessMode, BuildLogLine, BuildLogPage, CurrentRelease, Deployment, DeployRequest, DeploySourceConfig, EnvironmentList, EnvironmentSettings, List } from './types'
+import { fromBase64, sealSecret } from './secretbox'
+import type {
+  AccessChange,
+  AccessMode,
+  BuildLogLine,
+  BuildLogPage,
+  CurrentRelease,
+  Deployment,
+  DeployRequest,
+  DeploySourceConfig,
+  EnvironmentList,
+  EnvironmentSettings,
+  List,
+  PutEnvironmentSecret,
+  SecretView,
+  SetEnvironmentVariables,
+  SettingsChange,
+} from './types'
 
 /** While something is being published the console polls every 2 s (plan 1a-a1). */
 export const PUBLISHING_POLL_MS = 2000
@@ -75,6 +92,69 @@ export function useSetAccess(project: string, env: string) {
     mutationFn: (mode: AccessMode) => api<AccessChange>(`${envPath(project, env)}/access`, { method: 'PUT', body: { mode } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
   })
+}
+
+/** Sets and removes plain variables in one revision (a config deployment applies it when the app is online). */
+export function useSetEnv(project: string, env: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: SetEnvironmentVariables) => api<SettingsChange>(`${envPath(project, env)}/env`, { method: 'PATCH', body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+  })
+}
+
+/**
+ * Declares a secret: `managed` is a request a person answers by loading the
+ * value (200, nothing applied yet); `external` points at the vault (202, a
+ * revision applied like any change).
+ */
+export function usePutSecret(project: string, env: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, body }: { name: string; body: PutEnvironmentSecret }) =>
+      api<SecretView | SettingsChange>(`${envPath(project, env)}/secrets/${enc(name)}`, { method: 'PUT', body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+  })
+}
+
+export function useRemoveSecret(project: string, env: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api<SettingsChange>(`${envPath(project, env)}/secrets/${enc(name)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+  })
+}
+
+/**
+ * Loads a managed secret's value. The value is sealed here, in the browser,
+ * to the cluster's key (lib/secretbox): the API only ever receives the
+ * ciphertext. The key and the version come from settings read right now, not
+ * from the page, so a key that changed or a value someone else loaded meanwhile
+ * fails closed (SECRET_KEY_CHANGED / 409) instead of being overwritten.
+ */
+export function useLoadSecret(project: string, env: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, value }: { name: string; value: string }) => loadSecretValue(project, env, name, value),
+    // the variables hold the plaintext: drop the mutation as soon as nobody
+    // observes it (the dialog also resets it when it closes)
+    gcTime: 0,
+    onSettled: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+  })
+}
+
+/** useLoadSecret's work, on its own so a test proves only ciphertext leaves. */
+export async function loadSecretValue(project: string, env: string, name: string, value: string): Promise<SettingsChange> {
+  const settings = await api<EnvironmentSettings>(`${envPath(project, env)}/settings`)
+  const key = settings.secret_key
+  if (!key) throw new ApiError('El clúster de esta app todavía no puede guardar secretos. Pídele a TI que lo habilite.', 422, 'BUSINESS', 'SECRETS_UNAVAILABLE')
+  // the API's next_version counts past a removed one (the cluster takes only newer versions);
+  // a requested secret is in settings.secrets too, so a missing name was removed meanwhile
+  const known = settings.secrets.find(s => s.name === name)
+  if (!known) throw new ApiError('Este secreto ya no existe. Recarga la página.', 404, 'NOT_FOUND', 'NOT_FOUND')
+  const version = known.next_version
+  const sealed = await sealSecret(fromBase64(key.public_key), { cluster: key.cluster_id, environment: env, app: key.app, name, version }, value)
+  return api<SettingsChange>(`${envPath(project, env)}/secrets/${enc(name)}/value`, { method: 'PUT', body: { version, key_id: key.key_id, sealed } })
 }
 
 function useDeploymentWrite<V>(project: string, env: string, fn: (v: V) => Promise<Deployment>) {

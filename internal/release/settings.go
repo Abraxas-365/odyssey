@@ -1,6 +1,9 @@
 package release
 
 import (
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -56,19 +59,82 @@ type AccessSettings struct {
 
 // Settings is how an environment is configured, as one revision of an
 // append-only history: a change is a new, higher revision, never an update.
+// Each revision is the whole configuration (a change copies the rest
+// forward), so a deployment that applies revision N gets exactly N.
 // An environment with no revision uses the defaults (Revision 0).
 type Settings struct {
 	Environment  project.EnvironmentID   `json:"-"`
 	Organization identity.OrganizationID `json:"-"`
 	Revision     int64                   `json:"revision"`
 	Access       AccessSettings          `json:"access"`
-	CreatedBy    identity.UserID         `json:"-"`
-	CreatedAt    time.Time               `json:"-"`
+	// Env are the environment's plain variables (2a). They win over a
+	// release's env of the same name; never secrets.
+	Env map[string]string `json:"env"`
+	// Secrets are the environment's secret variables, sorted by name: only
+	// references, never a value. A name is in Env or in Secrets, not both.
+	Secrets   []SecretRef     `json:"secrets"`
+	CreatedBy identity.UserID `json:"-"`
+	CreatedAt time.Time       `json:"-"`
 }
 
 // DefaultSettings are the settings of an environment that never changed them.
 func DefaultSettings(organization identity.OrganizationID, env project.EnvironmentID) Settings {
-	return Settings{Environment: env, Organization: organization, Access: AccessSettings{Mode: DefaultAccess}}
+	return Settings{Environment: env, Organization: organization, Access: AccessSettings{Mode: DefaultAccess},
+		Env: map[string]string{}, Secrets: []SecretRef{}}
+}
+
+// Normalize fills the empty collections (rows written before 2a have none).
+func (s Settings) Normalize() Settings {
+	if s.Env == nil {
+		s.Env = map[string]string{}
+	}
+	if s.Secrets == nil {
+		s.Secrets = []SecretRef{}
+	}
+	slices.SortFunc(s.Secrets, func(a, b SecretRef) int { return strings.Compare(a.Name, b.Name) })
+	return s
+}
+
+// next is a copy of s to change into the following revision (deep: the
+// maps and slices are not shared with s).
+func (s Settings) next(actor identity.UserID) Settings {
+	n := s.Normalize()
+	n.Revision, n.CreatedBy, n.CreatedAt = 0, actor, time.Time{}
+	n.Env = maps.Clone(n.Env)
+	n.Secrets = slices.Clone(n.Secrets)
+	return n
+}
+
+// Secret is the reference named name (false when there is none).
+func (s Settings) Secret(name string) (SecretRef, bool) {
+	for _, r := range s.Secrets {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return SecretRef{}, false
+}
+
+// WithAccess is the next settings with the access mode changed (the rest
+// copied forward).
+func (s Settings) WithAccess(mode AccessMode, actor identity.UserID) Settings {
+	n := s.next(actor)
+	n.Access.Mode = mode
+	return n
+}
+
+// EnvNames are the plain variables' names, sorted.
+func (s Settings) EnvNames() []string {
+	return slices.Sorted(maps.Keys(s.Normalize().Env))
+}
+
+// SecretNames are the secrets' names, sorted.
+func (s Settings) SecretNames() []string {
+	out := make([]string, 0, len(s.Secrets))
+	for _, r := range s.Normalize().Secrets {
+		out = append(out, r.Name)
+	}
+	return out
 }
 
 // SetAccess is the request to change who can open an environment's app.
@@ -88,7 +154,13 @@ func (in SetAccess) Validate() error {
 // deployment that applies them (nil when it only stored them: another
 // deployment is in progress and will pick them up, nothing is online yet, or
 // nothing changed).
-type AccessChange struct {
+type AccessChange = SettingsChange
+
+// SettingsChange is the outcome of any settings change (access, variables,
+// secrets): the settings now in force and the config deployment that applies
+// them (nil when it only stored them: another deployment is in progress and
+// will pick them up, nothing is online yet, or nothing changed).
+type SettingsChange struct {
 	Settings   Settings    `json:"settings"`
 	Deployment *Deployment `json:"deployment"`
 }

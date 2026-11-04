@@ -13,8 +13,12 @@ package fleet
 
 import (
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Abraxas-365/odyssey/pkg/secretbox"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -152,7 +156,45 @@ type Capabilities struct {
 	StorageClasses []string `json:"storage_classes"`
 	// Builder is set when the cluster can build images (nil: it cannot).
 	Builder *Builder `json:"builder,omitempty"`
+	// SecretKey is where managed secret values are sealed to (nil: the
+	// cluster cannot take them).
+	SecretKey *SecretKey `json:"secret_key,omitempty"`
+	// SecretStores are the ClusterSecretStores external secrets may be read
+	// from, by name.
+	SecretStores []string `json:"secret_stores,omitempty"`
 }
+
+// SecretKey is a cluster's public key for managed secrets (pkg/secretbox).
+type SecretKey struct {
+	KeyID  string `json:"key_id"`
+	Public []byte `json:"public_key"`
+	Suite  string `json:"suite"`
+}
+
+// CapabilityExternalSecrets is listed in Capabilities.APIs when the cluster
+// has the External Secrets Operator.
+const CapabilityExternalSecrets = "external-secrets.io"
+
+// ExternalSecrets reports whether the cluster can read external secrets.
+func (c Capabilities) ExternalSecrets() bool {
+	return slices.Contains(c.APIs, CapabilityExternalSecrets)
+}
+
+// Codes and messages of secrets.
+const (
+	// CodeSecretsUnavailable: the cluster announced no secret key.
+	CodeSecretsUnavailable = "SECRETS_UNAVAILABLE"
+	// CodeExternalSecretsUnavailable: the cluster has no External Secrets Operator.
+	CodeExternalSecretsUnavailable = "EXTERNAL_SECRETS_UNAVAILABLE"
+	// CodeSecretKeyChanged: a value sealed to a key the cluster no longer
+	// has (it was reinstalled, or the environment moved): load it again.
+	CodeSecretKeyChanged = "SECRET_KEY_CHANGED"
+	// CodeSecretVersionConflict: a newer version of the secret is already
+	// waiting for the cluster (same code as release's).
+	CodeSecretVersionConflict         = "SECRET_VERSION_CONFLICT"
+	SecretsUnavailableMessage         = "Este clúster todavía no puede guardar secretos. Pide a TI que actualice su agente."
+	ExternalSecretsUnavailableMessage = "Este clúster no tiene un gestor de secretos externos (External Secrets Operator). Pide a TI que lo instale."
+)
 
 // CapabilityAccess is listed in Capabilities.APIs when the cluster can
 // protect apps with the sign-in gate (access mode team or organization). A
@@ -193,10 +235,37 @@ func (a Agent) Validate() error {
 			return errx.Validation("a reported capability is not valid")
 		}
 	}
+	if a.Capabilities.SecretKey != nil {
+		k := a.Capabilities.SecretKey
+		if k.Suite != secretbox.Suite || !secretbox.ValidPublic(k.Public) || k.KeyID != secretbox.KeyID(k.Public) {
+			return errx.Validation("the reported secret key is not valid")
+		}
+	}
+	if len(a.Capabilities.SecretStores) > MaxReported {
+		return errx.Validation("too many capabilities reported")
+	}
+	for _, s := range a.Capabilities.SecretStores {
+		if !ValidStoreName(s) {
+			return errx.Validation("a reported secret store is not valid")
+		}
+	}
 	if a.Capabilities.Builder != nil {
 		return a.Capabilities.Builder.Validate()
 	}
 	return nil
+}
+
+// ValidStoreName is a Kubernetes object name (DNS subdomain).
+func ValidStoreName(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, part := range strings.Split(s, ".") {
+		if !ValidAppName(part) {
+			return false
+		}
+	}
+	return true
 }
 
 // CertificateInfo identifies a client certificate without its contents.

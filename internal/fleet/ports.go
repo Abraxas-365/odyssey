@@ -20,6 +20,10 @@ type Commands interface {
 	Revoke(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input Revoke) error
 	// Move sends every app of a revoked cluster to an active one.
 	Move(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input Move) (Moved, error)
+	// SweepSecrets drops secret deliveries no cluster took within
+	// SecretDeliveryTTL (a scheduled task: a cluster that never reconnects
+	// would otherwise keep them forever).
+	SweepSecrets(ctx context.Context) (int, error)
 }
 
 // Queries are the read operations, implemented by fleetsvc.Service.
@@ -44,6 +48,16 @@ type Dispatch interface {
 	// default cluster (where its first Apply would put it); false when there is
 	// none, or its cluster was revoked. It changes nothing (no placement).
 	CanProtect(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (bool, error)
+	// SecretTarget is what the environment's cluster (or, unplaced, the
+	// organization's default) offers for secrets. It changes nothing; a zero
+	// Cluster when there is none or it was revoked.
+	SecretTarget(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (SecretTarget, error)
+	// DeliverSecret stores a sealed managed value for the environment's
+	// cluster and has it sent (replacing an older version still waiting). It
+	// joins the caller's transaction. The value must be sealed to that
+	// cluster's current key (Business CodeSecretKeyChanged otherwise) and the
+	// environment placed or placeable (like Apply).
+	DeliverSecret(ctx context.Context, delivery SecretDelivery) error
 }
 
 // Builds is what the build domain uses to build in clusters (its buildfleet
@@ -117,6 +131,14 @@ type Agents interface {
 	// LogBuild stores lines of a build of the agent's own cluster, dropping
 	// the ones already stored and the ones beyond MaxBuildLogBytes.
 	LogBuild(ctx context.Context, agent AgentRef, session Session, log BuildLog) error
+	// DesiredSecrets are the managed values waiting for the agent's cluster.
+	DesiredSecrets(ctx context.Context, agent AgentRef) ([]SecretDelivery, error)
+	// DesiredSecret is one of them (false when it is gone or not this cluster's).
+	DesiredSecret(ctx context.Context, agent AgentRef, delivery SecretDeliveryID) (SecretDelivery, bool, error)
+	// AckSecret ends a delivery of the agent's own cluster while session is
+	// its tunnel: the sealed value is deleted, stored or not (a failure is
+	// published: the person loads it again).
+	AckSecret(ctx context.Context, agent AgentRef, session Session, ack SecretAck) error
 }
 
 // Signals delivers the changes committed by any process (the worker applies
@@ -224,4 +246,32 @@ type Repository interface {
 	ListBuildLog(ctx context.Context, organization identity.OrganizationID, build BuildID, after int64, limit int) (LogPage, error)
 	// ObserveLogsArchived drops the stored lines; later ones are not stored.
 	ObserveLogsArchived(ctx context.Context, organization identity.OrganizationID, build BuildID) error
+
+	// PutSecretDelivery stores the delivery, replacing one of the same app
+	// and name with an older version, and signals its cluster's gateway
+	// (false: a same or newer version is already waiting).
+	PutSecretDelivery(ctx context.Context, delivery SecretDelivery) (bool, error)
+	// ListSecretDeliveries are the cluster's deliveries created after since.
+	ListSecretDeliveries(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, since time.Time) ([]SecretDelivery, error)
+	FindSecretDelivery(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, delivery SecretDeliveryID) (SecretDelivery, error)
+	// DeleteSecretDelivery removes a delivery of the cluster while session is
+	// its tunnel (false when there is none, or the tunnel is not current).
+	DeleteSecretDelivery(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, delivery SecretDeliveryID) (SecretDelivery, bool, error)
+	// DeleteSecretDeliveries drops the cluster's deliveries created before
+	// cutoff (never acknowledged in time) and returns them.
+	DeleteSecretDeliveries(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, cutoff time.Time) ([]SecretDelivery, error)
+	// DropSecretDeliveries drops every delivery of the cluster (it was
+	// revoked: nobody can open them any more) and returns them.
+	DropSecretDeliveries(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]SecretDelivery, error)
+	// ExpireSecretDeliveries drops, across organizations, up to limit
+	// deliveries created before cutoff (clusters that never came back) and
+	// returns them. Concurrent sweeps skip each other's rows.
+	ExpireSecretDeliveries(ctx context.Context, cutoff time.Time, limit int) ([]SecretDelivery, error)
+	// RecordSecretFailure stores f as its secret's failure unless a newer
+	// version already failed. A newer delivery (PutSecretDelivery) clears it.
+	RecordSecretFailure(ctx context.Context, failure SecretFailure) error
+	// ClearSecretFailure drops the secret's failure up to version (the
+	// cluster stored that version, or a newer one).
+	ClearSecretFailure(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, app, name string, version int64) error
+	ListSecretFailures(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]SecretFailure, error)
 }

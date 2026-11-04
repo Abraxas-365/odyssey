@@ -33,6 +33,43 @@ type commands struct {
 	rollbackFn func(release.DeploymentID) (release.Deployment, error)
 	access     []release.SetAccess
 	accessFn   func(release.SetAccess) (release.AccessChange, error)
+	env        []release.SetEnv
+	requests   []release.RequestSecret
+	requestFn  func(release.RequestSecret) (release.SecretView, error)
+}
+
+func (c *commands) SetEnv(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID, in release.SetEnv) (release.SettingsChange, error) {
+	c.env = append(c.env, in)
+	s := release.DefaultSettings(org, env)
+	s.Revision = 1
+	for k, v := range in.Set {
+		s.Env[k] = v
+	}
+	return release.SettingsChange{Settings: s}, nil
+}
+
+func (c *commands) RequestSecret(_ context.Context, _ identity.OrganizationID, _ project.ID, _ project.EnvironmentID, in release.RequestSecret) (release.SecretView, error) {
+	c.requests = append(c.requests, in)
+	if c.requestFn != nil {
+		return c.requestFn(in)
+	}
+	in = in.Normalize()
+	if err := in.Validate(); err != nil {
+		return release.SecretView{}, err
+	}
+	return release.SecretView{SecretRef: release.SecretRef{Name: in.Name, Source: release.SecretManaged}, State: release.SecretStateMissing}, nil
+}
+
+func (c *commands) LoadSecret(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.LoadSecret) (release.SettingsChange, error) {
+	return release.SettingsChange{}, errx.Internal("an assistant never loads a value")
+}
+
+func (c *commands) SetExternalSecret(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.SetExternalSecret) (release.SettingsChange, error) {
+	return release.SettingsChange{}, errx.Internal("not an assistant tool")
+}
+
+func (c *commands) RemoveSecret(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.RemoveSecret) (release.SettingsChange, error) {
+	return release.SettingsChange{}, errx.Internal("not an assistant tool")
 }
 
 func (c *commands) SetAccess(_ context.Context, org identity.OrganizationID, p project.ID, env project.EnvironmentID, in release.SetAccess) (release.AccessChange, error) {

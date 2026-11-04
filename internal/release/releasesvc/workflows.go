@@ -105,8 +105,7 @@ func (s *Service) apply(ctx context.Context, st *workflow.State) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	desired := release.Desired(j.app, j.deployment, r)
-	desired.Access = string(settings.Access.Mode) // the one place the app's access reaches the cluster
+	desired := release.Desired(j.app, j.deployment, r).WithSettings(settings) // the one place access, variables and secrets reach the cluster
 	if err := s.cluster.Apply(ctx, j.target, desired); err != nil {
 		if coded(err, release.CodeApplyFailed) {
 			return nil, workflow.Fail(err)

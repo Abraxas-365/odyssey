@@ -8,29 +8,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 	"github.com/google/uuid"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=create
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;create
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=odyssey-agent-secrets,verbs=bind
 // +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyapps,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=list
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=list
+// +kubebuilder:rbac:groups=external-secrets.io,resources=clustersecretstores,verbs=list
 
 // Labels the agent puts on what it creates from the desired state.
 const (
@@ -63,6 +74,9 @@ type Syncer struct {
 	// AccessGate says the agent's install has the sign-in gate configured
 	// (ODYSSEY_ACCESS_ENABLED): see CapabilityAccess.
 	AccessGate bool
+	// Namespaces creates the environments' namespaces (nil: on Client, binding
+	// nothing).
+	Namespaces *Namespaces
 }
 
 // Rejected is what retrying cannot fix: the cluster refused the app. It is
@@ -91,12 +105,99 @@ func Valid(a *fleetv1.App) error {
 	case a.GetRevision() < 1:
 		return errors.New("app revision must be positive")
 	}
+	return validSecretRefs(a.GetSecrets())
+}
+
+// MaxSecrets bounds an app's secret variables.
+const MaxSecrets = 100
+
+// maxRef bounds the free text of an external reference.
+const maxRef = 1024
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+
+// ValidEnvName reports whether s can be the name of an environment variable
+// (what a secret is called).
+func ValidEnvName(s string) bool { return envName.MatchString(s) }
+
+func validSecretRefs(refs []*fleetv1.SecretRef) error {
+	if len(refs) > MaxSecrets {
+		return fmt.Errorf("app has %d secrets, at most %d", len(refs), MaxSecrets)
+	}
+	seen := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		name := r.GetName()
+		switch {
+		case !ValidEnvName(name):
+			return fmt.Errorf("secret name %q is not a valid environment variable name", name)
+		case seen[name]:
+			return fmt.Errorf("secret %q is repeated", name)
+		}
+		seen[name] = true
+		switch v1alpha1.SecretSource(r.GetSource()) {
+		case v1alpha1.SecretManaged:
+			if r.GetVersion() < 1 {
+				return fmt.Errorf("managed secret %q needs a version of at least 1", name)
+			}
+		case v1alpha1.SecretExternal:
+			if r.GetStore() == "" || r.GetKey() == "" {
+				return fmt.Errorf("external secret %q needs a store and a key", name)
+			}
+			if len(validation.IsDNS1123Subdomain(r.GetStore())) > 0 {
+				return fmt.Errorf("external secret %q: store %q is not a valid name", name, r.GetStore())
+			}
+			if len(r.GetKey()) > maxRef || len(r.GetProperty()) > maxRef {
+				return fmt.Errorf("external secret %q: key or property too long", name)
+			}
+		default:
+			return fmt.Errorf("secret %q has source %q, not managed or external", name, r.GetSource())
+		}
+	}
+	return nil
+}
+
+// ValidSecret checks a delivered secret before anything is opened or written.
+func ValidSecret(s *fleetv1.Secret) error {
+	switch {
+	case s == nil:
+		return errors.New("no secret")
+	case !isUUID(s.GetEnvironmentId()) || !isUUID(s.GetOrganizationId()) || !isUUID(s.GetProjectId()):
+		return errors.New("secret needs organization, project and environment ids")
+	case len(validation.IsDNS1123Label(s.GetApp())) > 0:
+		return fmt.Errorf("app name %q is not a DNS label", s.GetApp())
+	case !ValidEnvName(s.GetName()):
+		return fmt.Errorf("secret name %q is not a valid environment variable name", s.GetName())
+	case s.GetVersion() < 1:
+		return errors.New("secret version must be positive")
+	case len(s.GetSealed()) == 0:
+		return errors.New("secret has no value")
+	}
 	return nil
 }
 
 func isUUID(s string) bool {
 	u, err := uuid.Parse(s)
 	return err == nil && u != uuid.Nil && u.String() == s
+}
+
+// secretsOf maps the proto's secret references (sorted by name, so the same
+// set always makes the same spec).
+func secretsOf(refs []*fleetv1.SecretRef) []v1alpha1.SecretRefSpec {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]v1alpha1.SecretRefSpec, 0, len(refs))
+	for _, r := range refs {
+		s := v1alpha1.SecretRefSpec{Name: r.GetName(), Source: v1alpha1.SecretSource(r.GetSource())}
+		if s.Source == v1alpha1.SecretManaged {
+			s.Version = r.GetVersion()
+		} else {
+			s.Store, s.Key, s.Property = r.GetStore(), r.GetKey(), r.GetProperty()
+		}
+		out = append(out, s)
+	}
+	slices.SortFunc(out, func(a, b v1alpha1.SecretRefSpec) int { return strings.Compare(a.Name, b.Name) })
+	return out
 }
 
 // Apply writes the desired app unless the cluster already has a newer
@@ -123,7 +224,7 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	labels[LabelOrganization], labels[LabelProject], labels[LabelEnvironment] = a.GetOrganizationId(), a.GetProjectId(), a.GetEnvironmentId()
 	spec := v1alpha1.OdysseyAppSpec{
 		Revision: a.GetRevision(), Image: a.GetImage(), Port: a.GetPort(), HealthPath: a.GetHealthPath(),
-		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(), Access: access,
+		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(), Access: access, Secrets: secretsOf(a.GetSecrets()),
 	}
 	ns := Namespace(a.GetEnvironmentId())
 	var cur v1alpha1.OdysseyApp
@@ -182,19 +283,137 @@ func permanent(err error) error {
 }
 
 func (s *Syncer) ensureNamespace(ctx context.Context, a *fleetv1.App) error {
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: Namespace(a.GetEnvironmentId()), Labels: map[string]string{
+	n := s.Namespaces
+	if n == nil {
+		n = &Namespaces{Client: s.Client}
+	}
+	return n.Ensure(ctx, a.GetOrganizationId(), a.GetProjectId(), a.GetEnvironmentId())
+}
+
+// SecretsRole is the ClusterRole (agent/install/rbac.yaml) that lets the
+// agent keep apps' Secrets. It is never bound cluster-wide: the agent binds
+// it, as a RoleBinding of the same name, only in the namespaces it creates
+// for environments (and the install's admission policy refuses a binding
+// anywhere else), so it cannot read the Secrets of the rest of the cluster.
+const SecretsRole = "odyssey-agent-secrets"
+
+// Namespaces creates the environments' namespaces and lets the agent keep
+// Secrets in them.
+type Namespaces struct {
+	Client client.Client
+	// API reads namespaces without caching them (nil: Client).
+	API client.Reader
+	// Agent is the agent's service account. Empty (an agent run outside the
+	// cluster on its own credentials) binds nothing.
+	Agent types.NamespacedName
+	// CanUseSecrets says whether the agent may already write Secrets in a
+	// namespace (nil: a SelfSubjectAccessReview). A new binding takes a
+	// moment to apply; Ensure waits for it.
+	CanUseSecrets func(ctx context.Context, namespace string) (bool, error)
+}
+
+// bindWait bounds how long Ensure waits for a new binding to apply.
+var bindWait = wait.Backoff{Duration: 100 * time.Millisecond, Factor: 1.5, Steps: 12, Cap: 2 * time.Second}
+
+// Ensure creates the environment's namespace when it is not there (the
+// first app or the first secret of an environment makes it) and binds
+// SecretsRole in it. A namespace of that name the agent does not manage is
+// refused (Rejected): the agent never takes over someone else's namespace.
+func (n *Namespaces) Ensure(ctx context.Context, organization, project, environment string) error {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: Namespace(environment), Labels: map[string]string{
 		LabelManagedBy:    ManagedBy,
-		LabelOrganization: a.GetOrganizationId(),
-		LabelProject:      a.GetProjectId(),
-		LabelEnvironment:  a.GetEnvironmentId(),
+		LabelOrganization: organization,
+		LabelProject:      project,
+		LabelEnvironment:  environment,
 		// Apps run under the baseline Pod Security profile; restricted
 		// (non-root) arrives with per-organization policy.
 		"pod-security.kubernetes.io/enforce": "baseline",
 	}}}
-	if err := s.Client.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+	err := n.Client.Create(ctx, ns)
+	switch {
+	case err == nil:
+	case apierrors.IsAlreadyExists(err):
+		var cur corev1.Namespace
+		if err := n.reader().Get(ctx, client.ObjectKey{Name: ns.Name}, &cur); err != nil {
+			return fmt.Errorf("namespace %s: %w", ns.Name, err)
+		}
+		if cur.Labels[LabelManagedBy] != ManagedBy {
+			return &Rejected{Message: fmt.Sprintf("the namespace %s already exists and is not managed by Odyssey", ns.Name)}
+		}
+	default:
 		return fmt.Errorf("namespace %s: %w", ns.Name, err)
 	}
+	return n.bind(ctx, ns.Name, true)
+}
+
+// BindAll binds SecretsRole in every namespace the agent created (an agent
+// upgraded from one that held the role cluster-wide, or a binding someone
+// deleted).
+func (n *Namespaces) BindAll(ctx context.Context) error {
+	var list corev1.NamespaceList
+	if err := n.reader().List(ctx, &list, client.MatchingLabels{LabelManagedBy: ManagedBy}); err != nil {
+		return fmt.Errorf("list namespaces: %w", err)
+	}
+	var errs []error
+	for _, ns := range list.Items {
+		if strings.HasPrefix(ns.Name, Namespace("")) && ns.DeletionTimestamp == nil {
+			// No wait here: a binding that has not applied yet is retried by
+			// the reconcilers, and an upgrade with many namespaces must not
+			// wait on each in turn.
+			errs = append(errs, n.bind(ctx, ns.Name, false))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// bind creates the binding in namespace; with settle, it returns only once the
+// agent may use Secrets there (also when the binding was already there: a
+// concurrent Ensure may have just made it).
+func (n *Namespaces) bind(ctx context.Context, namespace string, settle bool) error {
+	if n.Agent.Name == "" {
+		return nil
+	}
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: SecretsRole, Namespace: namespace, Labels: map[string]string{LabelManagedBy: ManagedBy}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: SecretsRole},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: n.Agent.Name, Namespace: n.Agent.Namespace}},
+	}
+	if err := n.Client.Create(ctx, rb); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("let the agent keep secrets in %s: %w", namespace, err)
+	}
+	if !settle {
+		return nil
+	}
+	can := n.CanUseSecrets
+	if can == nil {
+		can = n.selfReview
+	}
+	var last error
+	if err := wait.ExponentialBackoffWithContext(ctx, bindWait, func(ctx context.Context) (bool, error) {
+		ok, err := can(ctx, namespace)
+		last = err
+		return ok, nil
+	}); err != nil {
+		return fmt.Errorf("the agent's access to secrets in %s did not apply: %w", namespace, errors.Join(err, last))
+	}
 	return nil
+}
+
+func (n *Namespaces) selfReview(ctx context.Context, namespace string) (bool, error) {
+	r := &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+		ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: namespace, Verb: "create", Resource: "secrets"},
+	}}
+	if err := n.Client.Create(ctx, r); err != nil {
+		return false, err
+	}
+	return r.Status.Allowed, nil
+}
+
+func (n *Namespaces) reader() client.Reader {
+	if n.API != nil {
+		return n.API
+	}
+	return n.Client
 }
 
 // RejectedStatus is how a rejected app is reported.
@@ -327,5 +546,28 @@ func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
 	}
 	slices.Sort(out.IngressClasses)
 	slices.Sort(out.StorageClasses)
+	out.SecretStores = []string{}
+	if slices.Contains(out.Apis, ExternalSecretsGroup) {
+		out.SecretStores = s.secretStores(ctx, reader)
+	}
+	return out
+}
+
+// ExternalSecretsGroup is the API group of the External Secrets Operator.
+const ExternalSecretsGroup = "external-secrets.io"
+
+// secretStores names the ClusterSecretStores TI registered (sorted; empty
+// when they cannot be read: the agent may lack the permission or the CRD).
+func (s *Syncer) secretStores(ctx context.Context, reader client.Reader) []string {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: ExternalSecretsGroup, Version: "v1", Kind: "ClusterSecretStoreList"})
+	out := []string{}
+	if err := reader.List(ctx, list); err != nil {
+		return out
+	}
+	for _, i := range list.Items {
+		out = append(out, i.GetName())
+	}
+	slices.Sort(out)
 	return out
 }

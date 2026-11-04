@@ -477,40 +477,67 @@ func (s *Service) SetAccess(ctx context.Context, organization identity.Organizat
 	}
 	var out release.AccessChange
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		state, err := s.lockState(ctx, p, e)
+		state, prev, err := s.lockSettings(ctx, p, e)
 		if err != nil {
 			return err
 		}
-		prev, err := s.repo.FindSettings(ctx, organization, env)
-		if err != nil {
-			return err
-		}
-		out.Settings, out.Deployment = prev, nil
-		changed := prev.Access.Mode != input.Mode
-		if changed {
-			next := release.Settings{Environment: env, Organization: organization, CreatedBy: input.RequestedBy,
-				Access: release.AccessSettings{Mode: input.Mode}}
-			if out.Settings, err = s.repo.AppendSettings(ctx, next); err != nil {
-				return err
-			}
+		var next *release.Settings
+		if prev.Access.Mode != input.Mode {
+			n := prev.WithAccess(input.Mode, input.RequestedBy)
+			next = &n
 		}
 		var started *release.DeploymentID
-		if state.Current != nil && state.Active == nil {
-			if out.Settings.Revision > state.AppliedRevision() {
-				d, err := s.startConfig(ctx, state, p, e, input.RequestedBy)
-				if err != nil {
-					return err
-				}
-				d = d.WithProgress()
-				out.Deployment, started = &d, &d.ID
-			}
-		}
-		if !changed {
-			return nil
+		if out, started, err = s.changeSettings(ctx, state, p, e, prev, next, input.RequestedBy); err != nil || next == nil {
+			return err
 		}
 		return s.events.Publish(ctx, release.NewAccessChanged(organization, input.RequestedBy, id.String(), prev, out.Settings, started, names(p, e)))
 	})
 	return out, err
+}
+
+// lockSettings locks the environment (serialising its settings revisions
+// and deployments) and reads its settings in force.
+func (s *Service) lockSettings(ctx context.Context, p project.Project, e project.Environment) (release.EnvironmentState, release.Settings, error) {
+	state, err := s.lockState(ctx, p, e)
+	if err != nil {
+		return release.EnvironmentState{}, release.Settings{}, err
+	}
+	prev, err := s.repo.FindSettings(ctx, p.Organization, e.ID)
+	return state, prev, err
+}
+
+// changeSettings stores next as the environment's next revision (nil: nothing
+// changed) and, when the release serving is not running with the latest
+// revision and nothing is in progress, starts the config deployment that
+// applies it. With a deployment in progress the revision only waits: that
+// deployment applies the latest settings at its apply step, or, if it already
+// applied, starts the config deployment when it ends (promote). Nothing
+// changed still starts the config deployment if the serving release never got
+// the latest revision (a config deployment refused at apply): asking again is
+// the retry. One that failed after apply did reach the cluster (the applied
+// revision is recorded), and nothing is retried. The caller holds the lock
+// (lockSettings) and publishes the change.
+func (s *Service) changeSettings(ctx context.Context, state release.EnvironmentState, p project.Project, e project.Environment,
+	prev release.Settings, next *release.Settings, by identity.UserID) (release.SettingsChange, *release.DeploymentID, error) {
+	out := release.SettingsChange{Settings: prev}
+	if next != nil {
+		next.Environment, next.Organization, next.CreatedBy = e.ID, p.Organization, by
+		stored, err := s.repo.AppendSettings(ctx, *next)
+		if err != nil {
+			return release.SettingsChange{}, nil, err
+		}
+		out.Settings = stored
+	}
+	if state.Current == nil || state.Active != nil || out.Settings.Revision <= state.AppliedRevision() {
+		return out, nil, nil
+	}
+	d, err := s.startConfig(ctx, state, p, e, by)
+	if err != nil {
+		return release.SettingsChange{}, nil, err
+	}
+	d = d.WithProgress()
+	out.Deployment = &d
+	return out, &d.ID, nil
 }
 
 // ---- upload tickets ----

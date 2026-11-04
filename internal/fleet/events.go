@@ -23,6 +23,9 @@ const (
 	EventAppApplied         = "cluster.app_applied"
 	EventBuildSent          = "cluster.build_sent"
 	EventBuildReleased      = "cluster.build_released"
+	EventSecretSent         = "cluster.secret_sent"
+	EventSecretDelivered    = "cluster.secret_delivered"
+	EventSecretFailed       = "cluster.secret_failed"
 )
 
 // SubjectKind prefixes the fleet's event subjects ("cluster/<id>").
@@ -193,4 +196,50 @@ func NewAppApplied(org identity.OrganizationID, c Cluster, a App, placed bool) e
 		"Envió la revisión "+strconv.FormatInt(a.Revision, 10)+" de "+a.Name+" al clúster "+c.Name,
 		AppApplied{Cluster: c.ID, Project: a.Project.String(), Environment: a.Environment.String(), Name: a.Name,
 			Revision: a.Revision, Image: a.Image, EnvKeys: keys, Placed: placed})
+}
+
+// SecretSent v1: a sealed managed value went to the cluster (never the
+// value: name, version and the key it was sealed to).
+type SecretSent struct {
+	Cluster     ClusterID        `json:"cluster_id"`
+	Delivery    SecretDeliveryID `json:"delivery_id"`
+	Project     string           `json:"project_id"`
+	Environment string           `json:"environment_id"`
+	App         string           `json:"app"`
+	Name        string           `json:"name"`
+	Version     int64            `json:"version"`
+	KeyID       string           `json:"key_id"`
+	// Placed is true when this placed the environment on the cluster.
+	Placed bool `json:"placed"`
+}
+
+func NewSecretSent(org identity.OrganizationID, actor identity.UserID, c Cluster, d SecretDelivery, placed bool) event.Event {
+	return event.New(EventSecretSent, 1, org, actor, event.Subject(SubjectKind, c.ID),
+		"Envió el secreto "+d.Name+" de "+d.App+" al clúster "+c.Name,
+		SecretSent{Cluster: c.ID, Delivery: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), App: d.App,
+			Name: d.Name, Version: d.Version, KeyID: d.KeyID, Placed: placed})
+}
+
+// SecretAcked v1 is the payload of cluster.secret_delivered (the cluster
+// stored the value) and cluster.secret_failed (it could not, or nobody took
+// it in time: Error says why; the person loads it again).
+type SecretAcked struct {
+	Cluster     ClusterID        `json:"cluster_id"`
+	Delivery    SecretDeliveryID `json:"delivery_id"`
+	Project     string           `json:"project_id"`
+	Environment string           `json:"environment_id"`
+	App         string           `json:"app"`
+	Name        string           `json:"name"`
+	Version     int64            `json:"version"`
+	Error       string           `json:"error,omitempty"`
+}
+
+func NewSecretAcked(org identity.OrganizationID, d SecretDelivery, failure string) event.Event {
+	typ, what := EventSecretDelivered, "El clúster guardó el secreto "+d.Name+" de "+d.App
+	if failure != "" {
+		typ, what = EventSecretFailed, "El clúster no pudo guardar el secreto "+d.Name+" de "+d.App
+	}
+	return event.New(typ, 1, org, identity.UserID{}, event.Subject(SubjectKind, d.Cluster), what,
+		SecretAcked{Cluster: d.Cluster, Delivery: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), App: d.App,
+			Name: d.Name, Version: d.Version, Error: failure})
 }

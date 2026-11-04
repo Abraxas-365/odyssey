@@ -134,6 +134,20 @@ func (s *Service) Revoke(ctx context.Context, organization identity.Organization
 			if err := s.events.Publish(ctx, fleet.NewRevoked(organization, input.RevokedBy, c)); err != nil {
 				return err
 			}
+			// values sealed to its key can be opened by no other cluster
+			dropped, err := s.repo.DropSecretDeliveries(ctx, organization, id)
+			if err != nil {
+				return err
+			}
+			for _, d := range dropped {
+				e, err := s.settle(ctx, d, "el clúster fue revocado antes de recibirlo")
+				if err != nil {
+					return err
+				}
+				if err := s.events.Publish(ctx, e); err != nil {
+					return err
+				}
+			}
 			c.Status = fleet.StatusRevoked
 		}
 		if input.MoveTo == nil {
@@ -261,6 +275,10 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		// An agent that cannot protect apps would serve them open.
 		if (app.Access == fleet.AccessTeam || app.Access == fleet.AccessOrganization) && !c.Agent.Capabilities.CanProtect() {
 			return errx.Business(fleet.AccessUnavailableMessage).WithCode(fleet.CodeAccessUnavailable)
+		}
+		// One that cannot hold its secrets would wait for them forever.
+		if err := c.Agent.Capabilities.CheckSecrets(app.Secrets); err != nil {
+			return err
 		}
 		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)

@@ -78,7 +78,8 @@ services:
       FLEET_GATEWAY_URL: ${FLEET_GATEWAY_URL:-host.k3d.internal:8443}
       # Uploaded sources and build logs, shared with the worker.
       ODYSSEY_BLOB_URL: file:///var/lib/odyssey/blobs?no_tmp_dir=1
-      # Live build logs are read through the worker's builder: same choice.
+      # Same cluster and builder as the worker: the API reads the cluster's
+      # secret key and access support, and live build logs through the builder.
       ODYSSEY_CLUSTER: ${ODYSSEY_CLUSTER:-fake}
       ODYSSEY_BUILDER: ${ODYSSEY_BUILDER:-}
     volumes:

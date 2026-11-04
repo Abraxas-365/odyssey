@@ -513,6 +513,7 @@ type AgentMessage struct {
 	//	*AgentMessage_Report
 	//	*AgentMessage_BuildReport
 	//	*AgentMessage_BuildLog
+	//	*AgentMessage_SecretAck
 	Message       isAgentMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -591,6 +592,15 @@ func (x *AgentMessage) GetBuildLog() *BuildLog {
 	return nil
 }
 
+func (x *AgentMessage) GetSecretAck() *SecretAck {
+	if x != nil {
+		if x, ok := x.Message.(*AgentMessage_SecretAck); ok {
+			return x.SecretAck
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Message interface {
 	isAgentMessage_Message()
 }
@@ -616,6 +626,11 @@ type AgentMessage_BuildLog struct {
 	BuildLog *BuildLog `protobuf:"bytes,4,opt,name=build_log,json=buildLog,proto3,oneof"`
 }
 
+type AgentMessage_SecretAck struct {
+	// secret_ack answers a ControlMessage.secret.
+	SecretAck *SecretAck `protobuf:"bytes,5,opt,name=secret_ack,json=secretAck,proto3,oneof"`
+}
+
 func (*AgentMessage_Hello) isAgentMessage_Message() {}
 
 func (*AgentMessage_Report) isAgentMessage_Message() {}
@@ -624,6 +639,8 @@ func (*AgentMessage_BuildReport) isAgentMessage_Message() {}
 
 func (*AgentMessage_BuildLog) isAgentMessage_Message() {}
 
+func (*AgentMessage_SecretAck) isAgentMessage_Message() {}
+
 type ControlMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Message:
@@ -631,6 +648,7 @@ type ControlMessage struct {
 	//	*ControlMessage_Apply
 	//	*ControlMessage_Build
 	//	*ControlMessage_CancelBuild
+	//	*ControlMessage_Secret
 	Message       isControlMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -700,6 +718,15 @@ func (x *ControlMessage) GetCancelBuild() *CancelBuild {
 	return nil
 }
 
+func (x *ControlMessage) GetSecret() *Secret {
+	if x != nil {
+		if x, ok := x.Message.(*ControlMessage_Secret); ok {
+			return x.Secret
+		}
+	}
+	return nil
+}
+
 type isControlMessage_Message interface {
 	isControlMessage_Message()
 }
@@ -721,11 +748,189 @@ type ControlMessage_CancelBuild struct {
 	CancelBuild *CancelBuild `protobuf:"bytes,3,opt,name=cancel_build,json=cancelBuild,proto3,oneof"`
 }
 
+type ControlMessage_Secret struct {
+	// secret delivers one managed secret value, sealed to the cluster's
+	// secret_key. The agent answers with a secret_ack either way.
+	Secret *Secret `protobuf:"bytes,4,opt,name=secret,proto3,oneof"`
+}
+
 func (*ControlMessage_Apply) isControlMessage_Message() {}
 
 func (*ControlMessage_Build) isControlMessage_Message() {}
 
 func (*ControlMessage_CancelBuild) isControlMessage_Message() {}
+
+func (*ControlMessage_Secret) isControlMessage_Message() {}
+
+// Secret is a managed secret's value on its way to the cluster.
+type Secret struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// delivery_id names this delivery (the ack echoes it).
+	DeliveryId     string `protobuf:"bytes,1,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	OrganizationId string `protobuf:"bytes,2,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	ProjectId      string `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EnvironmentId  string `protobuf:"bytes,4,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	// app is the app's name in the cluster: the value goes to its secret store.
+	App     string `protobuf:"bytes,5,opt,name=app,proto3" json:"app,omitempty"`
+	Name    string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	Version int64  `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
+	// key_id is the cluster key it was sealed to.
+	KeyId string `protobuf:"bytes,8,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	// sealed is HPKE single-shot output (enc || ciphertext) made by
+	// pkg/secretbox: its info binds it to this cluster, environment, name and
+	// version, so it opens for nothing else.
+	Sealed        []byte `protobuf:"bytes,9,opt,name=sealed,proto3" json:"sealed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Secret) Reset() {
+	*x = Secret{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Secret) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Secret) ProtoMessage() {}
+
+func (x *Secret) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Secret.ProtoReflect.Descriptor instead.
+func (*Secret) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Secret) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
+	}
+	return ""
+}
+
+func (x *Secret) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *Secret) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *Secret) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *Secret) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *Secret) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Secret) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *Secret) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *Secret) GetSealed() []byte {
+	if x != nil {
+		return x.Sealed
+	}
+	return nil
+}
+
+// SecretAck answers a Secret.
+type SecretAck struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DeliveryId string                 `protobuf:"bytes,1,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	// error is empty when the value was stored (or a newer version already
+	// was); otherwise it says why not (wrong key, cannot open, cannot write).
+	Error         string `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecretAck) Reset() {
+	*x = SecretAck{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretAck) ProtoMessage() {}
+
+func (x *SecretAck) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretAck.ProtoReflect.Descriptor instead.
+func (*SecretAck) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SecretAck) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
+	}
+	return ""
+}
+
+func (x *SecretAck) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
 
 type Hello struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -737,7 +942,7 @@ type Hello struct {
 
 func (x *Hello) Reset() {
 	*x = Hello{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -749,7 +954,7 @@ func (x *Hello) String() string {
 func (*Hello) ProtoMessage() {}
 
 func (x *Hello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[11]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -762,7 +967,7 @@ func (x *Hello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hello.ProtoReflect.Descriptor instead.
 func (*Hello) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{11}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Hello) GetAgentVersion() string {
@@ -794,14 +999,21 @@ type Capabilities struct {
 	IngressClasses []string `protobuf:"bytes,3,rep,name=ingress_classes,json=ingressClasses,proto3" json:"ingress_classes,omitempty"`
 	StorageClasses []string `protobuf:"bytes,4,rep,name=storage_classes,json=storageClasses,proto3" json:"storage_classes,omitempty"`
 	// builder is set when the cluster can build images (unset: it cannot).
-	Builder       *Builder `protobuf:"bytes,5,opt,name=builder,proto3" json:"builder,omitempty"`
+	Builder *Builder `protobuf:"bytes,5,opt,name=builder,proto3" json:"builder,omitempty"`
+	// secret_key is the cluster's public key for managed secrets (2a): a
+	// person's value is sealed to it in the browser and only this cluster can
+	// open it. Unset: the cluster cannot take managed secrets.
+	SecretKey *SecretKey `protobuf:"bytes,6,opt,name=secret_key,json=secretKey,proto3" json:"secret_key,omitempty"`
+	// secret_stores are the ClusterSecretStores (External Secrets Operator)
+	// TI registered, by name: where external secrets may be read from.
+	SecretStores  []string `protobuf:"bytes,7,rep,name=secret_stores,json=secretStores,proto3" json:"secret_stores,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Capabilities) Reset() {
 	*x = Capabilities{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -813,7 +1025,7 @@ func (x *Capabilities) String() string {
 func (*Capabilities) ProtoMessage() {}
 
 func (x *Capabilities) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[12]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -826,7 +1038,7 @@ func (x *Capabilities) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Capabilities.ProtoReflect.Descriptor instead.
 func (*Capabilities) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{12}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Capabilities) GetKubernetesVersion() string {
@@ -864,6 +1076,84 @@ func (x *Capabilities) GetBuilder() *Builder {
 	return nil
 }
 
+func (x *Capabilities) GetSecretKey() *SecretKey {
+	if x != nil {
+		return x.SecretKey
+	}
+	return nil
+}
+
+func (x *Capabilities) GetSecretStores() []string {
+	if x != nil {
+		return x.SecretStores
+	}
+	return nil
+}
+
+// SecretKey is an HPKE (RFC 9180) public key.
+type SecretKey struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// key_id names the key: base64url(sha256(public_key)), first 16 chars.
+	KeyId string `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	// public_key is the KEM's serialized public key (32 bytes for X25519).
+	PublicKey []byte `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	// suite is "DHKEM-X25519-HKDF-SHA256/HKDF-SHA256/AES-256-GCM", the only one.
+	Suite         string `protobuf:"bytes,3,opt,name=suite,proto3" json:"suite,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecretKey) Reset() {
+	*x = SecretKey{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretKey) ProtoMessage() {}
+
+func (x *SecretKey) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretKey.ProtoReflect.Descriptor instead.
+func (*SecretKey) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SecretKey) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *SecretKey) GetPublicKey() []byte {
+	if x != nil {
+		return x.PublicKey
+	}
+	return nil
+}
+
+func (x *SecretKey) GetSuite() string {
+	if x != nil {
+		return x.Suite
+	}
+	return ""
+}
+
 // Builder is the cluster's image builder.
 type Builder struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -878,7 +1168,7 @@ type Builder struct {
 
 func (x *Builder) Reset() {
 	*x = Builder{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -890,7 +1180,7 @@ func (x *Builder) String() string {
 func (*Builder) ProtoMessage() {}
 
 func (x *Builder) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[13]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -903,7 +1193,7 @@ func (x *Builder) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Builder.ProtoReflect.Descriptor instead.
 func (*Builder) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{13}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Builder) GetRegistry() string {
@@ -942,7 +1232,7 @@ type Build struct {
 
 func (x *Build) Reset() {
 	*x = Build{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[14]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -954,7 +1244,7 @@ func (x *Build) String() string {
 func (*Build) ProtoMessage() {}
 
 func (x *Build) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[14]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -967,7 +1257,7 @@ func (x *Build) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Build.ProtoReflect.Descriptor instead.
 func (*Build) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{14}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Build) GetBuildId() string {
@@ -1037,7 +1327,7 @@ type SourceRef struct {
 
 func (x *SourceRef) Reset() {
 	*x = SourceRef{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[15]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1049,7 +1339,7 @@ func (x *SourceRef) String() string {
 func (*SourceRef) ProtoMessage() {}
 
 func (x *SourceRef) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[15]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1062,7 +1352,7 @@ func (x *SourceRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceRef.ProtoReflect.Descriptor instead.
 func (*SourceRef) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{15}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SourceRef) GetSha256() string {
@@ -1088,7 +1378,7 @@ type CancelBuild struct {
 
 func (x *CancelBuild) Reset() {
 	*x = CancelBuild{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[16]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1100,7 +1390,7 @@ func (x *CancelBuild) String() string {
 func (*CancelBuild) ProtoMessage() {}
 
 func (x *CancelBuild) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[16]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1113,7 +1403,7 @@ func (x *CancelBuild) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelBuild.ProtoReflect.Descriptor instead.
 func (*CancelBuild) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{16}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *CancelBuild) GetBuildId() string {
@@ -1132,7 +1422,7 @@ type BuildReport struct {
 
 func (x *BuildReport) Reset() {
 	*x = BuildReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[17]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1144,7 +1434,7 @@ func (x *BuildReport) String() string {
 func (*BuildReport) ProtoMessage() {}
 
 func (x *BuildReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[17]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1157,7 +1447,7 @@ func (x *BuildReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildReport.ProtoReflect.Descriptor instead.
 func (*BuildReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{17}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *BuildReport) GetBuilds() []*BuildStatus {
@@ -1184,7 +1474,7 @@ type BuildStatus struct {
 
 func (x *BuildStatus) Reset() {
 	*x = BuildStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[18]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1196,7 +1486,7 @@ func (x *BuildStatus) String() string {
 func (*BuildStatus) ProtoMessage() {}
 
 func (x *BuildStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[18]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1209,7 +1499,7 @@ func (x *BuildStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildStatus.ProtoReflect.Descriptor instead.
 func (*BuildStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{18}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BuildStatus) GetBuildId() string {
@@ -1257,7 +1547,7 @@ type BuildLog struct {
 
 func (x *BuildLog) Reset() {
 	*x = BuildLog{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[19]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1269,7 +1559,7 @@ func (x *BuildLog) String() string {
 func (*BuildLog) ProtoMessage() {}
 
 func (x *BuildLog) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[19]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1282,7 +1572,7 @@ func (x *BuildLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildLog.ProtoReflect.Descriptor instead.
 func (*BuildLog) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{19}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BuildLog) GetBuildId() string {
@@ -1313,7 +1603,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[20]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1325,7 +1615,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[20]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1338,7 +1628,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{20}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *LogLine) GetSeq() int64 {
@@ -1380,14 +1670,17 @@ type App struct {
 	Labels     map[string]string `protobuf:"bytes,11,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// access says who may open the app (1e "Quién puede abrirla"). An agent
 	// without the gate refuses (fail closed) any mode other than public.
-	Access        *Access `protobuf:"bytes,12,opt,name=access,proto3" json:"access,omitempty"`
+	Access *Access `protobuf:"bytes,12,opt,name=access,proto3" json:"access,omitempty"`
+	// secrets are the app's secret variables (2a): references only, never a
+	// value. A name here wins over the same name in env.
+	Secrets       []*SecretRef `protobuf:"bytes,13,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *App) Reset() {
 	*x = App{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[21]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1399,7 +1692,7 @@ func (x *App) String() string {
 func (*App) ProtoMessage() {}
 
 func (x *App) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[21]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1412,7 +1705,7 @@ func (x *App) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use App.ProtoReflect.Descriptor instead.
 func (*App) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{21}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *App) GetOrganizationId() string {
@@ -1499,6 +1792,105 @@ func (x *App) GetAccess() *Access {
 	return nil
 }
 
+func (x *App) GetSecrets() []*SecretRef {
+	if x != nil {
+		return x.Secrets
+	}
+	return nil
+}
+
+// SecretRef is one secret variable of an app.
+type SecretRef struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the environment variable the app reads it as.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// source is "managed" (a value a person loaded, delivered sealed with a
+	// Secret message) or "external" (read by the External Secrets Operator).
+	Source string `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	// version of a managed secret's value: the agent must not start the app
+	// until its secret store holds this version or a newer one.
+	Version int64 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	// store, key and property locate an external secret: the
+	// ClusterSecretStore, the remote key and (optional) the property in it.
+	Store         string `protobuf:"bytes,4,opt,name=store,proto3" json:"store,omitempty"`
+	Key           string `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
+	Property      string `protobuf:"bytes,6,opt,name=property,proto3" json:"property,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecretRef) Reset() {
+	*x = SecretRef{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretRef) ProtoMessage() {}
+
+func (x *SecretRef) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretRef.ProtoReflect.Descriptor instead.
+func (*SecretRef) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *SecretRef) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SecretRef) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *SecretRef) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *SecretRef) GetStore() string {
+	if x != nil {
+		return x.Store
+	}
+	return ""
+}
+
+func (x *SecretRef) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *SecretRef) GetProperty() string {
+	if x != nil {
+		return x.Property
+	}
+	return ""
+}
+
 // Access is the app's exposure policy.
 type Access struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1513,7 +1905,7 @@ type Access struct {
 
 func (x *Access) Reset() {
 	*x = Access{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1525,7 +1917,7 @@ func (x *Access) String() string {
 func (*Access) ProtoMessage() {}
 
 func (x *Access) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1538,7 +1930,7 @@ func (x *Access) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Access.ProtoReflect.Descriptor instead.
 func (*Access) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{22}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Access) GetMode() string {
@@ -1560,7 +1952,7 @@ type AppReport struct {
 
 func (x *AppReport) Reset() {
 	*x = AppReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1572,7 +1964,7 @@ func (x *AppReport) String() string {
 func (*AppReport) ProtoMessage() {}
 
 func (x *AppReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1585,7 +1977,7 @@ func (x *AppReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppReport.ProtoReflect.Descriptor instead.
 func (*AppReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{23}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AppReport) GetFull() bool {
@@ -1622,7 +2014,7 @@ type AppStatus struct {
 
 func (x *AppStatus) Reset() {
 	*x = AppStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[24]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1634,7 +2026,7 @@ func (x *AppStatus) String() string {
 func (*AppStatus) ProtoMessage() {}
 
 func (x *AppStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[24]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1647,7 +2039,7 @@ func (x *AppStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppStatus.ProtoReflect.Descriptor instead.
 func (*AppStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{24}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *AppStatus) GetEnvironmentId() string {
@@ -1740,27 +2132,54 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\vcertificate\x18\x03 \x01(\v2\x15.fleet.v1.CertificateR\vcertificate\"6\n" +
 	"\vCertificate\x12\x10\n" +
 	"\x03pem\x18\x01 \x01(\fR\x03pem\x12\x15\n" +
-	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\xe0\x01\n" +
+	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\x96\x02\n" +
 	"\fAgentMessage\x12'\n" +
 	"\x05hello\x18\x01 \x01(\v2\x0f.fleet.v1.HelloH\x00R\x05hello\x12-\n" +
 	"\x06report\x18\x02 \x01(\v2\x13.fleet.v1.AppReportH\x00R\x06report\x12:\n" +
 	"\fbuild_report\x18\x03 \x01(\v2\x15.fleet.v1.BuildReportH\x00R\vbuildReport\x121\n" +
-	"\tbuild_log\x18\x04 \x01(\v2\x12.fleet.v1.BuildLogH\x00R\bbuildLogB\t\n" +
-	"\amessage\"\xa7\x01\n" +
+	"\tbuild_log\x18\x04 \x01(\v2\x12.fleet.v1.BuildLogH\x00R\bbuildLog\x124\n" +
+	"\n" +
+	"secret_ack\x18\x05 \x01(\v2\x13.fleet.v1.SecretAckH\x00R\tsecretAckB\t\n" +
+	"\amessage\"\xd3\x01\n" +
 	"\x0eControlMessage\x12%\n" +
 	"\x05apply\x18\x01 \x01(\v2\r.fleet.v1.AppH\x00R\x05apply\x12'\n" +
 	"\x05build\x18\x02 \x01(\v2\x0f.fleet.v1.BuildH\x00R\x05build\x12:\n" +
-	"\fcancel_build\x18\x03 \x01(\v2\x15.fleet.v1.CancelBuildH\x00R\vcancelBuildB\t\n" +
-	"\amessage\"h\n" +
+	"\fcancel_build\x18\x03 \x01(\v2\x15.fleet.v1.CancelBuildH\x00R\vcancelBuild\x12*\n" +
+	"\x06secret\x18\x04 \x01(\v2\x10.fleet.v1.SecretH\x00R\x06secretB\t\n" +
+	"\amessage\"\x87\x02\n" +
+	"\x06Secret\x12\x1f\n" +
+	"\vdelivery_id\x18\x01 \x01(\tR\n" +
+	"deliveryId\x12'\n" +
+	"\x0forganization_id\x18\x02 \x01(\tR\x0eorganizationId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x03 \x01(\tR\tprojectId\x12%\n" +
+	"\x0eenvironment_id\x18\x04 \x01(\tR\renvironmentId\x12\x10\n" +
+	"\x03app\x18\x05 \x01(\tR\x03app\x12\x12\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\a \x01(\x03R\aversion\x12\x15\n" +
+	"\x06key_id\x18\b \x01(\tR\x05keyId\x12\x16\n" +
+	"\x06sealed\x18\t \x01(\fR\x06sealed\"B\n" +
+	"\tSecretAck\x12\x1f\n" +
+	"\vdelivery_id\x18\x01 \x01(\tR\n" +
+	"deliveryId\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"h\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12:\n" +
-	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xd0\x01\n" +
+	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xa9\x02\n" +
 	"\fCapabilities\x12-\n" +
 	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\x12\x12\n" +
 	"\x04apis\x18\x02 \x03(\tR\x04apis\x12'\n" +
 	"\x0fingress_classes\x18\x03 \x03(\tR\x0eingressClasses\x12'\n" +
 	"\x0fstorage_classes\x18\x04 \x03(\tR\x0estorageClasses\x12+\n" +
-	"\abuilder\x18\x05 \x01(\v2\x11.fleet.v1.BuilderR\abuilder\"C\n" +
+	"\abuilder\x18\x05 \x01(\v2\x11.fleet.v1.BuilderR\abuilder\x122\n" +
+	"\n" +
+	"secret_key\x18\x06 \x01(\v2\x13.fleet.v1.SecretKeyR\tsecretKey\x12#\n" +
+	"\rsecret_stores\x18\a \x03(\tR\fsecretStores\"W\n" +
+	"\tSecretKey\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x02 \x01(\fR\tpublicKey\x12\x14\n" +
+	"\x05suite\x18\x03 \x01(\tR\x05suite\"C\n" +
 	"\aBuilder\x12\x1a\n" +
 	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1c\n" +
 	"\tplatforms\x18\x02 \x03(\tR\tplatforms\"\xaf\x02\n" +
@@ -1793,7 +2212,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\aLogLine\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text\"\x85\x04\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"\xb4\x04\n" +
 	"\x03App\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -1809,13 +2228,21 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x03env\x18\n" +
 	" \x03(\v2\x16.fleet.v1.App.EnvEntryR\x03env\x121\n" +
 	"\x06labels\x18\v \x03(\v2\x19.fleet.v1.App.LabelsEntryR\x06labels\x12(\n" +
-	"\x06access\x18\f \x01(\v2\x10.fleet.v1.AccessR\x06access\x1a6\n" +
+	"\x06access\x18\f \x01(\v2\x10.fleet.v1.AccessR\x06access\x12-\n" +
+	"\asecrets\x18\r \x03(\v2\x13.fleet.v1.SecretRefR\asecrets\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1c\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x95\x01\n" +
+	"\tSecretRef\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06source\x18\x02 \x01(\tR\x06source\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x03R\aversion\x12\x14\n" +
+	"\x05store\x18\x04 \x01(\tR\x05store\x12\x10\n" +
+	"\x03key\x18\x05 \x01(\tR\x03key\x12\x1a\n" +
+	"\bproperty\x18\x06 \x01(\tR\bproperty\"\x1c\n" +
 	"\x06Access\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\"H\n" +
 	"\tAppReport\x12\x12\n" +
@@ -1849,7 +2276,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -1862,58 +2289,66 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*Certificate)(nil),        // 8: fleet.v1.Certificate
 	(*AgentMessage)(nil),       // 9: fleet.v1.AgentMessage
 	(*ControlMessage)(nil),     // 10: fleet.v1.ControlMessage
-	(*Hello)(nil),              // 11: fleet.v1.Hello
-	(*Capabilities)(nil),       // 12: fleet.v1.Capabilities
-	(*Builder)(nil),            // 13: fleet.v1.Builder
-	(*Build)(nil),              // 14: fleet.v1.Build
-	(*SourceRef)(nil),          // 15: fleet.v1.SourceRef
-	(*CancelBuild)(nil),        // 16: fleet.v1.CancelBuild
-	(*BuildReport)(nil),        // 17: fleet.v1.BuildReport
-	(*BuildStatus)(nil),        // 18: fleet.v1.BuildStatus
-	(*BuildLog)(nil),           // 19: fleet.v1.BuildLog
-	(*LogLine)(nil),            // 20: fleet.v1.LogLine
-	(*App)(nil),                // 21: fleet.v1.App
-	(*Access)(nil),             // 22: fleet.v1.Access
-	(*AppReport)(nil),          // 23: fleet.v1.AppReport
-	(*AppStatus)(nil),          // 24: fleet.v1.AppStatus
-	nil,                        // 25: fleet.v1.App.EnvEntry
-	nil,                        // 26: fleet.v1.App.LabelsEntry
+	(*Secret)(nil),             // 11: fleet.v1.Secret
+	(*SecretAck)(nil),          // 12: fleet.v1.SecretAck
+	(*Hello)(nil),              // 13: fleet.v1.Hello
+	(*Capabilities)(nil),       // 14: fleet.v1.Capabilities
+	(*SecretKey)(nil),          // 15: fleet.v1.SecretKey
+	(*Builder)(nil),            // 16: fleet.v1.Builder
+	(*Build)(nil),              // 17: fleet.v1.Build
+	(*SourceRef)(nil),          // 18: fleet.v1.SourceRef
+	(*CancelBuild)(nil),        // 19: fleet.v1.CancelBuild
+	(*BuildReport)(nil),        // 20: fleet.v1.BuildReport
+	(*BuildStatus)(nil),        // 21: fleet.v1.BuildStatus
+	(*BuildLog)(nil),           // 22: fleet.v1.BuildLog
+	(*LogLine)(nil),            // 23: fleet.v1.LogLine
+	(*App)(nil),                // 24: fleet.v1.App
+	(*SecretRef)(nil),          // 25: fleet.v1.SecretRef
+	(*Access)(nil),             // 26: fleet.v1.Access
+	(*AppReport)(nil),          // 27: fleet.v1.AppReport
+	(*AppStatus)(nil),          // 28: fleet.v1.AppStatus
+	nil,                        // 29: fleet.v1.App.EnvEntry
+	nil,                        // 30: fleet.v1.App.LabelsEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
 	8,  // 1: fleet.v1.RenewResponse.certificate:type_name -> fleet.v1.Certificate
 	8,  // 2: fleet.v1.RecoverResponse.certificate:type_name -> fleet.v1.Certificate
-	11, // 3: fleet.v1.AgentMessage.hello:type_name -> fleet.v1.Hello
-	23, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
-	17, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
-	19, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
-	21, // 7: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
-	14, // 8: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
-	16, // 9: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
-	12, // 10: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
-	13, // 11: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
-	15, // 12: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
-	18, // 13: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
-	20, // 14: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
-	25, // 15: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	26, // 16: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
-	22, // 17: fleet.v1.App.access:type_name -> fleet.v1.Access
-	24, // 18: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
-	2,  // 19: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 20: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 21: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 22: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 23: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 24: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 25: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 26: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 27: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 28: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	24, // [24:29] is the sub-list for method output_type
-	19, // [19:24] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	13, // 3: fleet.v1.AgentMessage.hello:type_name -> fleet.v1.Hello
+	27, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
+	20, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
+	22, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
+	12, // 7: fleet.v1.AgentMessage.secret_ack:type_name -> fleet.v1.SecretAck
+	24, // 8: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
+	17, // 9: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
+	19, // 10: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
+	11, // 11: fleet.v1.ControlMessage.secret:type_name -> fleet.v1.Secret
+	14, // 12: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
+	16, // 13: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
+	15, // 14: fleet.v1.Capabilities.secret_key:type_name -> fleet.v1.SecretKey
+	18, // 15: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
+	21, // 16: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
+	23, // 17: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
+	29, // 18: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	30, // 19: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	26, // 20: fleet.v1.App.access:type_name -> fleet.v1.Access
+	25, // 21: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
+	28, // 22: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
+	2,  // 23: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 24: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 25: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 26: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 27: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 28: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 29: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 30: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 31: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 32: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	28, // [28:33] is the sub-list for method output_type
+	23, // [23:28] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -1926,11 +2361,13 @@ func file_proto_fleet_v1_fleet_proto_init() {
 		(*AgentMessage_Report)(nil),
 		(*AgentMessage_BuildReport)(nil),
 		(*AgentMessage_BuildLog)(nil),
+		(*AgentMessage_SecretAck)(nil),
 	}
 	file_proto_fleet_v1_fleet_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlMessage_Apply)(nil),
 		(*ControlMessage_Build)(nil),
 		(*ControlMessage_CancelBuild)(nil),
+		(*ControlMessage_Secret)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1938,7 +2375,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

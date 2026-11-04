@@ -18,6 +18,7 @@ import (
 	"github.com/Abraxas-365/odyssey/agent/controllers/app"
 	buildctl "github.com/Abraxas-365/odyssey/agent/controllers/build"
 	"github.com/Abraxas-365/odyssey/agent/desired"
+	"github.com/Abraxas-365/odyssey/agent/secretstore"
 	"github.com/Abraxas-365/odyssey/agent/tunnel"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -59,6 +60,12 @@ type Options struct {
 	// Access says whether the cluster has the sign-in gate (odyssey-agent
 	// access, agent/access) and how Traefik reaches it.
 	Access AccessOptions
+	// ServiceAccount is the agent's own (namespace/name, ODYSSEY_SERVICE_ACCOUNT
+	// in its namespace). It is bound to desired.SecretsRole in each
+	// environment namespace, so the agent may keep app Secrets there and only
+	// there. Empty (an agent run outside the cluster): nothing is bound and
+	// its own credentials decide.
+	ServiceAccount client.ObjectKey
 }
 
 // AccessOptions configure protected apps (access mode team/organization).
@@ -106,6 +113,28 @@ func (e ensureAccessKey) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// bindSecrets binds desired.SecretsRole in every environment namespace once
+// the agent leads: an agent upgraded from one that held the Secrets role
+// cluster-wide keeps working in the namespaces it made before, and a binding
+// someone deleted comes back on restart.
+type bindSecrets struct{ n *desired.Namespaces }
+
+func (b bindSecrets) Start(ctx context.Context) error {
+	log := ctrl.Log.WithName("secrets-rbac")
+	for {
+		err := b.n.BindAll(ctx)
+		if err == nil {
+			return nil
+		}
+		log.Error(err, "cannot bind the secrets role in every environment namespace; retrying")
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(30 * time.Second):
 		}
 	}
 }
@@ -160,6 +189,9 @@ func Run(args []string) error {
 	fs.StringVar(&o.Builds.SourceURL, "source-url", env("ODYSSEY_SOURCE_URL", "http://odyssey-agent-source.odyssey-system.svc:8099"), "URL build pods reach the agent's source server at")
 	fs.BoolVar(&o.Access.Enabled, "access-enabled", envBool("ODYSSEY_ACCESS_ENABLED"), "the sign-in gate (odyssey-agent access) is installed: apps may require sign-in")
 	o.Access.KeyNamespace, o.Access.KeyName = env("POD_NAMESPACE", "odyssey-system"), env("ODYSSEY_ACCESS_SECRET", "odyssey-access")
+	if sa := os.Getenv("ODYSSEY_SERVICE_ACCOUNT"); sa != "" {
+		o.ServiceAccount = client.ObjectKey{Namespace: env("POD_NAMESPACE", "odyssey-system"), Name: sa}
+	}
 	fs.StringVar(&o.Access.VerifyURL, "access-verify-url", env("ODYSSEY_ACCESS_VERIFY_URL", "http://odyssey-access.odyssey-system.svc:8098/verify"), "the gate's /verify URL as Traefik reaches it")
 	zopts := zap.Options{}
 	zopts.BindFlags(fs)
@@ -175,6 +207,12 @@ func Run(args []string) error {
 	}
 	if *secret != "" {
 		o.Secret = client.ObjectKey{Namespace: *secretNS, Name: *secret}
+	}
+	// In the cluster the agent has no access to Secrets but what it binds
+	// for its own service account: without it, every secret would fail
+	// later and opaquely. Refuse to start instead.
+	if o.ServiceAccount.Name == "" && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return errors.New("ODYSSEY_SERVICE_ACCOUNT is not set: the agent's Deployment must pass its service account (fieldRef spec.serviceAccountName); see agent/install/deployment.yaml")
 	}
 	mgr, err := NewManager(cfg, o)
 	if err != nil {
@@ -224,7 +262,7 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	rec := &app.Reconciler{Client: mgr.GetClient(), Config: o.App, HealthGrace: o.HealthGrace, Owned: mw}
+	rec := &app.Reconciler{Client: mgr.GetClient(), Config: o.App, HealthGrace: o.HealthGrace, Owned: mw, ExternalSecrets: mgr.GetRESTMapper()}
 	if o.Access.Enabled && !o.Access.Ready() {
 		ctrl.Log.Error(nil, "ODYSSEY_ACCESS_ENABLED is set but the gate configuration is not usable: protected apps will fail", "verifyURL", o.Access.VerifyURL)
 	}
@@ -267,7 +305,17 @@ func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
 	if t.Store == nil {
 		t.Store = &tunnel.SecretStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: o.Secret.Namespace, Name: o.Secret.Name}
 	}
-	t.Desired = &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc, AccessGate: o.Access.Ready()}
+	namespaces := &desired.Namespaces{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Agent: o.ServiceAccount}
+	t.Desired = &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc, AccessGate: o.Access.Ready(), Namespaces: namespaces}
+	if t.Secrets == nil {
+		// Secrets are never cached: the writer reads the API.
+		t.Secrets = &secretstore.Writer{Client: mgr.GetClient(), Namespaces: namespaces}
+	}
+	if o.ServiceAccount.Name != "" {
+		if err := mgr.Add(bindSecrets{n: namespaces}); err != nil {
+			return err
+		}
+	}
 	t.IsRejected, t.Rejected = desired.IsRejected, desired.RejectedStatus
 	if t.Version == "" {
 		t.Version = Version

@@ -372,9 +372,15 @@ func (r *Repository) Place(ctx context.Context, organization identity.Organizati
 
 func (r *Repository) MovePlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, from, to fleet.ClusterID) (int, error) {
 	q := txn.Q(ctx, r.db)
-	// what the old cluster reported no longer describes anything
+	// what the old cluster reported no longer describes anything, and values
+	// sealed to its key cannot be opened by the new one (loaded again there)
 	if _, err := q.ExecContext(ctx,
 		`DELETE FROM fleet.app_status WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3`,
+		organization, environment, from); err != nil {
+		return 0, pgerr.Map(err, "move placement")
+	}
+	if _, err := q.ExecContext(ctx,
+		`DELETE FROM fleet.secret_deliveries WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3`,
 		organization, environment, from); err != nil {
 		return 0, pgerr.Map(err, "move placement")
 	}
@@ -416,10 +422,12 @@ type spec struct {
 	Env        map[string]string `json:"env"`
 	Labels     map[string]string `json:"labels"`
 	Access     string            `json:"access,omitempty"`
+	Secrets    []fleet.AppSecret `json:"secrets,omitempty"`
 }
 
 func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
-	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels, Access: a.Access})
+	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels,
+		Access: a.Access, Secrets: a.Secrets})
 	if err != nil {
 		return false, errx.Wrap(err, "encode app", errx.TypeInternal)
 	}
@@ -454,6 +462,10 @@ func (r appRow) app() (fleet.App, error) {
 	}
 	a := r.App
 	a.Image, a.Port, a.HealthPath, a.Replicas, a.Env, a.Labels, a.Access = s.Image, s.Port, s.HealthPath, s.Replicas, s.Env, s.Labels, s.Access
+	a.Secrets = s.Secrets
+	if a.Secrets == nil {
+		a.Secrets = []fleet.AppSecret{}
+	}
 	return a, nil
 }
 
@@ -507,7 +519,8 @@ func (r *Repository) notify(ctx context.Context, s fleet.Signal) error {
 }
 
 // Signals are "<org> <cluster> revoked", "<org> <cluster> reenrolled",
-// "<org> <cluster> app <env> <name>" or "<org> <cluster> build <id>".
+// "<org> <cluster> app <env> <name>", "<org> <cluster> build <id>" or
+// "<org> <cluster> secret <delivery id>".
 func encodeSignal(s fleet.Signal) string {
 	switch {
 	case s.Revoked:
@@ -516,6 +529,8 @@ func encodeSignal(s fleet.Signal) string {
 		return s.Organization.String() + " " + s.Cluster.String() + " reenrolled"
 	case !s.Build.IsZero():
 		return s.Organization.String() + " " + s.Cluster.String() + " build " + s.Build.String()
+	case !s.Secret.IsZero():
+		return s.Organization.String() + " " + s.Cluster.String() + " secret " + s.Secret.String()
 	}
 	return s.Organization.String() + " " + s.Cluster.String() + " app " + s.Environment.String() + " " + s.Name
 }
@@ -546,6 +561,10 @@ func decodeSignal(raw string) (fleet.Signal, bool) {
 		s.Name = f[4]
 	case f[2] == "build" && len(f) == 4:
 		if s.Build, err = fleet.ParseBuildID(f[3]); err != nil {
+			return fleet.Signal{}, false
+		}
+	case f[2] == "secret" && len(f) == 4:
+		if s.Secret, err = fleet.ParseSecretDeliveryID(f[3]); err != nil {
 			return fleet.Signal{}, false
 		}
 	default:

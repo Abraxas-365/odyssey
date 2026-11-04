@@ -32,6 +32,7 @@ import type { Project } from '@/lib/types'
 import { CodePanel } from '@/features/github/code-panel'
 import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
 import { AccessPanel } from '@/features/apps/access-panel'
+import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
 import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
 
 /** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
@@ -186,6 +187,10 @@ function Overview({ project: p }: { project: Project }) {
       {technical && production && can(permissions.deploymentsCreate) && !archived && <PublishImagePanel project={p.id} env={production.id} busy={publishing} />}
 
       {canRead && production && <AccessPanel project={p.id} env={production.id} current={current.data} canWrite={canWrite} busy={publishing} />}
+
+      {canRead && production && <VariablesPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
+
+      {canRead && production && <SecretsPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
 
       <EmptyState icon={Database} title="Lo que usa">Base de datos, archivos o IA. Tu asistente los pide cuando la app los necesita.</EmptyState>
 

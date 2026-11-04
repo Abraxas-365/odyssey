@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -40,6 +41,7 @@ const protectedResync = 10 * time.Minute
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// Secrets and ExternalSecrets: see secrets.go and agent/secretstore.
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,namespace=odyssey-system,resources=leases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",namespace=odyssey-system,resources=events,verbs=create;patch
@@ -63,6 +65,9 @@ type Reconciler struct {
 	// Owned are more kinds the app owns and reacts to (the Exposure's
 	// Middlewares, when the cluster has them at startup).
 	Owned []client.Object
+	// ExternalSecrets tells whether the ExternalSecret kind exists, i.e. the
+	// External Secrets Operator is installed (nil: Client's mapper).
+	ExternalSecrets meta.RESTMapper
 	// Now is the clock (tests); nil uses time.Now.
 	Now func() time.Time
 }
@@ -164,6 +169,13 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		steps = append([]step{ingStep}, steps[:2]...)
 	}
 	for _, x := range steps {
+		if x.obj == client.Object(d) {
+			// Before the Deployment changes: the running version keeps
+			// serving while a secret of the new one is missing.
+			if done, res, err := r.secretsStep(ctx, &a); done {
+				return res, err
+			}
+		}
 		var onInvalid func() error
 		if protected && x.obj == client.Object(ing) {
 			onInvalid = unexpose // an invalid update must not leave the old, open Ingress live
@@ -195,6 +207,21 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	logger.V(1).Info("observed", "phase", o.Phase, "reason", o.Reason, "message", o.Message)
 	if o.Phase == v1alpha1.PhaseProgressing {
 		return ctrl.Result{RequeueAfter: progressEvery}, nil
+	}
+	if o.Phase == v1alpha1.PhaseReady {
+		// The previous version's pods are gone: what the spec no longer
+		// lists can go. A value kept only for its grace is looked at again
+		// when the grace ends.
+		wait, err := r.pruneSecrets(ctx, &a)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if wait > 0 {
+			if protected && protectedResync < wait {
+				wait = protectedResync
+			}
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
 	}
 	if protected {
 		// Middlewares may not be watched (Traefik installed after the agent

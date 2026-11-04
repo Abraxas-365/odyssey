@@ -10,6 +10,29 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/config"
 )
 
+// The API reads ODYSSEY_CLUSTER like the worker: it asks the cluster for its
+// secret key and sends it sealed secrets, so a fleet API must not answer from
+// the in-memory fake (2a found its key offered for a real cluster).
+func TestAPICluster(t *testing.T) {
+	for cluster, want := range map[string]string{"": config.ClusterFake, "fake": config.ClusterFake, "fleet": config.ClusterFleet, "k8s": ""} {
+		for k, v := range map[string]string{"DATABASE_URL": "postgres://x", "ODYSSEY_BLOB_URL": "mem://", "IAMKIT_URL": "http://iam",
+			"IAMKIT_ISSUER": "http://iam", "IAMKIT_AUDIENCE": "http://api/mcp", "IAMKIT_ENVIRONMENT_ID": "e", "IAMKIT_APPLICATION_ID": "a",
+			"IAMKIT_RESOURCE_ID": "r", "ODYSSEY_CLUSTER": cluster, "ODYSSEY_BUILDER": ""} {
+			t.Setenv(k, v)
+		}
+		cfg, err := config.Load()
+		if want == "" {
+			if err == nil {
+				t.Errorf("%q: want an error, got %q", cluster, cfg.Cluster.Kind)
+			}
+			continue
+		}
+		if err != nil || cfg.Cluster.Kind != want {
+			t.Errorf("%q: got %q %v, want %q", cluster, cfg.Cluster.Kind, err, want)
+		}
+	}
+}
+
 // A fleet worker never pairs real clusters with the fake builder: its
 // placeholder images exist nowhere.
 func TestWorkerBuilder(t *testing.T) {

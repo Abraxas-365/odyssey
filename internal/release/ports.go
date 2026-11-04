@@ -34,6 +34,24 @@ type Commands interface {
 	// (a deployment in progress applies it itself). Choosing the mode already
 	// in force changes nothing. The caller checks the permission for the mode.
 	SetAccess(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input SetAccess) (AccessChange, error)
+	// SetEnv changes the environment's plain variables, as SetAccess changes
+	// its access (a new revision; a config deployment when something is
+	// online). Setting a name that is a secret is refused.
+	SetEnv(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input SetEnv) (SettingsChange, error)
+	// RequestSecret asks a person to load a managed secret's value (nothing
+	// changes in the cluster until it is loaded). A secret already there is
+	// returned as it is, without a request.
+	RequestSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input RequestSecret) (SecretView, error)
+	// LoadSecret stores a managed value sealed in the browser to the
+	// cluster's key: the reference goes into a new revision, the sealed
+	// bytes to the cluster, and a config deployment applies it. Version
+	// must be the next one (CodeSecretVersionConflict otherwise).
+	LoadSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input LoadSecret) (SettingsChange, error)
+	// SetExternalSecret points a secret at the company's vault through a
+	// ClusterSecretStore of the cluster. The caller checks the permission.
+	SetExternalSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input SetExternalSecret) (SettingsChange, error)
+	// RemoveSecret drops a secret variable, or a request (NotFound when neither).
+	RemoveSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input RemoveSecret) (SettingsChange, error)
 	// IssueUpload issues a one-use ticket to publish a folder to the
 	// environment (see UploadTicket); the returned ticket carries its token.
 	// The ticket names the request's client (event.Meta).
@@ -59,6 +77,9 @@ type Queries interface {
 	// with the sign-in (see Cluster.CanProtect). When it cannot, only public
 	// can be applied there.
 	AccessProtectionAvailable(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (bool, error)
+	// Secrets are the environment's secret variables and open requests, with
+	// their state against its cluster, and what the cluster offers.
+	Secrets(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Secrets, error)
 }
 
 // AccessLookup finds an environment by its id alone, for the access sign-in
@@ -86,6 +107,13 @@ type Cluster interface {
 	// CanProtect reports whether the environment's cluster can serve apps
 	// behind the access sign-in (team, organization). It changes nothing.
 	CanProtect(ctx context.Context, target Target) (bool, error)
+	// Secrets is what the environment's cluster (or, unplaced, the
+	// organization's default) offers for secrets. It changes nothing.
+	Secrets(ctx context.Context, target Target) (ClusterSecrets, error)
+	// DeliverSecret has a sealed managed value taken to the environment's
+	// cluster. It joins the caller's transaction; a value sealed to another
+	// key than the cluster's is refused (Business, CodeSecretKeyChanged).
+	DeliverSecret(ctx context.Context, target Target, delivery SecretDelivery) error
 }
 
 // Builder turns uploaded sources into images: the build domain, through
@@ -164,6 +192,17 @@ type Repository interface {
 	// lock (LockState): revisions are assigned there.
 	AppendSettings(ctx context.Context, settings Settings) (Settings, error)
 
+	// PutSecretRequest stores (or renews) a request for a managed value.
+	PutSecretRequest(ctx context.Context, request SecretRequest) error
+	ListSecretRequests(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]SecretRequest, error)
+	// DeleteSecretRequest drops the request named name (false when none).
+	DeleteSecretRequest(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (bool, error)
+	// ListSecretVersions is, by name, the highest managed version any settings
+	// revision of the environment ever recorded. AppendSettings raises it in
+	// the revision's transaction and it never goes down, even if the history
+	// were purged: a value loaded again after a removal gets a newer version
+	// than the one the cluster may still hold.
+	ListSecretVersions(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (map[string]int64, error)
 	CreateUploadTicket(ctx context.Context, ticket UploadTicket) error
 	// ConsumeUploadTicket marks the unused, unexpired ticket with hash used
 	// at now and returns it (NotFound otherwise). It is not scoped by

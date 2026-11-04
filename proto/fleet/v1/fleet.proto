@@ -100,6 +100,8 @@ message AgentMessage {
     // build_log carries lines a build printed, in order. Lines may be sent
     // again (after a reconnect): their seq makes that harmless.
     BuildLog build_log = 4;
+    // secret_ack answers a ControlMessage.secret.
+    SecretAck secret_ack = 5;
   }
 }
 
@@ -113,7 +115,37 @@ message ControlMessage {
     // cancel_build: the build is no longer wanted (cancelled, or finished
     // and recorded): stop it if it runs and drop what the cluster keeps of it.
     CancelBuild cancel_build = 3;
+    // secret delivers one managed secret value, sealed to the cluster's
+    // secret_key. The agent answers with a secret_ack either way.
+    Secret secret = 4;
   }
+}
+
+// Secret is a managed secret's value on its way to the cluster.
+message Secret {
+  // delivery_id names this delivery (the ack echoes it).
+  string delivery_id = 1;
+  string organization_id = 2;
+  string project_id = 3;
+  string environment_id = 4;
+  // app is the app's name in the cluster: the value goes to its secret store.
+  string app = 5;
+  string name = 6;
+  int64 version = 7;
+  // key_id is the cluster key it was sealed to.
+  string key_id = 8;
+  // sealed is HPKE single-shot output (enc || ciphertext) made by
+  // pkg/secretbox: its info binds it to this cluster, environment, name and
+  // version, so it opens for nothing else.
+  bytes sealed = 9;
+}
+
+// SecretAck answers a Secret.
+message SecretAck {
+  string delivery_id = 1;
+  // error is empty when the value was stored (or a newer version already
+  // was); otherwise it says why not (wrong key, cannot open, cannot write).
+  string error = 2;
 }
 
 message Hello {
@@ -136,6 +168,23 @@ message Capabilities {
   repeated string storage_classes = 4;
   // builder is set when the cluster can build images (unset: it cannot).
   Builder builder = 5;
+  // secret_key is the cluster's public key for managed secrets (2a): a
+  // person's value is sealed to it in the browser and only this cluster can
+  // open it. Unset: the cluster cannot take managed secrets.
+  SecretKey secret_key = 6;
+  // secret_stores are the ClusterSecretStores (External Secrets Operator)
+  // TI registered, by name: where external secrets may be read from.
+  repeated string secret_stores = 7;
+}
+
+// SecretKey is an HPKE (RFC 9180) public key.
+message SecretKey {
+  // key_id names the key: base64url(sha256(public_key)), first 16 chars.
+  string key_id = 1;
+  // public_key is the KEM's serialized public key (32 bytes for X25519).
+  bytes public_key = 2;
+  // suite is "DHKEM-X25519-HKDF-SHA256/HKDF-SHA256/AES-256-GCM", the only one.
+  string suite = 3;
 }
 
 // Builder is the cluster's image builder.
@@ -222,6 +271,26 @@ message App {
   // access says who may open the app (1e "Quién puede abrirla"). An agent
   // without the gate refuses (fail closed) any mode other than public.
   Access access = 12;
+  // secrets are the app's secret variables (2a): references only, never a
+  // value. A name here wins over the same name in env.
+  repeated SecretRef secrets = 13;
+}
+
+// SecretRef is one secret variable of an app.
+message SecretRef {
+  // name is the environment variable the app reads it as.
+  string name = 1;
+  // source is "managed" (a value a person loaded, delivered sealed with a
+  // Secret message) or "external" (read by the External Secrets Operator).
+  string source = 2;
+  // version of a managed secret's value: the agent must not start the app
+  // until its secret store holds this version or a newer one.
+  int64 version = 3;
+  // store, key and property locate an external secret: the
+  // ClusterSecretStore, the remote key and (optional) the property in it.
+  string store = 4;
+  string key = 5;
+  string property = 6;
 }
 
 // Access is the app's exposure policy.

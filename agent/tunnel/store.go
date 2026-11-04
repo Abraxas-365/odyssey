@@ -23,6 +23,14 @@ type Store interface {
 	// SavePending keeps the key of an Enroll or Renew about to be sent (nil
 	// drops it): if the answer is lost, Recover gets its certificate back.
 	SavePending(ctx context.Context, keyPEM []byte) error
+	// SecretKey returns the cluster's secret key as saved by SaveSecretKey
+	// (nil when there is none yet).
+	SecretKey(ctx context.Context) ([]byte, error)
+	// SaveSecretKey keeps the cluster's secret key unless one is already
+	// kept (the first wins, so the key never changes under values sealed to
+	// it); the caller reads it back with SecretKey. Save and enrolling leave
+	// it alone.
+	SaveSecretKey(ctx context.Context, key []byte) error
 }
 
 // Keys of the agent's Secret. An operator creates it with token, gateway
@@ -38,6 +46,9 @@ const (
 	KeyOrganization = "organization"
 	KeyCluster      = "cluster"
 	KeyPending      = "pending.key"
+	// KeySecret is the cluster's private key for managed secrets (the
+	// agent makes it once; see pkg/secretbox).
+	KeySecret = "secret.key"
 )
 
 // +kubebuilder:rbac:groups="",namespace=odyssey-system,resources=secrets,resourceNames=odyssey-agent,verbs=get;update
@@ -92,6 +103,22 @@ func (s *SecretStore) SavePending(ctx context.Context, keyPEM []byte) error {
 	})
 }
 
+func (s *SecretStore) SecretKey(ctx context.Context) ([]byte, error) {
+	var sec corev1.Secret
+	if err := s.Reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Name}, &sec); err != nil {
+		return nil, fmt.Errorf("read secret %s/%s: %w", s.Namespace, s.Name, err)
+	}
+	return sec.Data[KeySecret], nil
+}
+
+func (s *SecretStore) SaveSecretKey(ctx context.Context, key []byte) error {
+	return s.update(ctx, "save the secret key", func(data map[string][]byte) {
+		if len(data[KeySecret]) == 0 {
+			data[KeySecret] = key
+		}
+	})
+}
+
 func (s *SecretStore) update(ctx context.Context, what string, change func(map[string][]byte)) error {
 	var sec corev1.Secret
 	if err := s.Reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Name}, &sec); err != nil {
@@ -112,6 +139,7 @@ type MemoryStore struct {
 	mu         sync.Mutex
 	identity   Identity
 	enrollment Enrollment
+	secretKey  []byte
 	// LoseAnswers makes the next n Save calls fail (tests: an answer the
 	// agent got but could not keep is as good as lost).
 	LoseAnswers int
@@ -143,6 +171,21 @@ func (m *MemoryStore) SavePending(_ context.Context, keyPEM []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.enrollment.PendingKey = keyPEM
+	return nil
+}
+
+func (m *MemoryStore) SecretKey(context.Context) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.secretKey, nil
+}
+
+func (m *MemoryStore) SaveSecretKey(_ context.Context, key []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.secretKey) == 0 {
+		m.secretKey = key
+	}
 	return nil
 }
 

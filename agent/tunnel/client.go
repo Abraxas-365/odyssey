@@ -65,6 +65,9 @@ type Options struct {
 	// Builds runs the builds the control plane sends; nil: this agent does
 	// not build (its Capabilities have no builder).
 	Builds Builds
+	// Secrets stores the managed secrets the control plane delivers; nil:
+	// this agent takes none (its Capabilities have no secret key).
+	Secrets Secrets
 }
 
 type key struct{ environment, name string }
@@ -465,7 +468,8 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 		defer sendMu.Unlock()
 		return st.Send(m)
 	}
-	hello := &fleetv1.Hello{AgentVersion: c.o.Version, Capabilities: c.o.Desired.Capabilities(ctx)}
+	secrets := c.newSecretSession(ctx)
+	hello := &fleetv1.Hello{AgentVersion: c.o.Version, Capabilities: secrets.capabilities(c.o.Desired.Capabilities(ctx))}
 	if err := send(&fleetv1.AgentMessage{Message: &fleetv1.AgentMessage_Hello{Hello: hello}}); err != nil {
 		return err
 	}
@@ -479,7 +483,7 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 	c.o.Log.Info("tunnel up", "gateway", id.Gateway, "cluster", id.Cluster)
 
 	errc := make(chan error, 2)
-	go func() { errc <- c.receive(st) }()
+	go func() { errc <- c.receive(ctx, st, send, secrets, id.Cluster) }()
 	go func() { errc <- c.reportLoop(ctx, send, builds) }()
 
 	renewal := time.NewTimer(time.Until(renewAt(leaf)))
@@ -511,14 +515,23 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 // errRenewed ends a stream so the agent reconnects with its new certificate.
 var errRenewed = errors.New("reconnecting with the renewed certificate")
 
-// receive queues the desired apps and builds the gateway sends.
-func (c *Client) receive(st fleetv1.Fleet_ConnectClient) error {
+// receive queues the desired apps and builds the gateway sends, and stores
+// (and acknowledges) the secrets.
+func (c *Client) receive(ctx context.Context, st fleetv1.Fleet_ConnectClient, send func(*fleetv1.AgentMessage) error, secrets secretSession, cluster string) error {
 	for {
 		m, err := st.Recv()
 		if err != nil {
 			return err
 		}
 		if c.receiveBuild(m) {
+			continue
+		}
+		if sec := m.GetSecret(); sec != nil {
+			// In order and answered before the next message: a version
+			// delivered after another never overtakes it.
+			if err := c.receiveSecret(ctx, secrets, cluster, sec, send); err != nil {
+				return err
+			}
 			continue
 		}
 		a := m.GetApply()

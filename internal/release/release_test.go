@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,8 +46,36 @@ func TestEventContracts(t *testing.T) {
 		release.NewUploadTicketUsed(ticket, n),
 		release.NewAccessChanged(org, user, r.Project.String(), release.DefaultSettings(org, d.Environment),
 			release.Settings{Environment: d.Environment, Organization: org, Revision: 3, Access: release.AccessSettings{Mode: release.AccessOrganization}}, &restore, n),
+		release.NewEnvChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Organization: org, Revision: 4,
+			Env: map[string]string{"LOG_LEVEL": "debug", "TZ": "America/Lima"}}, []string{"TZ", "LOG_LEVEL"}, []string{"OLD"}, &restore, n),
+		release.NewSecretChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Revision: 5}, release.SecretRef{Name: "STRIPE_API_KEY",
+			Source: release.SecretManaged, Version: 2, KeyID: "k3yIdK3yIdK3yId0"}, release.SecretChangeLoaded, &restore, n),
 	} {
 		eventtest.Golden(t, e)
+	}
+}
+
+// TestSecretChangesNeverCarryAValue: every kind of change names the secret,
+// says what changed, and has nothing a value could hide in.
+func TestSecretChangesNeverCarryAValue(t *testing.T) {
+	org, user := identity.NewOrganizationID(), identity.MustParseUserID("00000000-0000-4000-8000-000000000002")
+	env := project.NewEnvironmentID()
+	n := release.Names{Project: "Visitas", Environment: "production"}
+	for change, ref := range map[string]release.SecretRef{
+		release.SecretChangeRequested: {Name: "STRIPE_API_KEY", Source: release.SecretManaged},
+		release.SecretChangeLoaded:    {Name: "STRIPE_API_KEY", Source: release.SecretManaged, Version: 1, KeyID: "k"},
+		release.SecretChangeExternal:  {Name: "DB_PASSWORD", Source: release.SecretExternal, Store: "vault-prod", Key: "apps/db"},
+		release.SecretChangeRemoved:   {Name: "DB_PASSWORD", Source: release.SecretExternal},
+	} {
+		e := release.NewSecretChanged(org, user, "p", release.Settings{Environment: env, Revision: 1}, ref, change, nil, n)
+		var got release.SecretChanged
+		if err := json.Unmarshal(e.Payload, &got); err != nil {
+			t.Fatal(err)
+		}
+		if e.Type != release.EventSecretChanged || got.Change != change || got.Name != ref.Name || e.Summary == "" ||
+			!strings.Contains(e.Summary, ref.Name) {
+			t.Errorf("%s: %+v %q", change, got, e.Summary)
+		}
 	}
 }
 
@@ -269,5 +298,92 @@ func TestAccessMode(t *testing.T) {
 	d.SettingsRevision = &two
 	if d.AppliedSettings() != 2 {
 		t.Error("applied revision")
+	}
+}
+
+// TestSettingsVarLimit: the 100 names of an environment are its variables,
+// secrets and open requests together, each name once, in every path that adds
+// one.
+func TestSettingsVarLimit(t *testing.T) {
+	org, env := identity.NewOrganizationID(), project.NewEnvironmentID()
+	user := identity.MustParseUserID("00000000-0000-4000-8000-000000000002")
+	base := release.DefaultSettings(org, env)
+	for i := range 40 {
+		base.Env[fmt.Sprintf("V%d", i)] = "x"
+	}
+	for i := range 30 {
+		base.Secrets = append(base.Secrets, release.SecretRef{Name: fmt.Sprintf("S%d", i), Source: release.SecretManaged, Version: 1, KeyID: "k"})
+	}
+	requests := func(names ...string) []release.SecretRequest {
+		var out []release.SecretRequest
+		for _, n := range names {
+			out = append(out, release.SecretRequest{Name: n})
+		}
+		return out
+	}
+	// 70 names + 30 requests = 100: full
+	var open []release.SecretRequest
+	for i := range 30 {
+		open = append(open, requests(fmt.Sprintf("R%d", i))...)
+	}
+	if got := base.NameCount(open); got != 100 {
+		t.Fatalf("count %d", got)
+	}
+	// a request of a name that is already a secret or a variable is not counted twice
+	if got := base.NameCount(append(requests("S0", "V0"), open...)); got != 100 {
+		t.Fatalf("double count %d", got)
+	}
+	tooMany := func(what string, err error) {
+		t.Helper()
+		var e *errx.Error
+		if !errors.As(err, &e) || !strings.Contains(e.Error(), "at most 100 variables, secrets and pending requests") {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+
+	// WithEnv: a 101st name is refused, replacing or removing is fine
+	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"NEW": "x"}, RequestedBy: user}, open); err == nil {
+		t.Error("WithEnv took a 101st name")
+	} else {
+		tooMany("WithEnv", err)
+	}
+	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"V0": "y"}, RequestedBy: user}, open); err != nil {
+		t.Errorf("WithEnv replacing: %v", err)
+	}
+	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"NEW": "x"}, Unset: []string{"V0"}, RequestedBy: user}, open); err != nil {
+		t.Errorf("WithEnv swapping: %v", err)
+	}
+	// a name with an open request becomes a variable: still 100 (the request is not a second place)
+	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"R0": "x"}, RequestedBy: user}, open); err != nil {
+		t.Errorf("WithEnv over a request: %v", err)
+	}
+
+	// WithSecret: a new secret is refused; answering a request is not
+	ref := func(name string) release.SecretRef {
+		return release.SecretRef{Name: name, Source: release.SecretManaged, Version: 1, KeyID: "k"}
+	}
+	if _, err := base.WithSecret(ref("NEW"), user, open); err == nil {
+		t.Error("WithSecret took a 101st name")
+	} else {
+		tooMany("WithSecret", err)
+	}
+	if n, err := base.WithSecret(ref("R0"), user, open); err != nil || len(n.Secrets) != 31 {
+		t.Errorf("WithSecret answering a request: %v", err)
+	}
+	if _, err := base.WithSecret(ref("V0"), user, open); err != nil { // variable becomes a secret
+		t.Errorf("WithSecret over a variable: %v", err)
+	}
+	if _, err := base.WithSecret(ref("S0"), user, open); err != nil { // rotation
+		t.Errorf("WithSecret rotating: %v", err)
+	}
+
+	// CheckRequest: full refuses a new name, renews an open one, and a name
+	// that is a secret is not a new request
+	tooMany("CheckRequest", base.CheckRequest(open, "NEW"))
+	if err := base.CheckRequest(open, "R5"); err != nil {
+		t.Errorf("CheckRequest renewing: %v", err)
+	}
+	if err := base.CheckRequest(open[:29], "NEW"); err != nil {
+		t.Errorf("CheckRequest with a free place: %v", err)
 	}
 }

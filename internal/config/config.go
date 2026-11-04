@@ -27,6 +27,10 @@ type Config struct {
 	Fleet Fleet
 	// Blob is where uploaded sources and build logs are stored.
 	Blob Blob
+	// Cluster is ODYSSEY_CLUSTER, as the worker's: the API asks the cluster
+	// for its secret key, sends it sealed secrets and checks it can protect
+	// apps (the worker applies the deployments). Both must agree.
+	Cluster Cluster
 	// Builder reads live build logs (the worker runs the builds); it follows
 	// ODYSSEY_CLUSTER like the worker's.
 	Builder Builder
@@ -281,6 +285,7 @@ func Load() (Config, error) {
 		},
 		CORSOrigins: splitList(os.Getenv("CORS_ORIGINS")),
 		Fleet:       Fleet{CACert: os.Getenv("FLEET_CA_CERT"), Gateway: os.Getenv("FLEET_GATEWAY_URL")},
+		Cluster:     Cluster{Kind: env("ODYSSEY_CLUSTER", ClusterFake)},
 	}
 	if (cfg.Fleet.CACert == "") != (cfg.Fleet.Gateway == "") {
 		return Config{}, errx.Validation("FLEET_CA_CERT and FLEET_GATEWAY_URL go together")

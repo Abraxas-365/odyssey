@@ -8,9 +8,11 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/pkg/secretbox"
 )
 
 // Outcome is how an applied app behaves.
@@ -32,6 +34,11 @@ type Options struct {
 	// access capability): CanProtect is false and a team or organization app
 	// is refused at Apply, like a real cluster without the gate.
 	NoAccessGate bool
+	// NoSecrets makes the cluster unable to take managed secrets (no key).
+	NoSecrets bool
+	// SecretStores are the ClusterSecretStores it offers (none: no External
+	// Secrets Operator).
+	SecretStores []string
 	// Domain is the base of the simulated URLs (default "apps.odyssey.localhost").
 	Domain string
 }
@@ -54,6 +61,11 @@ type Cluster struct {
 	apps    map[string]*app
 	applied []Applied
 	down    error
+	key     secretbox.Key
+	secrets map[string]Secret
+	// failures, by environment/name, as fleet's secret_failures
+	failures map[string]release.SecretFailure
+	revoked  bool
 }
 
 func New(opts Options) *Cluster {
@@ -63,7 +75,7 @@ func New(opts Options) *Cluster {
 	if opts.Domain == "" {
 		opts.Domain = "apps.odyssey.localhost"
 	}
-	return &Cluster{opts: opts, apps: map[string]*app{}}
+	return &Cluster{opts: opts, apps: map[string]*app{}, key: mustKey(), secrets: map[string]Secret{}, failures: map[string]release.SecretFailure{}}
 }
 
 var _ release.Cluster = (*Cluster)(nil)
@@ -87,6 +99,11 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 	if c.opts.NoAccessGate && (d.Access == "team" || d.Access == "organization") {
 		return release.Failed(release.CodeApplyFailed, "Este clúster no puede proteger apps con inicio de sesión. Pide a TI que lo habilite.")
 	}
+	for _, s := range d.Secrets {
+		if s.Source == release.SecretManaged && (c.opts.NoSecrets || s.KeyID != c.key.ID()) {
+			return release.Failed(release.CodeApplyFailed, "El clúster de este entorno cambió su llave: vuelve a cargar el secreto "+s.Name+" en la consola.")
+		}
+	}
 	k := key(t, d.Name)
 	if cur, ok := c.apps[k]; ok && cur.desired.Revision >= d.Revision {
 		return nil // idempotent; an older revision is ignored
@@ -102,6 +119,120 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 
 func (c *Cluster) CanProtect(context.Context, release.Target) (bool, error) {
 	return !c.opts.NoAccessGate, nil
+}
+
+// Secrets offers the fake's key (unless NoSecrets) and its stores, and the
+// environment's failed deliveries (Fail).
+func (c *Cluster) Secrets(_ context.Context, t release.Target) (release.ClusterSecrets, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.revoked {
+		return release.ClusterSecrets{Stores: []string{}, Revoked: true}, nil
+	}
+	out := release.ClusterSecrets{External: len(c.opts.SecretStores) > 0, Stores: append([]string{}, c.opts.SecretStores...)}
+	if !c.opts.NoSecrets {
+		out.Key = &release.ClusterKey{Cluster: FakeClusterID, KeyID: c.key.ID(), Public: c.key.Public()}
+	}
+	prefix := t.Environment.String() + "/"
+	for k, f := range c.failures {
+		if name, ok := strings.CutPrefix(k, prefix); ok {
+			if out.Failures == nil {
+				out.Failures = map[string]release.SecretFailure{}
+			}
+			out.Failures[name] = f
+		}
+	}
+	return out, nil
+}
+
+// Fail makes the delivery of the app's secret name at version end as the
+// agent reporting err would (fleet records a failure).
+func (c *Cluster) Fail(t release.Target, app, name string, version int64, err string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failures[t.Environment.String()+"/"+name] = release.SecretFailure{App: app, Version: version, Error: err, FailedAt: time.Now().UTC()}
+}
+
+// Revoke makes the cluster revoked: it offers nothing for secrets.
+func (c *Cluster) Revoke() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.revoked = true
+}
+
+// DeliverSecret opens the value as the agent would (so a test proves it was
+// sealed for this cluster, environment, name and version) and keeps it.
+func (c *Cluster) DeliverSecret(_ context.Context, t release.Target, d release.SecretDelivery) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.down != nil {
+		return c.down
+	}
+	if c.opts.NoSecrets {
+		return errx.Business("Este clúster todavía no puede guardar secretos.").WithCode(release.CodeSecretsUnavailable)
+	}
+	if d.KeyID != c.key.ID() {
+		return errx.Business("El clúster cambió su llave: vuelve a cargar el valor.").WithCode(release.CodeSecretKeyChanged)
+	}
+	value, err := c.key.Open(secretbox.Target{Cluster: FakeClusterID, Environment: t.Environment.String(), App: d.App, Name: d.Name, Version: d.Version}, d.Sealed)
+	if err != nil {
+		return errx.Validation("the fake cluster cannot open the value: " + err.Error())
+	}
+	k := key(t, d.App) + "/" + d.Name
+	if old, ok := c.secrets[k]; ok && old.Version >= d.Version {
+		// fleet keeps only newer versions (the agent ignores older ones)
+		return errx.Conflict("a newer value of this secret is on its way").WithCode(release.CodeSecretVersionConflict)
+	}
+	c.secrets[k] = Secret{Version: d.Version, Value: string(value)}
+	if f, ok := c.failures[t.Environment.String()+"/"+d.Name]; ok && f.Version <= d.Version {
+		delete(c.failures, t.Environment.String()+"/"+d.Name)
+	}
+	return nil
+}
+
+// Secret is a value the fake received.
+type Secret struct {
+	Version int64
+	Value   string
+}
+
+// Received is the value of the app's secret named name the fake holds.
+func (c *Cluster) Received(t release.Target, app, name string) (Secret, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.secrets[key(t, app)+"/"+name]
+	return s, ok
+}
+
+// RotateKey gives the fake a new key (its agent was reinstalled): values
+// sealed to the old one must be loaded again.
+func (c *Cluster) RotateKey() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.key = mustKey()
+}
+
+// SealFor seals value as the console would for the app's secret.
+func (c *Cluster) SealFor(t release.Target, app, name string, version int64, value string) (keyID string, sealed []byte) {
+	c.mu.Lock()
+	pub, id := c.key.Public(), c.key.ID()
+	c.mu.Unlock()
+	sealed, err := secretbox.Seal(pub, secretbox.Target{Cluster: FakeClusterID, Environment: t.Environment.String(), App: app, Name: name, Version: version}, []byte(value))
+	if err != nil {
+		panic(err)
+	}
+	return id, sealed
+}
+
+// FakeClusterID is the cluster id the fake's key is bound to.
+const FakeClusterID = "00000000-0000-4000-8000-00000000fa6e"
+
+func mustKey() secretbox.Key {
+	k, err := secretbox.GenerateKey()
+	if err != nil {
+		panic(err)
+	}
+	return k
 }
 
 func (c *Cluster) Status(_ context.Context, t release.Target, name string) (release.AppStatus, error) {

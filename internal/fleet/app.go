@@ -3,6 +3,7 @@ package fleet
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,9 +35,16 @@ type App struct {
 	Labels     map[string]string `json:"labels" db:"-"`
 	// Access is who may open the app: one of the Access* modes. "" is
 	// "public" and only exists for revisions stored before 1e.
-	Access    string    `json:"access" db:"-"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	Access string `json:"access" db:"-"`
+	// Secrets are the app's secret variables, by name (references only).
+	Secrets   []AppSecret `json:"secrets" db:"-"`
+	UpdatedAt time.Time   `json:"updated_at" db:"updated_at"`
 }
+
+// MaxAppSecrets bounds an app's secret variables.
+const MaxAppSecrets = 100
+
+var envVarPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 // Access modes of an app (proto App.access.mode).
 const (
@@ -64,6 +72,22 @@ func (a App) Validate() error {
 		return errx.Validation("app image is required")
 	case !ValidAccess(a.Access):
 		return errx.Validation("app access must be public, team or organization")
+	case len(a.Secrets) > MaxAppSecrets:
+		return errx.Validation("an app has at most 100 secrets")
+	}
+	seen := make(map[string]bool, len(a.Secrets))
+	for _, s := range a.Secrets {
+		switch {
+		case !envVarPattern.MatchString(s.Name) || seen[s.Name]:
+			return errx.Validation("secret names must be distinct environment variable names")
+		case s.Source == SecretManaged && (s.Version < 1 || s.KeyID == ""):
+			return errx.Validation("a managed secret needs its loaded version and key")
+		case s.Source == SecretExternal && (!ValidStoreName(s.Store) || s.Key == ""):
+			return errx.Validation("an external secret needs a store and a key")
+		case s.Source != SecretManaged && s.Source != SecretExternal:
+			return errx.Validation("secret source must be managed or external")
+		}
+		seen[s.Name] = true
 	}
 	return nil
 }

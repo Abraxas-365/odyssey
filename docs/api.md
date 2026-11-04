@@ -211,8 +211,12 @@ environment serves. The console calls both "versión".
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
-| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, access_login_available, access_protection_available}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
+| `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null}` (`{set, unset}`) |
+| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for `external`) | `managed`: 200 the secret (`missing` until loaded); `external`: **202** `{settings, deployment\|null}` |
+| `DELETE` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for a vault secret: 403 without it) | **202** `{settings, deployment\|null}` |
+| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name/value` | projects:write (+ `odyssey:secrets:external` to replace a vault secret: 403 without it) | **202** `{settings, deployment\|null}` (`{version, key_id, sealed}`: ciphertext only); 409 `SECRET_VERSION_CONFLICT` when `version` is not the secret's `next_version` |
 | `GET` | `/api/v1/projects/:id/releases/:release` | read | 200 release |
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
@@ -293,6 +297,46 @@ environment serves. The console calls both "versión".
   deployment that fails *after* that does not reopen the app on its own (the
   cluster keeps the mode it was told), and the console shows the change as not
   applied while the latest revision is higher.
+- **Variables and secrets** (cut 2a; data plane in `docs/secrets.md`). A
+  settings revision is the environment's whole configuration: access, plain
+  variables (`env`) and secret references (`secrets`), copied forward; every
+  change below is the next revision, applied exactly like an access change
+  (a `config` deployment when a release is online). In the pod, a release's
+  `env` < the environment's `env` < its secrets; a name is a variable or a
+  secret, never both (400). `PATCH …/env {set, unset}` changes variables
+  (event `env.changed`, names only). A **managed** secret is a value a person
+  types in the console: `PUT …/secrets/:name {source:"managed", note?}` only
+  records the request (state `missing`, nothing reaches the cluster; the
+  MCP's `request_secret` does this and answers with the console link, an
+  assistant never sees a value). The console then seals the value in the
+  browser to the cluster's `secret_key` (HPKE DHKEM-X25519/HKDF-SHA256/
+  AES-256-GCM, bound to cluster, environment, app, name and version) and sends
+  `PUT …/secrets/:name/value {version, key_id, sealed}`: the API accepts only
+  ciphertext and cannot open it; it is held until the agent answers (at most
+  7 days) and then deleted. `version` must be the secret's `next_version`
+  (in the settings): one more than the highest it ever had in this
+  environment, also after it was removed and added again, because the
+  cluster keeps only newer versions and would take a reused number for an old
+  value (409 `SECRET_VERSION_CONFLICT` otherwise; also when a newer value is
+  already on its way); a key that changed meanwhile is 422
+  `SECRET_KEY_CHANGED`, a cluster without a key 422 `SECRETS_UNAVAILABLE`.
+  When the environment's cluster changes key (it moved, or its agent was
+  reinstalled) its managed secrets show `reload` and a deployment fails closed
+  until they are loaded again. A value that never reached the cluster (the
+  agent could not store it, nobody took it within 7 days, or the cluster was
+  revoked first) shows `failed` with `failure {version, error, failed_at}`
+  until a newer value is loaded or the agent stores that one. A revoked
+  cluster offers no key nor stores and the settings say
+  `secrets_cluster_revoked: true`. An **external** secret (`{source:"external",
+  store, key, property?}`) is read by the cluster's External Secrets Operator
+  from a ClusterSecretStore TI registered; it needs `odyssey:secrets:external`
+  (403 otherwise) and a cluster with the operator and that store (422
+  `EXTERNAL_SECRETS_UNAVAILABLE`, 400 field `store`); removing one or loading a
+  value over it needs that permission too (403). `DELETE …/secrets/:name`
+  removes the secret or its open request. An environment holds at most 100
+  variables, secrets and open requests together (400). Events `secret.changed`
+  (`requested` | `loaded` | `external` | `removed`, with the version, never a
+  value).
 - **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
   path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
   image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),

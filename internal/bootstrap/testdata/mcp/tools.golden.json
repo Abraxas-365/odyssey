@@ -12,8 +12,10 @@
       "list_repositories",
       "list_versions",
       "publish_now",
+      "request_secret",
       "rollback",
       "set_access",
+      "set_env",
       "whoami"
     ],
     "Lector": [
@@ -36,8 +38,10 @@
       "list_repositories",
       "list_versions",
       "publish_now",
+      "request_secret",
       "rollback",
       "set_access",
+      "set_env",
       "whoami"
     ]
   },
@@ -1526,6 +1530,72 @@
     },
     {
       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Pedir un secreto"
+      },
+      "description": "Pide que una persona cargue el valor de una variable secreta (contraseña, token, llave de API) en la consola. Tú nunca ves ni envías el valor: devuelve console_url, el enlace que le pasas al usuario; allí lo escribe y se cifra en su navegador. Cuando lo carga, la app se vuelve a publicar sola con el secreto. Si ya existe, dice en qué estado está. Asks a person to load a secret variable's value (password, token, API key) in the console. You never see nor send the value: it returns console_url, the link you give the user; they type it there and it is encrypted in their browser. Once loaded, the app is published again by itself with the secret. If it exists already, it tells its state. Never ask the user to paste a secret in the chat. app is the slug (see list_apps) or the id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "name": {
+            "description": "nombre de la variable secreta, p. ej. STRIPE_API_KEY",
+            "type": "string"
+          },
+          "note": {
+            "description": "para qué es, en una frase (lo ve la persona que lo carga)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "request_secret",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "console_url": {
+            "description": "enlace para que el usuario cargue el valor en la consola",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "status": {
+            "description": "waiting_for_value (falta que una persona lo cargue), loaded (ya tiene valor), reload (hay que volver a cargarlo), unavailable (el clúster aún no puede guardarlo: TI) o external (viene del almacén de la empresa)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "name",
+          "status",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Pedir un secreto"
+    },
+    {
+      "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,
@@ -1817,6 +1887,184 @@
         "type": "object"
       },
       "title": "Quién puede abrir la app"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Variables de la app"
+      },
+      "description": "Crea, cambia o quita variables de entorno de la app (configuración en texto, NO secretos: quien puede ver la app las ve). set es nombre → valor; unset, nombres a quitar. Si la app ya está en línea, se vuelve a publicar la misma versión con las variables nuevas. Para contraseñas, tokens o llaves usa request_secret. Creates, changes or removes the app's environment variables (plain configuration, NOT secrets: anyone who can see the app sees them). set is name → value; unset, names to remove. If the app is online, the same version is published again with the new variables. For passwords, tokens or keys use request_secret. app is the slug (see list_apps) or the id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "set": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "variables a crear o cambiar: nombre → valor (texto, sin secretos)",
+            "type": "object"
+          },
+          "unset": {
+            "description": "nombres de variables a quitar",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "set_env",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "secrets": {
+            "description": "nombres de los secretos del entorno (sus valores nunca se muestran)",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "variables": {
+            "description": "nombres de las variables del entorno tras el cambio",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "version": {
+            "additionalProperties": false,
+            "description": "la publicación que aplica el cambio, si empezó una",
+            "properties": {
+              "author": {
+                "description": "autor del commit",
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "description": "SHA completo del commit si vino de GitHub",
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "created_by": {
+                "description": "usuario que la publicó; vacío si la inició la plataforma",
+                "type": "string"
+              },
+              "deployment_id": {
+                "type": "string"
+              },
+              "error": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "description": "las palabras del clúster o del build, si dijo algo",
+                    "type": "string"
+                  },
+                  "message": {
+                    "description": "qué pasó, en español claro",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "finished_at": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "image": {
+                "description": "imagen corta; vacía mientras se construye",
+                "type": "string"
+              },
+              "is_current": {
+                "description": "si es la versión que está en línea ahora",
+                "type": "boolean"
+              },
+              "reason": {
+                "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
+                "type": "string"
+              },
+              "repository": {
+                "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "status": {
+                "description": "building, pending, applying, verifying, ready, failed o cancelled",
+                "type": "string"
+              },
+              "step": {
+                "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+                "type": "string"
+              },
+              "title": {
+                "description": "primera línea del mensaje del commit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "deployment_id",
+              "status",
+              "reason",
+              "created_at",
+              "is_current"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          }
+        },
+        "required": [
+          "app",
+          "variables",
+          "secrets",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Variables de la app"
     },
     {
       "annotations": {

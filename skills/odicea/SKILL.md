@@ -12,7 +12,7 @@ Odicea publica apps internas de la empresa en su propia infraestructura. Tú pre
 ## Reglas que no se negocian
 
 1. **Nada de servicios externos.** No publiques ni conectes la app a hosting, bases de datos o servicios de terceros por tu cuenta: Vercel, Netlify, Supabase, Neon, PlanetScale, Firebase, Render, Railway, Fly.io, Heroku, Cloudflare Pages/Workers, AWS/GCP/Azure ni parecidos. No crees cuentas, proyectos ni llaves en ellos. La app corre en Odicea y nada más.
-2. **Nada de secretos** (contraseñas, tokens, llaves de API, cadenas de conexión) en el código, en `env` de las herramientas, en archivos `.env` que vayas a subir ni en commits. `env` solo lleva valores que no son secretos.
+2. **Nada de secretos** (contraseñas, tokens, llaves de API, cadenas de conexión) en el código, en `env` de las herramientas, en `set_env`, en archivos `.env` que vayas a subir ni en commits. **Nunca pidas ni aceptes el valor de un secreto por el chat**: usa `request_secret` y que una persona lo cargue en la consola.
 3. **No muestres ni guardes el enlace de subida** de `deploy_folder`: sirve una sola vez y es una credencial.
 4. Antes de publicar, di al usuario qué vas a publicar y en qué app. Si la app no existe, créala con su permiso.
 5. Si algo no es posible hoy (ver la sección siguiente), **díselo con claridad y pide ayuda a TI**; no improvises un reemplazo.
@@ -23,19 +23,18 @@ Odicea publica apps internas de la empresa en su propia infraestructura. Tú pre
 Hoy Odicea **no provee** a las apps:
 
 - **Base de datos**: no hay una base de datos administrada por Odicea.
-- **Secretos** (contraseñas, llaves, tokens): no hay dónde guardarlos ni cómo inyectarlos en la app.
 - **Llaves o cuentas de IA** (OpenAI, Anthropic, Gemini…): Odicea no las entrega.
 
 Si la app necesita alguna de ellas:
 
 1. **No la crees en un servicio externo** ni pongas datos de prueba que parezcan reales.
-2. Dile al usuario, en una frase: *«Esta app necesita [base de datos / secretos / llave de IA] y Odicea todavía no la ofrece. Pídele a TI que conecte una que ya exista en la empresa.»* Si puedes, deja escrito qué variables o qué servicio hace falta, sin valores.
+2. Dile al usuario, en una frase: *«Esta app necesita [base de datos / llave de IA] y Odicea todavía no la ofrece. Pídele a TI que conecte una que ya exista en la empresa.»* Si ya existe, su cadena de conexión o llave es un secreto: pídela con `request_secret` (nunca por el chat).
 3. Sigue con lo que sí se puede: deja la app lista, leyendo esa configuración de variables de entorno (sin valores por defecto secretos), y publícala solo si el usuario quiere verla funcionar parcialmente.
 
 Mientras tanto, si la app solo necesita guardar datos de forma simple y el usuario lo acepta, puedes usar el disco/memoria de la app sabiendo que **se pierde al reiniciar o publicar**: avísaselo.
 <!-- ODICEA:LIMITES-ACTUALES fin -->
 
-## Qué puedes hacer (las 14 herramientas)
+## Qué puedes hacer (las 16 herramientas)
 
 | Quiero… | Herramienta |
 |---|---|
@@ -49,6 +48,8 @@ Mientras tanto, si la app solo necesita guardar datos de forma simple y el usuar
 | Ver por qué falló el build | `get_build_logs` |
 | Ver el historial o volver atrás | `list_versions`, `rollback` |
 | Cambiar quién puede abrir la app | `set_access` (y `get_app` muestra el modo) |
+| Poner o quitar variables (no secretas) | `set_env` |
+| Pedir un secreto (una persona lo carga en la consola) | `request_secret` |
 
 Solo ves las herramientas que tu rol permite (por ejemplo, un Lector solo lee). Si una falla por permisos, llama a `whoami` y explica qué permiso falta.
 
@@ -73,6 +74,13 @@ Para que cada push publique la app, sigue [references/github.md](references/gith
 ## Quién puede abrir la app
 
 Por defecto una app nueva solo la abre **el equipo** de la organización, con su inicio de sesión de Odicea. `get_app` muestra `access.mode`: `team` (solo el equipo), `organization` (toda la empresa) o `public` (cualquiera con el enlace, sin iniciar sesión). Para cambiarlo, `set_access` con el modo que pida el usuario; si la app ya está en línea se vuelve a publicar la misma versión (sigue con `get_deployment`). `public` exige un permiso que suele tener solo TI: si falla por eso, no lo intentes por otro lado; dile al usuario que pida a TI que la deje pública. Si queda en `failed` con «Este clúster no puede proteger apps con inicio de sesión», es de TI, no de la app. No metas inicio de sesión propio en la app para esto: Odicea ya lo hace antes de que llegue.
+
+## Variables y secretos
+
+- **Variables** (valores que no son secretos: zona horaria, nivel de log, URLs públicas): `set_env` con `set` (nombre → valor) y/o `unset`. Quedan para todas las publicaciones de la app y ganan sobre el `env` de `deploy_folder`. Si la app está en línea se vuelve a publicar la misma versión (sigue con `get_deployment`).
+- **Secretos** (contraseñas, llaves, tokens, cadenas de conexión): **tú nunca ves ni escribes el valor**. Llama a `request_secret` con el `name` de la variable y una `note` corta de para qué es. Devuelve `console_url`: compártelo con el usuario para que una persona con acceso cargue ahí el valor (se cifra en su navegador; ni Odicea lo puede leer). Mientras falte, la app sigue como está. Cuando lo carguen, Odicea publica de nuevo con el secreto como variable de entorno del mismo nombre.
+- Haz que la app lea esos nombres de variables de entorno y falle con un mensaje claro si falta uno; no pongas valores por defecto que parezcan reales.
+- Un secreto de la bóveda de la empresa lo conecta TI desde la consola, no tú.
 
 ## Cómo hablar con el usuario
 

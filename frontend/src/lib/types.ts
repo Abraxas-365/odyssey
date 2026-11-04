@@ -37,6 +37,12 @@ export type CurrentRelease = Schemas['CurrentRelease']
 export type AccessMode = Schemas['AccessMode']
 export type EnvironmentSettings = Schemas['EnvironmentSettings']
 export type AccessChange = Schemas['AccessChange']
+/** Variables and secrets (cut 2a): a change is a settings revision; a secret is only ever a reference. */
+export type SettingsChange = Schemas['SettingsChange']
+export type SecretView = Schemas['SecretView']
+export type ClusterSecretKey = Schemas['ClusterSecretKey']
+export type SetEnvironmentVariables = NonNullable<operations['setEnvironmentVariables']['requestBody']>['content']['application/json']
+export type PutEnvironmentSecret = NonNullable<operations['putEnvironmentSecret']['requestBody']>['content']['application/json']
 export type DeployRequest = Schemas['DeployRequest']
 export type DeploySourceConfig = Schemas['DeploySourceConfig']
 /** The image built from an uploaded folder, and its log. */

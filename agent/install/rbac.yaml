@@ -31,3 +31,18 @@ subjects:
   - kind: ServiceAccount
     name: odyssey-agent
     namespace: odyssey-system
+---
+# The apps' Secrets (managed secret values, written by the agent). Never
+# bound cluster-wide: the agent binds it with a RoleBinding of the same name
+# in each environment namespace it creates (desired.Namespaces), so it cannot
+# read or change the Secrets of the rest of the cluster. It may bind this
+# role and no other (bind, resourceNames), and policy.yaml refuses a binding
+# outside its namespaces or for anyone but the agent.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: odyssey-agent-secrets
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, delete]

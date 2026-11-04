@@ -37,6 +37,11 @@ spec:
             - name: POD_NAME
               valueFrom:
                 fieldRef: { fieldPath: metadata.name }
+            # Its service account: bound to the Secrets role (odyssey-agent-secrets)
+            # only in the environment namespaces it creates.
+            - name: ODYSSEY_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef: { fieldPath: spec.serviceAccountName }
             # Where apps answer (k3d maps the ingress to localhost:8088).
             - name: ODYSSEY_APPS_DOMAIN
               value: apps.odyssey.localhost
