@@ -42,10 +42,18 @@ export function lastProblem(deployments: Deployment[]): Deployment | undefined {
   return last?.status === 'failed' ? last : undefined
 }
 
+/**
+ * A failed `config` deployment that got past `apply` already handed the new
+ * access to the cluster: the app is NOT reopened by itself (fail-closed). One
+ * refused at `apply` never reached it and the app stays as it was.
+ */
+export const configReachedApp = (d: Deployment) => d.reason === 'config' && (d.step === 'wait_ready' || d.step === 'promote')
+
 const reasonText: Record<Deployment['reason'], string> = {
   deploy: 'Nueva versión',
   rollback: 'Volviste a una versión anterior',
   auto_rollback: 'Restaurada automáticamente',
+  config: 'Cambió quién puede abrirla',
 }
 
 /** What a version is called: one from GitHub, its commit title; one from a folder, which folder. */

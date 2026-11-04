@@ -284,10 +284,12 @@ func TestVerifyFlow(t *testing.T) {
 		t.Errorf("POST: %d", w.Code)
 	}
 
-	// the callback trades a ticket for a cookie and returns to the path
+	// the callback trades a ticket for a cookie and returns to the path, on the
+	// app's public URL: Traefik would resolve a relative Location against the
+	// gate's own (in-cluster) address.
 	w = f.callback(f.ticket(nil), "/reports?x=1")
 	c := cookieOf(w)
-	if w.Code != http.StatusFound || w.Header().Get("Location") != "/reports?x=1" || c == nil {
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "http://"+host+"/reports?x=1" || c == nil {
 		t.Fatalf("callback: %d %v", w.Code, w.Header())
 	}
 	if !c.HttpOnly || c.Path != "/" || c.SameSite != http.SameSiteLaxMode || c.Domain != "" || c.Secure {
@@ -339,12 +341,34 @@ func TestCallbackRefusals(t *testing.T) {
 	if w.Code != http.StatusForbidden || cookieOf(w) != nil || strings.Contains(w.Body.String(), bad) {
 		t.Errorf("bad ticket: %d %s", w.Code, w.Body)
 	}
-	// open redirects: anything but a same-host path becomes "/"
+	// open redirects: anything but a same-host path becomes the app's "/"
 	for _, ret := range []string{"//evil.test/x", "https://evil.test/", "http://" + host + "/", "/\\evil.test", "evil", "", "/a\r\nSet-Cookie: x=1", CallbackPath + "?ticket=x"} {
 		w := f.callback(f.ticket(nil), ret)
-		if loc := w.Header().Get("Location"); w.Code != http.StatusFound || loc != "/" {
+		if loc := w.Header().Get("Location"); w.Code != http.StatusFound || loc != "http://"+host+"/" {
 			t.Errorf("return %q went to %q", ret, loc)
 		}
+	}
+	// paths that look like hosts stay paths on the app's host
+	for _, ret := range []string{"/a?b", "/%2f%2fevil.test", "/x#y", "/@evil.test", "/a?next=https://evil.test"} {
+		w := f.callback(f.ticket(nil), ret)
+		loc, err := url.Parse(w.Header().Get("Location"))
+		if err != nil || w.Code != http.StatusFound || loc.Scheme != "http" || loc.Host != host {
+			t.Errorf("return %q went to %q", ret, w.Header().Get("Location"))
+		}
+	}
+	// https without a port: the app's default port
+	f2 := newFixture(t)
+	q := query("team", orgID)
+	q.Set("scheme", "https")
+	q.Del("port")
+	r := httptest.NewRequest(http.MethodGet, "/verify?"+q.Encode(), nil)
+	r.Header.Set("X-Forwarded-Host", name)
+	r.Header.Set("X-Forwarded-Uri", CallbackPath+"?"+url.Values{"ticket": {f2.ticket(func(c jwt.MapClaims) { c["aud"] = name })}, "return": {"/r"}}.Encode())
+	r.Header.Set("X-Forwarded-Method", "GET")
+	w = httptest.NewRecorder()
+	f2.gate.Handler().ServeHTTP(w, r)
+	if loc := w.Header().Get("Location"); w.Code != http.StatusFound || loc != "https://"+name+"/r" {
+		t.Errorf("https without port: %d %q %s", w.Code, loc, w.Body)
 	}
 	// a bad request (missing/unknown mode, host) fails closed
 	for _, mode := range []string{"", "public", "x"} {
@@ -352,7 +376,7 @@ func TestCallbackRefusals(t *testing.T) {
 			t.Errorf("mode %q: %d", mode, w.Code)
 		}
 	}
-	r := httptest.NewRequest(http.MethodGet, "/verify?"+query("team", orgID).Encode(), nil)
+	r = httptest.NewRequest(http.MethodGet, "/verify?"+query("team", orgID).Encode(), nil)
 	r.Header.Set("X-Forwarded-Host", "evil.test/path")
 	r.Header.Set("X-Forwarded-Method", "GET")
 	w = httptest.NewRecorder()
@@ -521,5 +545,24 @@ func TestJWKSHardMaxAge(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	if _, err := f.gate.Verifier.key(ctx, "k1"); err == nil {
 		t.Error("still refused inside the min gap")
+	}
+}
+
+// The control plane signs `iss` without a trailing slash whatever the person
+// who configured it typed; the verifier trims its own issuer the same way, so
+// "https://x/" and "https://x" are one issuer (and another host is still not).
+func TestIssuerTrailingSlashIsNormalised(t *testing.T) {
+	f := newFixture(t)
+	want := Expect{Host: name, Aud: host, Env: envID, Mode: "team", AppOrg: orgID}
+	ctx := context.Background()
+	for _, issuer := range []string{"http://issuer.test/", "http://issuer.test//", "http://issuer.test"} {
+		v := &Verifier{Issuer: issuer, JWKSURL: f.issuer.URL, Now: func() time.Time { return f.now }}
+		if _, err := v.Verify(ctx, f.ticket(nil), want); err != nil {
+			t.Errorf("issuer %q refused a ticket signed by http://issuer.test: %v", issuer, err)
+		}
+	}
+	v := &Verifier{Issuer: "http://evil.test/", JWKSURL: f.issuer.URL, Now: func() time.Time { return f.now }}
+	if _, err := v.Verify(ctx, f.ticket(nil), want); err == nil {
+		t.Error("another issuer was accepted")
 	}
 }

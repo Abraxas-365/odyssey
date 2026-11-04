@@ -19,7 +19,7 @@ type Routes interface {
 
 // PublicRoutes is implemented by the handlers that also mount
 // unauthenticated routes (a provider's callbacks, each checking its own
-// proof). Architecture tests confine them to sourcehttp, releasehttp and the server's Assistant.
+// proof). Architecture tests confine them to sourcehttp, releasehttp, accesshttp and the server's Assistant.
 type PublicRoutes interface {
 	RegisterPublic(r fiber.Router)
 }

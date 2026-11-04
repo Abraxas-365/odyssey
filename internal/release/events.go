@@ -18,6 +18,7 @@ const (
 	EventDeploymentCancelled = "deployment.cancelled"
 	EventUploadTicketIssued  = "upload_ticket.issued"
 	EventUploadTicketUsed    = "upload_ticket.used"
+	EventAccessChanged       = "access.changed"
 )
 
 // Subject kinds ("release/<id>", "deployment/<id>").
@@ -25,6 +26,9 @@ const (
 	SubjectKind             = "release"
 	DeploymentSubjectKind   = "deployment"
 	UploadTicketSubjectKind = "upload_ticket"
+	// AccessSubjectKind prefixes the subject of access.changed: the
+	// environment whose settings changed ("environment/<id>").
+	AccessSubjectKind = "environment"
 )
 
 // Names are the human names events are summarised with.
@@ -114,6 +118,8 @@ func NewDeploymentStarted(org identity.OrganizationID, actor identity.UserID, d 
 		summary = "Volvió a una versión anterior de " + n.where()
 	case ReasonAutoRollback:
 		summary = "Restaurando la versión anterior de " + n.where()
+	case ReasonConfig:
+		summary = "Cambió quién puede abrir " + n.where()
 	}
 	return event.New(EventDeploymentStarted, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID), summary,
 		DeploymentStarted{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(),
@@ -182,4 +188,23 @@ func NewUploadTicketUsed(t UploadTicket, n Names) event.Event {
 	return event.New(EventUploadTicketUsed, 1, t.Organization, t.RequestedBy, event.Subject(UploadTicketSubjectKind, t.ID),
 		"Subió una carpeta a "+n.where(),
 		UploadTicketUsed{Ticket: t.ID, Project: t.Project.String(), Environment: t.Environment.String(), Client: t.Client})
+}
+
+// AccessChanged v1: who can open an environment's app was changed. Settings
+// is the new revision; Deployment the config deployment that applies it (null
+// when another deployment will, or nothing is online yet).
+type AccessChanged struct {
+	Project      string        `json:"project_id"`
+	Environment  string        `json:"environment_id"`
+	Revision     int64         `json:"revision"`
+	Mode         AccessMode    `json:"mode"`
+	PreviousMode AccessMode    `json:"previous_mode"`
+	Deployment   *DeploymentID `json:"deployment_id"`
+}
+
+func NewAccessChanged(org identity.OrganizationID, actor identity.UserID, projectID string, previous, now Settings, deployment *DeploymentID, n Names) event.Event {
+	return event.New(EventAccessChanged, 1, org, actor, event.Subject(AccessSubjectKind, now.Environment),
+		"Cambió quién puede abrir "+n.where()+": "+AccessLabel(now.Access.Mode),
+		AccessChanged{Project: projectID, Environment: now.Environment.String(), Revision: now.Revision, Mode: now.Access.Mode,
+			PreviousMode: previous.Access.Mode, Deployment: deployment})
 }

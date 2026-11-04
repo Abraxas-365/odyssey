@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Archive, Bot, Database, ExternalLink, Lock, Pencil } from 'lucide-react'
+import { Archive, Bot, Database, ExternalLink, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button, ButtonLink } from '@/components/ui/button'
@@ -31,7 +31,8 @@ import { useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
 import type { Project } from '@/lib/types'
 import { CodePanel } from '@/features/github/code-panel'
 import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
-import { appStatus, failureText, lastProblem, versions } from '@/features/apps/versions'
+import { AccessPanel } from '@/features/apps/access-panel'
+import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
 
 /** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
 export function AppOverviewPage() {
@@ -60,7 +61,8 @@ function Overview({ project: p }: { project: Project }) {
   const [confirmArchive, setConfirmArchive] = useState(false)
   const archive = useArchiveProject(p.id)
 
-  // Phase 1 publishes to production only; staging/previews come with GitHub.
+  // Phase 1 publishes to production only (there is no notion of another
+  // environment in the console yet); staging/previews come with GitHub.
   const environments = useEnvironments(p.id)
   const production = canRead ? environments.data?.items.find(e => e.kind === 'production') : undefined
   const current = useCurrent(p.id, production?.id)
@@ -106,8 +108,8 @@ function Overview({ project: p }: { project: Project }) {
       {current.error && <ErrorNotice error={current.error} onRetry={() => current.refetch()} />}
       {current.data?.active && <PublishingPanel deployment={current.data.active} technical={technical} />}
       {problem && (
-        <Callout tone={live ? 'warn' : 'bad'} title={live ? 'Tu app sigue funcionando con la versión anterior.' : 'La nueva versión no se publicó.'}>
-          {failureText(problem)} {live ? 'Nadie se vio afectado.' : 'Revisa los cambios y vuelve a intentarlo.'}
+        <Callout tone={live ? 'warn' : 'bad'} title={problem.reason === 'config' ? (configReachedApp(problem) ? 'El cambio de quién puede abrirla llegó a la app, pero no terminó de aplicarse.' : 'El cambio de quién puede abrirla no se aplicó.') : live ? 'Tu app sigue funcionando con la versión anterior.' : 'La nueva versión no se publicó.'}>
+          {failureText(problem)} {problem.reason === 'config' ? (configReachedApp(problem) ? 'Por seguridad la app queda con el nuevo acceso; no se vuelve a abrir sola. Publica una versión nueva para recuperarla.' : 'La app sigue como estaba.') : live ? 'Nadie se vio afectado.' : 'Revisa los cambios y vuelve a intentarlo.'}
           {technical && problem.error?.detail && <span className="mt-1.5 block font-mono text-xs break-words">{problem.error.detail}</span>}
         </Callout>
       )}
@@ -183,10 +185,9 @@ function Overview({ project: p }: { project: Project }) {
 
       {technical && production && can(permissions.deploymentsCreate) && !archived && <PublishImagePanel project={p.id} env={production.id} busy={publishing} />}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <EmptyState icon={Database} title="Lo que usa">Base de datos, archivos o IA. Tu asistente los pide cuando la app los necesita.</EmptyState>
-        <EmptyState icon={Lock} title="Quién puede abrirla">Por ahora, solo tu equipo.</EmptyState>
-      </div>
+      {canRead && production && <AccessPanel project={p.id} env={production.id} current={current.data} canWrite={canWrite} busy={publishing} />}
+
+      <EmptyState icon={Database} title="Lo que usa">Base de datos, archivos o IA. Tu asistente los pide cuando la app los necesita.</EmptyState>
 
       {canWrite && (
         <Panel className="border-destructive/35">

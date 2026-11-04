@@ -148,6 +148,20 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 			Risk:        mcpx.RiskWrite,
 			Annotations: mcpx.Annotations{Destructive: true},
 		}, t.rollback),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "set_access",
+			Title: "Quién puede abrir la app",
+			Description: "Cambia quién puede abrir la app: team (solo el equipo de la organización, lo normal), organization (toda la empresa) o " +
+				"public (cualquiera con el enlace, sin iniciar sesión; exige el permiso odyssey:access:public, que suele tener solo TI). " +
+				"Si la app ya está en línea, se vuelve a publicar la misma versión con el nuevo acceso. " +
+				"Changes who can open the app: team (only the organization's team, the default), organization (the whole company) or " +
+				"public (anyone with the link, no sign-in; needs the permission odyssey:access:public, usually only IT has it). " +
+				"If the app is already online, the same version is published again with the new access. " +
+				"app is the slug (see list_apps) or the id. Follow with get_deployment when next_step says so; get_app shows the current mode.",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsWrite, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+		}, t.setAccess),
 	}
 }
 
@@ -201,7 +215,7 @@ type Version struct {
 	DeploymentID string     `json:"deployment_id"`
 	Status       string     `json:"status" jsonschema:"building, pending, applying, verifying, ready, failed o cancelled"`
 	Step         string     `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló): build, apply, wait_ready, promote"`
-	Reason       string     `json:"reason" jsonschema:"deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)"`
+	Reason       string     `json:"reason" jsonschema:"deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)"`
 	Image        string     `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
 	Repository   string     `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
 	Branch       string     `json:"branch,omitempty"`
@@ -269,8 +283,10 @@ type GetAppOut struct {
 	// NeedsAttention is true when the latest publication failed.
 	NeedsAttention bool     `json:"needs_attention" jsonschema:"true si la última publicación falló: mira last_deployment.error"`
 	Current        *Version `json:"current,omitempty" jsonschema:"la versión que está en línea"`
-	Active         *Version `json:"active,omitempty" jsonschema:"la publicación en curso, si hay"`
-	LastDeployment *Version `json:"last_deployment,omitempty" jsonschema:"la publicación más reciente, termine como termine"`
+	// Access is who can open the app: the settings in force.
+	Access         *AccessOut `json:"access,omitempty" jsonschema:"quién puede abrir la app: mode es team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace); pending es true mientras se aplica un cambio"`
+	Active         *Version   `json:"active,omitempty" jsonschema:"la publicación en curso, si hay"`
+	LastDeployment *Version   `json:"last_deployment,omitempty" jsonschema:"la publicación más reciente, termine como termine"`
 	// Repository is the GitHub repository the app publishes from, if connected.
 	Repository *ConnectedRepo `json:"repository,omitempty" jsonschema:"repo de GitHub conectado: cada push a su rama publica la app"`
 }
@@ -288,7 +304,11 @@ func (t tools) getApp(ctx context.Context, caller mcpx.Principal, in GetAppIn) (
 	if err != nil {
 		return GetAppOut{}, err
 	}
-	out := GetAppOut{ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description, Status: string(p.Status),
+	settings, err := t.queries.Settings(ctx, caller.Organization, p.ID, env.ID)
+	if err != nil {
+		return GetAppOut{}, err
+	}
+	out := GetAppOut{Access: accessOf(settings, cur), ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description, Status: string(p.Status),
 		ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String(), State: "not_published"}
 	if cur.Deployment != nil {
 		v := version(*cur.Deployment, cur.Deployment)

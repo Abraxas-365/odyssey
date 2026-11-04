@@ -144,6 +144,13 @@ func Organization(c *fiber.Ctx) (identity.OrganizationID, error) {
 	return org, nil
 }
 
+// Can reports whether the authenticated token holds the permission (for
+// a rule that depends on the request, which RequirePermissions cannot say).
+func Can(c *fiber.Ctx, permission string) bool {
+	claims := fiberauth.Claims(c)
+	return claims != nil && claims.HasPermission(permission)
+}
+
 // User returns the authenticated IAMKit user (the token subject).
 func User(c *fiber.Ctx) (identity.UserID, error) {
 	claims := fiberauth.Claims(c)

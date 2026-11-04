@@ -24,7 +24,8 @@ they are stale). Change an endpoint → edit the spec in the same change.
 - Unauthenticated: `GET /health` and `GET /api/config`, which returns the
   dashboard's sign-in settings (`iam_url`, `client_id`, `environment_id`);
   and the few public routes of §11 (`GET /github/setup`, `POST
-  /webhooks/github`, `PUT /uploads/:ticket`, `GET /skills/odicea.tar.gz`).
+  /webhooks/github`, `PUT /uploads/:ticket`, `GET /skills/odicea.tar.gz`, and the access
+  sign-in `GET /.well-known/odicea-access-keys`, `GET /access/authorize`, `GET /access/callback`).
 
 | Operation | Success | Body |
 |---|---|---|
@@ -205,11 +206,13 @@ environment serves. The console calls both "versión".
 
 | Method | Path | Permission | Success |
 |---|---|---|---|
-| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active, applied_settings_revision}` |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments` | read | 200 `{items, page}`, newest first (filter `status`) |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
+| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, access_login_available, access_protection_available}` |
+| `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
 | `GET` | `/api/v1/projects/:id/releases/:release` | read | 200 release |
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
@@ -255,6 +258,41 @@ environment serves. The console calls both "versión".
   online, the platform starts a deployment of it with reason `auto_rollback`
   (`rollback_of` = the failed one). A failed `auto_rollback` is not retried.
   A failed build restores nothing: the cluster never changed.
+- **Who can open it** ("Quién puede abrirla", cut 1e; contract of the gate in
+  `docs/access.md`). The environment's **settings** are an append-only history
+  of revisions (0 = the defaults, access `team`); `PUT …/access {mode}` with
+  `team` | `organization` | `public` (`public` also needs
+  `odyssey:access:public`, else 403) stores the next revision (the mode already
+  in force adds none) and publishes `access.changed`. Settings are resolved
+  **when a deployment applies**, not when it starts: the apply step reads the
+  latest revision and records it on the deployment (`settings_revision`), so
+  the last change wins during a deployment. If settings changed after that
+  step, the deployment that goes online is followed by a deployment with
+  reason `config`; a PUT with a release online and nothing in progress starts
+  that deployment at once (the same release, so the console says «Cambió quién
+  puede abrirla»), and with no release online only stores the settings. A
+  rollback keeps the current settings. A `config` deployment that fails is not
+  repeated on its own and nothing is restored. Refused at `apply`, the cluster
+  never got the mode (it keeps the previous one) and asking for the mode again
+  retries it; failed *after* apply (the app is not healthy), the cluster keeps
+  the new mode (fail-closed, see `docs/access.md`) and `applied_settings_revision`
+  says so. A protected mode on a
+  cluster whose agent lacks the `odicea.access` capability fails at `apply`
+  with `APPLY_FAILED` and the message «Este clúster no puede proteger apps con
+  inicio de sesión. Pide a TI que lo habilite.». `access_login_available` is
+  false when this control plane has no signing key or login client
+  (`/access/*` answers 404): protected apps cannot be opened.
+  `access_protection_available` is false when the environment's cluster cannot
+  protect apps yet (no `odicea.access`; an unplaced environment is judged by the
+  organization's default cluster, false with none): only `public` can be applied
+  there. Environments that were online before this feature got a settings row
+  `public` (revision 1, no author) in migration 008: they were served open, and
+  the record says so; new environments default to `team`.
+  `current.applied_settings_revision` is the settings revision the cluster was
+  last told, set by the apply step the moment it hands the app over; a `config`
+  deployment that fails *after* that does not reopen the app on its own (the
+  cluster keeps the mode it was told), and the console shows the change as not
+  applied while the latest revision is higher.
 - **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
   path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
   image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),
@@ -417,3 +455,34 @@ into the binary. `ETag` is the version (a quoted hash of the archive; the same
 bytes always give the same version); `If-None-Match` naming it (a list, `*` and
 weak `W/"…"` validators included) answers `304`;
 `Cache-Control: public, max-age=300`.
+
+### Access sign-in (public: `GET /.well-known/odicea-access-keys`, `GET /access/authorize`, `GET /access/callback`)
+
+Not under `/api/v1`: no token and no CORS. The sign-in of apps protected with an
+Odicea login (`team` / `organization`; the whole contract with the gate in
+`docs/access.md`). Served only when `ODYSSEY_ACCESS_SIGNING_KEY[_FILE]` and
+`IAMKIT_ACCESS_CLIENT_ID/_SECRET` are set; otherwise all three answer `404`
+`ACCESS_NOT_CONFIGURED` (and the settings report `access_login_available: false`).
+
+- `GET /.well-known/odicea-access-keys`: the JWKS (`kty OKP`, `crv Ed25519`,
+  `use sig`, `alg EdDSA`, `kid` = first 16 characters of
+  base64url(sha256(public key))): the signing key, then the previous ones.
+- `GET /access/authorize?env&mode&return` (what the gate redirects to): finds
+  the environment by id (the organization comes from our own records), requires
+  `return` to be the environment's app: same scheme, host and port as its URL
+  (an explicit `:443` / `:80` equals none), https unless a development host, and
+  `mode` to be the one the cluster was last told (`team|organization`; a public
+  app has no sign-in). Every refusal is one generic Spanish page (400) — the
+  code is only in the server logs — so an unknown environment and a wrong host
+  look the same;
+  `302` to IAMKit's sign-in (authorization code + PKCE) and sets the sealed
+  cookie `__odicea_flow` (HttpOnly, SameSite=Lax, path `/access`, 10 min). It
+  writes nothing to the database.
+- `GET /access/callback?code&state`: checks the cookie and `state`, exchanges
+  the code, decides (`team`: the user's organization is the app's;
+  `organization`: the user belongs to this installation's IAMKit environment)
+  and answers `302` to `<scheme>://<app host>/_odicea/callback?ticket=<JWT>&return=<path>`
+  (a 60-second EdDSA ticket), or a plain Spanish HTML page: `403` when the
+  person may not open the app (or the app's access changed meanwhile), `400`
+  (the same generic page as authorize) when the sign-in expired or is not valid.
+  The ticket's `aud` is the app URL's `host[:port]`, as the gate computes it.

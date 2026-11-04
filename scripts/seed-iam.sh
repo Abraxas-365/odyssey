@@ -43,6 +43,7 @@ IAMKIT_KEY_FILE=.dev-secrets/owner.json \
 SPEC=iam/permissions.json \
 APP_URL="${APP_URL:-http://localhost:5178}" \
 AUDIENCE="${ODYSSEY_MCP_URL:-http://localhost:${ODYSSEY_PORT:-8095}/mcp}" \
+ACCESS_API_URL="${ACCESS_API_URL:-}" \
 MCP_PRESETS="${MCP_PRESETS-claude_code,codex,vscode,antigravity}" \
 PROJECT_NAME="Odyssey" ENVIRONMENT_NAME=Development ORG_NAME="${ORG_NAME:-Demo inEdge}" APP_NAME="Odyssey Console" \
 OWNER_EMAIL="$DEMO_EMAIL" OWNER_PASSWORD="$DEMO_PASSWORD" OWNER_NAME="Demo TI" \

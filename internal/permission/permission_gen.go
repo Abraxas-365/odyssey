@@ -19,6 +19,7 @@ const (
 	ClustersManage      = "odyssey:clusters:manage"      // Conectar, reconectar y desconectar clústeres
 	IntegrationsManage  = "odyssey:integrations:manage"  // Conectar y desconectar GitHub en la organización
 	AuditRead           = "odyssey:audit:read"           // Ver el historial de actividad de la organización
+	AccessPublic        = "odyssey:access:public"        // Dejar que cualquiera con el enlace abra una app, sin iniciar sesión
 )
 
 // All is the whole catalog, in manifest order.
@@ -32,6 +33,7 @@ var All = []string{
 	ClustersManage,
 	IntegrationsManage,
 	AuditRead,
+	AccessPublic,
 }
 
 // Labels describe each permission for role editors.
@@ -45,6 +47,7 @@ var Labels = map[string]string{
 	ClustersManage:      "Conectar, reconectar y desconectar clústeres",
 	IntegrationsManage:  "Conectar y desconectar GitHub en la organización",
 	AuditRead:           "Ver el historial de actividad de la organización",
+	AccessPublic:        "Dejar que cualquiera con el enlace abra una app, sin iniciar sesión",
 }
 
 // Names maps each constant's Go name to its permission (used by the
@@ -59,11 +62,12 @@ var Names = map[string]string{
 	"ClustersManage":      ClustersManage,
 	"IntegrationsManage":  IntegrationsManage,
 	"AuditRead":           AuditRead,
+	"AccessPublic":        AccessPublic,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic}},
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }

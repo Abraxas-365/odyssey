@@ -7,6 +7,8 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 )
@@ -99,13 +101,48 @@ func (s *Service) apply(ctx context.Context, st *workflow.State) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.cluster.Apply(ctx, j.target, release.Desired(j.app, j.deployment, r)); err != nil {
+	settings, err := s.resolveSettings(ctx, j)
+	if err != nil {
+		return nil, err
+	}
+	desired := release.Desired(j.app, j.deployment, r)
+	desired.Access = string(settings.Access.Mode) // the one place the app's access reaches the cluster
+	if err := s.cluster.Apply(ctx, j.target, desired); err != nil {
 		if coded(err, release.CodeApplyFailed) {
 			return nil, workflow.Fail(err)
 		}
 		return nil, err // the cluster is unreachable: retry
 	}
-	return nil, nil
+	// The cluster has been told (a refusal above never gets here). From now on
+	// the app is protected as these settings say, whatever happens to this
+	// deployment: a config deployment that fails afterwards does NOT reopen the
+	// app by itself, and the sign-in keeps asking for this mode. The console
+	// compares the latest settings with this revision.
+	return nil, s.repo.SetAppliedSettings(ctx, j.target.Organization, j.target.Environment, j.deployment.Revision, settings.Revision)
+}
+
+// resolveSettings is the environment's settings this deployment applies. They
+// are resolved here, not when the deployment starts, so one that has not
+// applied yet takes the latest; the revision is recorded before the cluster is
+// told and then kept, so an attempt retried after the cluster took the app
+// applies the very same settings (the cluster ignores a second app with the
+// same deployment revision).
+func (s *Service) resolveSettings(ctx context.Context, j job) (release.Settings, error) {
+	org, env := j.target.Organization, j.target.Environment
+	if j.deployment.SettingsRevision != nil {
+		return s.repo.FindSettingsRevision(ctx, org, env, *j.deployment.SettingsRevision)
+	}
+	latest, err := s.repo.FindSettings(ctx, org, env)
+	if err != nil {
+		return release.Settings{}, err
+	}
+	if err := s.repo.SetSettingsRevision(ctx, org, j.deployment.ID, latest.Revision); err != nil {
+		if errx.IsType(err, errx.TypeNotFound) {
+			return release.Settings{}, workflow.Fail(errSuperseded)
+		}
+		return release.Settings{}, err
+	}
+	return latest, nil
 }
 
 // build starts the deployment's build and follows it until its image is
@@ -264,7 +301,8 @@ func (s *Service) promote(ctx context.Context, st *workflow.State) (any, error) 
 		return nil, err
 	}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		if _, err := s.lockState(ctx, p, e); err != nil {
+		state, err := s.lockState(ctx, p, e)
+		if err != nil {
 			return err
 		}
 		d, err := s.repo.FindDeploymentForUpdate(ctx, org, in.Deployment)
@@ -283,7 +321,12 @@ func (s *Service) promote(ctx context.Context, st *workflow.State) (any, error) 
 		if err := s.repo.Finish(ctx, org, d.ID, release.StatusReady, nil); err != nil {
 			return err
 		}
-		return s.events.Publish(ctx, release.NewDeploymentReady(org, d.RequestedBy, d, url, names(p, e)))
+		if err := s.events.Publish(ctx, release.NewDeploymentReady(org, d.RequestedBy, d, url, names(p, e))); err != nil {
+			return err
+		}
+		// Settings changed while it was applying: the cluster has older ones.
+		state.Active, state.Current, state.CurrentDeployment = nil, d.Release, &d.ID
+		return s.applyNewerSettings(ctx, state, p, e)
 	})
 	return url, err
 }
@@ -335,7 +378,13 @@ func (s *Service) deployFailed(ctx context.Context, st *workflow.State, cause er
 	// never reached it (it failed building), was already doing that (no
 	// loops) or nothing was serving.
 	var restore *release.DeploymentID
-	if state.Current != nil && d.Step != release.StepBuild && d.Reason != release.ReasonAutoRollback &&
+	// A deployment that failed at apply never reached the cluster either: the
+	// cluster refused it (for instance ACCESS_UNAVAILABLE, a protected mode on
+	// a cluster without the gate) or could not be reached, so it still runs
+	// what it ran and there is nothing to restore. A restore would only apply
+	// the serving release under the same settings, to be refused the same way.
+	neverReached := d.Step == release.StepBuild || d.Step == release.StepApply
+	if state.Current != nil && !neverReached && d.Reason != release.ReasonAutoRollback &&
 		(d.Release == nil || *state.Current != *d.Release) {
 		id := release.NewDeploymentID()
 		restore = &id
@@ -344,6 +393,13 @@ func (s *Service) deployFailed(ctx context.Context, st *workflow.State, cause er
 		return err
 	}
 	if restore == nil {
+		// A deployment that never touched the cluster leaves the settings that
+		// changed meanwhile to nobody, except a config deployment (no loops:
+		// asking again is the retry).
+		if state.Current != nil && neverReached && d.Reason != release.ReasonConfig && state.CurrentDeployment != nil {
+			state.Active = nil
+			return s.applyNewerSettings(ctx, state, p, e)
+		}
 		return nil
 	}
 	r, err := s.repo.FindRelease(ctx, org, *state.Current)
@@ -359,4 +415,35 @@ func (s *Service) deployFailed(ctx context.Context, st *workflow.State, cause er
 func coded(err error, code string) bool {
 	var e *errx.Error
 	return errors.As(err, &e) && e.Code == code
+}
+
+// applyNewerSettings starts a config deployment of the current release when
+// the environment's latest settings are newer than the ones the cluster was
+// last told (state.AppliedSettings). The caller holds the environment's state
+// lock with Active cleared. Only the end of a deployment that applied older
+// settings, or of a build that never reached the cluster, calls it: a config
+// deployment that fails does not start another (no loops; a new PUT retries).
+func (s *Service) applyNewerSettings(ctx context.Context, state release.EnvironmentState, p project.Project, e project.Environment) error {
+	if state.Current == nil {
+		return nil
+	}
+	latest, err := s.repo.FindSettings(ctx, p.Organization, e.ID)
+	if err != nil || latest.Revision <= state.AppliedRevision() {
+		return err
+	}
+	_, err = s.startConfig(ctx, state, p, e, latest.CreatedBy)
+	return err
+}
+
+// startConfig begins the deployment that applies the latest settings to the
+// release the environment serves (state is locked, nothing is in progress).
+func (s *Service) startConfig(ctx context.Context, state release.EnvironmentState, p project.Project, e project.Environment,
+	by identity.UserID) (release.Deployment, error) {
+	r, err := s.repo.FindRelease(ctx, p.Organization, *state.Current)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	d, _, err := s.begin(ctx, state, p, e, release.Deployment{ID: release.NewDeploymentID(), Release: &r.ID, Image: r.Image,
+		Reason: release.ReasonConfig, RequestedBy: by})
+	return d, err
 }

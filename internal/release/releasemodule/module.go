@@ -45,12 +45,17 @@ type Deps struct {
 	BuildCommands build.Commands
 	BuildQueries  build.Queries
 	Options       releasesvc.Options
+	// AccessLoginAvailable: the API serves the access sign-in (/access/*),
+	// which the settings report so the console can warn when it does not.
+	AccessLoginAvailable bool
 }
 
 type Module struct {
-	Commands  release.Commands
-	Queries   release.Queries
-	HTTP      *releasehttp.Handler
+	Commands release.Commands
+	Queries  release.Queries
+	HTTP     *releasehttp.Handler
+	// Access finds an environment by id alone, for the access sign-in.
+	Access    release.AccessLookup
 	workflows release.Workflows
 }
 
@@ -65,7 +70,7 @@ func New(deps Deps) (Module, error) {
 	svc := releasesvc.New(releasepg.New(deps.DB), deps.Projects, cluster,
 		releasebuild.New(deps.BuildCommands, deps.BuildQueries), deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Options)
-	return Module{Commands: svc, Queries: svc, HTTP: releasehttp.New(svc, svc), workflows: svc}, nil
+	return Module{Commands: svc, Queries: svc, Access: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
 }
 
 // clusterOf picks the Cluster adapter.

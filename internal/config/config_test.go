@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,6 +97,60 @@ func TestMCPIntrospectionClient(t *testing.T) {
 			}
 			if err != nil || cfg.MCP.IntrospectionClientSecret != c.wantSecret || cfg.MCP.Enabled() != (c.wantSecret != "") {
 				t.Fatalf("%+v %v", cfg.MCP, err)
+			}
+		})
+	}
+}
+
+// The access sign-in is served only with its signing key and its IAMKit
+// client together; one without the other leaves it off (it is not an error:
+// an installation that has not provisioned the client still starts).
+func TestAccessSignIn(t *testing.T) {
+	seed := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	keyFile := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyFile, []byte(seed+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	type env = map[string]string
+	for name, c := range map[string]struct {
+		env     env
+		enabled bool
+		partial bool
+		bad     bool
+	}{
+		"off":              {},
+		"inline":           {env: env{"ODYSSEY_ACCESS_SIGNING_KEY": seed, "IAMKIT_ACCESS_CLIENT_ID": "c", "IAMKIT_ACCESS_CLIENT_SECRET": "s"}, enabled: true},
+		"key from file":    {env: env{"ODYSSEY_ACCESS_SIGNING_KEY_FILE": keyFile, "IAMKIT_ACCESS_CLIENT_ID": "c", "IAMKIT_ACCESS_CLIENT_SECRET": "s"}, enabled: true},
+		"key only":         {env: env{"ODYSSEY_ACCESS_SIGNING_KEY": seed}, partial: true},
+		"client only":      {env: env{"IAMKIT_ACCESS_CLIENT_ID": "c", "IAMKIT_ACCESS_CLIENT_SECRET": "s"}, partial: true},
+		"half a client":    {env: env{"IAMKIT_ACCESS_CLIENT_ID": "c"}, bad: true},
+		"short key":        {env: env{"ODYSSEY_ACCESS_SIGNING_KEY": "AAAA"}, bad: true},
+		"key and its file": {env: env{"ODYSSEY_ACCESS_SIGNING_KEY": seed, "ODYSSEY_ACCESS_SIGNING_KEY_FILE": keyFile}, bad: true},
+		"previous keys":    {env: env{"ODYSSEY_ACCESS_SIGNING_KEY": seed, "ODYSSEY_ACCESS_PREVIOUS_KEYS": seed + "," + seed, "IAMKIT_ACCESS_CLIENT_ID": "c", "IAMKIT_ACCESS_CLIENT_SECRET": "s"}, enabled: true},
+		"bad previous key": {env: env{"ODYSSEY_ACCESS_PREVIOUS_KEYS": "nope"}, bad: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range map[string]string{"DATABASE_URL": "postgres://x", "ODYSSEY_BLOB_URL": "mem://", "IAMKIT_URL": "http://iam",
+				"IAMKIT_ISSUER": "http://iam", "IAMKIT_AUDIENCE": "http://api/mcp", "IAMKIT_ENVIRONMENT_ID": "e", "IAMKIT_APPLICATION_ID": "a",
+				"IAMKIT_RESOURCE_ID": "r"} {
+				t.Setenv(k, v)
+			}
+			for _, k := range []string{"ODYSSEY_ACCESS_SIGNING_KEY", "ODYSSEY_ACCESS_SIGNING_KEY_FILE", "ODYSSEY_ACCESS_PREVIOUS_KEYS",
+				"IAMKIT_ACCESS_CLIENT_ID", "IAMKIT_ACCESS_CLIENT_SECRET", "IAMKIT_ACCESS_CLIENT_SECRET_FILE", "ODYSSEY_ACCESS_ALLOW_HTTP"} {
+				t.Setenv(k, "")
+			}
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := config.Load()
+			if c.bad {
+				if err == nil {
+					t.Fatalf("accepted %+v", cfg.Access)
+				}
+				return
+			}
+			if err != nil || cfg.Access.Enabled() != c.enabled || cfg.Access.Partial() != c.partial {
+				t.Fatalf("%+v %v", cfg.Access, err)
 			}
 		})
 	}

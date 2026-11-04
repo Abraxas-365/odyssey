@@ -9,6 +9,7 @@ export const permissions = {
   clustersRead: 'odyssey:clusters:read',
   clustersManage: 'odyssey:clusters:manage',
   integrationsManage: 'odyssey:integrations:manage',
+  accessPublic: 'odyssey:access:public',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]

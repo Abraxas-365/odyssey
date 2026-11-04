@@ -130,6 +130,63 @@ func uploadTicketViolations(files []goFile) []string {
 	return out
 }
 
+// Environment lookups without an organization: the access sign-in knows only
+// the environment id the gate sent, and finds the tenant here. The repository
+// method is called only by release/releasesvc (FindAccessTarget), and
+// FindAccessTarget only by the access service: nothing else may resolve a
+// tenant from an id in a request.
+var envLookups = map[string]string{
+	"FindStateByEnvironment": releaseSvc,
+	"FindAccessTarget":       "access/accesssvc",
+}
+
+func envLookupViolations(files []goFile) []string {
+	var out []string
+	for _, f := range files {
+		dir := path.Dir(f.rel)
+		if strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if owner, ok := envLookups[sel.Sel.Name]; ok && dir != owner {
+				out = append(out, f.fset.Position(call.Pos()).String()+": "+dir+" calls "+sel.Sel.Name+
+					", which finds an environment without its organization; only "+owner+" may")
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestEnvironmentLookupsWithoutTenantStayInOnePlace(t *testing.T) {
+	report(t, envLookupViolations(sources(t, false)))
+	files := parseFixtures(t, map[string]string{
+		// correct
+		releaseSvc + "/a.go":     `package releasesvc; func (s *S) f() { s.repo.FindStateByEnvironment(nil, id) }`,
+		"access/accesssvc/s.go":  `package accesssvc; func (s *S) f() { s.targets.FindAccessTarget(nil, id) }`,
+		releasePg + "/r.go":      `package releasepg; func (r *R) FindStateByEnvironment() {}`,
+		releasePg + "/r_test.go": `package releasepg_test; func T() { repo.FindStateByEnvironment(nil, id) }`,
+		// violations
+		"access/adapters/accesshttp/h.go":   `package accesshttp; func (h *H) f() { h.lookup.FindAccessTarget(nil, id) }`,
+		"release/adapters/releasehttp/h.go": `package releasehttp; func (h *H) f() { h.repo.FindStateByEnvironment(nil, id) }`,
+		"source/sourcesvc/s.go":             `package sourcesvc; func (s *S) f() { s.releases.FindAccessTarget(nil, id) }`,
+	})
+	expectViolations(t, envLookupViolations(files),
+		"access/adapters/accesshttp/h.go: access/adapters/accesshttp calls FindAccessTarget, which finds an environment without its organization; only access/accesssvc may",
+		"release/adapters/releasehttp/h.go: release/adapters/releasehttp calls FindStateByEnvironment, which finds an environment without its organization; only release/releasesvc may",
+		"source/sourcesvc/s.go: source/sourcesvc calls FindAccessTarget, which finds an environment without its organization; only access/accesssvc may",
+	)
+}
+
 func TestUploadTicketsAreSpentInOnePlace(t *testing.T) {
 	report(t, uploadTicketViolations(sources(t, false)))
 }

@@ -31,6 +31,7 @@ Flujo / flow:
 3. Desde GitHub: list_repositories → connect_repository (cada push publica) → publish_now para publicar ya.
 4. Una imagen ya construida (fijada por digest): deploy_image.
 5. list_versions: el historial; rollback vuelve a una versión anterior.
+6. Quién puede abrirla: por defecto solo el equipo; set_access cambia a organization (toda la empresa) o public (cualquiera con el enlace; lo permite TI).
 
 Reglas para que una app funcione en Odicea:
 - Escucha en el puerto $PORT (8080 si no está) y responde en "/".

@@ -31,6 +31,16 @@ type commands struct {
 	rollbackBy identity.UserID
 	clients    []string // event.Meta client of each call
 	rollbackFn func(release.DeploymentID) (release.Deployment, error)
+	access     []release.SetAccess
+	accessFn   func(release.SetAccess) (release.AccessChange, error)
+}
+
+func (c *commands) SetAccess(_ context.Context, org identity.OrganizationID, p project.ID, env project.EnvironmentID, in release.SetAccess) (release.AccessChange, error) {
+	c.access = append(c.access, in)
+	if c.accessFn != nil {
+		return c.accessFn(in)
+	}
+	return release.AccessChange{Settings: release.Settings{Environment: env, Organization: org, Revision: 1, Access: release.AccessSettings{Mode: in.Mode}}}, nil
 }
 
 func (c *commands) Deploy(ctx context.Context, org identity.OrganizationID, p project.ID, env project.EnvironmentID, in release.Deploy) (release.Deployment, error) {

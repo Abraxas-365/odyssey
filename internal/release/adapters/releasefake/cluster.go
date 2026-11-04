@@ -28,6 +28,10 @@ type Outcome struct {
 type Options struct {
 	// Behavior decides each applied app's outcome (default: DefaultBehavior).
 	Behavior func(release.DesiredApp) Outcome
+	// NoAccessGate makes the cluster unable to protect apps (it lacks the
+	// access capability): CanProtect is false and a team or organization app
+	// is refused at Apply, like a real cluster without the gate.
+	NoAccessGate bool
 	// Domain is the base of the simulated URLs (default "apps.odyssey.localhost").
 	Domain string
 }
@@ -80,6 +84,9 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 	if c.down != nil {
 		return c.down
 	}
+	if c.opts.NoAccessGate && (d.Access == "team" || d.Access == "organization") {
+		return release.Failed(release.CodeApplyFailed, "Este clúster no puede proteger apps con inicio de sesión. Pide a TI que lo habilite.")
+	}
 	k := key(t, d.Name)
 	if cur, ok := c.apps[k]; ok && cur.desired.Revision >= d.Revision {
 		return nil // idempotent; an older revision is ignored
@@ -91,6 +98,10 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 	c.apps[k] = &app{desired: d, outcome: o}
 	c.applied = append(c.applied, Applied{Target: t, App: d})
 	return nil
+}
+
+func (c *Cluster) CanProtect(context.Context, release.Target) (bool, error) {
+	return !c.opts.NoAccessGate, nil
 }
 
 func (c *Cluster) Status(_ context.Context, t release.Target, name string) (release.AppStatus, error) {

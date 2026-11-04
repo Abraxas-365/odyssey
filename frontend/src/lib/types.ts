@@ -33,6 +33,10 @@ export type Deployment = Schemas['Deployment']
 export type DeploymentStatus = Schemas['DeploymentStatus']
 export type DeploymentStep = Schemas['DeploymentStep']
 export type CurrentRelease = Schemas['CurrentRelease']
+/** Who can open an app (cut 1e): the environment's settings and the answer to changing them. */
+export type AccessMode = Schemas['AccessMode']
+export type EnvironmentSettings = Schemas['EnvironmentSettings']
+export type AccessChange = Schemas['AccessChange']
 export type DeployRequest = Schemas['DeployRequest']
 export type DeploySourceConfig = Schemas['DeploySourceConfig']
 /** The image built from an uploaded folder, and its log. */

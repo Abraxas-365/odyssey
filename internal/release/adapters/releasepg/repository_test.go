@@ -2,8 +2,10 @@ package releasepg_test
 
 import (
 	"context"
+	"io/fs"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +43,11 @@ func TestRepository(t *testing.T) {
 	}
 	if _, err := repo.FindRelease(ctx, other, r.ID); !errx.IsType(err, errx.TypeNotFound) {
 		t.Fatalf("cross-tenant release: %v", err)
+	}
+
+	// by environment id alone (the access sign-in): nothing before the state exists
+	if _, err := repo.FindStateByEnvironment(ctx, env); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("state by environment before use: %v", err)
 	}
 
 	// state: zero before first use, created and locked by LockState
@@ -111,6 +118,14 @@ func TestRepository(t *testing.T) {
 	s, err := repo.FindState(ctx, org, env)
 	if err != nil || s.Current == nil || *s.Current != r.ID || s.Active != nil || s.URL != "https://app.example" || s.Revision != 1 {
 		t.Fatalf("promoted state %+v %v", s, err)
+	}
+	// the tenant-less lookup returns the owner, which is how the access
+	// sign-in learns the app's organization
+	if s, err := repo.FindStateByEnvironment(ctx, env); err != nil || s.Organization != org || s.URL != "https://app.example" {
+		t.Fatalf("state by environment %+v %v", s, err)
+	}
+	if _, err := repo.FindStateByEnvironment(ctx, project.NewEnvironmentID()); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("unknown environment: %v", err)
 	}
 	// a finished deployment never changes
 	if err := repo.Finish(ctx, org, first.ID, release.StatusFailed, &release.Failure{Code: "X"}); !errx.IsType(err, errx.TypeNotFound) {
@@ -231,6 +246,113 @@ func TestRepository(t *testing.T) {
 	}
 }
 
+func TestSettings(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
+	repo := releasepg.New(db)
+	tx := txn.Postgres{DB: db}
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	user := identity.MustParseUserID(uuid.NewString())
+	proj, env, otherEnv := project.NewID(), project.NewEnvironmentID(), project.NewEnvironmentID()
+
+	// no row: the safe default, revision 0
+	if s, err := repo.FindSettings(ctx, org, env); err != nil || s.Revision != 0 || s.Access.Mode != release.AccessTeam {
+		t.Fatalf("default settings %+v %v", s, err)
+	}
+	append := func(org identity.OrganizationID, env project.EnvironmentID, mode release.AccessMode) (release.Settings, error) {
+		var out release.Settings
+		err := tx.Do(ctx, func(ctx context.Context) error {
+			var err error
+			out, err = repo.AppendSettings(ctx, release.Settings{Environment: env, Organization: org, Access: release.AccessSettings{Mode: mode}, CreatedBy: user})
+			return err
+		})
+		return out, err
+	}
+	first, err := append(org, env, release.AccessOrganization)
+	if err != nil || first.Revision != 1 || first.Access.Mode != release.AccessOrganization || first.CreatedBy != user || first.CreatedAt.IsZero() {
+		t.Fatalf("first revision %+v %v", first, err)
+	}
+	second, err := append(org, env, release.AccessPublic)
+	if err != nil || second.Revision != 2 {
+		t.Fatalf("second revision %+v %v", second, err)
+	}
+	// the latest wins; history is append-only
+	if s, err := repo.FindSettings(ctx, org, env); err != nil || s.Revision != 2 || s.Access.Mode != release.AccessPublic {
+		t.Fatalf("latest %+v %v", s, err)
+	}
+	var rows int
+	if err := db.GetContext(ctx, &rows, `SELECT count(*) FROM release.environment_settings WHERE environment_id = $1`, env); err != nil || rows != 2 {
+		t.Fatalf("history rows %d %v", rows, err)
+	}
+	if s, err := repo.FindSettingsRevision(ctx, org, env, 1); err != nil || s.Access.Mode != release.AccessOrganization {
+		t.Fatalf("revision 1 %+v %v", s, err)
+	}
+	if s, err := repo.FindSettingsRevision(ctx, org, env, 0); err != nil || s.Revision != 0 || s.Access.Mode != release.AccessTeam {
+		t.Fatalf("revision 0 %+v %v", s, err)
+	}
+	if _, err := repo.FindSettingsRevision(ctx, org, env, 3); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("missing revision: %v", err)
+	}
+	if _, err := repo.FindSettingsRevision(ctx, other, env, 1); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("cross-tenant revision: %v", err)
+	}
+	// revisions are per environment
+	if s, err := append(org, otherEnv, release.AccessTeam); err != nil || s.Revision != 1 {
+		t.Fatalf("other environment %+v %v", s, err)
+	}
+	// a mode outside the set is refused by the table
+	if _, err := append(org, env, release.AccessMode("everyone")); err == nil {
+		t.Fatal("an unknown mode was stored")
+	}
+
+	// tenant isolation: another organization sees the defaults for this
+	// environment and cannot add a revision to it
+	if s, err := repo.FindSettings(ctx, other, env); err != nil || s.Revision != 0 || s.Access.Mode != release.AccessTeam {
+		t.Fatalf("cross-tenant settings %+v %v", s, err)
+	}
+	if _, err := append(other, env, release.AccessPublic); err == nil {
+		t.Fatal("another organization appended a revision")
+	}
+	if s, err := repo.FindSettings(ctx, org, env); err != nil || s.Revision != 2 {
+		t.Fatalf("settings after the cross-tenant attempt %+v %v", s, err)
+	}
+
+	// the revision a deployment applied is recorded on it, once unfinished,
+	// and only in its own organization
+	r := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest, Config: release.Config{Port: 80}}
+	d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env, Release: &r.ID, Image: r.Image,
+		Status: release.StatusPending, Reason: release.ReasonConfig, Step: release.StepApply, Revision: 1, Run: workflow.NewRunID()}
+	if err := tx.Do(ctx, func(ctx context.Context) error {
+		if err := repo.CreateRelease(ctx, r); err != nil {
+			return err
+		}
+		if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"}); err != nil {
+			return err
+		}
+		return repo.CreateDeployment(ctx, d)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.FindDeployment(ctx, org, d.ID); err != nil || got.Reason != release.ReasonConfig || got.SettingsRevision != nil {
+		t.Fatalf("config deployment %+v %v", got, err)
+	}
+	if err := repo.SetSettingsRevision(ctx, other, d.ID, 2); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("cross-tenant settings revision: %v", err)
+	}
+	if err := repo.SetSettingsRevision(ctx, org, d.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.FindDeployment(ctx, org, d.ID); err != nil || got.SettingsRevision == nil || *got.SettingsRevision != 2 {
+		t.Fatalf("recorded revision %+v %v", got, err)
+	}
+	if err := repo.Finish(ctx, org, d.ID, release.StatusCancelled, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSettingsRevision(ctx, org, d.ID, 1); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("revision on a finished deployment: %v", err)
+	}
+}
+
 func TestUploadTickets(t *testing.T) {
 	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
 	repo := releasepg.New(db)
@@ -341,6 +463,165 @@ func TestUploadTickets(t *testing.T) {
 		_, err := repo.FindUploadTicketByHash(ctx, c.tk.TokenHash)
 		if (err == nil) != c.want {
 			t.Fatalf("after the sweep ticket %s present=%v, want %v (%v)", c.tk.ID, err == nil, c.want, err)
+		}
+	}
+}
+
+// The settings revision the cluster was last told lives on the environment's
+// state; only the deployment holding the state's revision may write it, and
+// only in its own organization.
+func TestSetAppliedSettings(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
+	repo := releasepg.New(db)
+	tx := txn.Postgres{DB: db}
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	proj, env := project.NewID(), project.NewEnvironmentID()
+	if err := tx.Do(ctx, func(ctx context.Context) error {
+		_, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	applied := func(o identity.OrganizationID) *int64 {
+		t.Helper()
+		s, err := repo.FindState(ctx, o, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.AppliedRevision(); (s.AppliedSettings == nil) != (got == -1) {
+			t.Fatalf("AppliedRevision %d for %v", got, s.AppliedSettings)
+		}
+		return s.AppliedSettings
+	}
+	if applied(org) != nil {
+		t.Fatal("a fresh state has applied settings")
+	}
+	// the state is at revision 0 here; a deployment of another revision (a
+	// superseded one) writes nothing
+	if err := repo.SetAppliedSettings(ctx, org, env, 7, 3); err != nil {
+		t.Fatal(err)
+	}
+	if applied(org) != nil {
+		t.Fatal("a superseded deployment recorded settings")
+	}
+	if err := repo.SetAppliedSettings(ctx, other, env, 0, 3); err != nil {
+		t.Fatal(err)
+	}
+	if applied(org) != nil {
+		t.Fatal("another organization recorded settings")
+	}
+	if err := repo.SetAppliedSettings(ctx, org, env, 0, 2); err != nil {
+		t.Fatal(err)
+	}
+	if a := applied(org); a == nil || *a != 2 {
+		t.Fatalf("applied %v", a)
+	}
+	if s, err := repo.FindState(ctx, other, env); err == nil && s.AppliedSettings != nil {
+		t.Fatalf("another organization reads %v", s.AppliedSettings)
+	}
+	if s, err := repo.FindStateByEnvironment(ctx, env); err != nil || s.AppliedSettings == nil || *s.AppliedSettings != 2 {
+		t.Fatalf("by environment %+v %v", s, err)
+	}
+}
+
+// Migration 008 on a database that already holds apps: those published before
+// settings existed were served open, so each gets a `public` revision 1 (by
+// nobody) and it counts as applied; everything else is left alone.
+func TestMigrationSeedsPublicForAppsServedBeforeSettings(t *testing.T) {
+	var before fstest.MapFS = fstest.MapFS{}
+	all := releasepg.Migrations()
+	names, _ := fs.Glob(all, "*.up.sql")
+	for _, n := range names {
+		if n < "008" {
+			b, _ := fs.ReadFile(all, n)
+			before[n] = &fstest.MapFile{Data: b}
+		}
+	}
+	if len(before) != 7 {
+		t.Fatalf("migrations before 008: %d", len(before))
+	}
+	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: before})
+	ctx := context.Background()
+	org, proj := identity.NewOrganizationID(), project.NewID()
+	rel := release.NewID()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO release.releases (id, organization_id, project_id, image, config) VALUES ($1, $2, $3, $4, '{}')`,
+		rel, org, proj, "r.local/app"+digest)
+	// env: id, whether it serves a release, the deployment's settings revision, the settings rows it already has
+	type seed struct {
+		env      project.EnvironmentID
+		serves   bool
+		depRev   *int64
+		existing []string
+	}
+	one, zero := int64(1), int64(0)
+	cases := map[string]seed{
+		"served before settings":    {project.NewEnvironmentID(), true, nil, nil},
+		"served, settings exist":    {project.NewEnvironmentID(), true, &one, []string{"organization"}},
+		"served after, no row yet":  {project.NewEnvironmentID(), true, &zero, nil},
+		"nothing online":            {project.NewEnvironmentID(), false, nil, nil},
+		"old deployment, row added": {project.NewEnvironmentID(), true, nil, []string{"team"}},
+	}
+	for name, c := range cases {
+		dep := release.NewDeploymentID()
+		mustExec(`INSERT INTO release.environment_states (environment_id, organization_id, project_id, app, revision) VALUES ($1, $2, $3, $4, 1)`,
+			c.env, org, proj, name)
+		mustExec(`INSERT INTO release.deployments (id, organization_id, project_id, environment_id, release_id, image, status, reason, step, revision, run_id, finished_at, settings_revision)
+			VALUES ($1, $2, $3, $4, $5, $6, 'ready', 'deploy', 'promote', 1, $7, now(), $8)`,
+			dep, org, proj, c.env, rel, "r.local/app"+digest, uuid.New(), c.depRev)
+		if c.serves {
+			mustExec(`UPDATE release.environment_states SET current_release_id = $2, current_deployment_id = $3, url = 'https://x.example' WHERE environment_id = $1`, c.env, rel, dep)
+		}
+		for i, mode := range c.existing {
+			mustExec(`INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, created_by) VALUES ($1, $2, $3, $4, $5)`,
+				c.env, org, i+1, mode, uuid.New())
+		}
+	}
+	if err := migrate.Apply(ctx, db, migrate.Set{Owner: releasepg.Schema, Files: all}); err != nil {
+		t.Fatal(err)
+	}
+	repo := releasepg.New(db)
+	for name, c := range cases {
+		st, err := repo.FindState(ctx, org, c.env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		settings, err := repo.FindSettings(ctx, org, c.env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows int
+		var author *string
+		_ = db.GetContext(ctx, &rows, `SELECT count(*) FROM release.environment_settings WHERE environment_id = $1`, c.env)
+		_ = db.GetContext(ctx, &author, `SELECT created_by::text FROM release.environment_settings WHERE environment_id = $1 ORDER BY revision LIMIT 1`, c.env)
+		switch name {
+		case "served before settings":
+			if settings.Revision != 1 || settings.Access.Mode != release.AccessPublic || rows != 1 || author != nil ||
+				st.AppliedSettings == nil || *st.AppliedSettings != 1 {
+				t.Errorf("%s: settings %+v rows %d author %v applied %v", name, settings, rows, author, st.AppliedSettings)
+			}
+		case "served, settings exist":
+			if settings.Revision != 1 || settings.Access.Mode != release.AccessOrganization || rows != 1 || st.AppliedSettings == nil || *st.AppliedSettings != 1 {
+				t.Errorf("%s: settings %+v rows %d applied %v", name, settings, rows, st.AppliedSettings)
+			}
+		case "served after, no row yet":
+			if settings.Revision != 0 || settings.Access.Mode != release.AccessTeam || rows != 0 || st.AppliedSettings == nil || *st.AppliedSettings != 0 {
+				t.Errorf("%s: settings %+v rows %d applied %v", name, settings, rows, st.AppliedSettings)
+			}
+		case "nothing online":
+			if settings.Revision != 0 || settings.Access.Mode != release.AccessTeam || rows != 0 || st.AppliedSettings != nil {
+				t.Errorf("%s: settings %+v rows %d applied %v", name, settings, rows, st.AppliedSettings)
+			}
+		case "old deployment, row added":
+			if settings.Revision != 1 || settings.Access.Mode != release.AccessTeam || rows != 1 || st.AppliedSettings != nil {
+				t.Errorf("%s: settings %+v rows %d applied %v", name, settings, rows, st.AppliedSettings)
+			}
 		}
 	}
 }

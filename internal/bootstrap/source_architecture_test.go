@@ -4,9 +4,11 @@ package bootstrap_test
 //
 //  1. The GitHub SDK (google/go-github) and the JWT library (golang-jwt)
 //     stay inside source/adapters/sourcegithub: the domain speaks only the
-//     GitProvider port, so another git host is another adapter.
+//     GitProvider port, so another git host is another adapter. The JWT
+//     library has one more home, access/adapters/accessjwt (it signs the
+//     access tickets).
 //  2. Unauthenticated routes are few and declared: only sourcehttp,
-//     releasehttp and the server's own Assistant implement RegisterPublic,
+//     releasehttp, accesshttp and the server's own Assistant implement RegisterPublic,
 //     each mounts exactly its own publicRoutes entry, and only the server mounts them (the composition
 //     root hands them over).
 //  3. release never depends on source (a deployment does not know where its
@@ -39,10 +41,16 @@ const (
 	sourceReleaseAdapt  = "source/adapters/sourcerelease"
 	sourceModule        = "source/sourcemodule"
 	serverPkg           = "server"
+	accessHTTPAdapter   = "access/adapters/accesshttp"
+	accessJWTAdapter    = "access/adapters/accessjwt"
 )
 
 // confinedToGitHub are the libraries only the GitHub adapter may import.
 var confinedToGitHub = []string{"github.com/google/go-github/", "github.com/golang-jwt/jwt"}
+
+// jwtPrefix is also used, and only there besides sourcegithub, by the
+// access adapter that signs tickets (EdDSA).
+const jwtPrefix = "github.com/golang-jwt/jwt"
 
 // publicRoutes are every unauthenticated route of the API besides /health
 // and /api/config (each documented with `security: []`), per adapter that
@@ -56,6 +64,13 @@ var publicRoutes = map[string]map[string]bool{
 	},
 	releaseHTTPAdapter: {
 		"PUT /uploads/:ticket": true,
+	},
+	// the access sign-in of protected apps: the key set the gates verify
+	// tickets with and the two browser steps (the OAuth flow is the proof)
+	accessHTTPAdapter: {
+		"GET /.well-known/odicea-access-keys": true,
+		"GET /access/authorize":               true,
+		"GET /access/callback":                true,
 	},
 	// the odicea skill's archive (no secrets in it; assistants fetch it with curl)
 	serverPkg: {
@@ -172,6 +187,9 @@ func gitHubSDKViolations(files []goFile) []string {
 		for _, imp := range f.file.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
 			for _, lib := range confinedToGitHub {
+				if dir == accessJWTAdapter && strings.HasPrefix(lib, jwtPrefix) {
+					continue // the ticket signer is the second home of the JWT library
+				}
 				if strings.HasPrefix(p, lib) {
 					out = append(out, f.fset.Position(imp.Pos()).String()+": "+dir+" imports "+p+
 						"; it stays inside "+sourceGitHubAdapter+" (depend on source.GitProvider)")
@@ -194,7 +212,7 @@ func publicRouteViolations(files []goFile) []string {
 			}
 			if publicRoutes[dir] == nil {
 				out = append(out, f.fset.Position(fn.Pos()).String()+": "+dir+
-					" declares RegisterPublic; unauthenticated routes live only in "+sourceHTTPAdapter+", "+releaseHTTPAdapter+" and "+serverPkg)
+					" declares RegisterPublic; unauthenticated routes live only in "+sourceHTTPAdapter+", "+releaseHTTPAdapter+", "+accessHTTPAdapter+" and "+serverPkg)
 				continue
 			}
 			out = append(out, undeclaredRoutes(f, fn, publicRoutes[dir])...)
@@ -338,6 +356,9 @@ func TestSourceRulesCatchViolations(t *testing.T) {
 func (h *Handler) RegisterPublic(r fiber.Router) { r.Get("/github/setup", h.setup); r.Post("/webhooks/github", h.hook) }`,
 		"release/adapters/releasehttp/h.go": `package releasehttp
 func (h *Handler) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", h.upload) }`,
+		"access/adapters/accesshttp/h.go": `package accesshttp
+func (h *Handler) RegisterPublic(r fiber.Router) { r.Get("/.well-known/odicea-access-keys", h.keys); r.Get("/access/authorize", h.a); r.Get("/access/callback", h.c) }`,
+		"access/adapters/accessjwt/s.go": `package accessjwt; import _ "github.com/golang-jwt/jwt/v5"`,
 		"server/assistant.go": `package server
 func (a Assistant) RegisterPublic(r fiber.Router) { r.Get("/skills/odicea.tar.gz", a.skill) }`,
 		"server/server.go":                   `package server; func New(p PublicRoutes, app *fiber.App) { p.RegisterPublic(app) }`,
@@ -373,6 +394,10 @@ func (x *Hook) RegisterPublic(r fiber.Router) { r.Post("/webhooks/github", x.d) 
 func (x *Upload) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", x.d) }`,
 		"release/adapters/releasehttp/group.go": `package releasehttp
 func (x *Group) RegisterPublic(r fiber.Router) { r.Group("/uploads").Put("/:ticket", x.d) }`,
+		"access/adapters/accesshttp/more.go": `package accesshttp
+func (x *More) RegisterPublic(r fiber.Router) { r.Post("/access/callback", x.d) }`,
+		"access/adapters/accessiam/jwt.go": `package accessiam; import _ "github.com/golang-jwt/jwt/v5"`,
+		"access/accesssvc/gh.go":           `package accesssvc; import _ "github.com/google/go-github/v93/github"`,
 		"server/extra.go": `package server
 func (a Extra) RegisterPublic(r fiber.Router) { r.Get("/skills/other.tar.gz", a.skill) }`,
 		"bootstrap/b.go":                  `package bootstrap; func wire(h *sourcehttp.Handler, app *fiber.App) { h.RegisterPublic(app) }`,
@@ -405,6 +430,8 @@ func (m M) peek(ctx C) { m.repo.ListConnectionsToReconcile(ctx, t, 1) }`,
 		"build/adapters/buildgit/g.go: build/adapters/buildgit imports github.com/google/go-github/v93/github",
 		"source/sourcesvc/jwt.go: source/sourcesvc imports github.com/golang-jwt/jwt/v5",
 		"cmd/odyssey-api/main.go: cmd/odyssey-api imports github.com/google/go-github/v93/github",
+		"access/adapters/accessiam/jwt.go: access/adapters/accessiam imports github.com/golang-jwt/jwt/v5",
+		"access/accesssvc/gh.go: access/accesssvc imports github.com/google/go-github/v93/github",
 		"pkg/srcarchive/jwt.go: pkg/srcarchive imports github.com/golang-jwt/jwt/v5",
 	)
 	expectViolations(t, publicRouteViolations(files),
@@ -416,6 +443,7 @@ func (m M) peek(ctx C) { m.repo.ListConnectionsToReconcile(ctx, t, 1) }`,
 		"source/adapters/sourcehttp/loop.go: RegisterPublic may only register literal routes",
 		"source/adapters/sourcehttp/chain.go: RegisterPublic may only register literal routes",
 		"source/adapters/sourcehttp/all.go: RegisterPublic mounts ALL /github/setup",
+		"access/adapters/accesshttp/more.go: RegisterPublic mounts POST /access/callback",
 		"release/adapters/releasehttp/more.go: RegisterPublic mounts GET /uploads/:ticket",
 		"release/adapters/releasehttp/webhook.go: RegisterPublic mounts POST /webhooks/github",
 		"source/adapters/sourcehttp/upload.go: RegisterPublic mounts PUT /uploads/:ticket",

@@ -35,7 +35,7 @@ Si la app necesita alguna de ellas:
 Mientras tanto, si la app solo necesita guardar datos de forma simple y el usuario lo acepta, puedes usar el disco/memoria de la app sabiendo que **se pierde al reiniciar o publicar**: avísaselo.
 <!-- ODICEA:LIMITES-ACTUALES fin -->
 
-## Qué puedes hacer (las 13 herramientas)
+## Qué puedes hacer (las 14 herramientas)
 
 | Quiero… | Herramienta |
 |---|---|
@@ -48,6 +48,7 @@ Mientras tanto, si la app solo necesita guardar datos de forma simple y el usuar
 | Seguir una publicación | `get_deployment` |
 | Ver por qué falló el build | `get_build_logs` |
 | Ver el historial o volver atrás | `list_versions`, `rollback` |
+| Cambiar quién puede abrir la app | `set_access` (y `get_app` muestra el modo) |
 
 Solo ves las herramientas que tu rol permite (por ejemplo, un Lector solo lee). Si una falla por permisos, llama a `whoami` y explica qué permiso falta.
 
@@ -68,6 +69,10 @@ Para que cada push publique la app, sigue [references/github.md](references/gith
 ## Volver atrás
 
 `list_versions` para elegir; `rollback` (sin `deployment_id` vuelve a la última versión que estuvo en línea) y luego `get_deployment` para confirmarlo.
+
+## Quién puede abrir la app
+
+Por defecto una app nueva solo la abre **el equipo** de la organización, con su inicio de sesión de Odicea. `get_app` muestra `access.mode`: `team` (solo el equipo), `organization` (toda la empresa) o `public` (cualquiera con el enlace, sin iniciar sesión). Para cambiarlo, `set_access` con el modo que pida el usuario; si la app ya está en línea se vuelve a publicar la misma versión (sigue con `get_deployment`). `public` exige un permiso que suele tener solo TI: si falla por eso, no lo intentes por otro lado; dile al usuario que pida a TI que la deje pública. Si queda en `failed` con «Este clúster no puede proteger apps con inicio de sesión», es de TI, no de la app. No metas inicio de sesión propio en la app para esto: Odicea ya lo hace antes de que llegue.
 
 ## Cómo hablar con el usuario
 

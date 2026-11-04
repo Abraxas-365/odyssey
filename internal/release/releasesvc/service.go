@@ -59,9 +59,10 @@ func New(repo release.Repository, projects project.Queries, cluster release.Clus
 }
 
 var (
-	_ release.Commands  = (*Service)(nil)
-	_ release.Queries   = (*Service)(nil)
-	_ release.Workflows = (*Service)(nil)
+	_ release.Commands     = (*Service)(nil)
+	_ release.Queries      = (*Service)(nil)
+	_ release.AccessLookup = (*Service)(nil)
+	_ release.Workflows    = (*Service)(nil)
 )
 
 // errSuperseded ends the workflow of a deployment that no longer matters (a
@@ -386,7 +387,7 @@ func (s *Service) Current(ctx context.Context, organization identity.Organizatio
 	if err != nil {
 		return release.Current{}, err
 	}
-	out := release.Current{Environment: env, URL: state.URL}
+	out := release.Current{Environment: env, URL: state.URL, AppliedSettingsRevision: state.AppliedSettings}
 	if state.Current != nil {
 		r, err := s.repo.FindRelease(ctx, organization, *state.Current)
 		if err != nil {
@@ -409,6 +410,107 @@ func (s *Service) Current(ctx context.Context, organization identity.Organizatio
 		*x.into = &d
 	}
 	return out, nil
+}
+
+// ---- settings ----
+
+// FindAccessTarget is the one tenant-less lookup of an environment (the
+// public access sign-in): its organization and the address the app was
+// promoted at. NotFound until the first deployment is live.
+func (s *Service) FindAccessTarget(ctx context.Context, env project.EnvironmentID) (release.AccessTarget, error) {
+	st, err := s.repo.FindStateByEnvironment(ctx, env)
+	if err != nil {
+		return release.AccessTarget{}, err
+	}
+	if st.URL == "" {
+		return release.AccessTarget{}, errx.NotFound("environment not found")
+	}
+	// The mode is what the cluster was last told, not what is stored: a
+	// change waiting for its config deployment (or one that failed after
+	// apply) is not what the app is protected with.
+	var settings release.Settings
+	if st.AppliedSettings != nil {
+		settings, err = s.repo.FindSettingsRevision(ctx, st.Organization, st.Environment, *st.AppliedSettings)
+	} else {
+		settings, err = s.repo.FindSettings(ctx, st.Organization, st.Environment)
+	}
+	if err != nil {
+		return release.AccessTarget{}, err
+	}
+	return release.AccessTarget{Environment: st.Environment, Organization: st.Organization, URL: st.URL, Mode: settings.Access.Mode}, nil
+}
+
+func (s *Service) Settings(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID) (release.Settings, error) {
+	if _, _, err := s.place(ctx, organization, id, env); err != nil {
+		return release.Settings{}, err
+	}
+	return s.repo.FindSettings(ctx, organization, env)
+}
+
+func (s *Service) AccessProtectionAvailable(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID) (bool, error) {
+	if _, _, err := s.place(ctx, organization, id, env); err != nil {
+		return false, err
+	}
+	return s.cluster.CanProtect(ctx, release.Target{Organization: organization, Project: id, Environment: env})
+}
+
+// SetAccess stores the mode as the environment's next settings revision and,
+// when the release serving is not running with it and nothing is in
+// progress, starts the config deployment that applies it. With a deployment
+// in progress the revision only waits: that deployment applies the latest
+// settings at its apply step, or, if it already applied, starts the config
+// deployment when it ends (promote). The mode already in force adds no
+// revision, but still starts the config deployment if the serving release
+// never got it (a config deployment refused at apply): asking again is the
+// retry. One that failed after apply did reach the cluster (the applied
+// revision is recorded): the app is not reopened, and nothing is retried.
+func (s *Service) SetAccess(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, input release.SetAccess) (release.AccessChange, error) {
+	if err := input.Validate(); err != nil {
+		return release.AccessChange{}, err
+	}
+	p, e, err := s.place(ctx, organization, id, env)
+	if err != nil {
+		return release.AccessChange{}, err
+	}
+	if err := archived(p); err != nil {
+		return release.AccessChange{}, err
+	}
+	var out release.AccessChange
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		state, err := s.lockState(ctx, p, e)
+		if err != nil {
+			return err
+		}
+		prev, err := s.repo.FindSettings(ctx, organization, env)
+		if err != nil {
+			return err
+		}
+		out.Settings, out.Deployment = prev, nil
+		changed := prev.Access.Mode != input.Mode
+		if changed {
+			next := release.Settings{Environment: env, Organization: organization, CreatedBy: input.RequestedBy,
+				Access: release.AccessSettings{Mode: input.Mode}}
+			if out.Settings, err = s.repo.AppendSettings(ctx, next); err != nil {
+				return err
+			}
+		}
+		var started *release.DeploymentID
+		if state.Current != nil && state.Active == nil {
+			if out.Settings.Revision > state.AppliedRevision() {
+				d, err := s.startConfig(ctx, state, p, e, input.RequestedBy)
+				if err != nil {
+					return err
+				}
+				d = d.WithProgress()
+				out.Deployment, started = &d, &d.ID
+			}
+		}
+		if !changed {
+			return nil
+		}
+		return s.events.Publish(ctx, release.NewAccessChanged(organization, input.RequestedBy, id.String(), prev, out.Settings, started, names(p, e)))
+	})
+	return out, err
 }
 
 // ---- upload tickets ----

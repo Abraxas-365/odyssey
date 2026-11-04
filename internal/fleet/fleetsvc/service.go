@@ -258,6 +258,10 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		if err != nil {
 			return err
 		}
+		// An agent that cannot protect apps would serve them open.
+		if (app.Access == fleet.AccessTeam || app.Access == fleet.AccessOrganization) && !c.Agent.Capabilities.CanProtect() {
+			return errx.Business(fleet.AccessUnavailableMessage).WithCode(fleet.CodeAccessUnavailable)
+		}
 		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)
 		if err != nil || !changed {
@@ -308,6 +312,29 @@ func (s *Service) placement(ctx context.Context, organization identity.Organizat
 			WithCode(fleet.CodeClusterRevoked)
 	}
 	return c, placed, nil
+}
+
+// CanProtect answers fleet.Dispatch.CanProtect without placing anything.
+func (s *Service) CanProtect(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (bool, error) {
+	id, err := s.repo.FindPlacement(ctx, organization, environment)
+	if errx.IsType(err, errx.TypeNotFound) {
+		def, err := s.repo.FindDefaultCluster(ctx, organization)
+		if errx.IsType(err, errx.TypeNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return def.Agent.Capabilities.CanProtect(), nil
+	}
+	if err != nil {
+		return false, err
+	}
+	c, err := s.repo.FindCluster(ctx, organization, id)
+	if err != nil {
+		return false, err
+	}
+	return c.Status != fleet.StatusRevoked && c.Agent.Capabilities.CanProtect(), nil
 }
 
 func (s *Service) Status(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (fleet.AppStatus, error) {

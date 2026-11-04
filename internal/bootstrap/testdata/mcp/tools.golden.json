@@ -13,6 +13,7 @@
       "list_versions",
       "publish_now",
       "rollback",
+      "set_access",
       "whoami"
     ],
     "Lector": [
@@ -36,6 +37,7 @@
       "list_versions",
       "publish_now",
       "rollback",
+      "set_access",
       "whoami"
     ]
   },
@@ -394,7 +396,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+            "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
             "type": "string"
           },
           "repository": {
@@ -452,6 +454,28 @@
       "outputSchema": {
         "additionalProperties": false,
         "properties": {
+          "access": {
+            "additionalProperties": false,
+            "description": "quién puede abrir la app: mode es team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace); pending es true mientras se aplica un cambio",
+            "properties": {
+              "mode": {
+                "description": "team, organization o public",
+                "type": "string"
+              },
+              "pending": {
+                "description": "true mientras el cambio se aplica a la app en línea",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "mode",
+              "pending"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
           "active": {
             "additionalProperties": false,
             "description": "la publicación en curso, si hay",
@@ -516,7 +540,7 @@
                 "type": "boolean"
               },
               "reason": {
-                "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
                 "type": "string"
               },
               "repository": {
@@ -616,7 +640,7 @@
                 "type": "boolean"
               },
               "reason": {
-                "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
                 "type": "string"
               },
               "repository": {
@@ -718,7 +742,7 @@
                 "type": "boolean"
               },
               "reason": {
-                "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
                 "type": "string"
               },
               "repository": {
@@ -1380,7 +1404,7 @@
                   "type": "boolean"
                 },
                 "reason": {
-                  "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+                  "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
                   "type": "string"
                 },
                 "repository": {
@@ -1598,7 +1622,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "deploy (nueva versión), rollback (volvió a una anterior) o auto_rollback (la plataforma restauró la anterior tras un fallo)",
+            "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
             "type": "string"
           },
           "repository": {
@@ -1630,6 +1654,169 @@
         "type": "object"
       },
       "title": "Volver a una versión anterior"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Quién puede abrir la app"
+      },
+      "description": "Cambia quién puede abrir la app: team (solo el equipo de la organización, lo normal), organization (toda la empresa) o public (cualquiera con el enlace, sin iniciar sesión; exige el permiso odyssey:access:public, que suele tener solo TI). Si la app ya está en línea, se vuelve a publicar la misma versión con el nuevo acceso. Changes who can open the app: team (only the organization's team, the default), organization (the whole company) or public (anyone with the link, no sign-in; needs the permission odyssey:access:public, usually only IT has it). If the app is already online, the same version is published again with the new access. app is the slug (see list_apps) or the id. Follow with get_deployment when next_step says so; get_app shows the current mode.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "mode": {
+            "description": "team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace; exige odyssey:access:public)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "set_access",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "description": "team, organization o public",
+                "type": "string"
+              },
+              "pending": {
+                "description": "true mientras el cambio se aplica a la app en línea",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "mode",
+              "pending"
+            ],
+            "type": "object"
+          },
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "version": {
+            "additionalProperties": false,
+            "description": "la publicación que aplica el cambio, si empezó una",
+            "properties": {
+              "author": {
+                "description": "autor del commit",
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commit": {
+                "description": "SHA completo del commit si vino de GitHub",
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "created_by": {
+                "description": "usuario que la publicó; vacío si la inició la plataforma",
+                "type": "string"
+              },
+              "deployment_id": {
+                "type": "string"
+              },
+              "error": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "description": "las palabras del clúster o del build, si dijo algo",
+                    "type": "string"
+                  },
+                  "message": {
+                    "description": "qué pasó, en español claro",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "finished_at": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "image": {
+                "description": "imagen corta; vacía mientras se construye",
+                "type": "string"
+              },
+              "is_current": {
+                "description": "si es la versión que está en línea ahora",
+                "type": "boolean"
+              },
+              "reason": {
+                "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
+                "type": "string"
+              },
+              "repository": {
+                "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "status": {
+                "description": "building, pending, applying, verifying, ready, failed o cancelled",
+                "type": "string"
+              },
+              "step": {
+                "description": "paso en el que está (o en el que falló): build, apply, wait_ready, promote",
+                "type": "string"
+              },
+              "title": {
+                "description": "primera línea del mensaje del commit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "deployment_id",
+              "status",
+              "reason",
+              "created_at",
+              "is_current"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          }
+        },
+        "required": [
+          "app",
+          "access",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Quién puede abrir la app"
     },
     {
       "annotations": {

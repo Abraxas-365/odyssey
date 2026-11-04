@@ -75,17 +75,22 @@ when `ODYSSEY_ACCESS_ENABLED=true`, the gate configuration is valid
 (`VerifyURL` an http(s) URL, key Secret named) **and** the cluster has
 `traefik.io`. The control plane keeps it in `fleet.Capabilities.APIs`;
 `fleet.CapabilityAccess` / `Capabilities.CanProtect()` name it. **The control
-plane must refuse a protected app on a cluster that does not list it** (an
-agent older than 1e never does, and would ignore `App.access` and serve the app
-open). That refusal is the lead's; the agent also fails closed on its side.
+plane refuses a protected app on a cluster that does not list it** (an agent
+older than 1e never does, and would ignore `App.access` and serve the app
+open): `fleetsvc.Apply` answers a Business error `ACCESS_UNAVAILABLE`
+("Este clúster no puede proteger apps con inicio de sesión. Pide a TI que lo
+habilite."), which `releasefleet` turns into `APPLY_FAILED` with that message,
+so the deployment fails at `apply` and nothing is exposed. `public` is never
+refused. The agent also fails closed on its side.
 
 ### Same-revision changes
 
 `desired.Apply` ignores a **lower** revision. An **equal** revision is applied
 when its desired spec differs from the cluster's (so an `access` change cannot
 be lost); an equal revision with the same spec is a no-op. The control plane
-bumps the revision on an access change anyway, so rollouts and reports stay
-unambiguous.
+bumps the revision on an access change anyway (every settings change is a
+`config` deployment, and every deployment gets a new revision), so rollouts and
+reports stay unambiguous.
 
 The status records what it describes: `status.observedGeneration` next to
 `observedRevision`. A same-revision spec change bumps `metadata.generation`, so
@@ -131,7 +136,10 @@ k3d (`deploy/k3d/agent`, a strategic-merge patch by container/env name): issuer
 - cookie `__odicea_access` valid and bound to {host, env, mode, app_org} → `200`
   with the identity headers;
 - `X-Forwarded-Uri` starts with `/_odicea/callback` → verifies `ticket`, answers
-  `302` to `return` (a path starting with `/`, not `//`; else `/`) with the
+  `302` to `return` (a path starting with `/`, not `//`; else `/`) made
+  absolute on the app's public URL (`scheme://host[:port]` from the query:
+  Traefik resolves a relative `Location` from forwardAuth against the gate's
+  in-cluster address, which browsers cannot reach), with the
   cookie (host-only, `Path=/`, HttpOnly, `SameSite=Lax`, `Secure` on https, 8 h,
   HMAC-SHA256 with the key of Secret `odyssey-access`/`cookie-key`; name and
   email are truncated so the value stays under 3800 bytes);
@@ -139,10 +147,14 @@ k3d (`deploy/k3d/agent`, a strategic-merge patch by container/env name): issuer
   `<ISSUER>/access/authorize?env=<env>&mode=<mode>&return=<url-encoded original absolute URL>`;
   other methods → `401`; a malformed question → `403`.
 
-`mode` in the redirect lets the control plane check that the user satisfies the
-**requested** mode (using the app organization from its own DB) and sign that
-mode. The gate's own check that the ticket's `mode` equals the app's mode stays
-the real enforcement, so an access change rolling out causes no sign-in loops.
+`mode` in the redirect is a question, not a command: the control plane signs a
+ticket only if `mode` is the one it **last told the cluster** for that
+environment (`AccessTarget.Mode`: the settings revision recorded when a
+deployment's apply step handed the app over; see "When a change fails" below).
+A public app has no sign-in, and a gate that still asks for the old mode while
+a change rolls out gets the generic error page for those seconds (fail closed)
+instead of a ticket for a mode the app no longer has. The gate's own check that
+the ticket's `mode` equals the app's mode stays the real enforcement.
 
 JWKS: fetched outside any lock (one fetch at a time, shared by waiters) with a
 5 s timeout and **no redirects**. Inside the 10 s minimum gap an unknown `kid`
@@ -160,8 +172,8 @@ JWT, header `{"alg":"EdDSA","typ":"JWT","kid":"<id>"}`, claims:
 
 | claim | value |
 |---|---|
-| `iss` | the issuer, exactly as the gate is configured |
-| `aud` | string: the app host as the browser sent it, `host[:port]` |
+| `iss` | the issuer, exactly as the gate is configured, **without a trailing `/`** (both sides trim it) |
+| `aud` | string: `host[:port]` of the app's URL, host lowercased, the port only when the URL has one (the gate builds it from its `/verify` query: `host`, and `port` when the agent was given `ODYSSEY_APPS_URL_PORT`) |
 | `sub`, `email`, `name` | the user |
 | `org` | the user's organization id |
 | `app_org` | the app's organization id (= `org` query param of `/verify`) |
@@ -183,11 +195,42 @@ keys for at most a **hard max age of 1 h** since the last good load; after that
 every ticket is refused until the issuer answers (a rotated-out or revoked key
 does not outlive an unreachable issuer).
 
-### Requirements on the control plane
+### Requirements on the control plane (implemented: `internal/access`)
 
-- `GET /access/authorize?env&mode&return` **must validate `return`** against the
-  hosts of that environment's apps (an open redirect otherwise), check the user
-  satisfies `mode` for the app's organization, and sign that `mode`.
+Where each lives: the mode reaches the cluster in `DesiredApp.Access`, resolved
+from the environment's settings *when the deployment applies* (so a change made
+while a deploy is in flight is not lost; `release.Settings`, revision 0 =
+`team`). The three routes are public (`accesshttp`); the organization is found
+from `release.AccessLookup` (the environment's record), never from the request.
+Ticket signing is `accessjwt` (EdDSA; the key is `ODYSSEY_ACCESS_SIGNING_KEY[_FILE]`,
+old ones in `ODYSSEY_ACCESS_PREVIOUS_KEYS` stay in the published set). The sign-in
+is on only with the key and the IAMKit client `IAMKIT_ACCESS_CLIENT_ID/_SECRET`;
+otherwise the routes answer 404 `ACCESS_NOT_CONFIGURED`.
+
+- `GET /access/authorize?env&mode&return` **validates `return`**: absolute, the
+  same scheme, host and port as the environment's live URL (an explicit default
+  port, `:443` on https / `:80` on http, equals none; the ticket's `aud` and
+  the redirect use the URL's own authority), https unless a development
+  host, no userinfo (an open redirect otherwise). Every refusal on `/access/*`
+  (authorize and callback) is the same Spanish page — «No pudimos abrir esta
+  app. Vuelve a intentarlo desde su enlace.» — so an unknown environment, a bad
+  host and a public app look alike; the specific code goes only to the server
+  logs. The flow state travels sealed
+  (AES-256-GCM with a key derived from the signing key secret) in the HttpOnly cookie
+  `__odicea_flow` (10 min); whether the user satisfies `mode` for the app's
+  organization is decided at `GET /access/callback` against the environment's
+  *current* records (the host is checked again), and that `mode` is what gets signed.
+- **The sign-in with IAMKit** is authorization code + PKCE (S256) with `state`
+  and a `nonce` (IAMKit requires both). Verifier, state and nonce live in the
+  sealed flow. At the callback the ID token from the token endpoint must carry
+  that nonce, name this client in `aud` (and in `azp` when `aud` has several),
+  and its `sub` must equal the `userinfo` subject. A flow without a nonce is
+  refused before the code is exchanged. The ID token's signature is not checked:
+  it comes straight from the token endpoint on a request authenticated with the
+  client secret (OIDC Core 3.1.3.7, step 6). That needs TLS, so **`IAMKIT_URL`
+  must be https** unless its host is local or private (`localhost`, a
+  single-label service name, `*.svc`, `*.svc.cluster.local`, `*.internal`) or
+  `ODYSSEY_ACCESS_ALLOW_HTTP=true`; otherwise the API refuses to start.
 - **The ticket travels in the query string** (it can land in logs and browser
   history). Mitigations: single-use (`jti`), 60 s life, and the gate redirects
   right away to `return` without it.
@@ -197,3 +240,37 @@ does not outlive an unreachable issuer).
   (10 min) after switching the signing key, so gates with a cached set still
   verify; a new `kid` is picked up by the gate on first use. Assumes the clocks
   of the control plane and the gate agree within the 30 s leeway.
+
+### When a change fails (what is "applied")
+
+`environment_states.applied_settings_revision` is the settings revision the
+cluster was last told. The deploy workflow's apply step sets it the moment
+`Cluster.Apply` succeeds, **before** the app is ready and whether or not the
+deployment then goes live. Three consequences, on purpose:
+
+- **No automatic reopening.** A `config` deployment that fails after apply
+  (the rollout never gets healthy) is not rolled back to the previous mode and
+  does not start another: the cluster was told the new mode and keeps it. Being
+  closed by mistake is a nuisance; being open by mistake is a leak. The failed
+  deployment shows in Versiones with its error (a new version is the way out
+  of an unhealthy app); the console shows the change as "aún no llega a la app"
+  only while the latest revision is higher than `applied_settings_revision`,
+  i.e. while no apply has told the cluster yet (a config deployment refused at
+  apply: asking again retries it). Asking for the mode the cluster already has
+  changes nothing.
+- A deployment refused **at** apply (for instance `ACCESS_UNAVAILABLE`: the
+  cluster has no `odicea.access`) never reached the cluster, so it records
+  nothing and gets no auto-rollback either (there is nothing to restore).
+- The sign-in trusts that revision, not the latest settings: a change still
+  waiting for its deployment does not change who can sign in. For environments
+  with nothing recorded yet it falls back to the latest settings.
+
+Apps published before this feature were served open (their agents had no gate).
+Migration 008 records that as settings revision 1, `public`, no author, for
+every environment with a release online and no settings row, so nothing
+changes silently and the console says «Cualquiera con el enlace». New
+environments default to `team`. `GET .../settings` also reports
+`access_protection_available`: whether the environment's cluster lists
+`odicea.access` (an unplaced environment is judged by the organization's
+default cluster, `false` with none). When it is false the console warns and
+only offers `public`.

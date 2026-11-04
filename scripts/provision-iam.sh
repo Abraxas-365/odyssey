@@ -28,6 +28,11 @@
 #        - a confidential client (token-exchange grant only, never used to sign
 #          anyone in) whose only job is calling /oauth/introspect: its id and
 #          secret go to OUT as IAMKIT_INTROSPECTION_CLIENT_ID/_SECRET.
+#      9. The access client (apps protected with an Odicea login): a
+#          confidential authorization_code client with hosted sign-in whose
+#          redirect is <API>/access/callback; its id and secret go to OUT as
+#          IAMKIT_ACCESS_CLIENT_ID/_SECRET. <API> is ACCESS_API_URL, or the
+#          AUDIENCE without its /mcp.
 #      The protected resource's URI is the resource's audience, which is
 #      immutable: AUDIENCE must already be the MCP endpoint URL (e.g.
 #      https://odicea.example.com/mcp). On an older resource with another
@@ -74,6 +79,8 @@
 #                     [<prefix>:projects:read,<prefix>:projects:write,
 #                      <prefix>:deployments:read,<prefix>:deployments:create]
 #   MCP_TOKEN_TTL     access token lifetime in seconds, 60-3600      [300]
+#   ACCESS_API_URL    the API's public base URL, for the access client's
+#                     redirect (step 9)                  [$AUDIENCE without /mcp]
 #
 # Secrets (service account, introspection client) exist only at creation: they
 # are kept in OUT (mode 600). If OUT lost one, revoke the account / disable the
@@ -126,7 +133,10 @@ problems=$(jq -r '
 
 # Secrets created earlier survive a re-run.
 IAMKIT_SERVICE_ACCOUNT_SECRET="" IAMKIT_INTROSPECTION_CLIENT_ID="" IAMKIT_INTROSPECTION_CLIENT_SECRET=""
+IAMKIT_ACCESS_CLIENT_ID="" IAMKIT_ACCESS_CLIENT_SECRET=""
 if [[ -f "$OUT" ]]; then
+  IAMKIT_ACCESS_CLIENT_ID=$(sed -n 's/^IAMKIT_ACCESS_CLIENT_ID=//p' "$OUT" | tail -1)
+  IAMKIT_ACCESS_CLIENT_SECRET=$(sed -n 's/^IAMKIT_ACCESS_CLIENT_SECRET=//p' "$OUT" | tail -1)
   IAMKIT_SERVICE_ACCOUNT_SECRET=$(sed -n 's/^IAMKIT_SERVICE_ACCOUNT_SECRET=//p' "$OUT" | tail -1)
   IAMKIT_INTROSPECTION_CLIENT_ID=$(sed -n 's/^IAMKIT_INTROSPECTION_CLIENT_ID=//p' "$OUT" | tail -1)
   IAMKIT_INTROSPECTION_CLIENT_SECRET=$(sed -n 's/^IAMKIT_INTROSPECTION_CLIENT_SECRET=//p' "$OUT" | tail -1)
@@ -444,6 +454,48 @@ fi
 # (the secret exists nowhere else).
 if [[ -n "$IAMKIT_INTROSPECTION_CLIENT_ID" && -n "$IAMKIT_INTROSPECTION_CLIENT_SECRET" ]]; then
   mcp_lines+=("IAMKIT_INTROSPECTION_CLIENT_ID=$IAMKIT_INTROSPECTION_CLIENT_ID" "IAMKIT_INTROSPECTION_CLIENT_SECRET=$IAMKIT_INTROSPECTION_CLIENT_SECRET")
+fi
+
+# 9. The access client. Apps protected with an Odicea login send the browser
+#    to <API>/access/authorize; the API signs the user in with this
+#    confidential client (authorization code + PKCE) and redirects back to
+#    <API>/access/callback. Like the introspection client its secret exists
+#    only at creation: only the client whose secret OUT keeps is reused.
+ACCESS_API_URL=${ACCESS_API_URL:-}
+if [[ -z "$ACCESS_API_URL" && "$AUDIENCE_WANTED" == */mcp ]]; then ACCESS_API_URL=${AUDIENCE_WANTED%/mcp}; fi
+ACCESS_API_URL=${ACCESS_API_URL%/}
+if [[ -n "$ACCESS_API_URL" ]]; then
+  step "9. Access client (redirect $ACCESS_API_URL/access/callback)"
+  access_body=$(jq -cn --arg r "$ACCESS_API_URL/access/callback" '{redirect_uris:[$r], hosted_login:true}')
+  registered=$(all "$e/oauth-clients?application_id=$application")
+  candidates=$(jq -c --arg r "$resource" \
+    '[.[] | select(.resource_id == $r and .public == false and .active == true and .grant_types == ["authorization_code"])]' <<<"$registered")
+  client=""
+  if [[ -n "$IAMKIT_ACCESS_CLIENT_SECRET" ]]; then
+    client=$(jq -r --arg id "$IAMKIT_ACCESS_CLIENT_ID" 'map(select(.id == $id))[0].id // empty' <<<"$candidates")
+  fi
+  if [[ -z "$client" ]]; then
+    created=$(jq -c --arg a "$application" --arg r "$resource" \
+      '. + {application_id:$a, resource_id:$r, public:false, grant_types:["authorization_code"]}' <<<"$access_body" | write POST "$e/oauth-clients")
+    client=$(jq -er .client_id <<<"$created"); IAMKIT_ACCESS_CLIENT_SECRET=$(jq -r '.client_secret // ""' <<<"$created")
+    change "created access client $client (secret saved to $OUT)"
+  else
+    current=$(jq -c --arg id "$client" '.[] | select(.id == $id) | {redirect_uris, hosted_login}' <<<"$registered")
+    if [[ "$(jq -S . <<<"$current")" != "$(jq -S . <<<"$access_body")" ]]; then
+      write PATCH "$e/oauth-clients/$client" <<<"$access_body" >/dev/null; change "synced access client $client"
+    else log "access client $client"; fi
+  fi
+  while IFS= read -r orphan; do
+    [[ -n "$orphan" && "$orphan" != "$client" ]] || continue
+    log "WARNING: access client $orphan has no saved secret: disable it in IAMKit (DELETE $e/oauth-clients/$orphan)"
+  done < <(jq -r '.[].id' <<<"$candidates")
+  IAMKIT_ACCESS_CLIENT_ID=$client
+else
+  step "9. Access client skipped: set ACCESS_API_URL (the API's public URL) or an AUDIENCE ending in /mcp."
+fi
+# Written together or not at all (the API refuses half of one).
+if [[ -n "$IAMKIT_ACCESS_CLIENT_ID" && -n "$IAMKIT_ACCESS_CLIENT_SECRET" ]]; then
+  mcp_lines+=("IAMKIT_ACCESS_CLIENT_ID=$IAMKIT_ACCESS_CLIENT_ID" "IAMKIT_ACCESS_CLIENT_SECRET=$IAMKIT_ACCESS_CLIENT_SECRET")
 fi
 
 if [[ "$(jq length <<<"$stale")" != 0 ]]; then

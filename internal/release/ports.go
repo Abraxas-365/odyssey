@@ -28,6 +28,12 @@ type Commands interface {
 	DeployUploaded(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input DeployUploaded) (Deployment, error)
 	// Rollback deploys again the release of an earlier deployment that went live.
 	Rollback(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, deployment DeploymentID, input Rollback) (Deployment, error)
+	// SetAccess changes who can open the environment's app: it stores a new
+	// settings revision and, when something is online and no deployment is in
+	// progress, starts a config deployment of the current release to apply it
+	// (a deployment in progress applies it itself). Choosing the mode already
+	// in force changes nothing. The caller checks the permission for the mode.
+	SetAccess(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input SetAccess) (AccessChange, error)
 	// IssueUpload issues a one-use ticket to publish a folder to the
 	// environment (see UploadTicket); the returned ticket carries its token.
 	// The ticket names the request's client (event.Meta).
@@ -46,6 +52,21 @@ type Queries interface {
 	FindDeployment(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, deployment DeploymentID) (Deployment, error)
 	ListDeployments(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, filter DeploymentFilter, page query.Pagination) (query.Paginated[Deployment], error)
 	FindRelease(ctx context.Context, organization identity.OrganizationID, project project.ID, release ID) (Release, error)
+	// Settings are the environment's settings in force (the defaults when it
+	// never changed them).
+	Settings(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Settings, error)
+	// AccessProtectionAvailable: the environment's cluster can protect apps
+	// with the sign-in (see Cluster.CanProtect). When it cannot, only public
+	// can be applied there.
+	AccessProtectionAvailable(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (bool, error)
+}
+
+// AccessLookup finds an environment by its id alone, for the access sign-in
+// (an unauthenticated route: the gate sends only the environment id, and
+// the organization comes from here, never from the request). Only the
+// access adapter calls it (architecture test).
+type AccessLookup interface {
+	FindAccessTarget(ctx context.Context, environment project.EnvironmentID) (AccessTarget, error)
 }
 
 // Workflows are the definitions the composition root registers.
@@ -62,6 +83,9 @@ type Cluster interface {
 	Apply(ctx context.Context, target Target, app DesiredApp) error
 	// Status reports the app named name (ObservedRevision 0 when unknown).
 	Status(ctx context.Context, target Target, name string) (AppStatus, error)
+	// CanProtect reports whether the environment's cluster can serve apps
+	// behind the access sign-in (team, organization). It changes nothing.
+	CanProtect(ctx context.Context, target Target) (bool, error)
 }
 
 // Builder turns uploaded sources into images: the build domain, through
@@ -98,14 +122,26 @@ type Repository interface {
 	ListDeployments(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, filter DeploymentFilter, page query.Pagination) (query.Paginated[Deployment], error)
 	// SetProgress records the step an unfinished deployment is in.
 	SetProgress(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, status Status, step string) error
+	// SetSettingsRevision records the settings revision the apply step
+	// handed to the cluster.
+	SetSettingsRevision(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, revision int64) error
 	// SetBuilt records the release a building deployment built and moves it
 	// on to apply.
 	SetBuilt(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, release Release) error
+	// SetAppliedSettings records on the environment's state the settings
+	// revision the cluster was just told, when deploymentRevision is still the
+	// latest one begun there (a superseded deployment changes nothing).
+	SetAppliedSettings(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deploymentRevision, settings int64) error
 	// Finish moves an unfinished deployment to a final status.
 	Finish(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, status Status, failure *Failure) error
 
 	// FindState is the environment's release state (zero before its first deployment).
 	FindState(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (EnvironmentState, error)
+	// FindStateByEnvironment is FindState without the organization: the
+	// access sign-in knows only the environment id the gate sent. NotFound
+	// when the environment has no state. Only releasesvc calls it
+	// (architecture test), and only for FindAccessTarget.
+	FindStateByEnvironment(ctx context.Context, environment project.EnvironmentID) (EnvironmentState, error)
 	// LockState locks the environment's release state until the transaction
 	// ends, creating it on first use: it serialises the environment's deploys.
 	LockState(ctx context.Context, state EnvironmentState) (EnvironmentState, error)
@@ -116,6 +152,17 @@ type Repository interface {
 	// Promote makes the deployment's release the one the environment serves.
 	// Only the deploy workflow's promote step calls it (architecture test).
 	Promote(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deployment Deployment, url string) error
+
+	// FindSettings is the environment's latest settings revision (the
+	// defaults, revision 0, when it never changed them).
+	FindSettings(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (Settings, error)
+	// FindSettingsRevision is one revision of the environment's settings
+	// (NotFound when it does not exist; revision 0 is the defaults).
+	FindSettingsRevision(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, revision int64) (Settings, error)
+	// AppendSettings stores s as the environment's next revision (history is
+	// append-only) and returns it. Call it holding the environment's state
+	// lock (LockState): revisions are assigned there.
+	AppendSettings(ctx context.Context, settings Settings) (Settings, error)
 
 	CreateUploadTicket(ctx context.Context, ticket UploadTicket) error
 	// ConsumeUploadTicket marks the unused, unexpired ticket with hash used

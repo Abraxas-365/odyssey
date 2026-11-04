@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
+	"github.com/Abraxas-365/odyssey/internal/access"
+	"github.com/Abraxas-365/odyssey/internal/access/accessmodule"
 	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/audit/auditmodule"
 	"github.com/Abraxas-365/odyssey/internal/blob"
@@ -277,6 +279,7 @@ type Platform struct {
 	Workflows *workflowpg.Engine
 	Projects  projectmodule.Module
 	Releases  releasemodule.Module
+	Access    accessmodule.Module
 	Builds    buildmodule.Module
 	Sources   sourcemodule.Module
 	// Blobs stores sources and archived build logs (the gateway streams
@@ -327,6 +330,14 @@ type Options struct {
 	GitHub      config.GitHub
 	// Source tunes the import service.
 	Source sourcesvc.Options
+	// Access configures the sign-in of protected apps (zero value: off);
+	// AccessIssuer is the API's public base URL (PublicAPIURL), IAM the
+	// IAMKit settings it signs in with. AccessLogin replaces the IAMKit
+	// client in tests.
+	Access       config.Access
+	AccessIssuer string
+	IAM          config.IAM
+	AccessLogin  access.Login
 }
 
 // Assemble builds the modules and wires who reacts to what. This is the only
@@ -357,7 +368,13 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	}
 	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
 		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch,
-		BuildCommands: builds.Commands, BuildQueries: builds.Queries, Options: opts.Release})
+		BuildCommands: builds.Commands, BuildQueries: builds.Queries, Options: opts.Release,
+		AccessLoginAvailable: opts.Access.Enabled() || opts.AccessLogin != nil})
+	if err != nil {
+		return nil, err
+	}
+	accesses, err := accessmodule.New(accessmodule.Deps{Targets: releases.Access, IAM: opts.IAM, Access: opts.Access,
+		Issuer: opts.AccessIssuer, Login: opts.AccessLogin})
 	if err != nil {
 		return nil, err
 	}
@@ -373,6 +390,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Events:   events,
 		Projects: projects,
 		Releases: releases,
+		Access:   accesses,
 		Builds:   builds,
 		Sources:  sources,
 		Blobs:    opts.Blobs,
@@ -444,7 +462,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a.closers = append(a.closers, blobs.Close)
 	opts := Options{Release: releasesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID},
-		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, BuilderConfig: cfg.Builder,
+		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder,
 		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
@@ -475,6 +493,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	} else {
 		slog.Warn("MCP is off: set IAMKIT_INTROSPECTION_CLIENT_ID and its secret (make seed provisions them)")
 	}
+	switch {
+	case cfg.Access.Partial():
+		slog.Warn("the access sign-in is off: it needs both ODYSSEY_ACCESS_SIGNING_KEY[_FILE] and IAMKIT_ACCESS_CLIENT_ID/_SECRET (make seed provisions the client)")
+	case !cfg.Access.Enabled():
+		slog.Warn("the access sign-in is off: apps cannot be protected with an Odicea login (set ODYSSEY_ACCESS_SIGNING_KEY[_FILE] and IAMKIT_ACCESS_CLIENT_ID/_SECRET)")
+	}
 	a.HTTP = NewServer(p, cfg, httpx.Authenticate(iam, cfg.IAM), mcpAuth)
 	return a, nil
 }
@@ -488,7 +512,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		Info:    assistant.Build(cfg.MCP.Enabled(), cfg.IAM.Audience, PublicAPIURL(cfg)+"/skills/"+skills.Name+".tar.gz", skill.Version, cfg.MCP.AntigravityClientID, cfg.MCP.Clients),
 		Archive: skill.Archive, Version: skill.Version,
 	}
-	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP, p.Releases.HTTP, assistantRoutes}}
+	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP, p.Releases.HTTP, p.Access.HTTP, assistantRoutes}}
 	if mcpAuth != nil {
 		opts.MCP = &server.MCP{Auth: mcpAuth, Handler: NewMCPHandler(p, cfg)}
 	}

@@ -57,6 +57,11 @@ func backendViolations(files []goFile) []string {
 // shapePorts are the interfaces every domain with a service declares.
 var shapePorts = []string{"Commands", "Queries", "Repository"}
 
+// statelessDomains keep nothing of their own, so they declare no Repository
+// port: access seals a sign-in's state in the browser's cookie and looks the
+// app up through release.AccessLookup.
+var statelessDomains = map[string]bool{"access": true}
+
 func shapeViolations(files []goFile) []string {
 	type domain struct {
 		svc, module bool
@@ -100,7 +105,7 @@ func shapeViolations(files []goFile) []string {
 			continue
 		}
 		for _, p := range shapePorts {
-			if !d.ports[p] {
+			if !d.ports[p] && !(p == "Repository" && statelessDomains[name]) {
 				out = append(out, name+"/ports.go: domain "+name+" has a service but declares no "+p+" port")
 			}
 		}
@@ -136,6 +141,9 @@ func TestBackendAndShapeRulesCatchViolations(t *testing.T) {
 		"order/ordermodule/m.go":        `package ordermodule; import _ "` + m + `event/adapters/outboxpg"`,
 		"invoice/invoicesvc/s.go":       `package invoicesvc`,
 		"invoice/ports.go":              `package invoice; type Commands interface{}; type Queries interface{}; type Repository interface{}`,
+		"access/accessmodule/m.go":      `package accessmodule`,
+		"access/accesssvc/s.go":         `package accesssvc`,
+		"access/ports.go":               `package access; type Commands interface{}; type Queries interface{}`, // stateless: no Repository
 	})
 	expectViolations(t, backendViolations(files),
 		"order/ordersvc/s.go: svc order/ordersvc imports the backend blob/adapters/gocloudblob",

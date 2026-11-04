@@ -4,6 +4,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"errors"
 	"os"
 	"sort"
 	"strconv"
@@ -32,6 +34,8 @@ type Config struct {
 	GitHub GitHub
 	// MCP is the endpoint coding agents connect to (optional).
 	MCP MCP
+	// Access is the sign-in of apps protected with an Odicea login (optional).
+	Access Access
 	// ConsoleURL is ODYSSEY_CONSOLE_URL: the console's base URL, for links
 	// (MCP answers, the GitHub setup callback, commit statuses).
 	ConsoleURL string
@@ -81,6 +85,94 @@ func loadMCP() (MCP, error) {
 		return MCP{}, errx.Validation("IAMKIT_INTROSPECTION_CLIENT_ID and its secret go together")
 	}
 	return m, nil
+}
+
+// Access is the sign-in the access gate of a cluster sends browsers to
+// (docs/access.md): the API signs short tickets (Ed25519) after an IAMKit
+// login. It needs the signing key and the confidential IAMKit client together
+// (Enabled); with only one of them it stays off, which bootstrap logs, so an
+// installation that has not provisioned the client yet still starts.
+type Access struct {
+	// SigningKey is the Ed25519 seed (32 bytes) of ODYSSEY_ACCESS_SIGNING_KEY
+	// (base64), or the contents of ODYSSEY_ACCESS_SIGNING_KEY_FILE.
+	SigningKey []byte
+	// PreviousKeys are the seeds of keys that signed before
+	// (ODYSSEY_ACCESS_PREVIOUS_KEYS, comma-separated base64): only their
+	// public halves are published, so gates with a cached key set still verify.
+	PreviousKeys [][]byte
+	// ClientID and ClientSecret are IAMKIT_ACCESS_CLIENT_ID/_SECRET (or
+	// IAMKIT_ACCESS_CLIENT_SECRET_FILE): the confidential authorization-code
+	// client whose redirect is <API>/access/callback.
+	ClientID     string
+	ClientSecret string
+	// AllowHTTP is ODYSSEY_ACCESS_ALLOW_HTTP=true: apps on plain http are
+	// accepted for any host (without it, only localhost, *.localhost,
+	// 127.0.0.1 and *.k3d.internal), and so is a plain-http IAMKIT_URL on a
+	// public host name.
+	AllowHTTP bool
+}
+
+// Partial reports whether exactly one of the key and the client is set.
+func (a Access) Partial() bool { return (len(a.SigningKey) > 0) != (a.ClientID != "") }
+
+// Enabled reports whether the access sign-in is served.
+func (a Access) Enabled() bool { return len(a.SigningKey) > 0 && a.ClientID != "" }
+
+func loadAccess() (Access, error) {
+	a := Access{ClientID: strings.TrimSpace(os.Getenv("IAMKIT_ACCESS_CLIENT_ID")), ClientSecret: os.Getenv("IAMKIT_ACCESS_CLIENT_SECRET"),
+		AllowHTTP: os.Getenv("ODYSSEY_ACCESS_ALLOW_HTTP") == "true"}
+	if file := os.Getenv("IAMKIT_ACCESS_CLIENT_SECRET_FILE"); file != "" {
+		if a.ClientSecret != "" {
+			return Access{}, errx.Validation("set IAMKIT_ACCESS_CLIENT_SECRET or its _FILE, not both")
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return Access{}, errx.Validation("IAMKIT_ACCESS_CLIENT_SECRET_FILE cannot be read")
+		}
+		a.ClientSecret = strings.TrimSpace(string(raw))
+	}
+	key := strings.TrimSpace(os.Getenv("ODYSSEY_ACCESS_SIGNING_KEY"))
+	if file := os.Getenv("ODYSSEY_ACCESS_SIGNING_KEY_FILE"); file != "" {
+		if key != "" {
+			return Access{}, errx.Validation("set ODYSSEY_ACCESS_SIGNING_KEY or its _FILE, not both")
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return Access{}, errx.Validation("ODYSSEY_ACCESS_SIGNING_KEY_FILE cannot be read")
+		}
+		key = strings.TrimSpace(string(raw))
+	}
+	if key != "" {
+		seed, err := ParseAccessSeed(key)
+		if err != nil {
+			return Access{}, errx.Validation("ODYSSEY_ACCESS_SIGNING_KEY " + err.Error())
+		}
+		a.SigningKey = seed
+	}
+	for _, k := range splitList(os.Getenv("ODYSSEY_ACCESS_PREVIOUS_KEYS")) {
+		seed, err := ParseAccessSeed(k)
+		if err != nil {
+			return Access{}, errx.Validation("ODYSSEY_ACCESS_PREVIOUS_KEYS " + err.Error())
+		}
+		a.PreviousKeys = append(a.PreviousKeys, seed)
+	}
+	if (a.ClientID == "") != (a.ClientSecret == "") {
+		return Access{}, errx.Validation("IAMKIT_ACCESS_CLIENT_ID and its secret go together")
+	}
+	return a, nil
+}
+
+// ParseAccessSeed decodes a base64 Ed25519 seed (32 bytes).
+func ParseAccessSeed(raw string) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(strings.TrimSpace(raw)); err == nil {
+			if len(b) != 32 {
+				return nil, errors.New("must be a base64 Ed25519 seed of 32 bytes")
+			}
+			return b, nil
+		}
+	}
+	return nil, errors.New("must be a base64 Ed25519 seed of 32 bytes")
 }
 
 // Blob is the object storage shared by the API and the worker.
@@ -219,6 +311,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.MCP, err = loadMCP(); err != nil {
+		return Config{}, err
+	}
+	if cfg.Access, err = loadAccess(); err != nil {
 		return Config{}, err
 	}
 	cfg.ConsoleURL = cfg.GitHub.ConsoleURL

@@ -83,6 +83,9 @@ const (
 	CodeNoCluster = "NO_CLUSTER"
 	// CodeClusterRevoked: the app's cluster was revoked.
 	CodeClusterRevoked = "CLUSTER_REVOKED"
+	// CodeAccessUnavailable: a protected app (access team or organization)
+	// on a cluster that cannot protect apps (see CapabilityAccess).
+	CodeAccessUnavailable = "ACCESS_UNAVAILABLE"
 	// CodePlacementMoved: the environment's cluster changed while the app
 	// was being stored (a move, or a revocation of the cluster it was just
 	// placed on). Transient: the workflow retries the apply.
@@ -156,6 +159,10 @@ type Capabilities struct {
 // protected app must not be placed on a cluster without it: the control plane
 // refuses, and an agent without it fails closed anyway.
 const CapabilityAccess = "odicea.access"
+
+// AccessUnavailableMessage is the plain-language text of CodeAccessUnavailable
+// (the agent reports the same words when it fails closed).
+const AccessUnavailableMessage = "Este clúster no puede proteger apps con inicio de sesión. Pide a TI que lo habilite."
 
 // CanProtect reports whether the cluster lists CapabilityAccess.
 func (c Capabilities) CanProtect() bool {

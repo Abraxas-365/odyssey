@@ -59,6 +59,7 @@ const (
 	ReasonDeploy       Reason = "deploy"        // someone published a new version
 	ReasonRollback     Reason = "rollback"      // someone went back to an earlier version
 	ReasonAutoRollback Reason = "auto_rollback" // the platform restored the serving version after a failure
+	ReasonConfig       Reason = "config"        // the serving version again, to apply changed settings (who can open it)
 )
 
 // Error codes of failed deployments and refused requests.
@@ -195,9 +196,13 @@ type Deployment struct {
 	Previous *ID `json:"previous_release_id" db:"previous_release_id"`
 	// RollbackOf is the deployment this one undoes: the one that failed
 	// (auto_rollback) or the one serving when someone went back (rollback).
-	RollbackOf *DeploymentID  `json:"rollback_of" db:"rollback_of"`
-	Error      *Failure       `json:"error" db:"-"`
-	Run        workflow.RunID `json:"run_id" db:"run_id"`
+	RollbackOf *DeploymentID `json:"rollback_of" db:"rollback_of"`
+	// SettingsRevision is the environment settings revision the apply step
+	// handed to the cluster (nil until it ran; settings are resolved when
+	// applying, not when the deployment starts).
+	SettingsRevision *int64         `json:"settings_revision" db:"settings_revision"`
+	Error            *Failure       `json:"error" db:"-"`
+	Run              workflow.RunID `json:"run_id" db:"run_id"`
 	// RequestedBy is zero when the platform started it (auto_rollback).
 	RequestedBy identity.UserID `json:"requested_by" db:"requested_by"`
 	// RequestedVia is where the request came from (see Via*), set by the
@@ -227,6 +232,20 @@ type EnvironmentState struct {
 	Active    *DeploymentID `json:"active_deployment_id" db:"active_deployment_id"`
 	URL       string        `json:"url" db:"url"`
 	UpdatedAt time.Time     `json:"updated_at" db:"updated_at"`
+	// AppliedSettings is the settings revision the cluster was last told: set
+	// by the apply step the moment the cluster takes the app, whether or not
+	// that deployment then goes live (nil: the cluster was never told one).
+	// It is what the app is protected with, and what the sign-in trusts.
+	AppliedSettings *int64 `json:"-" db:"applied_settings_revision"`
+}
+
+// AppliedRevision is the settings revision the cluster was last told; -1 when
+// it never was (any revision, even the defaults at 0, is newer).
+func (s EnvironmentState) AppliedRevision() int64 {
+	if s.AppliedSettings == nil {
+		return -1
+	}
+	return *s.AppliedSettings
 }
 
 // Current is what an environment serves, for the console.
@@ -237,6 +256,11 @@ type Current struct {
 	Deployment  *Deployment           `json:"deployment"`
 	// Active is the deployment in progress, if any.
 	Active *Deployment `json:"active"`
+	// AppliedSettingsRevision is the settings revision the cluster was last
+	// told (null: never). The console compares the latest revision with it:
+	// a config deployment that fails after apply leaves the cluster told, and
+	// that is not reopened by itself (fail-closed beats convenience).
+	AppliedSettingsRevision *int64 `json:"applied_settings_revision"`
 }
 
 // DeploymentFilter narrows ListDeployments; zero fields match everything.

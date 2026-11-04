@@ -92,6 +92,7 @@ internal/event/           event envelope + Bus; adapters/outboxpg: transactional
 internal/workflow/        durable workflow port + Registry; adapters/workflowpg: River-backed engine
 internal/blob/            object storage port (Store, TenantKey); adapters/gocloudblob: Go CDK (file://, mem://, s3://, azblob://)
 internal/build/           sources (uploaded tar.gz) + builds; archive/ (API wording of pkg/srcarchive); adapters buildpg, buildhttp (status, logs), buildfake (runner)
+internal/access/          the sign-in of apps protected with an Odicea login (public routes /access/authorize, /access/callback, /.well-known/odicea-access-keys): accesssvc (return-URL checks, sealed flow cookie, decision, ticket), adapters accesshttp, accessiam (IAMKit code + PKCE exchange), accessjwt (EdDSA ticket signer; the JWT library's second home). Resolves the tenant from `release.AccessLookup`, never from the request
 internal/audit/           ordered subscriber of every event → hash-chained trail, GET /api/v1/audit
 internal/{errx,identity,query,text,txn,pgerr,migrate,pgtest,config,httpx,permission}/  foundation
 iam/permissions.json      the IAMKit permission manifest (source of internal/permission)
@@ -149,7 +150,8 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | An upload ticket is spent in one place: `ConsumeUploadTicket` / `FindUploadTicketByHash` (by token hash, cross-org) are called only by `release/releasesvc`; `Commands.RedeemUpload` only by the public route in `releasehttp` (tests aside), never by an MCP tool | `TestUploadTicketsAreSpentInOnePlace` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
-| `go-github` and `golang-jwt` only in `source/adapters/sourcegithub`; unauthenticated routes only via `RegisterPublic` of `sourcehttp` (`GET /github/setup`, `POST /webhooks/github`), `releasehttp` (`PUT /uploads/:ticket`) and `server` itself (`GET /skills/odicea.tar.gz`), each one declared per adapter, mounted only by `server`; `release` never imports `source`, and `source` names `release.Commands` only in `sourcerelease`/`sourcemodule` (its `Deployer` port); the cross-org lookups webhooks/poll need (`FindInstallationByExternal`, `ListConnectionsByRepository`, `ListConnectionsToReconcile`) are called only by `sourcesvc`, which re-checks the installation's organization | `TestGitHubStaysInItsAdapter`, `TestPublicRoutesAreDeclared`, `TestReleaseDoesNotKnowSources`, `TestCrossOrgQueriesStayChecked` |
+| `go-github` and `golang-jwt` only in `source/adapters/sourcegithub` (and `golang-jwt` also in `access/adapters/accessjwt`); unauthenticated routes only via `RegisterPublic` of `sourcehttp` (`GET /github/setup`, `POST /webhooks/github`), `releasehttp` (`PUT /uploads/:ticket`), `accesshttp` (`GET /.well-known/odicea-access-keys`, `GET /access/authorize`, `GET /access/callback`) and `server` itself (`GET /skills/odicea.tar.gz`), each one declared per adapter, mounted only by `server`; `release` never imports `source`, and `source` names `release.Commands` only in `sourcerelease`/`sourcemodule` (its `Deployer` port); the cross-org lookups webhooks/poll need (`FindInstallationByExternal`, `ListConnectionsByRepository`, `ListConnectionsToReconcile`) are called only by `sourcesvc`, which re-checks the installation's organization | `TestGitHubStaysInItsAdapter`, `TestPublicRoutesAreDeclared`, `TestReleaseDoesNotKnowSources`, `TestCrossOrgQueriesStayChecked` |
+| An environment is found without its organization in one place: `Repository.FindStateByEnvironment` only from `release/releasesvc` (`FindAccessTarget`), and `AccessLookup.FindAccessTarget` only from `access/accesssvc` — the access sign-in's tenant comes from our records, not the request | `TestEnvironmentLookupsWithoutTenantStayInOnePlace` |
 | A svc's `Observe*` repo writes skip the publish rule only in observer domains (`fleet`: heartbeats; `source`: webhook deliveries, polled heads) | `TestWritesPublishEvents` (`observers`) |
 
 When you adopt a new pattern (blob, telemetry, …), add an arch rule
@@ -213,6 +215,20 @@ Other rules:
   lists `odicea.access` in `capabilities.apis` (`fleet.CapabilityAccess`) only
   when it can enforce; a protected app never stays exposed when protection
   cannot be applied (fail closed).
+  Control plane: `release.Settings` (append-only per environment; revision 0 =
+  defaults, `team`) holds the access mode; `PUT .../environments/{env}/access`
+  (`setEnvironmentAccess`) writes one and publishes `access.changed`, and
+  the next deploy resolves the settings *at apply* into `DesiredApp.Access`
+  (every settings change is a new revision). `fleetsvc.Apply` refuses
+  `team|organization` on a cluster without `odicea.access`
+  (`ACCESS_UNAVAILABLE`, mapped to `APPLY_FAILED`). The sign-in is
+  `internal/access`: on only with `ODYSSEY_ACCESS_SIGNING_KEY[_FILE]` (Ed25519
+  seed, base64; `make access-key` makes the dev one) **and**
+  `IAMKIT_ACCESS_CLIENT_ID/_SECRET` (`make seed`, step 9 of
+  `provision-iam.sh`); `ODYSSEY_ACCESS_PREVIOUS_KEYS` keeps old keys verifying
+  during a rotation; `ODYSSEY_ACCESS_ALLOW_HTTP=true` is dev only. Settings
+  report `access_login_available`; `GET .../settings`, the MCP tool `set_access`
+  and the console card sit on the same service.
 - **New permission**: add it to `iam/permissions.json`, run `make gen`, use
   `permission.X`, then run `make iam-sync`.
 - **Endpoint change**: update `api/openapi.yaml` (shapes + `x-permissions`)

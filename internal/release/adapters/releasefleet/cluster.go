@@ -31,12 +31,16 @@ func (c *Cluster) Apply(ctx context.Context, t release.Target, app release.Desir
 	})
 	var e *errx.Error
 	if errors.As(err, &e) && (e.Type == errx.TypeBusiness || e.Type == errx.TypeValidation) {
-		if e.Code == fleet.CodeNoCluster || e.Code == fleet.CodeClusterRevoked {
+		if e.Code == fleet.CodeNoCluster || e.Code == fleet.CodeClusterRevoked || e.Code == fleet.CodeAccessUnavailable {
 			return release.Failed(release.CodeApplyFailed, e.Message)
 		}
 		return release.Failed(release.CodeApplyFailed, "El clúster no pudo aceptar la configuración de la app.", e.Message)
 	}
 	return err
+}
+
+func (c *Cluster) CanProtect(ctx context.Context, t release.Target) (bool, error) {
+	return c.fleet.CanProtect(ctx, t.Organization, t.Environment)
 }
 
 func (c *Cluster) Status(ctx context.Context, t release.Target, name string) (release.AppStatus, error) {

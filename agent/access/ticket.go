@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,7 +90,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string, want Expect) (Ticket,
 		return v.key(ctx, kid)
 	},
 		jwt.WithValidMethods([]string{"EdDSA"}),
-		jwt.WithIssuer(v.Issuer),
+		jwt.WithIssuer(strings.TrimRight(v.Issuer, "/")), // the control plane trims it too
 		jwt.WithAudience(want.Aud),
 		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),

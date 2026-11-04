@@ -65,6 +65,13 @@ services:
       # (make seed creates it; without it /mcp is not mounted).
       IAMKIT_INTROSPECTION_CLIENT_ID: ${IAMKIT_INTROSPECTION_CLIENT_ID:-}
       IAMKIT_INTROSPECTION_CLIENT_SECRET: ${IAMKIT_INTROSPECTION_CLIENT_SECRET:-}
+      # Apps protected with an Odicea login: the access sign-in needs the
+      # confidential IAMKit client (make seed creates it) and a signing key
+      # (make access-key writes .dev-secrets/access-signing.key). Without both
+      # /access/* answers 404.
+      IAMKIT_ACCESS_CLIENT_ID: ${IAMKIT_ACCESS_CLIENT_ID:-}
+      IAMKIT_ACCESS_CLIENT_SECRET: ${IAMKIT_ACCESS_CLIENT_SECRET:-}
+      ODYSSEY_ACCESS_SIGNING_KEY_FILE: /secrets/access-signing.key
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       # Registers clusters: tokens name the gateway as a k3d cluster sees it.
       FLEET_CA_CERT: /secrets/fleet/ca.crt
@@ -76,6 +83,7 @@ services:
       ODYSSEY_BUILDER: ${ODYSSEY_BUILDER:-}
     volumes:
       - ./secrets/fleet/ca.crt:/secrets/fleet/ca.crt:ro
+      - ./.dev-secrets/access-signing.key:/secrets/access-signing.key:ro
       - blobs:/var/lib/odyssey/blobs
     depends_on:
       db:

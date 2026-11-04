@@ -172,7 +172,9 @@ func (g *Gate) callback(w http.ResponseWriter, r *http.Request, req request) {
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: req.scheme == "https",
 	})
 	g.Log.Info("callback: signed in", "host", req.want.Host, "env", req.want.Env, "mode", req.want.Mode)
-	http.Redirect(w, r, back, http.StatusFound)
+	// Absolute: Traefik resolves a relative Location from forwardAuth against
+	// the gate's own address, which a browser cannot reach.
+	http.Redirect(w, r, req.publicURL(back), http.StatusFound)
 }
 
 // safeReturn accepts only a path on the same host: it starts with a single

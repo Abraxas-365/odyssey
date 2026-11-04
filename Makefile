@@ -1,4 +1,4 @@
-.PHONY: build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
+.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
 
 # The Railpack library's version names the plans the builder writes (the
 # Dockerfile sets it the same way).
@@ -53,12 +53,22 @@ check:
 	go vet ./...
 	go test ./...
 
+# The key the API signs access tickets with (apps protected with an Odicea
+# login): an Ed25519 seed, base64, generated once in .dev-secrets/ (never
+# committed; 644 like secrets/jwt.pem so the API container's user can read the
+# bind mount, inside a 700 directory). Production sets ODYSSEY_ACCESS_SIGNING_KEY[_FILE] itself.
+ACCESS_KEY := $(CURDIR)/.dev-secrets/access-signing.key
+access-key:
+	@mkdir -p .dev-secrets && chmod 700 .dev-secrets
+	@[ -f $(ACCESS_KEY) ] || (openssl rand -base64 32 > $(ACCESS_KEY) && chmod 644 $(ACCESS_KEY) && echo "created $(ACCESS_KEY)")
+
 # Run the API on the host against the compose db/IAMKit (needs .env seeded).
 # It registers clusters (tokens point agents at the local gateway). CLUSTER
 # and BUILDER must match the worker's: the API reads live build logs
 # through the same builder.
-run:
+run: access-key
 	set -a && . ./.env && set +a && \
+	ODYSSEY_ACCESS_SIGNING_KEY_FILE=$(ACCESS_KEY) \
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
 	IAMKIT_URL=http://localhost:$${IAMKIT_PORT:-8085} PORT=$${ODYSSEY_PORT:-8095} \
 	FLEET_CA_CERT=$(FLEET_DIR)/ca.crt FLEET_GATEWAY_URL=$(GATEWAY_HOST):$(GATEWAY_PORT) \
@@ -200,8 +210,9 @@ setup:
 		-e "s|^DEMO_PASSWORD=.*|DEMO_PASSWORD=$$(openssl rand -hex 12)|" \
 		.env.example > .env && chmod 600 .env && echo "created .env" )
 	@grep -q '^ODYSSEY_UID=' .env || printf 'ODYSSEY_UID=%s\nODYSSEY_GID=%s\n' "$$(id -u)" "$$(id -g)" >> .env
+	@$(MAKE) --no-print-directory access-key
 
-up:
+up: access-key
 	@if grep -q '^IAMKIT_ENVIRONMENT_ID=.' .env 2>/dev/null; then \
 		docker compose up -d --build --wait; \
 	else \

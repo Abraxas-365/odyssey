@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/Abraxas-365/odyssey/agent/tunnel"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
 	"github.com/Abraxas-365/odyssey/internal/config"
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/fleet/adapters/fleetca"
 	"github.com/Abraxas-365/odyssey/internal/fleet/adapters/fleetgrpc"
@@ -321,6 +323,23 @@ func TestFleetTunnel(t *testing.T) {
 		s, err := rf.Status(ctx, target, "portal")
 		return err == nil && s.Phase == release.PhaseFailed && s.Reason == release.FailureConfig && s.ObservedRevision == 3
 	})
+
+	// An agent that does not list odicea.access cannot protect apps: team and
+	// organization are refused as APPLY_FAILED in the fleet's words, public is not.
+	for _, mode := range []string{fleet.AccessTeam, fleet.AccessOrganization} {
+		protected := app(5)
+		protected.Access = mode
+		err := rf.Apply(ctx, target, protected)
+		var failure *errx.Error
+		if !errors.As(err, &failure) || failure.Code != release.CodeApplyFailed || failure.Message != fleet.AccessUnavailableMessage {
+			t.Fatalf("%s app on a cluster without the gate: %v", mode, err)
+		}
+	}
+	public := app(5)
+	public.Access = fleet.AccessPublic
+	if err := rf.Apply(ctx, target, public); err != nil {
+		t.Fatalf("public app on a cluster without the gate: %v", err)
+	}
 
 	// Another organization sees nothing of this cluster.
 	if _, err := f.Queries.Find(ctx, identity.NewOrganizationID(), created.Cluster.ID); err == nil {

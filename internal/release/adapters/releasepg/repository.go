@@ -86,7 +86,7 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 // ---- deployments ----
 
 const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name,
-	source_size, source_git, config, status, reason, step, revision, previous_release_id, rollback_of, error_code, error_message, error_detail,
+	source_size, source_git, config, status, reason, step, revision, previous_release_id, rollback_of, settings_revision, error_code, error_message, error_detail,
 	run_id, requested_by, requested_via, created_at, updated_at, finished_at`
 
 type deploymentRow struct {
@@ -210,6 +210,14 @@ func (r *Repository) ListDeployments(ctx context.Context, organization identity.
 	return query.NewPaginated(items, total, page), nil
 }
 
+// SetSettingsRevision records the settings revision the apply step handed to
+// the cluster.
+func (r *Repository) SetSettingsRevision(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, revision int64) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.deployments SET settings_revision = $3, updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND finished_at IS NULL`, organization, id, revision)
+	return affected(res, err, "set deployment settings revision", "deployment not found or finished")
+}
+
 func (r *Repository) SetBuilt(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, rel release.Release) error {
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.deployments
 		SET release_id = $3, image = $4, status = $5, step = $6, updated_at = now()
@@ -239,7 +247,7 @@ func (r *Repository) Finish(ctx context.Context, organization identity.Organizat
 // ---- environment state ----
 
 const stateColumns = `environment_id, organization_id, project_id, app, revision, current_release_id,
-	current_deployment_id, active_deployment_id, url, updated_at`
+	current_deployment_id, active_deployment_id, url, updated_at, applied_settings_revision`
 
 func (r *Repository) FindState(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID) (release.EnvironmentState, error) {
 	var s release.EnvironmentState
@@ -250,6 +258,20 @@ func (r *Repository) FindState(ctx context.Context, organization identity.Organi
 	}
 	if err != nil {
 		return release.EnvironmentState{}, pgerr.MapWith(err, "find environment state", messages)
+	}
+	return s, nil
+}
+
+// FindStateByEnvironment finds a state by environment id alone (the access
+// sign-in); NotFound when there is none.
+func (r *Repository) FindStateByEnvironment(ctx context.Context, env project.EnvironmentID) (release.EnvironmentState, error) {
+	var s release.EnvironmentState
+	err := txn.Q(ctx, r.db).GetContext(ctx, &s, `SELECT `+stateColumns+` FROM release.environment_states WHERE environment_id = $1`, env)
+	if errors.Is(err, sql.ErrNoRows) {
+		return release.EnvironmentState{}, errx.NotFound("environment not found")
+	}
+	if err != nil {
+		return release.EnvironmentState{}, pgerr.MapWith(err, "find environment state by id", messages)
 	}
 	return s, nil
 }
@@ -279,6 +301,16 @@ func (r *Repository) Begin(ctx context.Context, organization identity.Organizati
 	return affected(res, err, "begin deployment", "environment not found")
 }
 
+// SetAppliedSettings records the settings revision the cluster was just told.
+// Only the deployment that holds the environment's latest revision may: one
+// superseded meanwhile must not put back older settings.
+func (r *Repository) SetAppliedSettings(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, deploymentRevision, settings int64) error {
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.environment_states
+		SET applied_settings_revision = $4, updated_at = now()
+		WHERE organization_id = $1 AND environment_id = $2 AND revision = $3`, organization, env, deploymentRevision, settings)
+	return pgerr.MapWith(err, "record applied settings", messages)
+}
+
 func (r *Repository) Settle(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, d release.DeploymentID) error {
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.environment_states
 		SET active_deployment_id = NULL, updated_at = now()
@@ -306,6 +338,69 @@ func affected(res sql.Result, err error, op, notFound string) error {
 		return errx.NotFound(notFound)
 	}
 	return nil
+}
+
+// ---- environment settings ----
+
+const settingsColumns = `environment_id, organization_id, revision, access_mode, created_by, created_at`
+
+type settingsRow struct {
+	Environment  project.EnvironmentID   `db:"environment_id"`
+	Organization identity.OrganizationID `db:"organization_id"`
+	Revision     int64                   `db:"revision"`
+	AccessMode   release.AccessMode      `db:"access_mode"`
+	CreatedBy    identity.UserID         `db:"created_by"`
+	CreatedAt    time.Time               `db:"created_at"`
+}
+
+func (s settingsRow) settings() release.Settings {
+	return release.Settings{Environment: s.Environment, Organization: s.Organization, Revision: s.Revision,
+		Access: release.AccessSettings{Mode: s.AccessMode}, CreatedBy: s.CreatedBy, CreatedAt: s.CreatedAt}
+}
+
+// FindSettings is the latest revision; an environment that never changed its
+// settings has the defaults (revision 0).
+func (r *Repository) FindSettings(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID) (release.Settings, error) {
+	var row settingsRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `SELECT `+settingsColumns+` FROM release.environment_settings
+		WHERE organization_id = $1 AND environment_id = $2 ORDER BY revision DESC LIMIT 1`, organization, env)
+	if errors.Is(err, sql.ErrNoRows) {
+		return release.DefaultSettings(organization, env), nil
+	}
+	if err != nil {
+		return release.Settings{}, pgerr.MapWith(err, "find environment settings", messages)
+	}
+	return row.settings(), nil
+}
+
+// FindSettingsRevision is one revision; 0 is the defaults.
+func (r *Repository) FindSettingsRevision(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, revision int64) (release.Settings, error) {
+	if revision == 0 {
+		return release.DefaultSettings(organization, env), nil
+	}
+	var row settingsRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `SELECT `+settingsColumns+` FROM release.environment_settings
+		WHERE organization_id = $1 AND environment_id = $2 AND revision = $3`, organization, env, revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return release.Settings{}, errx.NotFound("settings revision not found")
+	}
+	if err != nil {
+		return release.Settings{}, pgerr.MapWith(err, "find environment settings revision", messages)
+	}
+	return row.settings(), nil
+}
+
+// AppendSettings writes s as the environment's next revision. Callers hold
+// the environment's state lock, so revisions never race.
+func (r *Repository) AppendSettings(ctx context.Context, s release.Settings) (release.Settings, error) {
+	var row settingsRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, created_by)
+		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
+		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, s.CreatedBy)
+	if err != nil {
+		return release.Settings{}, pgerr.MapWith(err, "append environment settings", messages)
+	}
+	return row.settings(), nil
 }
 
 // ---- upload tickets ----

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, params } from './api'
-import type { BuildLogLine, BuildLogPage, CurrentRelease, Deployment, DeployRequest, DeploySourceConfig, EnvironmentList, List } from './types'
+import type { AccessChange, AccessMode, BuildLogLine, BuildLogPage, CurrentRelease, Deployment, DeployRequest, DeploySourceConfig, EnvironmentList, EnvironmentSettings, List } from './types'
 
 /** While something is being published the console polls every 2 s (plan 1a-a1). */
 export const PUBLISHING_POLL_MS = 2000
@@ -14,6 +14,7 @@ export const releaseKeys = {
   env: (project: string, env: string) => ['projects', 'detail', project, 'environments', env] as const,
   current: (project: string, env: string) => [...releaseKeys.env(project, env), 'current'] as const,
   deployments: (project: string, env: string) => [...releaseKeys.env(project, env), 'deployments'] as const,
+  settings: (project: string, env: string) => [...releaseKeys.env(project, env), 'settings'] as const,
 }
 
 export function useEnvironments(project: string) {
@@ -51,6 +52,28 @@ export function useDeployments(project: string, env: string | undefined, publish
     queryFn: ({ signal }) => api<List<Deployment>>(`${envPath(project, env!)}/deployments?limit=20`, { signal }),
     enabled: !!env,
     refetchInterval: publishing ? PUBLISHING_POLL_MS : false,
+  })
+}
+
+/** Who can open the app: revision 0 is the default (the team). */
+export function useSettings(project: string, env: string | undefined) {
+  return useQuery({
+    queryKey: releaseKeys.settings(project, env ?? ''),
+    queryFn: ({ signal }) => api<EnvironmentSettings>(`${envPath(project, env!)}/settings`, { signal }),
+    enabled: !!env,
+  })
+}
+
+/**
+ * Changes who can open the app. When it is online a deployment applies it, so
+ * everything under the environment is refreshed (the current state starts
+ * polling by itself).
+ */
+export function useSetAccess(project: string, env: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (mode: AccessMode) => api<AccessChange>(`${envPath(project, env)}/access`, { method: 'PUT', body: { mode } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
   })
 }
 

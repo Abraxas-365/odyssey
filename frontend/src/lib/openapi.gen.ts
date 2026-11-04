@@ -262,6 +262,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments/{environment}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Who can open the app
+         * @description The environment's settings in force: revision 0 with the defaults
+         *     (`team`) when nobody changed them. `access_login_available` is false
+         *     when this control plane cannot serve the sign-in of protected apps
+         *     (no signing key or login client configured); `access_protection_available`
+         *     is false when the environment's cluster cannot protect apps yet.
+         *     Environments published before this feature report `public` (revision 1,
+         *     created by nobody): that is how they were served.
+         */
+        get: operations["getEnvironmentSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change who can open the app
+         * @description Stores the mode as the environment's next settings revision (history is
+         *     append-only; the mode already in force adds none). When a release is
+         *     online and nothing is in progress, a deployment with reason `config`
+         *     applies it to that release at once (`deployment`, `Location`); with a
+         *     deployment in progress it applies the latest settings itself, or, if it
+         *     already applied, one follows it; with no release online the settings
+         *     are only stored (`deployment` null). Rolling back keeps the current
+         *     settings. `public` also needs `odyssey:access:public`. Event
+         *     `access.changed`.
+         */
+        put: operations["setEnvironmentAccess"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/releases/{release}": {
         parameters: {
             query?: never;
@@ -761,6 +821,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/.well-known/odicea-access-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The public keys the access gates verify tickets with
+         * @description Public (keys are public). A JWKS of Ed25519 keys (`kty: OKP`, `crv: Ed25519`, `use: sig`, `alg: EdDSA`; `kid` is the first 16 characters of base64url(sha256(public key))): the key signing now first, then the previous ones (`ODYSSEY_ACCESS_PREVIOUS_KEYS`) so gates with a cached set keep verifying through a rotation. `Cache-Control: public, max-age=60`. 404 `ACCESS_NOT_CONFIGURED` when this installation has no signing key and IAMKit access client. Not under `/api/v1`: no token, no CORS.
+         */
+        get: operations["getAccessKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/access/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where an app's access gate sends a browser that is not signed in
+         * @description Public: the gate of the app's cluster redirects here (docs/access.md). Looks the environment up by its id (the organization comes from our own records, never from the request), requires `return` to be an absolute URL of the environment's app: same scheme, host and port as its URL, where an explicit default port (`:443` on https, `:80` on http) equals none (anything else is an open redirect, refused), https unless the host is a development one (`localhost`, `*.localhost`, `127.0.0.1`, `*.k3d.internal`, or `ODYSSEY_ACCESS_ALLOW_HTTP=true`), and `mode` to be the one the app's cluster was last told (`team` or `organization`; a public app has no sign-in: refused). Then 302s to IAMKit's sign-in (authorization code + PKCE, the confidential access client; for `team` with the app's organization as the hint) and sets the sealed, HttpOnly, SameSite=Lax cookie `__odicea_flow` (path `/access`, 10 minutes) that the callback needs. Nothing is written to the database. 404 `ACCESS_NOT_CONFIGURED` when the sign-in is off; every other refusal is the same generic Spanish page (400), whether the environment exists or not.
+         */
+        get: operations["authorizeAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/access/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where IAMKit sends the browser after the access sign-in
+         * @description Public: needs the `__odicea_flow` cookie that `authorizeAccess` set and a `state` equal to the one sealed in it. Exchanges the code, reads the user (UserInfo) and decides against the environment's current records: `team` needs the user's organization to be the app's, `organization` needs the user to belong to this installation's IAMKit environment; and the flow's mode must still be the one the cluster was last told (403 otherwise). Allowed: 302 to `<scheme>://<app host>/_odicea/callback?ticket=<JWT>&return=<path>`, a 60-second Ed25519 ticket (claims in docs/access.md). Not allowed: a plain Spanish HTML page, 403. An expired or tampered flow, or a refused code: a plain HTML page, 400. The cookie is cleared either way. `Cache-Control: no-store`.
+         */
+        get: operations["callbackAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/skills/odicea.tar.gz": {
         parameters: {
             query?: never;
@@ -1086,6 +1206,33 @@ export interface components {
             /** @description The build ended and this page reaches the end of its log. */
             finished: boolean;
         };
+        /**
+         * @description Who can open the app: `team` (people of the app's organization, the
+         *     default), `organization` (anyone in the company's IAMKit environment) or
+         *     `public` (anyone with the link; needs `odyssey:access:public` to set).
+         * @enum {string}
+         */
+        AccessMode: "team" | "organization" | "public";
+        EnvironmentSettings: {
+            /** @description 0: the defaults; every change adds one. */
+            revision: number;
+            access: {
+                mode: components["schemas"]["AccessMode"];
+            };
+            access_login_available: boolean;
+            /** @description Whether the environment's cluster can protect apps with the sign-in (its agent lists `odicea.access`). An environment not placed yet is judged by the organization's default cluster; false with no cluster. When false only `public` can be applied there. */
+            access_protection_available: boolean;
+        };
+        AccessChange: {
+            settings: {
+                revision: number;
+                access: {
+                    mode: components["schemas"]["AccessMode"];
+                };
+            };
+            deployment: null | components["schemas"]["Deployment"];
+            access_login_available: boolean;
+        };
         /** @description One attempt to make a release the one an environment serves. A finished one never changes. */
         Deployment: {
             /** Format: uuid */
@@ -1120,9 +1267,10 @@ export interface components {
             status: components["schemas"]["DeploymentStatus"];
             /**
              * @description `auto_rollback`: the platform restored the version online after a failed deployment.
+             *     `config`: the same release again, to apply new settings (who can open it).
              * @enum {string}
              */
-            reason: "deploy" | "rollback" | "auto_rollback";
+            reason: "deploy" | "rollback" | "auto_rollback" | "config";
             /** @enum {string} */
             step: "build" | "apply" | "wait_ready" | "promote";
             /** @description The steps this deployment goes through (`build` only for a folder). */
@@ -1135,6 +1283,8 @@ export interface components {
              * @description The deployment this one undoes.
              */
             rollback_of: string | null;
+            /** @description The environment settings revision its apply step handed to the cluster (null until then, and before settings existed). */
+            settings_revision: number | null;
             error: null | {
                 /**
                  * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side).
@@ -1168,6 +1318,8 @@ export interface components {
             environment_id: string;
             /** @description "" before the first deployment. */
             url: string;
+            /** @description The settings revision the cluster was last told (set when a deployment's apply step handed it to the cluster, even if that deployment then failed); null if never. Compare with the latest settings revision: lower means the change has not reached the app yet. */
+            applied_settings_revision: number | null;
             release: null | components["schemas"]["Release"];
             /** @description The deployment that put the current release online. */
             deployment: null | components["schemas"]["Deployment"];
@@ -1329,6 +1481,21 @@ export interface components {
                 name: "odicea";
             };
             clients: components["schemas"]["AssistantClient"][];
+        };
+        AccessKeys: {
+            keys: {
+                /** @enum {string} */
+                kty: "OKP";
+                /** @enum {string} */
+                crv: "Ed25519";
+                /** @description The public key */
+                x: string;
+                kid: string;
+                /** @enum {string} */
+                use: "sig";
+                /** @enum {string} */
+                alg: "EdDSA";
+            }[];
         };
         AuditVerification: {
             valid: boolean;
@@ -2020,6 +2187,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getEnvironmentSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentSettings"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    setEnvironmentAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    mode: components["schemas"]["AccessMode"];
+                };
+            };
+        };
+        responses: {
+            /** @description The settings stored and the deployment applying them, if one started. */
+            202: {
+                headers: {
+                    /** @description The config deployment, when there is one. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessChange"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -2840,6 +3072,149 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
+        };
+    };
+    getAccessKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The key set. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessKeys"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    authorizeAccess: {
+        parameters: {
+            query: {
+                /** @description The environment id (the gate's `env`). */
+                env: string;
+                mode: "team" | "organization";
+                /** @description The absolute URL the person wanted to open. */
+                return: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To IAMKit's sign-in. */
+            302: {
+                headers: {
+                    Location: string;
+                    /** @description `__odicea_flow`. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The generic Spanish page «No pudimos abrir esta app. Vuelve a intentarlo desde su enlace.» for every refusal (unknown environment, a `return` that is not the app's, a mode the app is not served with, a public app): the reason is only in the server logs. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description The sign-in is off (`ACCESS_NOT_CONFIGURED`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description A failure of ours (the same generic page). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    callbackAccess: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To the app's gate with the ticket. */
+            302: {
+                headers: {
+                    Location: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The generic Spanish page «No pudimos abrir esta app. Vuelve a intentarlo desde su enlace.»: the flow expired or is not valid, the environment or `return` is no longer the app's, the app is public now. The reason is only in the server logs. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description This person may not open the app, or the app's access changed since the sign-in started (HTML). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description The sign-in is off (`ACCESS_NOT_CONFIGURED`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description A failure of ours (the generic page). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description IAMKit failed (the generic page). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
         };
     };
     getOdiceaSkill: {

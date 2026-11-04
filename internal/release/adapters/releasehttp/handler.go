@@ -19,10 +19,18 @@ import (
 type Handler struct {
 	commands release.Commands
 	queries  release.Queries
+	opts     Options
 }
 
-func New(commands release.Commands, queries release.Queries) *Handler {
-	return &Handler{commands: commands, queries: queries}
+// Options are what the deployment decides for the handler.
+type Options struct {
+	// AccessLoginAvailable: this control plane serves the sign-in endpoints
+	// apps with a protected access mode rely on (/access/*).
+	AccessLoginAvailable bool
+}
+
+func New(commands release.Commands, queries release.Queries, opts Options) *Handler {
+	return &Handler{commands: commands, queries: queries, opts: opts}
 }
 
 // Register mounts the routes on an already-authenticated router.
@@ -33,6 +41,8 @@ func (h *Handler) Register(r fiber.Router) {
 	env.Post("/deployments", httpx.RequirePermissions(permission.DeploymentsCreate), h.deploy)
 	env.Get("/deployments/:deployment", httpx.RequirePermissions(permission.DeploymentsRead), h.find)
 	env.Post("/deployments/:deployment/rollback", httpx.RequirePermissions(permission.DeploymentsRollback), h.rollback)
+	env.Get("/settings", httpx.RequirePermissions(permission.ProjectsRead), h.settings)
+	env.Put("/access", httpx.RequirePermissions(permission.ProjectsWrite), h.setAccess)
 	r.Get("/projects/:id/releases/:release", httpx.RequirePermissions(permission.DeploymentsRead), h.findRelease)
 }
 
@@ -291,4 +301,75 @@ func (h *Handler) findRelease(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(r)
+}
+
+// settingsView is the settings of an environment as the API shows them.
+type settingsView struct {
+	release.Settings
+	// AccessLoginAvailable is false when this control plane cannot serve the
+	// sign-in of team and organization apps (no signing key or login client).
+	AccessLoginAvailable bool `json:"access_login_available"`
+	// AccessProtectionAvailable is false when the environment's cluster cannot
+	// protect apps yet (its agent lacks the access capability): team and
+	// organization are refused there until IT enables it; public still works.
+	// An unplaced environment is judged by the organization's default cluster.
+	AccessProtectionAvailable bool `json:"access_protection_available"`
+}
+
+func (h *Handler) settings(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	at, err := parsePlace(c)
+	if err != nil {
+		return err
+	}
+	out, err := h.queries.Settings(c.UserContext(), org, at.project, at.environment)
+	if err != nil {
+		return err
+	}
+	can, err := h.queries.AccessProtectionAvailable(c.UserContext(), org, at.project, at.environment)
+	if err != nil {
+		return err
+	}
+	return c.JSON(settingsView{Settings: out, AccessLoginAvailable: h.opts.AccessLoginAvailable, AccessProtectionAvailable: can})
+}
+
+// setAccess answers 202: the config deployment (when one starts) runs in the
+// worker. Making an app public takes a permission of its own.
+func (h *Handler) setAccess(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	user, err := httpx.User(c)
+	if err != nil {
+		return err
+	}
+	at, err := parsePlace(c)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Mode release.AccessMode `json:"mode"`
+	}
+	if err := httpx.DecodeJSON(c, &body); err != nil {
+		return err
+	}
+	if body.Mode == release.AccessPublic && !httpx.Can(c, permission.AccessPublic) {
+		return errx.Forbidden("making an app public needs the permission " + permission.AccessPublic)
+	}
+	out, err := h.commands.SetAccess(c.UserContext(), org, at.project, at.environment, release.SetAccess{Mode: body.Mode, RequestedBy: user})
+	if err != nil {
+		return err
+	}
+	if out.Deployment != nil { // a sibling of /access, like rollback's
+		base := strings.TrimRight(c.Path(), "/")
+		c.Set(fiber.HeaderLocation, base[:strings.LastIndex(base, "/")+1]+"deployments/"+out.Deployment.ID.String())
+	}
+	return c.Status(fiber.StatusAccepted).JSON(struct {
+		release.AccessChange
+		AccessLoginAvailable bool `json:"access_login_available"`
+	}{out, h.opts.AccessLoginAvailable})
 }

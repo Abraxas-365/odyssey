@@ -38,6 +38,12 @@ type Dispatch interface {
 	// Status is what the agent last reported of the app (ObservedRevision 0
 	// when it has reported nothing yet).
 	Status(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (AppStatus, error)
+	// CanProtect reports whether the cluster the environment runs on lists
+	// CapabilityAccess, i.e. can serve team and organization apps behind the
+	// sign-in. An environment not placed yet is judged by the organization's
+	// default cluster (where its first Apply would put it); false when there is
+	// none, or its cluster was revoked. It changes nothing (no placement).
+	CanProtect(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (bool, error)
 }
 
 // Builds is what the build domain uses to build in clusters (its buildfleet

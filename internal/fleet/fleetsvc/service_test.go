@@ -224,6 +224,52 @@ func TestApplyStaysOffARevokedCluster(t *testing.T) {
 	}
 }
 
+// A protected app (team or organization) is refused on a cluster whose agent
+// does not list the access capability (an agent older than 1e would ignore the
+// mode and serve it open); public apps do not need it.
+func TestApplyRefusesProtectedAppsWithoutTheCapability(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	agent := e.enrolled(t, "lima-1")
+	app := func(access string, rev int64) fleet.App {
+		return fleet.App{Organization: e.org, Project: project.NewID(), Environment: project.NewEnvironmentID(), Name: "web", Revision: rev,
+			Image: "r.local/web@sha256:00", Port: 8080, HealthPath: "/health", Replicas: 1, Access: access}
+	}
+	connect := func(apis ...string) {
+		t.Helper()
+		if err := e.svc.Connect(ctx, agent, fleet.NewSession(), fleet.Agent{Version: "v1", Capabilities: fleet.Capabilities{APIs: apis}}, "10.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connect("postgresql.cnpg.io")
+	for _, mode := range []string{fleet.AccessTeam, fleet.AccessOrganization} {
+		a := app(mode, 1)
+		err := e.svc.Apply(ctx, a)
+		if code(err) != fleet.CodeAccessUnavailable || !errx.IsType(err, errx.TypeBusiness) ||
+			err.(*errx.Error).Message != "Este clúster no puede proteger apps con inicio de sesión. Pide a TI que lo habilite." {
+			t.Fatalf("%s without the capability: %v", mode, err)
+		}
+		if _, ok, _ := e.svc.DesiredApp(ctx, agent, a.Environment, "web"); ok {
+			t.Fatalf("a refused %s app was stored", mode)
+		}
+	}
+	for _, mode := range []string{fleet.AccessPublic, ""} {
+		if err := e.svc.Apply(ctx, app(mode, 1)); err != nil {
+			t.Fatalf("%q without the capability: %v", mode, err)
+		}
+	}
+	connect("postgresql.cnpg.io", fleet.CapabilityAccess)
+	for _, mode := range []string{fleet.AccessTeam, fleet.AccessOrganization} {
+		a := app(mode, 1)
+		if err := e.svc.Apply(ctx, a); err != nil {
+			t.Fatalf("%s with the capability: %v", mode, err)
+		}
+		if got, ok, err := e.svc.DesiredApp(ctx, agent, a.Environment, "web"); !ok || err != nil || got.Access != mode {
+			t.Fatalf("stored %s app: %+v %v %v", mode, got, ok, err)
+		}
+	}
+}
+
 // A deployment racing a move never stores its app for the cluster the
 // environment just left: it waits for the move, then retries (or lands on
 // the new cluster), and every app ends up where its environment is.
@@ -473,5 +519,48 @@ func TestRecover(t *testing.T) {
 	}
 	if _, err := e.svc.Recover(ctx, fleet.Recover{Organization: "x"}, csr(t, next)); !errx.IsType(err, errx.TypeValidation) {
 		t.Fatalf("recover without a cluster: %v", err)
+	}
+}
+
+// CanProtect tells the console whether protected modes can be offered: the
+// capability of the cluster the environment is placed on, of the default
+// cluster while it is not placed yet, and false with no cluster at all.
+func TestCanProtect(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	env := project.NewEnvironmentID()
+	if ok, err := e.svc.CanProtect(ctx, e.org, env); err != nil || ok {
+		t.Fatalf("no cluster: %v %v", ok, err)
+	}
+	agent := e.enrolled(t, "lima-1")
+	connect := func(apis ...string) {
+		t.Helper()
+		if err := e.svc.Connect(ctx, agent, fleet.NewSession(), fleet.Agent{Version: "v1", Capabilities: fleet.Capabilities{APIs: apis}}, "10.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connect("postgresql.cnpg.io")
+	if ok, err := e.svc.CanProtect(ctx, e.org, env); err != nil || ok {
+		t.Fatalf("default cluster without the capability: %v %v", ok, err)
+	}
+	connect("postgresql.cnpg.io", fleet.CapabilityAccess)
+	if ok, err := e.svc.CanProtect(ctx, e.org, env); err != nil || !ok {
+		t.Fatalf("default cluster with the capability (not placed yet): %v %v", ok, err)
+	}
+	// placed by its first apply
+	if err := e.svc.Apply(ctx, fleet.App{Organization: e.org, Project: project.NewID(), Environment: env, Name: "web", Revision: 1,
+		Image: "r.local/web@sha256:00", Port: 8080, HealthPath: "/health", Replicas: 1, Access: fleet.AccessTeam}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := e.svc.CanProtect(ctx, e.org, env); err != nil || !ok {
+		t.Fatalf("placed cluster with the capability: %v %v", ok, err)
+	}
+	connect("postgresql.cnpg.io") // the agent was downgraded
+	if ok, err := e.svc.CanProtect(ctx, e.org, env); err != nil || ok {
+		t.Fatalf("placed cluster that lost the capability: %v %v", ok, err)
+	}
+	// another organization sees none of this
+	if ok, err := e.svc.CanProtect(ctx, identity.NewOrganizationID(), env); err != nil || ok {
+		t.Fatalf("another organization: %v %v", ok, err)
 	}
 }

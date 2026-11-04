@@ -35,6 +35,8 @@ tags:
     description: The organization's tamper-evident activity trail.
   - name: github
     description: Connecting apps to their GitHub repositories.
+  - name: access
+    description: The sign-in of apps protected with an Odicea login (public routes; the OAuth flow is the proof).
   - name: mcp
     description: The endpoint coding agents use (Model Context Protocol), with its own OAuth resource.
 
@@ -399,6 +401,79 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Deployment" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/settings:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [deployments]
+      operationId: getEnvironmentSettings
+      summary: Who can open the app
+      description: |
+        The environment's settings in force: revision 0 with the defaults
+        (`team`) when nobody changed them. `access_login_available` is false
+        when this control plane cannot serve the sign-in of protected apps
+        (no signing key or login client configured); `access_protection_available`
+        is false when the environment's cluster cannot protect apps yet.
+        Environments published before this feature report `public` (revision 1,
+        created by nobody): that is how they were served.
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentSettings" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/access:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    put:
+      tags: [deployments]
+      operationId: setEnvironmentAccess
+      summary: Change who can open the app
+      description: |
+        Stores the mode as the environment's next settings revision (history is
+        append-only; the mode already in force adds none). When a release is
+        online and nothing is in progress, a deployment with reason `config`
+        applies it to that release at once (`deployment`, `Location`); with a
+        deployment in progress it applies the latest settings itself, or, if it
+        already applied, one follows it; with no release online the settings
+        are only stored (`deployment` null). Rolling back keeps the current
+        settings. `public` also needs `odyssey:access:public`. Event
+        `access.changed`.
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode]
+              properties:
+                mode: { $ref: "#/components/schemas/AccessMode" }
+      responses:
+        "202":
+          description: The settings stored and the deployment applying them, if one started.
+          headers:
+            Location: { schema: { type: string }, description: "The config deployment, when there is one." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessChange" }
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1185,6 +1260,140 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /.well-known/odicea-access-keys:
+    get:
+      tags: [access]
+      operationId: getAccessKeys
+      summary: The public keys the access gates verify tickets with
+      description: >-
+        Public (keys are public). A JWKS of Ed25519 keys (`kty: OKP`, `crv: Ed25519`, `use: sig`, `alg: EdDSA`;
+        `kid` is the first 16 characters of base64url(sha256(public key))): the key signing now first, then the
+        previous ones (`ODYSSEY_ACCESS_PREVIOUS_KEYS`) so gates with a cached set keep verifying through a
+        rotation. `Cache-Control: public, max-age=60`. 404 `ACCESS_NOT_CONFIGURED` when this installation has no
+        signing key and IAMKit access client. Not under `/api/v1`: no token, no CORS.
+      security: []
+      responses:
+        "200":
+          description: The key set.
+          headers:
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessKeys" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /access/authorize:
+    get:
+      tags: [access]
+      operationId: authorizeAccess
+      summary: Where an app's access gate sends a browser that is not signed in
+      description: >-
+        Public: the gate of the app's cluster redirects here (docs/access.md). Looks the environment up by its id
+        (the organization comes from our own records, never from the request), requires `return` to be an
+        absolute URL of the environment's app: same scheme, host and port as its URL, where an explicit default port
+        (`:443` on https, `:80` on http) equals none (anything else is an open redirect, refused), https unless the host is a development one (`localhost`, `*.localhost`, `127.0.0.1`,
+        `*.k3d.internal`, or `ODYSSEY_ACCESS_ALLOW_HTTP=true`), and `mode` to be the one the app's cluster was last told
+        (`team` or `organization`; a public app has no sign-in: refused). Then
+        302s to IAMKit's sign-in (authorization code + PKCE, the confidential access client; for `team` with the
+        app's organization as the hint) and sets the sealed, HttpOnly, SameSite=Lax cookie `__odicea_flow`
+        (path `/access`, 10 minutes) that the callback needs. Nothing is written to the database. 404
+        `ACCESS_NOT_CONFIGURED` when the sign-in is off; every other refusal is the same generic Spanish page (400),
+        whether the environment exists or not.
+      security: []
+      parameters:
+        - name: env
+          in: query
+          required: true
+          description: The environment id (the gate's `env`).
+          schema: { type: string, format: uuid }
+        - name: mode
+          in: query
+          required: true
+          schema: { type: string, enum: [team, organization] }
+        - name: return
+          in: query
+          required: true
+          description: The absolute URL the person wanted to open.
+          schema: { type: string }
+      responses:
+        "302":
+          description: To IAMKit's sign-in.
+          headers:
+            Location:
+              required: true
+              schema: { type: string }
+            Set-Cookie: { schema: { type: string }, description: "`__odicea_flow`." }
+        "400":
+          description: >-
+            The generic Spanish page «No pudimos abrir esta app. Vuelve a intentarlo desde su enlace.» for every
+            refusal (unknown environment, a `return` that is not the app's, a mode the app is not served with,
+            a public app): the reason is only in the server logs.
+          content:
+            text/html: { schema: { type: string } }
+        "404":
+          description: The sign-in is off (`ACCESS_NOT_CONFIGURED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        "500":
+          description: A failure of ours (the same generic page).
+          content:
+            text/html: { schema: { type: string } }
+
+  /access/callback:
+    get:
+      tags: [access]
+      operationId: callbackAccess
+      summary: Where IAMKit sends the browser after the access sign-in
+      description: >-
+        Public: needs the `__odicea_flow` cookie that `authorizeAccess` set and a `state` equal to the one sealed
+        in it. Exchanges the code, reads the user (UserInfo) and decides against the environment's current
+        records: `team` needs the user's organization to be the app's, `organization` needs the user to belong to
+        this installation's IAMKit environment; and the flow's mode must still be the one the cluster was last told (403
+        otherwise). Allowed: 302 to `<scheme>://<app host>/_odicea/callback?ticket=<JWT>&return=<path>`,
+        a 60-second Ed25519 ticket (claims in docs/access.md). Not allowed: a plain Spanish HTML page, 403.
+        An expired or tampered flow, or a refused code: a plain HTML page, 400. The cookie is cleared either way.
+        `Cache-Control: no-store`.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+      responses:
+        "302":
+          description: To the app's gate with the ticket.
+          headers:
+            Location:
+              required: true
+              schema: { type: string }
+        "400":
+          description: >-
+            The generic Spanish page «No pudimos abrir esta app. Vuelve a intentarlo desde su enlace.»: the flow
+            expired or is not valid, the environment or `return` is no longer the app's, the app is public now. The
+            reason is only in the server logs.
+          content:
+            text/html: { schema: { type: string } }
+        "403":
+          description: This person may not open the app, or the app's access changed since the sign-in started (HTML).
+          content:
+            text/html: { schema: { type: string } }
+        "404":
+          description: The sign-in is off (`ACCESS_NOT_CONFIGURED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        "502":
+          description: IAMKit failed (the generic page).
+          content:
+            text/html: { schema: { type: string } }
+        "500":
+          description: A failure of ours (the generic page).
+          content:
+            text/html: { schema: { type: string } }
+
   /skills/odicea.tar.gz:
     get:
       tags: [mcp]
@@ -1714,12 +1923,60 @@ components:
               text: { type: string }
         next: { type: integer, description: The `after` to ask with next time. }
         finished: { type: boolean, description: The build ended and this page reaches the end of its log. }
+    AccessMode:
+      type: string
+      enum: [team, organization, public]
+      description: |
+        Who can open the app: `team` (people of the app's organization, the
+        default), `organization` (anyone in the company's IAMKit environment) or
+        `public` (anyone with the link; needs `odyssey:access:public` to set).
+    EnvironmentSettings:
+      type: object
+      additionalProperties: false
+      required: [revision, access, access_login_available, access_protection_available]
+      properties:
+        revision: { type: integer, description: "0: the defaults; every change adds one." }
+        access:
+          type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode: { $ref: "#/components/schemas/AccessMode" }
+        access_login_available: { type: boolean }
+        access_protection_available:
+          type: boolean
+          description: >-
+            Whether the environment's cluster can protect apps with the sign-in (its agent lists `odicea.access`).
+            An environment not placed yet is judged by the organization's default cluster; false with no cluster.
+            When false only `public` can be applied there.
+    AccessChange:
+      type: object
+      additionalProperties: false
+      required: [settings, deployment, access_login_available]
+      properties:
+        settings:
+          type: object
+          additionalProperties: false
+          required: [revision, access]
+          properties:
+            revision: { type: integer }
+            access:
+              type: object
+              additionalProperties: false
+              required: [mode]
+              properties:
+                mode: { $ref: "#/components/schemas/AccessMode" }
+        deployment:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Deployment"
+        access_login_available: { type: boolean }
     Deployment:
       type: object
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
       required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, status, reason, step, steps,
-                 revision, previous_release_id, rollback_of, error, run_id, requested_by, requested_via, created_at, updated_at, finished_at]
+                 revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_via, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -1752,8 +2009,10 @@ components:
         status: { $ref: "#/components/schemas/DeploymentStatus" }
         reason:
           type: string
-          enum: [deploy, rollback, auto_rollback]
-          description: "`auto_rollback`: the platform restored the version online after a failed deployment."
+          enum: [deploy, rollback, auto_rollback, config]
+          description: |
+            `auto_rollback`: the platform restored the version online after a failed deployment.
+            `config`: the same release again, to apply new settings (who can open it).
         step: { type: string, enum: [build, apply, wait_ready, promote] }
         steps:
           type: array
@@ -1765,6 +2024,9 @@ components:
           type: [string, "null"]
           format: uuid
           description: The deployment this one undoes.
+        settings_revision:
+          type: [integer, "null"]
+          description: The environment settings revision its apply step handed to the cluster (null until then, and before settings existed).
         error:
           oneOf:
             - type: "null"
@@ -1807,10 +2069,16 @@ components:
     CurrentRelease:
       type: object
       additionalProperties: false
-      required: [environment_id, url, release, deployment, active]
+      required: [environment_id, url, release, deployment, active, applied_settings_revision]
       properties:
         environment_id: { type: string, format: uuid }
         url: { type: string, description: '"" before the first deployment.' }
+        applied_settings_revision:
+          description: >-
+            The settings revision the cluster was last told (set when a deployment's apply step handed it to the
+            cluster, even if that deployment then failed); null if never. Compare with the latest settings revision:
+            lower means the change has not reached the app yet.
+          type: [integer, "null"]
         release:
           oneOf:
             - type: "null"
@@ -2000,6 +2268,24 @@ components:
         clients:
           type: array
           items: { $ref: "#/components/schemas/AssistantClient" }
+    AccessKeys:
+      type: object
+      additionalProperties: false
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [kty, crv, x, kid, use, alg]
+            properties:
+              kty: { type: string, enum: [OKP] }
+              crv: { type: string, enum: [Ed25519] }
+              x: { type: string, description: The public key, base64url. }
+              kid: { type: string }
+              use: { type: string, enum: [sig] }
+              alg: { type: string, enum: [EdDSA] }
     AuditVerification:
       type: object
       additionalProperties: false

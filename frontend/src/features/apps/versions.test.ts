@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, Deployment } from '@/lib/types'
-import { appStatus, attribution, lastProblem, progressSteps, versionMessage, versions } from './versions'
+import { appStatus, attribution, configReachedApp, lastProblem, progressSteps, versionMessage, versions } from './versions'
 
 let n = 0
 function dep(over: Partial<Deployment>): Deployment {
@@ -25,6 +25,7 @@ function dep(over: Partial<Deployment>): Deployment {
     revision: n,
     previous_release_id: null,
     rollback_of: null,
+    settings_revision: null,
     error: null,
     run_id: 'run',
     requested_by: 'me',
@@ -42,6 +43,7 @@ const current = (d: Deployment, active?: Deployment): CurrentRelease => ({
   release: { id: d.release_id!, organization_id: 'o', project_id: 'p', image: d.image, config: { port: 80, health_path: '/', replicas: 1, env: {} }, created_by: 'me', created_at: d.created_at },
   deployment: d,
   active: active ?? null,
+  applied_settings_revision: null,
 })
 
 describe('versions', () => {
@@ -150,6 +152,7 @@ describe('GitHub versions', () => {
   })
 
   it('fall back to a plain phrase when the commit has no title', () => {
+    expect(versionMessage(dep({ reason: 'config' }))).toBe('Cambió quién puede abrirla')
     expect(versionMessage(fromGit({ source: { id: 's', name: 'x', size: 1, git: { ...git, title: '  ' } } }))).toBe('Cambios desde GitHub')
   })
 
@@ -159,5 +162,24 @@ describe('GitHub versions', () => {
     const items = versions([folder, restored], undefined, 'me')
     expect(items.map(i => i.git)).toEqual([undefined, undefined])
     expect(items[1].message).toBe('Volviste a una versión anterior')
+  })
+})
+
+describe('failed config deployments', () => {
+  const failed = (step: Deployment['step'], code: string) =>
+    dep({ reason: 'config', status: 'failed', step, error: { code, message: 'No quedó lista', detail: '' } as Deployment['error'] })
+
+  it('show in Versiones with their error and are the last problem', () => {
+    const f = failed('wait_ready', 'HEALTH_CHECK_FAILED')
+    const list = versions([f], current(dep({})), 'me')
+    expect(list.some(v => v.id === f.id && v.kind === 'failed' && v.deployment.error?.code === 'HEALTH_CHECK_FAILED')).toBe(true)
+    expect(lastProblem([f])).toBe(f)
+  })
+
+  it('tells one that reached the cluster (the app is not reopened) from one refused at apply', () => {
+    expect(configReachedApp(failed('wait_ready', 'HEALTH_CHECK_FAILED'))).toBe(true)
+    expect(configReachedApp(failed('promote', 'PROMOTE_FAILED'))).toBe(true)
+    expect(configReachedApp(failed('apply', 'APPLY_FAILED'))).toBe(false)
+    expect(configReachedApp(dep({ reason: 'deploy', status: 'failed', step: 'wait_ready' }))).toBe(false)
   })
 })

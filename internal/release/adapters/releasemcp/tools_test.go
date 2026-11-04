@@ -36,15 +36,17 @@ var (
 // releases is a release.Queries over the deployments of one environment,
 // newest first, scoped by organization like the service.
 type releases struct {
-	org         identity.OrganizationID
-	env         project.EnvironmentID
-	url         string
-	current     *release.Deployment
-	release     *release.Release // the serving release
-	active      *release.Deployment
-	deployments []release.Deployment // newest first
-	finds       int                  // FindDeployment calls
-	onFind      func(n int)          // runs at the start of the nth FindDeployment
+	org             identity.OrganizationID
+	env             project.EnvironmentID
+	url             string
+	current         *release.Deployment
+	release         *release.Release // the serving release
+	active          *release.Deployment
+	deployments     []release.Deployment // newest first
+	finds           int                  // FindDeployment calls
+	onFind          func(n int)          // runs at the start of the nth FindDeployment
+	settings        *release.Settings    // nil: the defaults
+	appliedSettings *int64               // the revision the cluster was last told
 }
 
 func (r *releases) place(org identity.OrganizationID, env project.EnvironmentID) error {
@@ -58,7 +60,7 @@ func (r *releases) Current(_ context.Context, org identity.OrganizationID, _ pro
 	if err := r.place(org, env); err != nil {
 		return release.Current{}, err
 	}
-	return release.Current{Environment: env, URL: r.url, Release: r.release, Deployment: r.current, Active: r.active}, nil
+	return release.Current{Environment: env, URL: r.url, Release: r.release, Deployment: r.current, Active: r.active, AppliedSettingsRevision: r.appliedSettings}, nil
 }
 
 func (r *releases) FindDeployment(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID, id release.DeploymentID) (release.Deployment, error) {
@@ -90,6 +92,20 @@ func (r *releases) ListDeployments(_ context.Context, org identity.OrganizationI
 	from := min(page.Offset, len(all))
 	to := min(from+page.Limit, len(all))
 	return query.NewPaginated(all[from:to], len(all), page), nil
+}
+
+func (r *releases) Settings(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Settings, error) {
+	if err := r.place(org, env); err != nil {
+		return release.Settings{}, err
+	}
+	if r.settings == nil {
+		return release.DefaultSettings(org, env), nil
+	}
+	return *r.settings, nil
+}
+
+func (r *releases) AccessProtectionAvailable(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID) (bool, error) {
+	return true, nil
 }
 
 func (r *releases) FindRelease(context.Context, identity.OrganizationID, project.ID, release.ID) (release.Release, error) {

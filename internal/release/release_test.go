@@ -43,6 +43,8 @@ func TestEventContracts(t *testing.T) {
 		release.NewDeploymentCancelled(org, user, d, restore, n),
 		release.NewUploadTicketIssued(ticket, n),
 		release.NewUploadTicketUsed(ticket, n),
+		release.NewAccessChanged(org, user, r.Project.String(), release.DefaultSettings(org, d.Environment),
+			release.Settings{Environment: d.Environment, Organization: org, Revision: 3, Access: release.AccessSettings{Mode: release.AccessOrganization}}, &restore, n),
 	} {
 		eventtest.Golden(t, e)
 	}
@@ -236,5 +238,36 @@ func TestViaFor(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestAccessMode(t *testing.T) {
+	for _, m := range []release.AccessMode{release.AccessTeam, release.AccessOrganization, release.AccessPublic} {
+		if !m.Valid() || release.AccessLabel(m) == string(m) {
+			t.Errorf("%q", m)
+		}
+		if err := (release.SetAccess{Mode: m}).Validate(); err != nil {
+			t.Errorf("%q refused: %v", m, err)
+		}
+	}
+	for _, m := range []release.AccessMode{"", "everyone", "Team", "private"} {
+		if m.Valid() || (release.SetAccess{Mode: m}).Validate() == nil {
+			t.Errorf("%q accepted", m)
+		}
+	}
+	if !release.AccessTeam.Protected() || !release.AccessOrganization.Protected() || release.AccessPublic.Protected() || release.AccessMode("").Protected() {
+		t.Error("only team and organization are protected")
+	}
+	if got := release.DefaultSettings(identity.NewOrganizationID(), project.NewEnvironmentID()); got.Revision != 0 || got.Access.Mode != release.AccessTeam {
+		t.Errorf("default %+v", got)
+	}
+	var d release.Deployment
+	if d.AppliedSettings() != -1 {
+		t.Error("a deployment that never recorded settings has applied none")
+	}
+	two := int64(2)
+	d.SettingsRevision = &two
+	if d.AppliedSettings() != 2 {
+		t.Error("applied revision")
 	}
 }
