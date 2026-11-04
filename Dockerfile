@@ -10,6 +10,7 @@ COPY internal/ internal/
 COPY agent/ agent/
 COPY proto/ proto/
 COPY pkg/ pkg/
+COPY skills/ skills/
 # The Railpack library's version names the plans the agent writes and the
 # frontend image that reads them (they must agree).
 RUN RAILPACK="$(go list -m -f '{{.Version}}' github.com/railwayapp/railpack)" \

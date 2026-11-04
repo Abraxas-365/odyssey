@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -49,5 +50,40 @@ func TestPinsAgree(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^FROM golang:` + regexp.QuoteMeta(mod.Go.Version) + `-alpine AS build$`).Match(dockerfile) {
 		t.Errorf("the Dockerfile's Go image is not go.mod's (%s)", mod.Go.Version)
+	}
+}
+
+// TestDockerfileCopiesEveryGoTree: the image builds from the top-level
+// directories it copies, so one that holds a package the binaries import and
+// is missing from the build stage breaks `docker build` while `go build` on a
+// checkout still passes (skills/ did, once).
+func TestDockerfileCopiesEveryGoTree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dockerfile, err := os.ReadFile("../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const module = "github.com/Abraxas-365/odyssey/"
+	cmd := exec.Command("go", "list", "-deps", "./cmd/...")
+	cmd.Dir = ".."
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	trees := map[string]bool{}
+	for _, pkg := range strings.Fields(string(out)) {
+		if rest, ok := strings.CutPrefix(pkg, module); ok {
+			trees[strings.SplitN(rest, "/", 2)[0]] = true
+		}
+	}
+	if !trees["cmd"] || !trees["internal"] {
+		t.Fatalf("go list found no binaries: %v", trees)
+	}
+	for name := range trees {
+		if !regexp.MustCompile(`(?m)^COPY ` + regexp.QuoteMeta(name) + `/ ` + regexp.QuoteMeta(name) + `/$`).Match(dockerfile) {
+			t.Errorf("the binaries import %s/ but the Dockerfile's build stage does not COPY it", name)
+		}
 	}
 }
