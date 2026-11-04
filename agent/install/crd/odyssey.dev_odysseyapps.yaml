@@ -66,6 +66,27 @@ spec:
               OdysseyAppSpec is what the cluster must run for one app in one environment.
               It mirrors the control plane's release.DesiredApp (field for field).
             properties:
+              access:
+                description: |-
+                  Access says who may open the app. Absent means public (an object
+                  written before access existed); the agent never exposes a protected
+                  app in a cluster that cannot protect it.
+                properties:
+                  mode:
+                    description: AccessMode is who may open an app.
+                    enum:
+                    - public
+                    - team
+                    - organization
+                    type: string
+                  organization:
+                    description: |-
+                      Organization is the app's organization id: what the team mode
+                      compares the user's organization with.
+                    type: string
+                required:
+                - mode
+                type: object
               env:
                 additionalProperties:
                   type: string
@@ -122,6 +143,13 @@ spec:
                 description: Message is the cluster's detail for people (in English,
                   as Kubernetes says it).
                 type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation of the spec this status
+                  describes. A spec change at the same revision (e.g. the access mode)
+                  bumps the generation: the status is stale until the agent re-observes.
+                format: int64
+                type: integer
               observedRevision:
                 description: ObservedRevision is the spec revision this status describes.
                 format: int64

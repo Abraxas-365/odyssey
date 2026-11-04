@@ -5,12 +5,15 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/agent/access"
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	"github.com/Abraxas-365/odyssey/agent/controllers/app"
 	buildctl "github.com/Abraxas-365/odyssey/agent/controllers/build"
@@ -23,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -52,6 +56,68 @@ type Options struct {
 	Secret client.ObjectKey
 	// Builds make the agent its cluster's builder (needs the tunnel).
 	Builds BuildOptions
+	// Access says whether the cluster has the sign-in gate (odyssey-agent
+	// access, agent/access) and how Traefik reaches it.
+	Access AccessOptions
+}
+
+// AccessOptions configure protected apps (access mode team/organization).
+type AccessOptions struct {
+	// Enabled (ODYSSEY_ACCESS_ENABLED) says the gate is installed and
+	// configured (its own ODYSSEY_ACCESS_ISSUER is set). Without it, apps
+	// that ask for sign-in fail with reason config instead of being exposed,
+	// and the agent does not report the odicea.access capability.
+	Enabled bool
+	// VerifyURL is the gate's /verify endpoint as Traefik reaches it.
+	VerifyURL string
+	// KeyNamespace and KeyName: the Secret that holds the gate's cookie
+	// key. The agent creates it (the gate only reads it).
+	KeyNamespace, KeyName string
+}
+
+// Ready says protected apps can be served: the gate is enabled and its
+// configuration is usable. Otherwise the agent fails closed and does not
+// list the "access" feature.
+func (a AccessOptions) Ready() bool {
+	u, err := url.Parse(a.VerifyURL)
+	return a.Enabled && err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.RawQuery == "" && a.KeyName != "" && a.KeyNamespace != ""
+}
+
+// ensureAccessKey creates the gate's cookie-key Secret (once; it never
+// replaces an existing one), retrying until it works.
+type ensureAccessKey struct {
+	cfg *rest.Config
+	o   AccessOptions
+}
+
+func (e ensureAccessKey) Start(ctx context.Context) error {
+	log := ctrl.Log.WithName("access")
+	kc, err := kubernetes.NewForConfig(e.cfg)
+	if err != nil {
+		return err
+	}
+	for {
+		err := access.EnsureKey(ctx, kc, e.o.KeyNamespace, e.o.KeyName)
+		if err == nil {
+			return nil
+		}
+		log.Error(err, "cannot create the gate's cookie key; retrying")
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// hasTraefik says whether the cluster serves traefik.io/v1alpha1 now.
+func hasTraefik(cfg *rest.Config) bool {
+	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return false
+	}
+	_, err = dc.ServerResourcesForGroupVersion("traefik.io/v1alpha1")
+	return err == nil
 }
 
 // Version is the agent's version (set at build time with -ldflags).
@@ -92,6 +158,9 @@ func Run(args []string) error {
 	fs.StringVar(&o.Builds.AgentImage, "agent-image", os.Getenv("ODYSSEY_AGENT_IMAGE"), "the agent's own image (it runs each build's prepare step)")
 	fs.StringVar(&o.Builds.SourceAddr, "source-addr", env("ODYSSEY_SOURCE_ADDR", ":8099"), "address the agent serves sources to build pods on")
 	fs.StringVar(&o.Builds.SourceURL, "source-url", env("ODYSSEY_SOURCE_URL", "http://odyssey-agent-source.odyssey-system.svc:8099"), "URL build pods reach the agent's source server at")
+	fs.BoolVar(&o.Access.Enabled, "access-enabled", envBool("ODYSSEY_ACCESS_ENABLED"), "the sign-in gate (odyssey-agent access) is installed: apps may require sign-in")
+	o.Access.KeyNamespace, o.Access.KeyName = env("POD_NAMESPACE", "odyssey-system"), env("ODYSSEY_ACCESS_SECRET", "odyssey-access")
+	fs.StringVar(&o.Access.VerifyURL, "access-verify-url", env("ODYSSEY_ACCESS_VERIFY_URL", "http://odyssey-access.odyssey-system.svc:8098/verify"), "the gate's /verify URL as Traefik reaches it")
 	zopts := zap.Options{}
 	zopts.BindFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -132,6 +201,16 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		byObject[&batchv1.Job{}] = cache.ByObject{Label: owned.Label, Namespaces: map[string]cache.Config{buildctl.Namespace: {}}}
 		byObject[&v1alpha1.OdysseyBuild{}] = cache.ByObject{Namespaces: map[string]cache.Config{buildctl.Namespace: {}}}
 	}
+	// The Middlewares are watched (a deleted one is put back) only when the
+	// traefik.io API exists now: an informer on a missing kind would stop the
+	// manager from starting. Without the watch, protected apps are re-checked
+	// periodically (app.Reconciler).
+	var mw []client.Object
+	if o.Access.Ready() && hasTraefik(cfg) {
+		m := app.NewMiddleware()
+		byObject[m] = owned
+		mw = append(mw, m)
+	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                  scheme,
 		HealthProbeBindAddress:  o.HealthAddr,
@@ -145,7 +224,17 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := (&app.Reconciler{Client: mgr.GetClient(), Config: o.App, HealthGrace: o.HealthGrace}).SetupWithManager(mgr); err != nil {
+	rec := &app.Reconciler{Client: mgr.GetClient(), Config: o.App, HealthGrace: o.HealthGrace, Owned: mw}
+	if o.Access.Enabled && !o.Access.Ready() {
+		ctrl.Log.Error(nil, "ODYSSEY_ACCESS_ENABLED is set but the gate configuration is not usable: protected apps will fail", "verifyURL", o.Access.VerifyURL)
+	}
+	if o.Access.Ready() {
+		if err := mgr.Add(ensureAccessKey{cfg: cfg, o: o.Access}); err != nil {
+			return nil, err
+		}
+		rec.Exposure = &app.Traefik{Client: mgr.GetClient(), VerifyURL: o.Access.VerifyURL, Mapper: mgr.GetRESTMapper()}
+	}
+	if err := rec.SetupWithManager(mgr); err != nil {
 		return nil, err
 	}
 	if o.Tunnel.Store != nil || o.Secret.Name != "" {
@@ -178,7 +267,7 @@ func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
 	if t.Store == nil {
 		t.Store = &tunnel.SecretStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: o.Secret.Namespace, Name: o.Secret.Name}
 	}
-	t.Desired = &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc}
+	t.Desired = &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc, AccessGate: o.Access.Ready()}
 	t.IsRejected, t.Rejected = desired.IsRejected, desired.RejectedStatus
 	if t.Version == "" {
 		t.Version = Version

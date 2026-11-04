@@ -3,6 +3,9 @@ package desired
 import (
 	"context"
 	"errors"
+	fakediscovery "k8s.io/client-go/discovery/fake"
+	clienttesting "k8s.io/client-go/testing"
+	"slices"
 	"strings"
 	"testing"
 
@@ -94,6 +97,46 @@ func TestApplyWritesTheAppInTheEnvironmentNamespace(t *testing.T) {
 	}
 	if a := get(t, c); a.Spec.Revision != 3 || a.Labels["odyssey.dev/deployment"] != "d3" {
 		t.Errorf("newer revision: %+v", a.Spec)
+	}
+}
+
+func TestApplyMapsAccess(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		mode string
+		want v1alpha1.AccessMode
+		ok   bool
+	}{
+		{"", v1alpha1.AccessPublic, true}, // revisions created before the gate
+		{"public", v1alpha1.AccessPublic, true},
+		{"team", v1alpha1.AccessTeam, true},
+		{"organization", v1alpha1.AccessOrganization, true},
+		{"everyone", "", false},
+	} {
+		s, cl := newSyncer(t, interceptor.Funcs{})
+		a := app(1)
+		a.Access = &fleetv1.Access{Mode: c.mode}
+		err := s.Apply(ctx, a)
+		if !c.ok {
+			if !IsRejected(err) {
+				t.Errorf("mode %q: want a rejection, got %v", c.mode, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := get(t, cl).Spec.Access
+		if got == nil || got.Mode != c.want || got.Organization != org {
+			t.Errorf("mode %q: %+v", c.mode, got)
+		}
+	}
+	s, cl := newSyncer(t, interceptor.Funcs{})
+	if err := s.Apply(ctx, app(1)); err != nil { // an old control plane sends no access at all
+		t.Fatal(err)
+	}
+	if got := get(t, cl).Spec.Access; got == nil || got.Mode != v1alpha1.AccessPublic {
+		t.Errorf("no access message: %+v", got)
 	}
 }
 
@@ -210,5 +253,44 @@ func TestCapabilities(t *testing.T) {
 	}
 	if c.GetApis() == nil {
 		t.Error("apis must be an empty list, not nil")
+	}
+}
+
+func TestAccessCapabilityNeedsTheGateAndTraefik(t *testing.T) {
+	groups := func(names ...string) *fakediscovery.FakeDiscovery {
+		fd := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
+		for _, n := range names {
+			fd.Resources = append(fd.Resources, &metav1.APIResourceList{GroupVersion: n + "/v1alpha1"})
+		}
+		return fd
+	}
+	for name, c := range map[string]struct {
+		gate bool
+		fd   *fakediscovery.FakeDiscovery
+		want bool
+	}{
+		"gate and traefik": {true, groups("traefik.io"), true},
+		"no gate":          {false, groups("traefik.io"), false},
+		"no traefik":       {true, groups("cert-manager.io"), false},
+	} {
+		s, _ := newSyncer(t, interceptor.Funcs{})
+		s.Discovery, s.AccessGate = c.fd, c.gate
+		if got := slices.Contains(s.Capabilities(context.Background()).GetApis(), CapabilityAccess); got != c.want {
+			t.Errorf("%s: odicea.access reported = %v", name, got)
+		}
+	}
+}
+
+func TestStatusIsStaleWhenTheSpecChangedAfterIt(t *testing.T) {
+	a := &v1alpha1.OdysseyApp{}
+	a.Name, a.Namespace, a.Generation = "portal", Namespace(env), 2
+	a.Labels = map[string]string{LabelEnvironment: env}
+	a.Status = v1alpha1.OdysseyAppStatus{ObservedRevision: 1, ObservedGeneration: 1, Phase: v1alpha1.PhaseFailed}
+	if statusOf(a) != nil {
+		t.Error("a status of an older generation must not be reported")
+	}
+	a.Status.ObservedGeneration = 2
+	if statusOf(a) == nil {
+		t.Error("a fresh status is reported")
 	}
 }

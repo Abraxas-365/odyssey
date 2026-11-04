@@ -77,10 +77,11 @@ agent/controllers/build/  OdysseyBuild → token Secret + Job (Job = pure builde
 agent/builder/            what a build's pod runs: prepare (fetch, verify, Dockerfile or Railpack plan), build (buildctl push); imports only pkg/
 agent/builds/             tunnel ↔ OdysseyBuilds: start/cancel/status, follow the pod's log (seq = stream<<32|line)
 agent/source/             :8099 source server for build pods (per-build token) relaying FetchSource
+agent/access/             the sign-in gate (`odyssey-agent access`, its own Deployment `odyssey-access` behind Traefik forwardAuth): cookie + ticket (EdDSA JWT via JWKS) verification; imports only pkg/ and the stdlib/jwt/client-go. Contract: docs/access.md
 agent/desired/            desired app (proto) → namespace + OdysseyApp; status/capabilities → proto
 agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports; builds.go: build queue, final status after its log
 deploy/k3d/              local cluster extras: registry/ (zot in ns odyssey-registry, Service ClusterIP 10.43.200.200), registries.yaml (k3s mirror so the node pulls the registry by its in-cluster name), agent/ (overlay of agent/install: ODYSSEY_REGISTRY + `builds-registry` NetworkPolicy)
-agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), deployment
+agent/install/            kustomize: crd/ + rbac/role.yaml (generated), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), access.yaml (the gate: Deployment replicas 1, Service, Role, NetworkPolicy), deployment
 internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
 internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp
 internal/server/          Fiber app: middleware, /health, /api/config, /api/v1; assistant.go: GET /api/v1/assistant + public GET /skills/odicea.tar.gz
@@ -144,7 +145,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
 | A foundation port's backends (`blob/adapters/*`, `event/adapters/*`, `workflow/adapters/*`) are opened only by bootstrap; `gocloud.dev` only inside `blob/adapters`; a domain with a service declares `Commands`, `Queries`, `Repository` and has a `<domain>module` | `TestBackendsStayInTheCompositionRoot`, `TestDomainsHaveTheGoldenShape` |
-| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); `pkg/` (code both planes run, e.g. `srcarchive`) imports neither plane nor Kubernetes; `agent/builder` (a build pod's program) imports only `pkg/` — no Kubernetes, gRPC or protobuf — and is the only importer of Railpack; in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
+| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); `pkg/` (code both planes run, e.g. `srcarchive`) imports neither plane nor Kubernetes; `agent/builder` (a build pod's program) imports only `pkg/` — no Kubernetes, gRPC or protobuf — and is the only importer of Railpack; `agent/access` (the sign-in gate) meets the control plane only through the ticket contract (docs/access.md): it imports only `pkg/`, no proto/gRPC, no controller-runtime and no other `agent/` package; in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | An upload ticket is spent in one place: `ConsumeUploadTicket` / `FindUploadTicketByHash` (by token hash, cross-org) are called only by `release/releasesvc`; `Commands.RedeemUpload` only by the public route in `releasehttp` (tests aside), never by an MCP tool | `TestUploadTicketsAreSpentInOnePlace` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
@@ -204,6 +205,14 @@ Other rules:
   server and follows the requester: `release.ViaFor` from the event client
   (`source.pushes.requested_client` carries it for `publish_now`), `github`
   when a push has no requester; never read from a request.
+- **Access** (`access` on an app: public|team|organization; docs/access.md):
+  `odyssey-agent access` is the gate. Agent env: `ODYSSEY_ACCESS_ENABLED`,
+  `ODYSSEY_ACCESS_VERIFY_URL`, `ODYSSEY_ACCESS_SECRET`. Gate env:
+  `ODYSSEY_ACCESS_ISSUER`, `ODYSSEY_ACCESS_JWKS_URL`,
+  `ODYSSEY_ACCESS_INSECURE_ISSUER`, `ODYSSEY_ACCESS_HEALTH_LISTEN`. The agent
+  lists `odicea.access` in `capabilities.apis` (`fleet.CapabilityAccess`) only
+  when it can enforce; a protected app never stays exposed when protection
+  cannot be applied (fail closed).
 - **New permission**: add it to `iam/permissions.json`, run `make gen`, use
   `permission.X`, then run `make iam-sync`.
 - **Endpoint change**: update `api/openapi.yaml` (shapes + `x-permissions`)

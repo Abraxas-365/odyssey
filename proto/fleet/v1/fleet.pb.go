@@ -786,6 +786,10 @@ type Capabilities struct {
 	KubernetesVersion string                 `protobuf:"bytes,1,opt,name=kubernetes_version,json=kubernetesVersion,proto3" json:"kubernetes_version,omitempty"`
 	// apis are the optional platform APIs installed, by API group
 	// (e.g. "postgresql.cnpg.io", "kyverno.io", "gateway.networking.k8s.io").
+	// It also lists "odicea.access" when the agent can protect apps with the
+	// sign-in gate (access mode team/organization): the gate is installed and
+	// configured AND the cluster has traefik.io. An agent that does not list it
+	// (every agent older than 1e too) must not be sent a protected app.
 	Apis           []string `protobuf:"bytes,2,rep,name=apis,proto3" json:"apis,omitempty"`
 	IngressClasses []string `protobuf:"bytes,3,rep,name=ingress_classes,json=ingressClasses,proto3" json:"ingress_classes,omitempty"`
 	StorageClasses []string `protobuf:"bytes,4,rep,name=storage_classes,json=storageClasses,proto3" json:"storage_classes,omitempty"`
@@ -1367,13 +1371,16 @@ type App struct {
 	// name is the app's DNS-label name in the cluster.
 	Name string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	// revision grows with every deployment of the environment.
-	Revision      int64             `protobuf:"varint,5,opt,name=revision,proto3" json:"revision,omitempty"`
-	Image         string            `protobuf:"bytes,6,opt,name=image,proto3" json:"image,omitempty"`
-	Port          int32             `protobuf:"varint,7,opt,name=port,proto3" json:"port,omitempty"`
-	HealthPath    string            `protobuf:"bytes,8,opt,name=health_path,json=healthPath,proto3" json:"health_path,omitempty"`
-	Replicas      int32             `protobuf:"varint,9,opt,name=replicas,proto3" json:"replicas,omitempty"`
-	Env           map[string]string `protobuf:"bytes,10,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Labels        map[string]string `protobuf:"bytes,11,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Revision   int64             `protobuf:"varint,5,opt,name=revision,proto3" json:"revision,omitempty"`
+	Image      string            `protobuf:"bytes,6,opt,name=image,proto3" json:"image,omitempty"`
+	Port       int32             `protobuf:"varint,7,opt,name=port,proto3" json:"port,omitempty"`
+	HealthPath string            `protobuf:"bytes,8,opt,name=health_path,json=healthPath,proto3" json:"health_path,omitempty"`
+	Replicas   int32             `protobuf:"varint,9,opt,name=replicas,proto3" json:"replicas,omitempty"`
+	Env        map[string]string `protobuf:"bytes,10,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Labels     map[string]string `protobuf:"bytes,11,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// access says who may open the app (1e "Quién puede abrirla"). An agent
+	// without the gate refuses (fail closed) any mode other than public.
+	Access        *Access `protobuf:"bytes,12,opt,name=access,proto3" json:"access,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1485,6 +1492,62 @@ func (x *App) GetLabels() map[string]string {
 	return nil
 }
 
+func (x *App) GetAccess() *Access {
+	if x != nil {
+		return x.Access
+	}
+	return nil
+}
+
+// Access is the app's exposure policy.
+type Access struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mode is "public" (anyone with the link), "team" (users of the app's
+	// organization) or "organization" (any user of the IAMKit environment).
+	// Empty means "public" and exists only for revisions created before 1e;
+	// the control plane always sends an explicit mode from 1e on.
+	Mode          string `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Access) Reset() {
+	*x = Access{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Access) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Access) ProtoMessage() {}
+
+func (x *Access) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Access.ProtoReflect.Descriptor instead.
+func (*Access) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *Access) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
 // AppReport carries what the agent observes. A full report (sent once per
 // stream, right after Hello) lists every app; the rest carry only changes.
 type AppReport struct {
@@ -1497,7 +1560,7 @@ type AppReport struct {
 
 func (x *AppReport) Reset() {
 	*x = AppReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1509,7 +1572,7 @@ func (x *AppReport) String() string {
 func (*AppReport) ProtoMessage() {}
 
 func (x *AppReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[22]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1522,7 +1585,7 @@ func (x *AppReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppReport.ProtoReflect.Descriptor instead.
 func (*AppReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{22}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *AppReport) GetFull() bool {
@@ -1559,7 +1622,7 @@ type AppStatus struct {
 
 func (x *AppStatus) Reset() {
 	*x = AppStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1571,7 +1634,7 @@ func (x *AppStatus) String() string {
 func (*AppStatus) ProtoMessage() {}
 
 func (x *AppStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[23]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1584,7 +1647,7 @@ func (x *AppStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppStatus.ProtoReflect.Descriptor instead.
 func (*AppStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{23}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AppStatus) GetEnvironmentId() string {
@@ -1730,7 +1793,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\aLogLine\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text\"\xdb\x03\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"\x85\x04\n" +
 	"\x03App\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -1745,13 +1808,16 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\breplicas\x18\t \x01(\x05R\breplicas\x12(\n" +
 	"\x03env\x18\n" +
 	" \x03(\v2\x16.fleet.v1.App.EnvEntryR\x03env\x121\n" +
-	"\x06labels\x18\v \x03(\v2\x19.fleet.v1.App.LabelsEntryR\x06labels\x1a6\n" +
+	"\x06labels\x18\v \x03(\v2\x19.fleet.v1.App.LabelsEntryR\x06labels\x12(\n" +
+	"\x06access\x18\f \x01(\v2\x10.fleet.v1.AccessR\x06access\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"H\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1c\n" +
+	"\x06Access\x12\x12\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\"H\n" +
 	"\tAppReport\x12\x12\n" +
 	"\x04full\x18\x01 \x01(\bR\x04full\x12'\n" +
 	"\x04apps\x18\x02 \x03(\v2\x13.fleet.v1.AppStatusR\x04apps\"\xf4\x01\n" +
@@ -1783,7 +1849,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -1807,17 +1873,18 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*BuildLog)(nil),           // 19: fleet.v1.BuildLog
 	(*LogLine)(nil),            // 20: fleet.v1.LogLine
 	(*App)(nil),                // 21: fleet.v1.App
-	(*AppReport)(nil),          // 22: fleet.v1.AppReport
-	(*AppStatus)(nil),          // 23: fleet.v1.AppStatus
-	nil,                        // 24: fleet.v1.App.EnvEntry
-	nil,                        // 25: fleet.v1.App.LabelsEntry
+	(*Access)(nil),             // 22: fleet.v1.Access
+	(*AppReport)(nil),          // 23: fleet.v1.AppReport
+	(*AppStatus)(nil),          // 24: fleet.v1.AppStatus
+	nil,                        // 25: fleet.v1.App.EnvEntry
+	nil,                        // 26: fleet.v1.App.LabelsEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
 	8,  // 1: fleet.v1.RenewResponse.certificate:type_name -> fleet.v1.Certificate
 	8,  // 2: fleet.v1.RecoverResponse.certificate:type_name -> fleet.v1.Certificate
 	11, // 3: fleet.v1.AgentMessage.hello:type_name -> fleet.v1.Hello
-	22, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
+	23, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
 	17, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
 	19, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
 	21, // 7: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
@@ -1828,24 +1895,25 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	15, // 12: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
 	18, // 13: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
 	20, // 14: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
-	24, // 15: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	25, // 16: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
-	23, // 17: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
-	2,  // 18: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 19: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 20: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 21: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 22: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 23: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 24: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 25: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 26: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 27: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	23, // [23:28] is the sub-list for method output_type
-	18, // [18:23] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	25, // 15: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	26, // 16: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	22, // 17: fleet.v1.App.access:type_name -> fleet.v1.Access
+	24, // 18: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
+	2,  // 19: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 20: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 21: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 22: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 23: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 24: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 25: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 26: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 27: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 28: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	24, // [24:29] is the sub-list for method output_type
+	19, // [19:24] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -1870,7 +1938,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

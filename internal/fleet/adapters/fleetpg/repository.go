@@ -415,10 +415,11 @@ type spec struct {
 	Replicas   int               `json:"replicas"`
 	Env        map[string]string `json:"env"`
 	Labels     map[string]string `json:"labels"`
+	Access     string            `json:"access,omitempty"`
 }
 
 func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
-	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels})
+	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels, Access: a.Access})
 	if err != nil {
 		return false, errx.Wrap(err, "encode app", errx.TypeInternal)
 	}
@@ -452,7 +453,7 @@ func (r appRow) app() (fleet.App, error) {
 		return fleet.App{}, errx.Wrap(err, "decode app", errx.TypeInternal)
 	}
 	a := r.App
-	a.Image, a.Port, a.HealthPath, a.Replicas, a.Env, a.Labels = s.Image, s.Port, s.HealthPath, s.Replicas, s.Env, s.Labels
+	a.Image, a.Port, a.HealthPath, a.Replicas, a.Env, a.Labels, a.Access = s.Image, s.Port, s.HealthPath, s.Replicas, s.Env, s.Labels, s.Access
 	return a, nil
 }
 

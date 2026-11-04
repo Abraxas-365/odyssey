@@ -127,6 +127,10 @@ message Capabilities {
   string kubernetes_version = 1;
   // apis are the optional platform APIs installed, by API group
   // (e.g. "postgresql.cnpg.io", "kyverno.io", "gateway.networking.k8s.io").
+  // It also lists "odicea.access" when the agent can protect apps with the
+  // sign-in gate (access mode team/organization): the gate is installed and
+  // configured AND the cluster has traefik.io. An agent that does not list it
+  // (every agent older than 1e too) must not be sent a protected app.
   repeated string apis = 2;
   repeated string ingress_classes = 3;
   repeated string storage_classes = 4;
@@ -215,6 +219,18 @@ message App {
   int32 replicas = 9;
   map<string, string> env = 10;
   map<string, string> labels = 11;
+  // access says who may open the app (1e "Quién puede abrirla"). An agent
+  // without the gate refuses (fail closed) any mode other than public.
+  Access access = 12;
+}
+
+// Access is the app's exposure policy.
+message Access {
+  // mode is "public" (anyone with the link), "team" (users of the app's
+  // organization) or "organization" (any user of the IAMKit environment).
+  // Empty means "public" and exists only for revisions created before 1e;
+  // the control plane always sends an explicit mode from 1e on.
+  string mode = 1;
 }
 
 // AppReport carries what the agent observes. A full report (sent once per

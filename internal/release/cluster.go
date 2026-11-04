@@ -30,6 +30,10 @@ type DesiredApp struct {
 	// Labels identify the app's objects (project, environment, release,
 	// deployment).
 	Labels map[string]string `json:"labels"`
+	// Access is who may open the app: "public", "team" or "organization"
+	// ("" = public, only for settings that predate 1e). Desired leaves it
+	// empty; the settings of the deployment fill it.
+	Access string `json:"access"`
 }
 
 // Phase is how the cluster sees an app.

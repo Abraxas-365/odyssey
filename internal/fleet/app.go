@@ -32,7 +32,22 @@ type App struct {
 	Replicas   int               `json:"replicas" db:"replicas"`
 	Env        map[string]string `json:"env" db:"-"`
 	Labels     map[string]string `json:"labels" db:"-"`
-	UpdatedAt  time.Time         `json:"updated_at" db:"updated_at"`
+	// Access is who may open the app: one of the Access* modes. "" is
+	// "public" and only exists for revisions stored before 1e.
+	Access    string    `json:"access" db:"-"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// Access modes of an app (proto App.access.mode).
+const (
+	AccessPublic       = "public"       // anyone with the link
+	AccessTeam         = "team"         // users of the app's organization
+	AccessOrganization = "organization" // any user of the IAMKit environment
+)
+
+// ValidAccess accepts a mode, or "" (public, for revisions before 1e).
+func ValidAccess(mode string) bool {
+	return mode == "" || mode == AccessPublic || mode == AccessTeam || mode == AccessOrganization
 }
 
 // Validate checks what the release domain hands over (it validated the
@@ -47,6 +62,8 @@ func (a App) Validate() error {
 		return errx.Validation("app revision must be positive")
 	case a.Image == "":
 		return errx.Validation("app image is required")
+	case !ValidAccess(a.Access):
+		return errx.Validation("app access must be public, team or organization")
 	}
 	return nil
 }

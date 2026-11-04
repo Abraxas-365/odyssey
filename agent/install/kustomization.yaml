@@ -16,6 +16,7 @@ resources:
   - rbac.yaml
   - builds.yaml
   - deployment.yaml
+  - access.yaml
 images:
   - name: odyssey-agent
     newName: odyssey-agent

@@ -1,0 +1,154 @@
+# The sign-in gate ("Quién puede abrirla"): `odyssey-agent access`, the same
+# image as the agent. Traefik asks it (forwardAuth) before an app whose
+# access is "team" or "organization" gets a request; see docs/access.md.
+#
+# To turn protection on, an install sets, in this file's Deployment and the
+# agent's (the k3d overlay in deploy/k3d/agent shows it):
+#   ODYSSEY_ACCESS_ISSUER     the control plane's PUBLIC base URL (here)
+#   ODYSSEY_ACCESS_JWKS_URL   optional: where the gate fetches the signing keys
+#                             when the cluster reaches the control plane by
+#                             another address than browsers do (here)
+#   ODYSSEY_ACCESS_INSECURE_ISSUER=true   allow an http issuer that is not
+#                             local (https is required otherwise)
+#   ODYSSEY_ACCESS_ENABLED=true   (on the agent) the gate is installed: apps
+#                             may ask for sign-in, and the agent reports the
+#                             odicea.access capability when Traefik exists.
+# Without ENABLED the agent fails closed: such apps are not exposed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: odyssey-access
+  namespace: odyssey-system
+  labels:
+    app.kubernetes.io/part-of: odyssey
+automountServiceAccountToken: true
+---
+# Only to read its own Secret (the cookie key). The agent creates that Secret
+# (agent/controllers/app/traefik.go has the marker), so the gate cannot create
+# or read any other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: odyssey-access
+  namespace: odyssey-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["odyssey-access"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: odyssey-access
+  namespace: odyssey-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: odyssey-access
+subjects:
+  - kind: ServiceAccount
+    name: odyssey-access
+    namespace: odyssey-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odyssey-access
+  namespace: odyssey-system
+  labels:
+    app.kubernetes.io/name: odyssey-access
+    app.kubernetes.io/part-of: odyssey
+spec:
+  # One replica: used ticket ids are remembered in memory, per pod. With more
+  # replicas a ticket could be redeemed once per pod within its short life
+  # (60 s). Keep 1 until the replay cache is shared (docs/access.md).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: odyssey-access
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: odyssey-access
+    spec:
+      serviceAccountName: odyssey-access
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: access
+          image: odyssey-agent
+          imagePullPolicy: IfNotPresent
+          args: ["access"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            # PLACEHOLDER: the control plane's public base URL. The gate
+            # only works once an overlay sets it (see the header).
+            - name: ODYSSEY_ACCESS_ISSUER
+              value: https://odyssey.invalid
+            # - name: ODYSSEY_ACCESS_JWKS_URL
+            #   value: http://odyssey-api.internal:8095/.well-known/odicea-access-keys
+          ports:
+            - name: http
+              containerPort: 8098
+            - name: health
+              containerPort: 8097
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+          readinessProbe:
+            httpGet: { path: /healthz, port: health }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odyssey-access
+  namespace: odyssey-system
+  labels:
+    app.kubernetes.io/part-of: odyssey
+spec:
+  selector:
+    app.kubernetes.io/name: odyssey-access
+  ports:
+    - name: http
+      port: 8098
+      targetPort: http
+---
+# The gate answers only the ingress controller (Traefik): nobody else in the
+# cluster may ask it to verify (or mint a session for) a request. The
+# selectors below are k3s's Traefik; another install overrides them in its
+# overlay (deploy/k3d/agent shows a patch). The health port stays open for
+# the kubelet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: odyssey-access
+  namespace: odyssey-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: odyssey-access
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8098
+    - ports:
+        - port: 8097

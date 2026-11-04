@@ -32,6 +32,30 @@ type OdysseyAppSpec struct {
 	// deployment); they are copied to everything the agent creates.
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
+	// Access says who may open the app. Absent means public (an object
+	// written before access existed); the agent never exposes a protected
+	// app in a cluster that cannot protect it.
+	// +optional
+	Access *AccessSpec `json:"access,omitempty"`
+}
+
+// AccessMode is who may open an app.
+// +kubebuilder:validation:Enum=public;team;organization
+type AccessMode string
+
+const (
+	AccessPublic       AccessMode = "public"       // anyone with the link
+	AccessTeam         AccessMode = "team"         // users of the app's organization
+	AccessOrganization AccessMode = "organization" // any user of the identity environment
+)
+
+// AccessSpec is the app's exposure policy (the sign-in gate, agent/access).
+type AccessSpec struct {
+	Mode AccessMode `json:"mode"`
+	// Organization is the app's organization id: what the team mode
+	// compares the user's organization with.
+	// +optional
+	Organization string `json:"organization,omitempty"`
 }
 
 // Phase is how the cluster sees the app at status.observedRevision.
@@ -61,6 +85,11 @@ type OdysseyAppStatus struct {
 	// ObservedRevision is the spec revision this status describes.
 	// +optional
 	ObservedRevision int64 `json:"observedRevision,omitempty"`
+	// ObservedGeneration is the metadata.generation of the spec this status
+	// describes. A spec change at the same revision (e.g. the access mode)
+	// bumps the generation: the status is stale until the agent re-observes.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional
 	Phase Phase `json:"phase,omitempty"`
 	// +optional

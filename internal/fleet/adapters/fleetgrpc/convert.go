@@ -46,7 +46,7 @@ func appToProto(a fleet.App) *fleetv1.App {
 	return &fleetv1.App{
 		OrganizationId: a.Organization.String(), ProjectId: a.Project.String(), EnvironmentId: a.Environment.String(),
 		Name: a.Name, Revision: a.Revision, Image: a.Image, Port: int32(a.Port), HealthPath: a.HealthPath,
-		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels,
+		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels, Access: &fleetv1.Access{Mode: a.Access},
 	}
 }
 

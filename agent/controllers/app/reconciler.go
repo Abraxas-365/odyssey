@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ import (
 // progressEvery is how often a rollout in progress is re-observed (pod
 // events also trigger reconciles; this catches time-based failures).
 const progressEvery = 3 * time.Second
+
+// protectedResync is how often a settled protected app re-checks its
+// Middlewares (a safety net next to the watch).
+const protectedResync = 10 * time.Minute
 
 // The agent's permissions (make gen → agent/install/rbac/role.yaml). Owner
 // references garbage-collect what it creates, so it deletes only the
@@ -52,6 +57,12 @@ type Reconciler struct {
 	// health check before the app is reported failed (default 2 min; keep it
 	// below Config.ReadyDeadline, both below the control plane's 5 min).
 	HealthGrace time.Duration
+	// Exposure puts the sign-in gate in front of apps whose access is not
+	// public (nil: the cluster cannot protect apps, so none is exposed).
+	Exposure Exposure
+	// Owned are more kinds the app owns and reacts to (the Exposure's
+	// Middlewares, when the cluster has them at startup).
+	Owned []client.Object
 	// Now is the clock (tests); nil uses time.Now.
 	Now func() time.Time
 }
@@ -68,12 +79,16 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.API == nil {
 		r.API = mgr.GetAPIReader()
 	}
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		// Spec changes only: the agent's own status writes need no new pass.
 		For(&v1alpha1.OdysseyApp{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&networkingv1.Ingress{}).
+		Owns(&networkingv1.Ingress{})
+	for _, o := range r.Owned {
+		b = b.Owns(o) // a deleted or edited Middleware is put back
+	}
+	return b.
 		// Pods are owned by ReplicaSets; map them to their app by label.
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
 			name := o.GetLabels()[LabelApp]
@@ -115,19 +130,57 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			Message: fmt.Sprintf("host %s is already used by %s", r.Config.host(&a), taken)})
 	}
 
+	// Fail closed: an app that asks for sign-in is never exposed where
+	// nothing can enforce it, nor while its protection is being applied.
+	protected := accessMode(&a) != v1alpha1.AccessPublic
+	ing := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: a.Name, Namespace: a.Namespace}}
+	unexpose := func() error { return client.IgnoreNotFound(r.Client.Delete(ctx, ing.DeepCopy())) }
+	if protected && (r.Exposure == nil || !r.Exposure.Available(ctx)) {
+		if err := unexpose(); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.report(ctx, &a, Observation{Phase: v1alpha1.PhaseFailed, Reason: v1alpha1.ReasonConfig, Message: UnavailableMessage})
+	}
+	if protected {
+		if err := r.Exposure.Protect(ctx, &a, policyOf(&a, r.Config)); err != nil {
+			return ctrl.Result{}, failClosed(err, unexpose())
+		}
+	}
+
 	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: a.Name, Namespace: a.Namespace}}
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: a.Name, Namespace: a.Namespace}}
-	ing := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: a.Name, Namespace: a.Namespace}}
-	for _, x := range []struct {
+	type step struct {
 		obj    client.Object
 		mutate func()
-	}{
-		{d, func() { mutateDeployment(d, &a, r.Config) }},
-		{svc, func() { mutateService(svc, &a) }},
-		{ing, func() { mutateIngress(ing, &a, r.Config) }},
-	} {
-		if done, res, err := r.ensure(ctx, &a, x.obj, x.mutate); done {
+	}
+	ingStep := step{ing, func() {
+		mutateIngress(ing, &a, r.Config)
+		applyExposure(ing, r.Exposure, &a, protected)
+	}}
+	steps := []step{{d, func() { mutateDeployment(d, &a, r.Config) }}, {svc, func() { mutateService(svc, &a) }}, ingStep}
+	if protected {
+		// The existing Ingress gets the gate first, before anything else is
+		// written (an app that was public is exposed until it does).
+		steps = append([]step{ingStep}, steps[:2]...)
+	}
+	for _, x := range steps {
+		var onInvalid func() error
+		if protected && x.obj == client.Object(ing) {
+			onInvalid = unexpose // an invalid update must not leave the old, open Ingress live
+		}
+		done, res, err := r.ensure(ctx, &a, x.obj, x.mutate, onInvalid)
+		if protected && err != nil && x.obj == client.Object(ing) {
+			err = failClosed(err, unexpose())
+		}
+		if done {
 			return res, err
+		}
+	}
+
+	if !protected && r.Exposure != nil {
+		// After the Ingress stopped referencing them.
+		if err := r.Exposure.Unprotect(ctx, &a); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -143,12 +196,26 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if o.Phase == v1alpha1.PhaseProgressing {
 		return ctrl.Result{RequeueAfter: progressEvery}, nil
 	}
+	if protected {
+		// Middlewares may not be watched (Traefik installed after the agent
+		// started): look again from time to time.
+		return ctrl.Result{RequeueAfter: protectedResync}, nil
+	}
 	return ctrl.Result{}, nil
+}
+
+// failClosed is err, after removing the Ingress (unexposeErr is that attempt's
+// result): when protection cannot be applied the app must not stay open.
+func failClosed(err, unexposeErr error) error {
+	if unexposeErr != nil {
+		return errors.Join(err, unexposeErr)
+	}
+	return err
 }
 
 // ensure creates or updates one of a's objects. done reports that the pass
 // must stop there (with res, err).
-func (r *Reconciler) ensure(ctx context.Context, a *v1alpha1.OdysseyApp, obj client.Object, mutate func()) (done bool, res ctrl.Result, err error) {
+func (r *Reconciler) ensure(ctx context.Context, a *v1alpha1.OdysseyApp, obj client.Object, mutate func(), onInvalid func() error) (done bool, res ctrl.Result, err error) {
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
 		mutate()
 		return controllerutil.SetControllerReference(a, obj, r.Client.Scheme())
@@ -170,6 +237,11 @@ func (r *Reconciler) ensure(ctx context.Context, a *v1alpha1.OdysseyApp, obj cli
 		return true, ctrl.Result{}, r.report(ctx, a, Observation{Phase: v1alpha1.PhaseFailed, Reason: v1alpha1.ReasonConfig,
 			Message: fmt.Sprintf("a %s named %s already exists in %s and is not managed by Odyssey", kind, a.Name, a.Namespace)})
 	case apierrors.IsInvalid(err):
+		if onInvalid != nil {
+			if uerr := onInvalid(); uerr != nil {
+				return true, ctrl.Result{}, errors.Join(err, uerr)
+			}
+		}
 		return true, ctrl.Result{}, r.report(ctx, a, Observation{Phase: v1alpha1.PhaseFailed, Reason: v1alpha1.ReasonConfig, Message: firstLine(err.Error(), "")})
 	}
 	return true, ctrl.Result{}, err
@@ -181,11 +253,11 @@ func (r *Reconciler) ensure(ctx context.Context, a *v1alpha1.OdysseyApp, obj cli
 // health. A new revision starts over.
 func (r *Reconciler) report(ctx context.Context, a *v1alpha1.OdysseyApp, o Observation) error {
 	s := a.Status
-	if s.ObservedRevision == a.Spec.Revision && (s.Phase == v1alpha1.PhaseFailed || s.Phase == v1alpha1.PhaseReady) {
+	if s.ObservedRevision == a.Spec.Revision && s.ObservedGeneration == a.Generation && (s.Phase == v1alpha1.PhaseFailed || s.Phase == v1alpha1.PhaseReady) {
 		return nil
 	}
 	next := v1alpha1.OdysseyAppStatus{
-		ObservedRevision: a.Spec.Revision, Phase: o.Phase, Reason: o.Reason, Message: o.Message,
+		ObservedRevision: a.Spec.Revision, ObservedGeneration: a.Generation, Phase: o.Phase, Reason: o.Reason, Message: o.Message,
 		ReadyReplicas: o.ReadyReplicas, URL: r.Config.URL(a),
 	}
 	if next == s {

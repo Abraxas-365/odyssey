@@ -151,12 +151,12 @@ func TestClusters(t *testing.T) {
 
 	// sessions: connected while the current session beats; a stale one is ignored
 	s1, s2 := fleet.NewSession(), fleet.NewSession()
-	info := fleet.Agent{Version: "v1", Capabilities: fleet.Capabilities{KubernetesVersion: "v1.31.0", APIs: []string{"networking.k8s.io/v1"}}}
+	info := fleet.Agent{Version: "v1", Capabilities: fleet.Capabilities{KubernetesVersion: "v1.31.0", APIs: []string{"networking.k8s.io/v1", fleet.CapabilityAccess}}}
 	notFound(t, "cross-tenant session", repo.SetSession(ctx, other, c.ID, s1, info))
 	if err := repo.SetSession(ctx, org, c.ID, s1, info); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := repo.FindCluster(ctx, org, c.ID); !got.Connected || got.Agent.Version != "v1" || got.Agent.Capabilities.KubernetesVersion != "v1.31.0" || got.LastSeenAt == nil {
+	if got, _ := repo.FindCluster(ctx, org, c.ID); !got.Connected || got.Agent.Version != "v1" || got.Agent.Capabilities.KubernetesVersion != "v1.31.0" || !got.Agent.Capabilities.CanProtect() || got.LastSeenAt == nil {
 		t.Fatalf("connected %+v", got)
 	}
 	if ok, err := repo.ObserveHeartbeat(ctx, org, c.ID, s1, "s3"); !ok || err != nil {
@@ -262,7 +262,7 @@ func TestDesiredApps(t *testing.T) {
 
 	app := fleet.App{Organization: org, Project: proj, Environment: environment, Cluster: c.ID, Name: "web", Revision: 2,
 		Image: "r.local/web@sha256:00", Port: 8080, HealthPath: "/health", Replicas: 1,
-		Env: map[string]string{"TZ": "America/Lima"}, Labels: map[string]string{"team": "ventas"}}
+		Env: map[string]string{"TZ": "America/Lima"}, Labels: map[string]string{"team": "ventas"}, Access: fleet.AccessTeam}
 	if changed, err := repo.PutApp(ctx, app); err != nil || !changed {
 		t.Fatalf("put %v %v", changed, err)
 	}
@@ -280,7 +280,7 @@ func TestDesiredApps(t *testing.T) {
 		t.Fatal("another tenant overwrote the app")
 	}
 	got, err := repo.FindApp(ctx, org, c.ID, environment, "web")
-	if err != nil || got.Revision != 2 || got.Image != app.Image || got.Env["TZ"] != "America/Lima" || got.Labels["team"] != "ventas" || got.Port != 8080 {
+	if err != nil || got.Revision != 2 || got.Image != app.Image || got.Env["TZ"] != "America/Lima" || got.Labels["team"] != "ventas" || got.Port != 8080 || got.Access != fleet.AccessTeam {
 		t.Fatalf("find app %+v %v", got, err)
 	}
 	_, err = repo.FindApp(ctx, other, theirs.ID, environment, "web")

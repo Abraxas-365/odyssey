@@ -195,3 +195,14 @@ func TestBuildReportsAreCleaned(t *testing.T) {
 		}
 	}
 }
+
+func TestAppAccessModes(t *testing.T) {
+	base := fleet.App{Organization: org, Project: proj, Environment: env, Cluster: cluster, Name: "web", Revision: 1, Image: "r/web@sha256:00"}
+	for mode, valid := range map[string]bool{"": true, "public": true, "team": true, "organization": true, "everyone": false, "Team": false} {
+		a := base
+		a.Access = mode
+		if (a.Validate() == nil) != valid {
+			t.Errorf("access %q: valid=%v, want %v", mode, !valid, valid)
+		}
+	}
+}

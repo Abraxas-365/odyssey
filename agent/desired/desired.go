@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,6 +60,9 @@ type Syncer struct {
 	API client.Reader
 	// Discovery reads the Kubernetes version and API groups (nil: none).
 	Discovery discovery.DiscoveryInterface
+	// AccessGate says the agent's install has the sign-in gate configured
+	// (ODYSSEY_ACCESS_ENABLED): see CapabilityAccess.
+	AccessGate bool
 }
 
 // Rejected is what retrying cannot fix: the cluster refused the app. It is
@@ -95,8 +99,8 @@ func isUUID(s string) bool {
 	return err == nil && u != uuid.Nil && u.String() == s
 }
 
-// Apply writes the desired app unless the cluster already has the same or a
-// newer revision. A conflicting concurrent write is returned as a plain
+// Apply writes the desired app unless the cluster already has a newer
+// revision, or the same revision with the same spec. A conflicting concurrent write is returned as a plain
 // error (the caller retries and re-reads); what retrying cannot fix is a
 // *Rejected: a spec the API refuses, a cluster without the OdysseyApp CRD,
 // or permissions the agent lacks.
@@ -107,6 +111,10 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	if err := s.ensureNamespace(ctx, a); err != nil {
 		return permanent(err)
 	}
+	access, err := accessOf(a)
+	if err != nil {
+		return &Rejected{Message: err.Error()}
+	}
 	labels := make(map[string]string, len(a.GetLabels())+3)
 	for k, v := range a.GetLabels() {
 		labels[k] = v
@@ -115,11 +123,11 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	labels[LabelOrganization], labels[LabelProject], labels[LabelEnvironment] = a.GetOrganizationId(), a.GetProjectId(), a.GetEnvironmentId()
 	spec := v1alpha1.OdysseyAppSpec{
 		Revision: a.GetRevision(), Image: a.GetImage(), Port: a.GetPort(), HealthPath: a.GetHealthPath(),
-		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(),
+		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(), Access: access,
 	}
 	ns := Namespace(a.GetEnvironmentId())
 	var cur v1alpha1.OdysseyApp
-	err := s.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: a.GetName()}, &cur)
+	err = s.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: a.GetName()}, &cur)
 	switch {
 	case apierrors.IsNotFound(err):
 		obj := &v1alpha1.OdysseyApp{ObjectMeta: metav1.ObjectMeta{Name: a.GetName(), Namespace: ns, Labels: labels}, Spec: spec}
@@ -129,13 +137,34 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 		}
 	case err != nil:
 		return permanent(fmt.Errorf("read %s: %w", a.GetName(), err))
-	case cur.Spec.Revision >= a.GetRevision():
-		return nil // the same or a newer revision already got here
+	case cur.Spec.Revision > a.GetRevision():
+		return nil // a newer revision already got here
+	case cur.Spec.Revision == a.GetRevision() && equality.Semantic.DeepEqual(cur.Spec, spec):
+		return nil // the same revision with the same spec
 	default:
+		// A higher revision, or the same one whose spec differs (the control
+		// plane re-sent it, e.g. with another access mode): the desired
+		// state wins. The status is not reset: the agent re-observes it
+		// against the new spec on the next pass.
 		cur.Spec, cur.Labels = spec, labels
 		err = s.Client.Update(ctx, &cur) // resourceVersion guards against a concurrent writer
 	}
 	return permanent(err)
+}
+
+// accessOf maps the proto's access to the CRD's. An empty mode is "public":
+// it only comes from revisions created before the sign-in gate existed (the
+// control plane always sends an explicit mode now).
+func accessOf(a *fleetv1.App) (*v1alpha1.AccessSpec, error) {
+	mode := v1alpha1.AccessMode(a.GetAccess().GetMode())
+	switch mode {
+	case "":
+		mode = v1alpha1.AccessPublic
+	case v1alpha1.AccessPublic, v1alpha1.AccessTeam, v1alpha1.AccessOrganization:
+	default:
+		return nil, fmt.Errorf("app access %q is not public, team or organization", mode)
+	}
+	return &v1alpha1.AccessSpec{Mode: mode, Organization: a.GetOrganizationId()}, nil
 }
 
 func permanent(err error) error {
@@ -210,6 +239,9 @@ func statusOf(a *v1alpha1.OdysseyApp) *fleetv1.AppStatus {
 	if !isUUID(env) || a.Namespace != Namespace(env) || st.ObservedRevision < 1 {
 		return nil
 	}
+	if st.ObservedGeneration != a.Generation {
+		return nil // the spec changed after this status (same revision): not fresh yet
+	}
 	switch st.Phase {
 	case v1alpha1.PhaseProgressing, v1alpha1.PhaseReady, v1alpha1.PhaseFailed:
 	default:
@@ -240,8 +272,13 @@ func clip(s string, n int) string {
 // Platform APIs the control plane may use when present.
 var knownAPIs = []string{
 	"postgresql.cnpg.io", "kyverno.io", "keda.sh", "gateway.networking.k8s.io",
-	"cert-manager.io", "external-secrets.io",
+	"cert-manager.io", "external-secrets.io", "traefik.io",
 }
+
+// CapabilityAccess is reported among the APIs when the cluster can protect
+// apps with the sign-in gate: the gate is configured (Syncer.AccessGate) and
+// the ingress's API group exists (traefik.io today).
+const CapabilityAccess = "odicea.access"
 
 // Capabilities describes the cluster: its Kubernetes version, which known
 // platform APIs it has, and its ingress and storage classes. Whatever
@@ -257,6 +294,9 @@ func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
 				if slices.Contains(knownAPIs, g.Name) {
 					out.Apis = append(out.Apis, g.Name)
 				}
+			}
+			if s.AccessGate && slices.Contains(out.Apis, "traefik.io") {
+				out.Apis = append(out.Apis, CapabilityAccess)
 			}
 			slices.Sort(out.Apis)
 		}

@@ -22,3 +22,33 @@ patches:
         value:
           name: ODYSSEY_REGISTRY_INSECURE
           value: "true"
+  # Sign-in gate ("Quién puede abrirla"). Browsers use the API's public
+  # address; the gate (a pod) fetches the ticket keys from the host as
+  # k3d names it. Needs `make run` on :8095 (ODYSSEY_PORT).
+  - target:
+      kind: Deployment
+      name: odyssey-agent
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ODYSSEY_ACCESS_ENABLED
+          value: "true"
+  - target:
+      kind: Deployment
+      name: odyssey-access
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: odyssey-access
+      spec:
+        template:
+          spec:
+            containers:
+              - name: access
+                env:
+                  - name: ODYSSEY_ACCESS_ISSUER
+                    value: http://localhost:8095
+                  - name: ODYSSEY_ACCESS_JWKS_URL
+                    value: http://host.k3d.internal:8095/.well-known/odicea-access-keys

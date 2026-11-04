@@ -27,6 +27,11 @@ import (
 //     account token and talks to nothing but the agent's source server and
 //     the registry): it imports no Kubernetes, no gRPC/proto and no other
 //     agent package (pkg/ only); Railpack is imported only there;
+//   - agent/access is the sign-in gate (a Deployment of its own, in front of
+//     the apps): it speaks to the control plane only through the ticket
+//     contract (docs/access.md), so it imports no proto/gRPC, no
+//     controller-runtime and no other agent package; Kubernetes only through
+//     client-go (its cookie-key Secret);
 //   - in the control plane the wire format (proto/, protobuf) is used only
 //     by adapters (fleet/adapters/fleetgrpc), and gRPC only by adapters and
 //     the composition root (which builds the gateway's server).
@@ -58,6 +63,23 @@ func builderViolations(rel, p, pos string) []string {
 	for _, lib := range append(append([]string{grpcLib}, kubernetesLibs...), "google.golang.org/protobuf") {
 		if strings.HasPrefix(p, lib) {
 			out = append(out, pos+": agent/builder runs in a build's pod, which talks to no cluster API nor the control plane ("+p+")")
+		}
+	}
+	return out
+}
+
+// accessViolations: what the sign-in gate may not import.
+func accessViolations(rel, p, pos string) []string {
+	if !strings.HasPrefix(rel, "agent/access/") {
+		return nil
+	}
+	var out []string
+	if strings.HasPrefix(p, repoModule) && !strings.HasPrefix(p, repoModule+"pkg/") {
+		out = append(out, pos+": agent/access meets the control plane only through the ticket contract and imports only pkg/ ("+p+")")
+	}
+	for _, lib := range []string{grpcLib, "google.golang.org/protobuf", "sigs.k8s.io/"} {
+		if strings.HasPrefix(p, lib) {
+			out = append(out, pos+": agent/access takes no wire format nor controller-runtime ("+p+")")
 		}
 	}
 	return out
@@ -104,6 +126,7 @@ func planeViolations(files []goFile) []string {
 			p, _ := strconv.Unquote(imp.Path.Value)
 			pos := f.fset.Position(imp.Pos()).String()
 			out = append(out, builderViolations(f.rel, p, pos)...)
+			out = append(out, accessViolations(f.rel, p, pos)...)
 			if agentSide && (strings.HasPrefix(p, repoModule+"internal/") || strings.HasPrefix(p, repoModule+"cmd/")) {
 				out = append(out, pos+": the agent must not import the control plane ("+p+"); they talk through proto/")
 			}
@@ -166,7 +189,9 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"agent/builds/m.go":                                `package builds; import (_ "` + m + `agent/controllers/build"; _ "` + m + `pkg/srcarchive"; _ "` + m + `proto/fleet/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client")`,
 		"agent/controllers/build/j.go":                     `package build; import (_ "` + m + `agent/builder"; _ "k8s.io/api/batch/v1")`,
 		"internal/build/archive/a.go":                      `package archive; import _ "` + m + `pkg/srcarchive"`,
+		"agent/access/g.go":                                `package access; import (_ "github.com/golang-jwt/jwt/v5"; _ "k8s.io/client-go/kubernetes")`,
 		// violations
+		"agent/access/bad.go":                        `package access; import (_ "` + m + `proto/fleet/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client"; _ "` + m + `agent/api/v1alpha1")`,
 		"agent/builder/k.go":                         `package builder; import (_ "k8s.io/client-go/kubernetes"; _ "` + m + `agent/api/v1alpha1"; _ "google.golang.org/grpc")`,
 		"agent/builds/r.go":                          `package builds; import _ "github.com/railwayapp/railpack/core/app"`,
 		"pkg/srcarchive/bad.go":                      `package srcarchive; import _ "` + m + `internal/errx"`,
@@ -198,5 +223,8 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"agent/builder/k.go: talks to no cluster API nor the control plane (k8s.io/client-go",
 		"agent/builder/k.go: talks to no cluster API nor the control plane (google.golang.org/grpc",
 		"agent/builds/r.go: Railpack is the build pod's planner",
+		"agent/access/bad.go: agent/access meets the control plane only through the ticket contract and imports only pkg/ (github.com/Abraxas-365/odyssey/proto",
+		"agent/access/bad.go: agent/access meets the control plane only through the ticket contract and imports only pkg/ (github.com/Abraxas-365/odyssey/agent/api",
+		"agent/access/bad.go: agent/access takes no wire format nor controller-runtime (sigs.k8s.io/",
 	)
 }

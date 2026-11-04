@@ -151,6 +151,22 @@ type Capabilities struct {
 	Builder *Builder `json:"builder,omitempty"`
 }
 
+// CapabilityAccess is listed in Capabilities.APIs when the cluster can
+// protect apps with the sign-in gate (access mode team or organization). A
+// protected app must not be placed on a cluster without it: the control plane
+// refuses, and an agent without it fails closed anyway.
+const CapabilityAccess = "odicea.access"
+
+// CanProtect reports whether the cluster lists CapabilityAccess.
+func (c Capabilities) CanProtect() bool {
+	for _, x := range c.APIs {
+		if x == CapabilityAccess {
+			return true
+		}
+	}
+	return false
+}
+
 // Limits of what an agent reports (it is outside the trust boundary of
 // the control plane: a compromised cluster must not fill the database).
 const (

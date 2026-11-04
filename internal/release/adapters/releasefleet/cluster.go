@@ -27,7 +27,7 @@ func (c *Cluster) Apply(ctx context.Context, t release.Target, app release.Desir
 	err := c.fleet.Apply(ctx, fleet.App{
 		Organization: t.Organization, Project: t.Project, Environment: t.Environment, Name: app.Name,
 		Revision: app.Revision, Image: app.Image, Port: app.Port, HealthPath: app.HealthPath,
-		Replicas: app.Replicas, Env: app.Env, Labels: app.Labels,
+		Replicas: app.Replicas, Env: app.Env, Labels: app.Labels, Access: app.Access,
 	})
 	var e *errx.Error
 	if errors.As(err, &e) && (e.Type == errx.TypeBusiness || e.Type == errx.TypeValidation) {
