@@ -102,6 +102,9 @@ message AgentMessage {
     BuildLog build_log = 4;
     // secret_ack answers a ControlMessage.secret.
     SecretAck secret_ack = 5;
+    // resource_report says how the environments' resources are (2b): a full
+    // one (every resource the cluster holds) right after Hello, then changes.
+    ResourceReport resource_report = 6;
   }
 }
 
@@ -118,6 +121,10 @@ message ControlMessage {
     // secret delivers one managed secret value, sealed to the cluster's
     // secret_key. The agent answers with a secret_ack either way.
     Secret secret = 4;
+    // resource hands the agent the desired state of one resource (a
+    // database, a cache, a files volume). Applying it twice, or a generation
+    // older than the one the cluster has, changes nothing.
+    Resource resource = 5;
   }
 }
 
@@ -175,6 +182,11 @@ message Capabilities {
   // secret_stores are the ClusterSecretStores (External Secrets Operator)
   // TI registered, by name: where external secrets may be read from.
   repeated string secret_stores = 7;
+  // resource_kinds are the resources the cluster can provision (2b):
+  // "postgres" (CloudNativePG installed), "redis" (always, with a storage
+  // class) and "files" (a default storage class). An agent that does not
+  // list a kind (every agent older than 2b) must not be sent one.
+  repeated string resource_kinds = 8;
 }
 
 // SecretKey is an HPKE (RFC 9180) public key.
@@ -274,6 +286,10 @@ message App {
   // secrets are the app's secret variables (2a): references only, never a
   // value. A name here wins over the same name in env.
   repeated SecretRef secrets = 13;
+  // resources are the environment's resources the app uses (2b): the agent
+  // wires their connection (kept in the cluster, never sent) into the app's
+  // environment and does not start a revision until they are ready.
+  repeated ResourceRef resources = 14;
 }
 
 // SecretRef is one secret variable of an app.
@@ -317,9 +333,64 @@ message AppStatus {
   int64 observed_revision = 3;
   // phase is "progressing", "ready" or "failed".
   string phase = 4;
-  // reason explains a failed phase: "unhealthy", "image_pull", "crash", "config".
+  // reason explains a failed phase: "unhealthy", "image_pull", "crash", "config",
+  // "resource" (a resource the app uses did not become ready in time).
   string reason = 5;
   string message = 6;
   int32 ready_replicas = 7;
   string url = 8;
+}
+
+// ResourceRef is one resource of the environment an app uses (2b).
+message ResourceRef {
+  // name is the resource's name in its environment (a DNS label).
+  string name = 1;
+  // kind is "postgres", "redis" or "files".
+  string kind = 2;
+  // prefix goes before the variables the app reads it by (empty: none):
+  // postgres → DATABASE_URL, PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD;
+  // redis → REDIS_URL; files → FILES_DIR (the volume is mounted at
+  // /data/<name>). With prefix "ANALYTICS", ANALYTICS_DATABASE_URL, …
+  string prefix = 3;
+}
+
+// Resource is the desired state of one resource of an environment (2b): a
+// database (CloudNativePG), a cache (Redis) or a files volume. Its
+// credentials are made in the cluster and never leave it.
+message Resource {
+  string organization_id = 1;
+  string project_id = 2;
+  string environment_id = 3;
+  // name is unique in the environment (a DNS label, at most 30 characters).
+  string name = 4;
+  // kind is "postgres", "redis" or "files"; it never changes.
+  string kind = 5;
+  // generation grows with every change of the desired state.
+  int64 generation = 6;
+  // storage is the volume's size (a Kubernetes quantity, e.g. "1Gi"); it
+  // may grow, never shrink.
+  string storage = 7;
+  // deleted: the resource and its data are to be removed.
+  bool deleted = 8;
+}
+
+// ResourceReport carries what the agent observes of resources. full: the
+// report holds every resource status the agent has (the control plane forgets
+// the statuses missing from it); a set too big for one message goes as
+// partial reports instead.
+message ResourceReport {
+  bool full = 1;
+  repeated ResourceStatus resources = 2;
+}
+
+message ResourceStatus {
+  string environment_id = 1;
+  string name = 2;
+  // observed_generation is the desired generation the status describes.
+  int64 observed_generation = 3;
+  // phase is "provisioning", "ready", "failed" or "deleted" (gone from the
+  // cluster: the control plane may forget it).
+  string phase = 4;
+  // message says why it is not ready, in plain words.
+  string message = 5;
 }

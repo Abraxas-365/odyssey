@@ -162,6 +162,9 @@ type Capabilities struct {
 	// SecretStores are the ClusterSecretStores external secrets may be read
 	// from, by name.
 	SecretStores []string `json:"secret_stores,omitempty"`
+	// ResourceKinds are the resources the cluster can provision (2b):
+	// "postgres", "redis", "files". An agent older than 2b lists none.
+	ResourceKinds []string `json:"resource_kinds"`
 }
 
 // SecretKey is a cluster's public key for managed secrets (pkg/secretbox).
@@ -226,6 +229,9 @@ const (
 
 // Validate bounds what an agent says of itself.
 func (a Agent) Validate() error {
+	if len(a.Capabilities.ResourceKinds) > MaxReported {
+		return errx.Validation("too many capabilities reported")
+	}
 	if len(a.Capabilities.APIs) > MaxReported || len(a.Capabilities.IngressClasses) > MaxReported || len(a.Capabilities.StorageClasses) > MaxReported {
 		return errx.Validation("too many capabilities reported")
 	}

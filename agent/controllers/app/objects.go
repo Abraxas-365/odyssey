@@ -65,13 +65,23 @@ func labels(a *v1alpha1.OdysseyApp) map[string]string {
 }
 
 // env is the spec's env, sorted, then the secret variables (read from
-// Secrets; a secret replaces a plain variable of its name), plus PORT unless
-// the spec sets it either way.
+// Secrets; a secret replaces a plain variable of its name), then the
+// resources' (they win over both), plus PORT unless the spec sets it either way.
 func env(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
-	secret := secretEnv(a)
-	secretNames := make(map[string]bool, len(secret))
+	res := resourceEnv(a)
+	resNames := resourceNames(a)
+	var secret []corev1.EnvVar
+	for _, e := range secretEnv(a) {
+		if !resNames[e.Name] {
+			secret = append(secret, e)
+		}
+	}
+	secretNames := make(map[string]bool, len(secret)+len(res))
 	for _, e := range secret {
 		secretNames[e.Name] = true
+	}
+	for n := range resNames {
+		secretNames[n] = true
 	}
 	keys := make([]string, 0, len(a.Spec.Env))
 	for k := range a.Spec.Env {
@@ -85,6 +95,7 @@ func env(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
 		out = append(out, corev1.EnvVar{Name: k, Value: a.Spec.Env[k]})
 	}
 	out = append(out, secret...)
+	out = append(out, res...)
 	_, plain := a.Spec.Env["PORT"]
 	if !plain && !secretNames["PORT"] {
 		out = append(out, corev1.EnvVar{Name: "PORT", Value: strconv.Itoa(int(a.Spec.Port))})
@@ -114,20 +125,33 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 		Type:          appsv1.RollingUpdateDeploymentStrategyType,
 		RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &zero, MaxSurge: &one},
 	}
+	if hasFiles(a) {
+		// A ReadWriteOnce volume cannot be mounted by the old and the new pod
+		// at once: the old one goes first (a short outage, by design).
+		d.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
 	d.Spec.ProgressDeadlineSeconds = &deadline
 	d.Spec.RevisionHistoryLimit = ptr(int32(3))
+	vols, mounts := resourceVolumes(a)
+	podSecurity := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
+	if len(vols) > 0 {
+		group, onMismatch := filesGroup, corev1.FSGroupChangeOnRootMismatch
+		podSecurity.FSGroup, podSecurity.FSGroupChangePolicy = &group, &onMismatch
+	}
 	d.Spec.Template = corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{Labels: pod, Annotations: podAnnotations(a)},
 		Spec: corev1.PodSpec{
 			AutomountServiceAccountToken: &no,
 			EnableServiceLinks:           &no,
-			SecurityContext:              &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+			SecurityContext:              podSecurity,
+			Volumes:                      vols,
 			Containers: []corev1.Container{{
 				Name:            "app",
 				Image:           a.Spec.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: a.Spec.Port, Protocol: corev1.ProtocolTCP}},
 				Env:             env(a),
+				VolumeMounts:    mounts,
 				// Readiness only: a version is "ready" when its health check
 				// passes. Liveness (restarts) is per-app configuration, later.
 				ReadinessProbe: &corev1.Probe{
@@ -151,13 +175,20 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 	}
 }
 
-// podAnnotations roll the pods when the app's secrets change (none: apps
-// without secrets keep the template they had).
+// podAnnotations roll the pods when the app's secrets or resources change
+// (none: apps without either keep the template they had).
 func podAnnotations(a *v1alpha1.OdysseyApp) map[string]string {
+	var out map[string]string
 	if h := secretsHash(a); h != "" {
-		return map[string]string{AnnotationSecrets: h}
+		out = map[string]string{AnnotationSecrets: h}
 	}
-	return nil
+	if h := resourcesHash(a); h != "" {
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[AnnotationResources] = h
+	}
+	return out
 }
 
 func mutateService(s *corev1.Service, a *v1alpha1.OdysseyApp) {

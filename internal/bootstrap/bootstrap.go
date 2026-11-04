@@ -45,8 +45,11 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasemcp"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releaseresource"
 	"github.com/Abraxas-365/odyssey/internal/release/releasemodule"
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
+	"github.com/Abraxas-365/odyssey/internal/resource/adapters/resourcemcp"
+	"github.com/Abraxas-365/odyssey/internal/resource/resourcemodule"
 	"github.com/Abraxas-365/odyssey/internal/server"
 	"github.com/Abraxas-365/odyssey/internal/source"
 	"github.com/Abraxas-365/odyssey/internal/source/adapters/sourcemcp"
@@ -254,6 +257,7 @@ func Migrations() []migrate.Set {
 		{Owner: buildmodule.Schema, Files: buildmodule.Migrations()},
 		{Owner: sourcemodule.Schema, Files: sourcemodule.Migrations()},
 		{Owner: fleetmodule.Schema, Files: fleetmodule.Migrations()},
+		{Owner: resourcemodule.Schema, Files: resourcemodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
 	}
@@ -284,9 +288,10 @@ type Platform struct {
 	Sources   sourcemodule.Module
 	// Blobs stores sources and archived build logs (the gateway streams
 	// sources from it to the agents).
-	Blobs blob.Store
-	Fleet fleetmodule.Module
-	Audit auditmodule.Module
+	Blobs     blob.Store
+	Fleet     fleetmodule.Module
+	Resources resourcemodule.Module
+	Audit     auditmodule.Module
 }
 
 // Options are the process-specific parts of a Platform.
@@ -385,21 +390,28 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	if err != nil {
 		return nil, err
 	}
+	resources := resourcemodule.New(resourcemodule.Deps{DB: db, Events: events, Projects: projects.Queries, Fleet: fleets.Resources,
+		ReleaseCommands: releases.Commands, ReleaseQueries: releases.Queries, ReleaseUsage: releases.Usage})
+	// release is built first (resources need its Usage), so it learns of
+	// resources afterwards.
+	releases.UseResources(releaseresource.New(resources.Queries))
 	p := &Platform{
-		DB:       db,
-		Bus:      bus,
-		Events:   events,
-		Projects: projects,
-		Releases: releases,
-		Access:   accesses,
-		Builds:   builds,
-		Sources:  sources,
-		Blobs:    opts.Blobs,
-		Fleet:    fleets,
-		Audit:    auditmodule.New(auditmodule.Deps{DB: db}),
+		DB:        db,
+		Bus:       bus,
+		Events:    events,
+		Projects:  projects,
+		Releases:  releases,
+		Access:    accesses,
+		Builds:    builds,
+		Sources:   sources,
+		Blobs:     opts.Blobs,
+		Fleet:     fleets,
+		Resources: resources,
+		Audit:     auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
 	p.Sources.Subscribe(bus)
+	p.Resources.Subscribe(bus)
 	bus.Seal()
 	p.Releases.Register(registry)
 	p.Builds.Register(registry)
@@ -534,6 +546,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.Builds.HTTP,
 		p.Sources.HTTP,
 		p.Fleet.HTTP,
+		p.Resources.HTTP,
 		p.Audit.HTTP,
 		assistantRoutes,
 	)
@@ -562,6 +575,7 @@ func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
 				return &releasemcp.ConnectedRepo{Repository: c.Repository, Branch: c.Branch, Root: c.Root, LastCommit: c.LastCommit}, nil
 			}}),
 		sourcemcp.Tools(p.Projects.Queries, p.Sources.Commands, sources, sourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
+		resourcemcp.Tools(p.Projects.Queries, p.Resources.Commands, p.Resources.Queries, resourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
 	)
 }
 

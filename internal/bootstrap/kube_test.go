@@ -185,12 +185,23 @@ func clusterFor(t *testing.T, ctx context.Context) (string, int) {
 	if image == "" {
 		image = "rancher/k3s:v1.35.5-k3s1"
 	}
-	crd, err := filepath.Abs("../../agent/install/crd/odyssey.dev_odysseyapps.yaml")
-	if err != nil {
+	// k3s names a manifest's Addon after its file name up to the first dot,
+	// so the agent's CRDs (odyssey.dev_*.yaml all become "odyssey") go in
+	// one file: two would race for the same Addon and one would be lost.
+	var crds []byte
+	for _, name := range []string{"odyssey.dev_odysseyapps.yaml", "odyssey.dev_odysseyresources.yaml"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "agent", "install", "crd", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		crds = append(append(crds, "---\n"...), b...)
+	}
+	crd := filepath.Join(t.TempDir(), "odyssey-crds.yaml")
+	if err := os.WriteFile(crd, crds, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// The module disables k3s' Traefik; keep it: the test goes through the
-	// ingress like a user would. k3s applies the CRD at startup.
+	// ingress like a user would. k3s applies the CRDs at startup.
 	k, err := k3s.Run(ctx, image,
 		k3s.WithManifest(crd),
 		testcontainers.WithCmd("server", "--tls-san=localhost", "--tls-san=127.0.0.1"),
@@ -217,7 +228,9 @@ func clusterFor(t *testing.T, ctx context.Context) (string, int) {
 	return path, int(mapped.Num())
 }
 
-// waitForCRD waits until the cluster serves OdysseyApps.
+// waitForCRD waits until the cluster serves OdysseyApps and
+// OdysseyResources (k3s applies each manifest on its own: the group can be
+// served before both kinds are).
 func waitForCRD(t *testing.T, ctx context.Context, kubeconfig string) {
 	t.Helper()
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -229,13 +242,19 @@ func waitForCRD(t *testing.T, ctx context.Context, kubeconfig string) {
 		t.Fatal(err)
 	}
 	for {
-		_, err := cs.Discovery().ServerResourcesForGroupVersion("odyssey.dev/v1alpha1")
+		list, err := cs.Discovery().ServerResourcesForGroupVersion("odyssey.dev/v1alpha1")
 		if err == nil {
-			return
+			served := map[string]bool{}
+			for _, r := range list.APIResources {
+				served[r.Name] = true
+			}
+			if served["odysseyapps"] && served["odysseyresources"] {
+				return
+			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("the OdysseyApp CRD never became available: %v", err)
+			t.Fatalf("the agent's CRDs never became available: %v", err)
 		case <-time.After(time.Second):
 		}
 	}

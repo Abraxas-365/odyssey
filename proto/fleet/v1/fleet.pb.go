@@ -514,6 +514,7 @@ type AgentMessage struct {
 	//	*AgentMessage_BuildReport
 	//	*AgentMessage_BuildLog
 	//	*AgentMessage_SecretAck
+	//	*AgentMessage_ResourceReport
 	Message       isAgentMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -601,6 +602,15 @@ func (x *AgentMessage) GetSecretAck() *SecretAck {
 	return nil
 }
 
+func (x *AgentMessage) GetResourceReport() *ResourceReport {
+	if x != nil {
+		if x, ok := x.Message.(*AgentMessage_ResourceReport); ok {
+			return x.ResourceReport
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Message interface {
 	isAgentMessage_Message()
 }
@@ -631,6 +641,12 @@ type AgentMessage_SecretAck struct {
 	SecretAck *SecretAck `protobuf:"bytes,5,opt,name=secret_ack,json=secretAck,proto3,oneof"`
 }
 
+type AgentMessage_ResourceReport struct {
+	// resource_report says how the environments' resources are (2b): a full
+	// one (every resource the cluster holds) right after Hello, then changes.
+	ResourceReport *ResourceReport `protobuf:"bytes,6,opt,name=resource_report,json=resourceReport,proto3,oneof"`
+}
+
 func (*AgentMessage_Hello) isAgentMessage_Message() {}
 
 func (*AgentMessage_Report) isAgentMessage_Message() {}
@@ -641,6 +657,8 @@ func (*AgentMessage_BuildLog) isAgentMessage_Message() {}
 
 func (*AgentMessage_SecretAck) isAgentMessage_Message() {}
 
+func (*AgentMessage_ResourceReport) isAgentMessage_Message() {}
+
 type ControlMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Message:
@@ -649,6 +667,7 @@ type ControlMessage struct {
 	//	*ControlMessage_Build
 	//	*ControlMessage_CancelBuild
 	//	*ControlMessage_Secret
+	//	*ControlMessage_Resource
 	Message       isControlMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -727,6 +746,15 @@ func (x *ControlMessage) GetSecret() *Secret {
 	return nil
 }
 
+func (x *ControlMessage) GetResource() *Resource {
+	if x != nil {
+		if x, ok := x.Message.(*ControlMessage_Resource); ok {
+			return x.Resource
+		}
+	}
+	return nil
+}
+
 type isControlMessage_Message interface {
 	isControlMessage_Message()
 }
@@ -754,6 +782,13 @@ type ControlMessage_Secret struct {
 	Secret *Secret `protobuf:"bytes,4,opt,name=secret,proto3,oneof"`
 }
 
+type ControlMessage_Resource struct {
+	// resource hands the agent the desired state of one resource (a
+	// database, a cache, a files volume). Applying it twice, or a generation
+	// older than the one the cluster has, changes nothing.
+	Resource *Resource `protobuf:"bytes,5,opt,name=resource,proto3,oneof"`
+}
+
 func (*ControlMessage_Apply) isControlMessage_Message() {}
 
 func (*ControlMessage_Build) isControlMessage_Message() {}
@@ -761,6 +796,8 @@ func (*ControlMessage_Build) isControlMessage_Message() {}
 func (*ControlMessage_CancelBuild) isControlMessage_Message() {}
 
 func (*ControlMessage_Secret) isControlMessage_Message() {}
+
+func (*ControlMessage_Resource) isControlMessage_Message() {}
 
 // Secret is a managed secret's value on its way to the cluster.
 type Secret struct {
@@ -1006,7 +1043,12 @@ type Capabilities struct {
 	SecretKey *SecretKey `protobuf:"bytes,6,opt,name=secret_key,json=secretKey,proto3" json:"secret_key,omitempty"`
 	// secret_stores are the ClusterSecretStores (External Secrets Operator)
 	// TI registered, by name: where external secrets may be read from.
-	SecretStores  []string `protobuf:"bytes,7,rep,name=secret_stores,json=secretStores,proto3" json:"secret_stores,omitempty"`
+	SecretStores []string `protobuf:"bytes,7,rep,name=secret_stores,json=secretStores,proto3" json:"secret_stores,omitempty"`
+	// resource_kinds are the resources the cluster can provision (2b):
+	// "postgres" (CloudNativePG installed), "redis" (always, with a storage
+	// class) and "files" (a default storage class). An agent that does not
+	// list a kind (every agent older than 2b) must not be sent one.
+	ResourceKinds []string `protobuf:"bytes,8,rep,name=resource_kinds,json=resourceKinds,proto3" json:"resource_kinds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1086,6 +1128,13 @@ func (x *Capabilities) GetSecretKey() *SecretKey {
 func (x *Capabilities) GetSecretStores() []string {
 	if x != nil {
 		return x.SecretStores
+	}
+	return nil
+}
+
+func (x *Capabilities) GetResourceKinds() []string {
+	if x != nil {
+		return x.ResourceKinds
 	}
 	return nil
 }
@@ -1673,7 +1722,11 @@ type App struct {
 	Access *Access `protobuf:"bytes,12,opt,name=access,proto3" json:"access,omitempty"`
 	// secrets are the app's secret variables (2a): references only, never a
 	// value. A name here wins over the same name in env.
-	Secrets       []*SecretRef `protobuf:"bytes,13,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	Secrets []*SecretRef `protobuf:"bytes,13,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	// resources are the environment's resources the app uses (2b): the agent
+	// wires their connection (kept in the cluster, never sent) into the app's
+	// environment and does not start a revision until they are ready.
+	Resources     []*ResourceRef `protobuf:"bytes,14,rep,name=resources,proto3" json:"resources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1795,6 +1848,13 @@ func (x *App) GetAccess() *Access {
 func (x *App) GetSecrets() []*SecretRef {
 	if x != nil {
 		return x.Secrets
+	}
+	return nil
+}
+
+func (x *App) GetResources() []*ResourceRef {
+	if x != nil {
+		return x.Resources
 	}
 	return nil
 }
@@ -2003,7 +2063,8 @@ type AppStatus struct {
 	ObservedRevision int64 `protobuf:"varint,3,opt,name=observed_revision,json=observedRevision,proto3" json:"observed_revision,omitempty"`
 	// phase is "progressing", "ready" or "failed".
 	Phase string `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
-	// reason explains a failed phase: "unhealthy", "image_pull", "crash", "config".
+	// reason explains a failed phase: "unhealthy", "image_pull", "crash", "config",
+	// "resource" (a resource the app uses did not become ready in time).
 	Reason        string `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
 	Message       string `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
 	ReadyReplicas int32  `protobuf:"varint,7,opt,name=ready_replicas,json=readyReplicas,proto3" json:"ready_replicas,omitempty"`
@@ -2098,6 +2159,318 @@ func (x *AppStatus) GetUrl() string {
 	return ""
 }
 
+// ResourceRef is one resource of the environment an app uses (2b).
+type ResourceRef struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the resource's name in its environment (a DNS label).
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// kind is "postgres", "redis" or "files".
+	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	// prefix goes before the variables the app reads it by (empty: none):
+	// postgres → DATABASE_URL, PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD;
+	// redis → REDIS_URL; files → FILES_DIR (the volume is mounted at
+	// /data/<name>). With prefix "ANALYTICS", ANALYTICS_DATABASE_URL, …
+	Prefix        string `protobuf:"bytes,3,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceRef) Reset() {
+	*x = ResourceRef{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceRef) ProtoMessage() {}
+
+func (x *ResourceRef) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceRef.ProtoReflect.Descriptor instead.
+func (*ResourceRef) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ResourceRef) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ResourceRef) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ResourceRef) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
+}
+
+// Resource is the desired state of one resource of an environment (2b): a
+// database (CloudNativePG), a cache (Redis) or a files volume. Its
+// credentials are made in the cluster and never leave it.
+type Resource struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	ProjectId      string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EnvironmentId  string                 `protobuf:"bytes,3,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	// name is unique in the environment (a DNS label, at most 30 characters).
+	Name string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	// kind is "postgres", "redis" or "files"; it never changes.
+	Kind string `protobuf:"bytes,5,opt,name=kind,proto3" json:"kind,omitempty"`
+	// generation grows with every change of the desired state.
+	Generation int64 `protobuf:"varint,6,opt,name=generation,proto3" json:"generation,omitempty"`
+	// storage is the volume's size (a Kubernetes quantity, e.g. "1Gi"); it
+	// may grow, never shrink.
+	Storage string `protobuf:"bytes,7,opt,name=storage,proto3" json:"storage,omitempty"`
+	// deleted: the resource and its data are to be removed.
+	Deleted       bool `protobuf:"varint,8,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Resource) Reset() {
+	*x = Resource{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Resource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Resource) ProtoMessage() {}
+
+func (x *Resource) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Resource.ProtoReflect.Descriptor instead.
+func (*Resource) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *Resource) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *Resource) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *Resource) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *Resource) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Resource) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Resource) GetGeneration() int64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+func (x *Resource) GetStorage() string {
+	if x != nil {
+		return x.Storage
+	}
+	return ""
+}
+
+func (x *Resource) GetDeleted() bool {
+	if x != nil {
+		return x.Deleted
+	}
+	return false
+}
+
+// ResourceReport carries what the agent observes of resources. full: the
+// report holds every resource status the agent has (the control plane forgets
+// the statuses missing from it); a set too big for one message goes as
+// partial reports instead.
+type ResourceReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Full          bool                   `protobuf:"varint,1,opt,name=full,proto3" json:"full,omitempty"`
+	Resources     []*ResourceStatus      `protobuf:"bytes,2,rep,name=resources,proto3" json:"resources,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceReport) Reset() {
+	*x = ResourceReport{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceReport) ProtoMessage() {}
+
+func (x *ResourceReport) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceReport.ProtoReflect.Descriptor instead.
+func (*ResourceReport) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ResourceReport) GetFull() bool {
+	if x != nil {
+		return x.Full
+	}
+	return false
+}
+
+func (x *ResourceReport) GetResources() []*ResourceStatus {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+type ResourceStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EnvironmentId string                 `protobuf:"bytes,1,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// observed_generation is the desired generation the status describes.
+	ObservedGeneration int64 `protobuf:"varint,3,opt,name=observed_generation,json=observedGeneration,proto3" json:"observed_generation,omitempty"`
+	// phase is "provisioning", "ready", "failed" or "deleted" (gone from the
+	// cluster: the control plane may forget it).
+	Phase string `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
+	// message says why it is not ready, in plain words.
+	Message       string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceStatus) Reset() {
+	*x = ResourceStatus{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceStatus) ProtoMessage() {}
+
+func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceStatus.ProtoReflect.Descriptor instead.
+func (*ResourceStatus) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *ResourceStatus) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *ResourceStatus) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ResourceStatus) GetObservedGeneration() int64 {
+	if x != nil {
+		return x.ObservedGeneration
+	}
+	return 0
+}
+
+func (x *ResourceStatus) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *ResourceStatus) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_proto_fleet_v1_fleet_proto protoreflect.FileDescriptor
 
 const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
@@ -2132,20 +2505,22 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\vcertificate\x18\x03 \x01(\v2\x15.fleet.v1.CertificateR\vcertificate\"6\n" +
 	"\vCertificate\x12\x10\n" +
 	"\x03pem\x18\x01 \x01(\fR\x03pem\x12\x15\n" +
-	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\x96\x02\n" +
+	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\xdb\x02\n" +
 	"\fAgentMessage\x12'\n" +
 	"\x05hello\x18\x01 \x01(\v2\x0f.fleet.v1.HelloH\x00R\x05hello\x12-\n" +
 	"\x06report\x18\x02 \x01(\v2\x13.fleet.v1.AppReportH\x00R\x06report\x12:\n" +
 	"\fbuild_report\x18\x03 \x01(\v2\x15.fleet.v1.BuildReportH\x00R\vbuildReport\x121\n" +
 	"\tbuild_log\x18\x04 \x01(\v2\x12.fleet.v1.BuildLogH\x00R\bbuildLog\x124\n" +
 	"\n" +
-	"secret_ack\x18\x05 \x01(\v2\x13.fleet.v1.SecretAckH\x00R\tsecretAckB\t\n" +
-	"\amessage\"\xd3\x01\n" +
+	"secret_ack\x18\x05 \x01(\v2\x13.fleet.v1.SecretAckH\x00R\tsecretAck\x12C\n" +
+	"\x0fresource_report\x18\x06 \x01(\v2\x18.fleet.v1.ResourceReportH\x00R\x0eresourceReportB\t\n" +
+	"\amessage\"\x85\x02\n" +
 	"\x0eControlMessage\x12%\n" +
 	"\x05apply\x18\x01 \x01(\v2\r.fleet.v1.AppH\x00R\x05apply\x12'\n" +
 	"\x05build\x18\x02 \x01(\v2\x0f.fleet.v1.BuildH\x00R\x05build\x12:\n" +
 	"\fcancel_build\x18\x03 \x01(\v2\x15.fleet.v1.CancelBuildH\x00R\vcancelBuild\x12*\n" +
-	"\x06secret\x18\x04 \x01(\v2\x10.fleet.v1.SecretH\x00R\x06secretB\t\n" +
+	"\x06secret\x18\x04 \x01(\v2\x10.fleet.v1.SecretH\x00R\x06secret\x120\n" +
+	"\bresource\x18\x05 \x01(\v2\x12.fleet.v1.ResourceH\x00R\bresourceB\t\n" +
 	"\amessage\"\x87\x02\n" +
 	"\x06Secret\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
@@ -2165,7 +2540,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"h\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12:\n" +
-	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xa9\x02\n" +
+	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xd0\x02\n" +
 	"\fCapabilities\x12-\n" +
 	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\x12\x12\n" +
 	"\x04apis\x18\x02 \x03(\tR\x04apis\x12'\n" +
@@ -2174,7 +2549,8 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\abuilder\x18\x05 \x01(\v2\x11.fleet.v1.BuilderR\abuilder\x122\n" +
 	"\n" +
 	"secret_key\x18\x06 \x01(\v2\x13.fleet.v1.SecretKeyR\tsecretKey\x12#\n" +
-	"\rsecret_stores\x18\a \x03(\tR\fsecretStores\"W\n" +
+	"\rsecret_stores\x18\a \x03(\tR\fsecretStores\x12%\n" +
+	"\x0eresource_kinds\x18\b \x03(\tR\rresourceKinds\"W\n" +
 	"\tSecretKey\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1d\n" +
 	"\n" +
@@ -2212,7 +2588,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\aLogLine\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text\"\xb4\x04\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"\xe9\x04\n" +
 	"\x03App\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -2229,7 +2605,8 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	" \x03(\v2\x16.fleet.v1.App.EnvEntryR\x03env\x121\n" +
 	"\x06labels\x18\v \x03(\v2\x19.fleet.v1.App.LabelsEntryR\x06labels\x12(\n" +
 	"\x06access\x18\f \x01(\v2\x10.fleet.v1.AccessR\x06access\x12-\n" +
-	"\asecrets\x18\r \x03(\v2\x13.fleet.v1.SecretRefR\asecrets\x1a6\n" +
+	"\asecrets\x18\r \x03(\v2\x13.fleet.v1.SecretRefR\asecrets\x123\n" +
+	"\tresources\x18\x0e \x03(\v2\x15.fleet.v1.ResourceRefR\tresources\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +
@@ -2256,7 +2633,32 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x06 \x01(\tR\amessage\x12%\n" +
 	"\x0eready_replicas\x18\a \x01(\x05R\rreadyReplicas\x12\x10\n" +
-	"\x03url\x18\b \x01(\tR\x03url2\xc5\x02\n" +
+	"\x03url\x18\b \x01(\tR\x03url\"M\n" +
+	"\vResourceRef\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
+	"\x06prefix\x18\x03 \x01(\tR\x06prefix\"\xf5\x01\n" +
+	"\bResource\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12%\n" +
+	"\x0eenvironment_id\x18\x03 \x01(\tR\renvironmentId\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\x12\x12\n" +
+	"\x04kind\x18\x05 \x01(\tR\x04kind\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x06 \x01(\x03R\n" +
+	"generation\x12\x18\n" +
+	"\astorage\x18\a \x01(\tR\astorage\x12\x18\n" +
+	"\adeleted\x18\b \x01(\bR\adeleted\"\\\n" +
+	"\x0eResourceReport\x12\x12\n" +
+	"\x04full\x18\x01 \x01(\bR\x04full\x126\n" +
+	"\tresources\x18\x02 \x03(\v2\x18.fleet.v1.ResourceStatusR\tresources\"\xac\x01\n" +
+	"\x0eResourceStatus\x12%\n" +
+	"\x0eenvironment_id\x18\x01 \x01(\tR\renvironmentId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12/\n" +
+	"\x13observed_generation\x18\x03 \x01(\x03R\x12observedGeneration\x12\x14\n" +
+	"\x05phase\x18\x04 \x01(\tR\x05phase\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage2\xc5\x02\n" +
 	"\x05Fleet\x12;\n" +
 	"\x06Enroll\x12\x17.fleet.v1.EnrollRequest\x1a\x18.fleet.v1.EnrollResponse\x128\n" +
 	"\x05Renew\x12\x16.fleet.v1.RenewRequest\x1a\x17.fleet.v1.RenewResponse\x12>\n" +
@@ -2276,7 +2678,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -2307,8 +2709,12 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*Access)(nil),             // 26: fleet.v1.Access
 	(*AppReport)(nil),          // 27: fleet.v1.AppReport
 	(*AppStatus)(nil),          // 28: fleet.v1.AppStatus
-	nil,                        // 29: fleet.v1.App.EnvEntry
-	nil,                        // 30: fleet.v1.App.LabelsEntry
+	(*ResourceRef)(nil),        // 29: fleet.v1.ResourceRef
+	(*Resource)(nil),           // 30: fleet.v1.Resource
+	(*ResourceReport)(nil),     // 31: fleet.v1.ResourceReport
+	(*ResourceStatus)(nil),     // 32: fleet.v1.ResourceStatus
+	nil,                        // 33: fleet.v1.App.EnvEntry
+	nil,                        // 34: fleet.v1.App.LabelsEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
@@ -2319,36 +2725,40 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	20, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
 	22, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
 	12, // 7: fleet.v1.AgentMessage.secret_ack:type_name -> fleet.v1.SecretAck
-	24, // 8: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
-	17, // 9: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
-	19, // 10: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
-	11, // 11: fleet.v1.ControlMessage.secret:type_name -> fleet.v1.Secret
-	14, // 12: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
-	16, // 13: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
-	15, // 14: fleet.v1.Capabilities.secret_key:type_name -> fleet.v1.SecretKey
-	18, // 15: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
-	21, // 16: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
-	23, // 17: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
-	29, // 18: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	30, // 19: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
-	26, // 20: fleet.v1.App.access:type_name -> fleet.v1.Access
-	25, // 21: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
-	28, // 22: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
-	2,  // 23: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 24: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 25: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 26: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 27: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 28: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 29: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 30: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 31: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 32: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	28, // [28:33] is the sub-list for method output_type
-	23, // [23:28] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	31, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
+	24, // 9: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
+	17, // 10: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
+	19, // 11: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
+	11, // 12: fleet.v1.ControlMessage.secret:type_name -> fleet.v1.Secret
+	30, // 13: fleet.v1.ControlMessage.resource:type_name -> fleet.v1.Resource
+	14, // 14: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
+	16, // 15: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
+	15, // 16: fleet.v1.Capabilities.secret_key:type_name -> fleet.v1.SecretKey
+	18, // 17: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
+	21, // 18: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
+	23, // 19: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
+	33, // 20: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	34, // 21: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	26, // 22: fleet.v1.App.access:type_name -> fleet.v1.Access
+	25, // 23: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
+	29, // 24: fleet.v1.App.resources:type_name -> fleet.v1.ResourceRef
+	28, // 25: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
+	32, // 26: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
+	2,  // 27: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 28: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 29: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 30: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 31: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 32: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 33: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 34: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 35: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 36: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	32, // [32:37] is the sub-list for method output_type
+	27, // [27:32] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -2362,12 +2772,14 @@ func file_proto_fleet_v1_fleet_proto_init() {
 		(*AgentMessage_BuildReport)(nil),
 		(*AgentMessage_BuildLog)(nil),
 		(*AgentMessage_SecretAck)(nil),
+		(*AgentMessage_ResourceReport)(nil),
 	}
 	file_proto_fleet_v1_fleet_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlMessage_Apply)(nil),
 		(*ControlMessage_Build)(nil),
 		(*ControlMessage_CancelBuild)(nil),
 		(*ControlMessage_Secret)(nil),
+		(*ControlMessage_Resource)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2375,7 +2787,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

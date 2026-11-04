@@ -11,11 +11,12 @@
     { "name": "odyssey:integrations:manage", "label": "Conectar y desconectar GitHub en la organización" },
     { "name": "odyssey:audit:read", "label": "Ver el historial de actividad de la organización" },
     { "name": "odyssey:access:public", "label": "Dejar que cualquiera con el enlace abra una app, sin iniciar sesión" },
-    { "name": "odyssey:secrets:external", "label": "Conectar secretos de una app con el almacén de secretos de la empresa" }
+    { "name": "odyssey:secrets:external", "label": "Conectar secretos de una app con el almacén de secretos de la empresa" },
+    { "name": "odyssey:resources:delete", "label": "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)" }
   ],
   "roles": [
-    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external"] },
-    { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback"] },
+    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external", "odyssey:resources:delete"] },
+    { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:resources:delete"] },
     { "name": "Lector", "permissions": ["odyssey:projects:read", "odyssey:deployments:read"] }
   ]
 }

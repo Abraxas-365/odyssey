@@ -29,16 +29,21 @@ func (c *Cluster) Apply(ctx context.Context, t release.Target, app release.Desir
 		secrets = append(secrets, fleet.AppSecret{Name: s.Name, Source: string(s.Source), Version: s.Version, KeyID: s.KeyID,
 			Store: s.Store, Key: s.Key, Property: s.Property})
 	}
+	resources := make([]fleet.ResourceRef, 0, len(app.Resources))
+	for _, r := range app.Resources {
+		resources = append(resources, fleet.ResourceRef{Name: r.Name, Kind: r.Kind, Prefix: r.Prefix})
+	}
 	err := c.fleet.Apply(ctx, fleet.App{
 		Organization: t.Organization, Project: t.Project, Environment: t.Environment, Name: app.Name,
 		Revision: app.Revision, Image: app.Image, Port: app.Port, HealthPath: app.HealthPath,
-		Replicas: app.Replicas, Env: app.Env, Labels: app.Labels, Access: app.Access, Secrets: secrets,
+		Replicas: app.Replicas, Env: app.Env, Labels: app.Labels, Access: app.Access, Secrets: secrets, Resources: resources,
 	})
 	var e *errx.Error
 	if errors.As(err, &e) && (e.Type == errx.TypeBusiness || e.Type == errx.TypeValidation) {
 		switch e.Code {
 		case fleet.CodeNoCluster, fleet.CodeClusterRevoked, fleet.CodeAccessUnavailable, fleet.CodeSecretsUnavailable,
-			fleet.CodeExternalSecretsUnavailable, fleet.CodeSecretKeyChanged, fleet.CodeSecretStoreUnknown:
+			fleet.CodeExternalSecretsUnavailable, fleet.CodeSecretKeyChanged, fleet.CodeSecretStoreUnknown,
+			fleet.CodeResourcesUnavailable:
 			return release.Failed(release.CodeApplyFailed, e.Message)
 		}
 		return release.Failed(release.CodeApplyFailed, "El clúster no pudo aceptar la configuración de la app.", e.Message)
@@ -102,6 +107,7 @@ func (c *Cluster) Status(ctx context.Context, t release.Target, name string) (re
 			fleet.ReasonImagePull: release.FailureImagePull,
 			fleet.ReasonCrash:     release.FailureCrash,
 			fleet.ReasonConfig:    release.FailureConfig,
+			fleet.ReasonResource:  release.FailureResource,
 		}[s.Reason]
 		if out.Reason == "" {
 			out.Reason = release.FailureUnhealthy

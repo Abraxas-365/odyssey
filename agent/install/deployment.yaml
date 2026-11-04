@@ -37,8 +37,8 @@ spec:
             - name: POD_NAME
               valueFrom:
                 fieldRef: { fieldPath: metadata.name }
-            # Its service account: bound to the Secrets role (odyssey-agent-secrets)
-            # only in the environment namespaces it creates.
+            # Its service account: bound to the environment role
+            # (odyssey-agent-environment) only in the environment namespaces it creates.
             - name: ODYSSEY_SERVICE_ACCOUNT
               valueFrom:
                 fieldRef: { fieldPath: spec.serviceAccountName }

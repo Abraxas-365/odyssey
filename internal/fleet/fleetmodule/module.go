@@ -36,8 +36,10 @@ type Module struct {
 	Queries  fleet.Queries
 	Dispatch fleet.Dispatch
 	Builds   fleet.Builds
-	Agents   fleet.Agents
-	HTTP     *fleethttp.Handler
+	// Resources is what the resource domain's resourcefleet adapter uses.
+	Resources fleet.Resources
+	Agents    fleet.Agents
+	HTTP      *fleethttp.Handler
 }
 
 func New(deps Deps) Module {
@@ -47,7 +49,7 @@ func New(deps Deps) Module {
 	}
 	svc := fleetsvc.New(fleetpg.New(deps.DB), ca, txn.Postgres{DB: deps.DB}, deps.Events,
 		fleetsvc.Options{Gateway: deps.Gateway, CertificateTTL: deps.CertificateTTL})
-	return Module{Commands: svc, Queries: svc, Dispatch: svc, Builds: svc, Agents: svc, HTTP: fleethttp.New(svc, svc)}
+	return Module{Commands: svc, Queries: svc, Dispatch: svc, Builds: svc, Resources: svc, Agents: svc, HTTP: fleethttp.New(svc, svc)}
 }
 
 // LoadAuthority reads the fleet CA (keyFile "" for verify-only).

@@ -37,8 +37,9 @@ import (
 
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=odyssey-agent-secrets,verbs=bind
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=odyssey-agent-environment,verbs=bind
 // +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyapps,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyresources,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=list
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=list
 // +kubebuilder:rbac:groups=external-secrets.io,resources=clustersecretstores,verbs=list
@@ -105,7 +106,10 @@ func Valid(a *fleetv1.App) error {
 	case a.GetRevision() < 1:
 		return errors.New("app revision must be positive")
 	}
-	return validSecretRefs(a.GetSecrets())
+	if err := validSecretRefs(a.GetSecrets()); err != nil {
+		return err
+	}
+	return validResourceRefs(a.GetResources())
 }
 
 // MaxSecrets bounds an app's secret variables.
@@ -225,6 +229,7 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	spec := v1alpha1.OdysseyAppSpec{
 		Revision: a.GetRevision(), Image: a.GetImage(), Port: a.GetPort(), HealthPath: a.GetHealthPath(),
 		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(), Access: access, Secrets: secretsOf(a.GetSecrets()),
+		Resources: resourcesOf(a.GetResources()),
 	}
 	ns := Namespace(a.GetEnvironmentId())
 	var cur v1alpha1.OdysseyApp
@@ -290,15 +295,17 @@ func (s *Syncer) ensureNamespace(ctx context.Context, a *fleetv1.App) error {
 	return n.Ensure(ctx, a.GetOrganizationId(), a.GetProjectId(), a.GetEnvironmentId())
 }
 
-// SecretsRole is the ClusterRole (agent/install/rbac.yaml) that lets the
-// agent keep apps' Secrets. It is never bound cluster-wide: the agent binds
-// it, as a RoleBinding of the same name, only in the namespaces it creates
-// for environments (and the install's admission policy refuses a binding
-// anywhere else), so it cannot read the Secrets of the rest of the cluster.
-const SecretsRole = "odyssey-agent-secrets"
+// EnvironmentRole is the ClusterRole (agent/install/rbac.yaml) with the
+// agent's destructive and secret-bearing verbs: apps' Secrets, and creating,
+// resizing and deleting the volumes, databases and caches of resources. It
+// is never bound cluster-wide: the agent binds it, as a RoleBinding of the
+// same name, only in the namespaces it creates for environments (and the
+// install's admission policy refuses a binding anywhere else), so it can
+// neither read the Secrets of the rest of the cluster nor erase its data.
+const EnvironmentRole = "odyssey-agent-environment"
 
-// Namespaces creates the environments' namespaces and lets the agent keep
-// Secrets in them.
+// Namespaces creates the environments' namespaces and gives the agent the
+// EnvironmentRole in them.
 type Namespaces struct {
 	Client client.Client
 	// API reads namespaces without caching them (nil: Client).
@@ -306,10 +313,11 @@ type Namespaces struct {
 	// Agent is the agent's service account. Empty (an agent run outside the
 	// cluster on its own credentials) binds nothing.
 	Agent types.NamespacedName
-	// CanUseSecrets says whether the agent may already write Secrets in a
-	// namespace (nil: a SelfSubjectAccessReview). A new binding takes a
-	// moment to apply; Ensure waits for it.
-	CanUseSecrets func(ctx context.Context, namespace string) (bool, error)
+	// CanUseRole says whether the agent may already use the EnvironmentRole
+	// in a namespace (nil: a SelfSubjectAccessReview of creating Secrets,
+	// one of the verbs the role grants). A new binding takes a moment to
+	// apply; Ensure waits for it.
+	CanUseRole func(ctx context.Context, namespace string) (bool, error)
 }
 
 // bindWait bounds how long Ensure waits for a new binding to apply.
@@ -317,7 +325,7 @@ var bindWait = wait.Backoff{Duration: 100 * time.Millisecond, Factor: 1.5, Steps
 
 // Ensure creates the environment's namespace when it is not there (the
 // first app or the first secret of an environment makes it) and binds
-// SecretsRole in it. A namespace of that name the agent does not manage is
+// EnvironmentRole in it. A namespace of that name the agent does not manage is
 // refused (Rejected): the agent never takes over someone else's namespace.
 func (n *Namespaces) Ensure(ctx context.Context, organization, project, environment string) error {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: Namespace(environment), Labels: map[string]string{
@@ -346,8 +354,8 @@ func (n *Namespaces) Ensure(ctx context.Context, organization, project, environm
 	return n.bind(ctx, ns.Name, true)
 }
 
-// BindAll binds SecretsRole in every namespace the agent created (an agent
-// upgraded from one that held the role cluster-wide, or a binding someone
+// BindAll binds EnvironmentRole in every namespace the agent created (an
+// agent upgraded from one that bound an older role, or a binding someone
 // deleted).
 func (n *Namespaces) BindAll(ctx context.Context) error {
 	var list corev1.NamespaceList
@@ -367,24 +375,24 @@ func (n *Namespaces) BindAll(ctx context.Context) error {
 }
 
 // bind creates the binding in namespace; with settle, it returns only once the
-// agent may use Secrets there (also when the binding was already there: a
+// agent may use the role there (also when the binding was already there: a
 // concurrent Ensure may have just made it).
 func (n *Namespaces) bind(ctx context.Context, namespace string, settle bool) error {
 	if n.Agent.Name == "" {
 		return nil
 	}
 	rb := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: SecretsRole, Namespace: namespace, Labels: map[string]string{LabelManagedBy: ManagedBy}},
-		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: SecretsRole},
+		ObjectMeta: metav1.ObjectMeta{Name: EnvironmentRole, Namespace: namespace, Labels: map[string]string{LabelManagedBy: ManagedBy}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: EnvironmentRole},
 		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: n.Agent.Name, Namespace: n.Agent.Namespace}},
 	}
 	if err := n.Client.Create(ctx, rb); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("let the agent keep secrets in %s: %w", namespace, err)
+		return fmt.Errorf("let the agent manage environment %s: %w", namespace, err)
 	}
 	if !settle {
 		return nil
 	}
-	can := n.CanUseSecrets
+	can := n.CanUseRole
 	if can == nil {
 		can = n.selfReview
 	}
@@ -394,7 +402,7 @@ func (n *Namespaces) bind(ctx context.Context, namespace string, settle bool) er
 		last = err
 		return ok, nil
 	}); err != nil {
-		return fmt.Errorf("the agent's access to secrets in %s did not apply: %w", namespace, errors.Join(err, last))
+		return fmt.Errorf("the agent's access to %s did not apply: %w", namespace, errors.Join(err, last))
 	}
 	return nil
 }
@@ -546,6 +554,7 @@ func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
 	}
 	slices.Sort(out.IngressClasses)
 	slices.Sort(out.StorageClasses)
+	out.ResourceKinds = resourceKinds(out)
 	out.SecretStores = []string{}
 	if slices.Contains(out.Apis, ExternalSecretsGroup) {
 		out.SecretStores = s.secretStores(ctx, reader)

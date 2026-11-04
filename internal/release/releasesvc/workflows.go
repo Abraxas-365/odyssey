@@ -11,6 +11,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 // Workflows returns the deploy workflow:
@@ -36,11 +37,31 @@ func (s *Service) Workflows() []workflow.Definition {
 			{Name: release.StepApply, Run: s.apply, MaxAttempts: 8},
 			// Polls don't count as attempts; errors (cluster or DB unreachable)
 			// do, and the step's Timeout bounds the whole wait anyway.
-			{Name: release.StepWaitReady, Run: s.waitReady, Timeout: s.opts.ReadyTimeout, MaxAttempts: 30},
+			{Name: release.StepWaitReady, Run: s.waitReady, Timeout: s.readyBound(), MaxAttempts: 30},
 			{Name: release.StepPromote, Run: s.promote},
 		},
 		OnFailure: s.deployFailed,
 	}}
+}
+
+// resourcesGrace is how long, beyond the time the agent waits for an app's
+// resources (resourcekind.Wait), wait_ready lets the agent report it.
+const resourcesGrace = 3 * time.Minute
+
+// readyBound is wait_ready's outer bound. An app with resources may wait
+// that long: the agent holds its revision back until they are ready
+// (resourcekind.Wait) and then reports why it gave up. One without resources
+// is bounded by ReadyTimeout inside waitReady (see stillWaiting).
+func (s *Service) readyBound() time.Duration {
+	return max(s.opts.ReadyTimeout, resourcekind.Wait+resourcesGrace)
+}
+
+// applyOutput is what the apply step saves for wait_ready.
+type applyOutput struct {
+	// Resources: the desired app uses resources (the wait may be long).
+	Resources bool `json:"resources"`
+	// AppliedAt is when the cluster took the app.
+	AppliedAt time.Time `json:"applied_at"`
 }
 
 // job is what a step works on.
@@ -117,7 +138,10 @@ func (s *Service) apply(ctx context.Context, st *workflow.State) (any, error) {
 	// deployment: a config deployment that fails afterwards does NOT reopen the
 	// app by itself, and the sign-in keeps asking for this mode. The console
 	// compares the latest settings with this revision.
-	return nil, s.repo.SetAppliedSettings(ctx, j.target.Organization, j.target.Environment, j.deployment.Revision, settings.Revision)
+	if err := s.repo.SetAppliedSettings(ctx, j.target.Organization, j.target.Environment, j.deployment.Revision, settings.Revision); err != nil {
+		return nil, err
+	}
+	return applyOutput{Resources: len(desired.Resources) > 0, AppliedAt: s.now().UTC()}, nil
 }
 
 // resolveSettings is the environment's settings this deployment applies. They
@@ -261,13 +285,28 @@ func (s *Service) waitReady(ctx context.Context, st *workflow.State) (any, error
 	case status.ObservedRevision > j.deployment.Revision:
 		return nil, workflow.Fail(errSuperseded) // a newer deployment took over
 	case status.ObservedRevision < j.deployment.Revision:
-		return nil, workflow.Poll(s.opts.PollEvery) // the cluster has not seen it yet
+		return nil, s.stillWaiting(st) // the cluster has not seen it yet
 	case status.Phase == release.PhaseReady:
 		return status.URL, nil
 	case status.Phase == release.PhaseFailed:
 		return nil, workflow.Fail(release.Unready(status))
 	}
-	return nil, workflow.Poll(s.opts.PollEvery)
+	return nil, s.stillWaiting(st)
+}
+
+// stillWaiting polls again, unless the app has no resources and has been
+// waiting longer than ReadyTimeout: then it fails as the step's timeout
+// always did (NOT_READY), so an app without resources keeps its bound while
+// the step's own Timeout leaves room for the resources of one that has them.
+// A run that started before the apply step saved its output (none, or null)
+// is bounded by the step's Timeout alone.
+func (s *Service) stillWaiting(st *workflow.State) error {
+	var applied applyOutput
+	if err := st.Output(release.StepApply, &applied); err == nil && !applied.Resources && !applied.AppliedAt.IsZero() &&
+		s.now().Sub(applied.AppliedAt) > s.opts.ReadyTimeout {
+		return workflow.Fail(release.Failed(release.CodeNotReady, "La app no quedó lista a tiempo."))
+	}
+	return workflow.Poll(s.opts.PollEvery)
 }
 
 // promote is the only code that changes what an environment serves

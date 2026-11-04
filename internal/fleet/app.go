@@ -12,6 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/text"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 // App is the desired state of one app of an environment: what the agent of
@@ -37,8 +38,11 @@ type App struct {
 	// "public" and only exists for revisions stored before 1e.
 	Access string `json:"access" db:"-"`
 	// Secrets are the app's secret variables, by name (references only).
-	Secrets   []AppSecret `json:"secrets" db:"-"`
-	UpdatedAt time.Time   `json:"updated_at" db:"updated_at"`
+	Secrets []AppSecret `json:"secrets" db:"-"`
+	// Resources are the environment's resources the app uses (2b): the
+	// agent wires their connection into the app and waits for them.
+	Resources []ResourceRef `json:"resources" db:"-"`
+	UpdatedAt time.Time     `json:"updated_at" db:"updated_at"`
 }
 
 // MaxAppSecrets bounds an app's secret variables.
@@ -74,6 +78,18 @@ func (a App) Validate() error {
 		return errx.Validation("app access must be public, team or organization")
 	case len(a.Secrets) > MaxAppSecrets:
 		return errx.Validation("an app has at most 100 secrets")
+	case len(a.Resources) > MaxAppResources:
+		return errx.Validation("an app uses at most 10 resources")
+	}
+	seenRes := make(map[string]bool, len(a.Resources))
+	for _, r := range a.Resources {
+		switch {
+		case resourcekind.CheckName(r.Name) != nil || !r.Kind.Valid() || seenRes[r.Name]:
+			return errx.Validation("resources must be distinct, with a valid name and kind")
+		case resourcekind.CheckPrefix(r.Prefix) != nil:
+			return errx.Validation(resourcekind.CheckPrefix(r.Prefix).Error())
+		}
+		seenRes[r.Name] = true
 	}
 	seen := make(map[string]bool, len(a.Secrets))
 	for _, s := range a.Secrets {
@@ -111,10 +127,13 @@ const (
 	ReasonImagePull Reason = "image_pull"
 	ReasonCrash     Reason = "crash"
 	ReasonConfig    Reason = "config"
+	// ReasonResource: a database, cache or volume the app uses was not ready
+	// in time.
+	ReasonResource Reason = "resource"
 )
 
 func (r Reason) Valid() bool {
-	return r == "" || r == ReasonUnhealthy || r == ReasonImagePull || r == ReasonCrash || r == ReasonConfig
+	return r == "" || r == ReasonUnhealthy || r == ReasonImagePull || r == ReasonCrash || r == ReasonConfig || r == ReasonResource
 }
 
 // AppStatus is what the agent observed of an app.

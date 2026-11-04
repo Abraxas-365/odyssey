@@ -137,17 +137,23 @@ version < 1, more than 100.
 ## RBAC
 
 The agent holds **no access to Secrets cluster-wide**: it cannot read
-`kube-system`'s or another team's.
+`kube-system`'s or another team's. The same goes for the verbs that create,
+grow or erase data (cut 2b): they are only in environment namespaces.
 
-- `odyssey-agent-secrets` (`agent/install/rbac.yaml`, ClusterRole):
+- `odyssey-agent-environment` (`agent/install/rbac.yaml`, ClusterRole; it was
+  `odyssey-agent-secrets` before cut 2b):
   `secrets` **get/create/update/delete** (no list, watch or patch: Secrets
   are never cached by the agent, every read is a `get` by name through the
   API reader; `get` gates and prunes, `create`/`update` write deliveries and
-  the owner reference, `delete` removes a Secret pruned empty). Nothing in
+  the owner reference, `delete` removes a Secret pruned empty), plus what
+  resources need: `persistentvolumeclaims` **create/update/delete**,
+  `postgresql.cnpg.io` `clusters` **create/update/delete**, `deployments` and
+  `services` **delete** (the Redis children). Nothing in
   the install binds it. `desired.Namespaces.Ensure` binds it with a
   RoleBinding of the same name in each environment namespace it creates (for
   the agent's service account, `ODYSSEY_SERVICE_ACCOUNT` from the pod spec)
-  and waits until a SelfSubjectAccessReview says it applies (also when the
+  and waits until a SelfSubjectAccessReview (create secrets, a verb the role
+  grants) says it applies (also when the
   binding already existed: a concurrent `Ensure` may have just made it); on
   start the leader binds it in every namespace it made before (`BindAll`:
   upgrades and deleted bindings; no wait per namespace, a reconcile that
@@ -155,16 +161,29 @@ The agent holds **no access to Secrets cluster-wide**: it cannot read
   `ODYSSEY_SERVICE_ACCOUNT`; the policy names `odyssey-system/odyssey-agent`
   literally, and `agent/install_test.go` checks it matches the Deployment. A namespace `odyssey-<environment>` that exists without
   `app.kubernetes.io/managed-by=odyssey` is someone else's: the app (or the
-  delivery) is refused and nothing is bound there.
+  delivery) is refused and nothing is bound there. The role is written by
+  hand: the `+kubebuilder` markers must not grant its verbs cluster-wide.
 - `odyssey-agent` (generated `agent/install/rbac/role.yaml`, bound
   cluster-wide) may `bind` exactly that role (`resourceNames`), `create`
   rolebindings, and `get/list/create` namespaces, never update or patch them
   (so it cannot label someone else's namespace as its own); plus
   `externalsecrets` create/delete/get/list/update and `clustersecretstores`
-  list.
+  list. For resources it holds only `get/list/watch` on
+  `persistentvolumeclaims` and CNPG `clusters` (cache and watches).
 - `agent/install/policy.yaml` (ValidatingAdmissionPolicy, Kubernetes ≥ 1.30)
-  denies any RoleBinding of `odyssey-agent-secrets` outside a namespace
+  denies any RoleBinding of `odyssey-agent-environment` outside a namespace
   `odyssey-*` labelled managed-by=odyssey, or for any subject but the agent.
+- **Upgrading** from `odyssey-agent-secrets`: the new agent binds the new role
+  in every managed namespace at start, but cannot delete RoleBindings
+  (create-only). TI may remove the stale objects afterwards:
+  `kubectl delete rolebinding -A --field-selector metadata.name=odyssey-agent-secrets`,
+  `kubectl delete clusterrole odyssey-agent-secrets`,
+  `kubectl delete validatingadmissionpolicybinding,validatingadmissionpolicy odyssey-agent-secrets`
+  (`kubectl apply -k` does not prune; the install no longer ships them).
 - The other Secret uses are namespaced `Role`s (the agent's own identity and
   the build tokens). `agent/install_test.go` fails if a ClusterRole bound
-  cluster-wide grants `secrets` or wildcards, or the policy is missing.
+  cluster-wide grants `secrets` or wildcards, or the policy is missing, and
+  (`TestAgentCannotEraseDataClusterWide`) if one grants create/update/patch/
+  delete/deletecollection on persistentvolumeclaims or CNPG clusters, or delete
+  on deployments/services, or the environment role grants more or less than the
+  controllers need.

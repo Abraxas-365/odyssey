@@ -85,6 +85,9 @@ func (r clusterRow) cluster() (fleet.Cluster, error) {
 	if c.Agent.Capabilities.StorageClasses == nil {
 		c.Agent.Capabilities.StorageClasses = []string{}
 	}
+	if c.Agent.Capabilities.ResourceKinds == nil {
+		c.Agent.Capabilities.ResourceKinds = []string{}
+	}
 	return c, nil
 }
 
@@ -402,6 +405,25 @@ func (r *Repository) MovePlacement(ctx context.Context, organization identity.Or
 			return 0, err
 		}
 	}
+	// Resources move with their apps (their data does not: the new cluster
+	// prepares them empty).
+	if _, err := q.ExecContext(ctx,
+		`DELETE FROM fleet.resource_status WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3`,
+		organization, environment, from); err != nil {
+		return 0, pgerr.Map(err, "move placement")
+	}
+	var resources []string
+	if err := q.SelectContext(ctx, &resources,
+		`UPDATE fleet.desired_resources SET cluster_id = $4, updated_at = now()
+		 WHERE organization_id = $1 AND environment_id = $2 AND cluster_id = $3 RETURNING name`,
+		organization, environment, from, to); err != nil {
+		return 0, pgerr.Map(err, "move placement")
+	}
+	for _, name := range resources {
+		if err := r.notify(ctx, fleet.Signal{Organization: organization, Cluster: to, Environment: environment, Name: name, Resource: true}); err != nil {
+			return 0, err
+		}
+	}
 	return len(names), nil
 }
 
@@ -415,19 +437,20 @@ func (r *Repository) ListPlacements(ctx context.Context, organization identity.O
 
 // spec is the stored form of an app's desired state.
 type spec struct {
-	Image      string            `json:"image"`
-	Port       int               `json:"port"`
-	HealthPath string            `json:"health_path"`
-	Replicas   int               `json:"replicas"`
-	Env        map[string]string `json:"env"`
-	Labels     map[string]string `json:"labels"`
-	Access     string            `json:"access,omitempty"`
-	Secrets    []fleet.AppSecret `json:"secrets,omitempty"`
+	Image      string              `json:"image"`
+	Port       int                 `json:"port"`
+	HealthPath string              `json:"health_path"`
+	Replicas   int                 `json:"replicas"`
+	Env        map[string]string   `json:"env"`
+	Labels     map[string]string   `json:"labels"`
+	Access     string              `json:"access,omitempty"`
+	Secrets    []fleet.AppSecret   `json:"secrets,omitempty"`
+	Resources  []fleet.ResourceRef `json:"resources,omitempty"`
 }
 
 func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
 	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels,
-		Access: a.Access, Secrets: a.Secrets})
+		Access: a.Access, Secrets: a.Secrets, Resources: a.Resources})
 	if err != nil {
 		return false, errx.Wrap(err, "encode app", errx.TypeInternal)
 	}
@@ -465,6 +488,10 @@ func (r appRow) app() (fleet.App, error) {
 	a.Secrets = s.Secrets
 	if a.Secrets == nil {
 		a.Secrets = []fleet.AppSecret{}
+	}
+	a.Resources = s.Resources
+	if a.Resources == nil {
+		a.Resources = []fleet.ResourceRef{}
 	}
 	return a, nil
 }
@@ -520,7 +547,7 @@ func (r *Repository) notify(ctx context.Context, s fleet.Signal) error {
 
 // Signals are "<org> <cluster> revoked", "<org> <cluster> reenrolled",
 // "<org> <cluster> app <env> <name>", "<org> <cluster> build <id>" or
-// "<org> <cluster> secret <delivery id>".
+// "<org> <cluster> secret <delivery id>" or "<org> <cluster> resource <env> <name>".
 func encodeSignal(s fleet.Signal) string {
 	switch {
 	case s.Revoked:
@@ -531,6 +558,8 @@ func encodeSignal(s fleet.Signal) string {
 		return s.Organization.String() + " " + s.Cluster.String() + " build " + s.Build.String()
 	case !s.Secret.IsZero():
 		return s.Organization.String() + " " + s.Cluster.String() + " secret " + s.Secret.String()
+	case s.Resource:
+		return s.Organization.String() + " " + s.Cluster.String() + " resource " + s.Environment.String() + " " + s.Name
 	}
 	return s.Organization.String() + " " + s.Cluster.String() + " app " + s.Environment.String() + " " + s.Name
 }
@@ -559,6 +588,11 @@ func decodeSignal(raw string) (fleet.Signal, bool) {
 			return fleet.Signal{}, false
 		}
 		s.Name = f[4]
+	case f[2] == "resource" && len(f) == 5:
+		if s.Environment, err = project.ParseEnvironmentID(f[3]); err != nil {
+			return fleet.Signal{}, false
+		}
+		s.Name, s.Resource = f[4], true
 	case f[2] == "build" && len(f) == 4:
 		if s.Build, err = fleet.ParseBuildID(f[3]); err != nil {
 			return fleet.Signal{}, false

@@ -8,6 +8,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 // Commands are what platform people do with clusters, implemented by
@@ -58,6 +59,26 @@ type Dispatch interface {
 	// cluster's current key (Business CodeSecretKeyChanged otherwise) and the
 	// environment placed or placeable (like Apply).
 	DeliverSecret(ctx context.Context, delivery SecretDelivery) error
+}
+
+// Resources is what the resource domain uses to run databases, caches and
+// volumes in clusters (its resourcefleet adapter), implemented by
+// fleetsvc.Service.
+type Resources interface {
+	// ApplyResource stores the desired resource for the cluster of its
+	// environment (placing the environment on the default cluster the first
+	// time, like Apply) and has it sent. It fails closed with Business
+	// CodeResourcesUnavailable when the cluster does not list the kind. It
+	// joins the caller's transaction; a generation older than the stored
+	// one changes nothing.
+	ApplyResource(ctx context.Context, resource DesiredResource) error
+	// ResourceStatus is what the agent last reported (ObservedGeneration 0
+	// and no phase when it has reported nothing yet).
+	ResourceStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (ResourceStatus, error)
+	// ResourceKinds are the kinds the environment's cluster (or, unplaced,
+	// the organization's default) can provision; none when there is no
+	// cluster or it was revoked. It changes nothing.
+	ResourceKinds(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resourcekind.Kind, error)
 }
 
 // Builds is what the build domain uses to build in clusters (its buildfleet
@@ -117,6 +138,15 @@ type Agents interface {
 	// desired revision; the rest is ignored.
 	Report(ctx context.Context, agent AgentRef, session Session, report Report) error
 
+	// DesiredResources are the cluster's desired resources (the gateway
+	// sends them before the apps that use them).
+	DesiredResources(ctx context.Context, agent AgentRef) ([]DesiredResource, error)
+	// DesiredResource is one of them (false when it is no longer this cluster's).
+	DesiredResource(ctx context.Context, agent AgentRef, environment project.EnvironmentID, name string) (DesiredResource, bool, error)
+	// ReportResources stores what the agent observed of resources, like
+	// Report. A resource reported gone (phase deleted) that was being
+	// deleted is forgotten and published as cluster.resource_removed.
+	ReportResources(ctx context.Context, agent AgentRef, session Session, report ResourceReport) error
 	// DesiredBuilds are the cluster's builds of the last BuildResendWithin
 	// (wanted, cancelled and finished: the gateway decides what to send).
 	DesiredBuilds(ctx context.Context, agent AgentRef) ([]DesiredBuild, error)
@@ -274,4 +304,19 @@ type Repository interface {
 	// cluster stored that version, or a newer one).
 	ClearSecretFailure(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, app, name string, version int64) error
 	ListSecretFailures(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]SecretFailure, error)
+
+	// PutResource stores the desired resource unless the stored generation
+	// is the same or newer (or it is another cluster's), signalling the
+	// cluster's gateway; false when nothing changed.
+	PutResource(ctx context.Context, resource DesiredResource) (bool, error)
+	ListResources(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]DesiredResource, error)
+	FindResource(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, environment project.EnvironmentID, name string) (DesiredResource, error)
+	FindResourceStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (ResourceStatus, error)
+	// ObserveResources upserts the reported statuses of resources desired on
+	// this cluster while session is its tunnel (false when it is not). A
+	// status never goes back to an older generation; one beyond the desired
+	// generation is dropped. A resource being deleted whose report says
+	// "deleted" at its generation is removed (desired state and status) and
+	// returned.
+	ObserveResources(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, report ResourceReport) (bool, []DesiredResource, error)
 }

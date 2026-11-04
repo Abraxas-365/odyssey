@@ -21,6 +21,7 @@ const (
 	EventAccessChanged       = "access.changed"
 	EventEnvChanged          = "env.changed"
 	EventSecretChanged       = "secret.changed"
+	EventResourcesChanged    = "resources.changed"
 )
 
 // Subject kinds ("release/<id>", "deployment/<id>").

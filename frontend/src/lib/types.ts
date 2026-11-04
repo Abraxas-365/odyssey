@@ -39,6 +39,13 @@ export type EnvironmentSettings = Schemas['EnvironmentSettings']
 export type AccessChange = Schemas['AccessChange']
 /** Variables and secrets (cut 2a): a change is a settings revision; a secret is only ever a reference. */
 export type SettingsChange = Schemas['SettingsChange']
+
+/** Databases, caches and files of an environment (docs/api.md §11, docs/resources.md). */
+export type Resource = Schemas['Resource']
+export type ResourceKind = Schemas['ResourceKind']
+export type ResourceChange = Schemas['ResourceChange']
+export type ResourceList = operations['listResources']['responses'][200]['content']['application/json']
+export type CreateResource = operations['createResource']['requestBody']['content']['application/json']
 export type SecretView = Schemas['SecretView']
 export type ClusterSecretKey = Schemas['ClusterSecretKey']
 export type SetEnvironmentVariables = NonNullable<operations['setEnvironmentVariables']['requestBody']>['content']['application/json']

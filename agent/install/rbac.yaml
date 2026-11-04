@@ -32,17 +32,34 @@ subjects:
     name: odyssey-agent
     namespace: odyssey-system
 ---
-# The apps' Secrets (managed secret values, written by the agent). Never
-# bound cluster-wide: the agent binds it with a RoleBinding of the same name
-# in each environment namespace it creates (desired.Namespaces), so it cannot
-# read or change the Secrets of the rest of the cluster. It may bind this
-# role and no other (bind, resourceNames), and policy.yaml refuses a binding
-# outside its namespaces or for anyone but the agent.
+# What the agent may only do inside the namespaces of environments: keep the
+# apps' Secrets and make, grow and ERASE the data of resources (volumes,
+# databases, caches). Never bound cluster-wide: the agent binds it with a
+# RoleBinding of the same name in each environment namespace it creates
+# (desired.Namespaces), so it can neither read the Secrets of the rest of
+# the cluster nor delete anyone else's volumes, databases or workloads. The
+# cluster-wide role (rbac/role.yaml, generated) holds only the reads the
+# caches and watches need for these kinds. The agent may bind this role and no
+# other (bind, resourceNames), and policy.yaml refuses a binding outside its
+# namespaces or for anyone but the agent. Kept by hand: the kubebuilder
+# markers must not grant these verbs (agent/install_test.go checks it).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: odyssey-agent-secrets
+  name: odyssey-agent-environment
 rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, create, update, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, update, delete]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [create, update, delete]

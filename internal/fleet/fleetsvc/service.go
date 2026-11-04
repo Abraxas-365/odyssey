@@ -280,6 +280,10 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		if err := c.Agent.Capabilities.CheckSecrets(app.Secrets); err != nil {
 			return err
 		}
+		// One that cannot provision its resources would wait for them forever.
+		if err := c.Agent.Capabilities.CheckResources(app.Resources); err != nil {
+			return err
+		}
 		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)
 		if err != nil || !changed {

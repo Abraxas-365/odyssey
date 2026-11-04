@@ -17,6 +17,7 @@ import (
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	"github.com/Abraxas-365/odyssey/agent/controllers/app"
 	buildctl "github.com/Abraxas-365/odyssey/agent/controllers/build"
+	"github.com/Abraxas-365/odyssey/agent/controllers/resource"
 	"github.com/Abraxas-365/odyssey/agent/desired"
 	"github.com/Abraxas-365/odyssey/agent/secretstore"
 	"github.com/Abraxas-365/odyssey/agent/tunnel"
@@ -61,10 +62,10 @@ type Options struct {
 	// access, agent/access) and how Traefik reaches it.
 	Access AccessOptions
 	// ServiceAccount is the agent's own (namespace/name, ODYSSEY_SERVICE_ACCOUNT
-	// in its namespace). It is bound to desired.SecretsRole in each
-	// environment namespace, so the agent may keep app Secrets there and only
-	// there. Empty (an agent run outside the cluster): nothing is bound and
-	// its own credentials decide.
+	// in its namespace). It is bound to desired.EnvironmentRole in each
+	// environment namespace, so the agent may keep app Secrets and erase
+	// resource data there and only there. Empty (an agent run outside the
+	// cluster): nothing is bound and its own credentials decide.
 	ServiceAccount client.ObjectKey
 }
 
@@ -117,20 +118,20 @@ func (e ensureAccessKey) Start(ctx context.Context) error {
 	}
 }
 
-// bindSecrets binds desired.SecretsRole in every environment namespace once
-// the agent leads: an agent upgraded from one that held the Secrets role
-// cluster-wide keeps working in the namespaces it made before, and a binding
-// someone deleted comes back on restart.
-type bindSecrets struct{ n *desired.Namespaces }
+// bindEnvironment binds desired.EnvironmentRole in every environment namespace
+// once the agent leads: an agent upgraded from one that bound an older role
+// keeps working in the namespaces it made before, and a binding someone
+// deleted comes back on restart.
+type bindEnvironment struct{ n *desired.Namespaces }
 
-func (b bindSecrets) Start(ctx context.Context) error {
-	log := ctrl.Log.WithName("secrets-rbac")
+func (b bindEnvironment) Start(ctx context.Context) error {
+	log := ctrl.Log.WithName("environment-rbac")
 	for {
 		err := b.n.BindAll(ctx)
 		if err == nil {
 			return nil
 		}
-		log.Error(err, "cannot bind the secrets role in every environment namespace; retrying")
+		log.Error(err, "cannot bind the environment role in every environment namespace; retrying")
 		select {
 		case <-ctx.Done():
 			return nil
@@ -140,12 +141,15 @@ func (b bindSecrets) Start(ctx context.Context) error {
 }
 
 // hasTraefik says whether the cluster serves traefik.io/v1alpha1 now.
-func hasTraefik(cfg *rest.Config) bool {
+func hasTraefik(cfg *rest.Config) bool { return hasAPI(cfg, "traefik.io/v1alpha1") }
+
+// hasAPI says whether the cluster serves the group version ("group/version") now.
+func hasAPI(cfg *rest.Config, groupVersion string) bool {
 	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
 		return false
 	}
-	_, err = dc.ServerResourcesForGroupVersion("traefik.io/v1alpha1")
+	_, err = dc.ServerResourcesForGroupVersion(groupVersion)
 	return err == nil
 }
 
@@ -234,6 +238,8 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 	owned := cache.ByObject{Label: labels.SelectorFromSet(labels.Set{app.LabelManagedBy: app.ManagedBy})}
 	byObject := map[client.Object]cache.ByObject{
 		&corev1.Pod{}: owned, &appsv1.Deployment{}: owned, &corev1.Service{}: owned, &networkingv1.Ingress{}: owned,
+		// Only the volumes the resource controller made (files, redis).
+		&corev1.PersistentVolumeClaim{}: owned,
 	}
 	if o.Builds.enabled() {
 		byObject[&batchv1.Job{}] = cache.ByObject{Label: owned.Label, Namespaces: map[string]cache.Config{buildctl.Namespace: {}}}
@@ -248,6 +254,15 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		m := app.NewMiddleware()
 		byObject[m] = owned
 		mw = append(mw, m)
+	}
+	// The same for CloudNativePG's Clusters (postgres resources): owned only
+	// when the API exists now; otherwise postgres resources are re-checked
+	// periodically (resource.Reconciler).
+	var clusters []client.Object
+	if hasAPI(cfg, resource.ClusterGVK.GroupVersion().String()) {
+		c := resource.NewCluster()
+		byObject[c] = owned
+		clusters = append(clusters, c)
 	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                  scheme,
@@ -275,7 +290,14 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 	if err := rec.SetupWithManager(mgr); err != nil {
 		return nil, err
 	}
-	if o.Tunnel.Store != nil || o.Secret.Name != "" {
+	tunnelled := o.Tunnel.Store != nil || o.Secret.Name != ""
+	// A deleted resource's object is removed once the control plane has been
+	// told (the tunnel marks it); without a tunnel nobody needs telling.
+	resources := &resource.Reconciler{Client: mgr.GetClient(), Owned: clusters, Mapper: mgr.GetRESTMapper(), AwaitReport: tunnelled}
+	if err := resources.SetupWithManager(mgr); err != nil {
+		return nil, err
+	}
+	if tunnelled {
 		if err := addTunnel(cfg, mgr, o); err != nil {
 			return nil, err
 		}
@@ -306,13 +328,17 @@ func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
 		t.Store = &tunnel.SecretStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: o.Secret.Namespace, Name: o.Secret.Name}
 	}
 	namespaces := &desired.Namespaces{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Agent: o.ServiceAccount}
-	t.Desired = &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc, AccessGate: o.Access.Ready(), Namespaces: namespaces}
+	syncer := &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc, AccessGate: o.Access.Ready(), Namespaces: namespaces}
+	t.Desired = syncer
+	if t.Resources == nil {
+		t.Resources, t.RejectedResource = syncer, desired.RejectedResourceStatus
+	}
 	if t.Secrets == nil {
 		// Secrets are never cached: the writer reads the API.
 		t.Secrets = &secretstore.Writer{Client: mgr.GetClient(), Namespaces: namespaces}
 	}
 	if o.ServiceAccount.Name != "" {
-		if err := mgr.Add(bindSecrets{n: namespaces}); err != nil {
+		if err := mgr.Add(bindEnvironment{n: namespaces}); err != nil {
 			return err
 		}
 	}
@@ -329,6 +355,9 @@ func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
 	}
 	c := tunnel.New(t)
 	if err := c.WatchStatuses(mgr); err != nil {
+		return err
+	}
+	if err := c.WatchResourceStatuses(mgr); err != nil {
 		return err
 	}
 	if withTunnel != nil {

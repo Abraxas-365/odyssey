@@ -11,6 +11,7 @@ export const permissions = {
   integrationsManage: 'odyssey:integrations:manage',
   accessPublic: 'odyssey:access:public',
   secretsExternal: 'odyssey:secrets:external',
+  resourcesDelete: 'odyssey:resources:delete',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]

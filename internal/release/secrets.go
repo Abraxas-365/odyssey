@@ -10,6 +10,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 	"github.com/Abraxas-365/odyssey/pkg/secretbox"
 )
 
@@ -332,6 +333,13 @@ func (d DesiredApp) WithSettings(s Settings) DesiredApp {
 	for k, v := range s.Env {
 		env[k] = v
 	}
+	d.Resources = make([]DesiredResource, 0, len(s.Resources))
+	for _, r := range s.Resources {
+		for _, v := range resourcekind.Variables(r.Kind, r.Prefix) {
+			delete(env, v) // the connection wins over a release's variable of its name
+		}
+		d.Resources = append(d.Resources, DesiredResource{Name: r.Name, Kind: r.Kind, Prefix: r.Prefix})
+	}
 	d.Secrets = make([]DesiredSecret, 0, len(s.Secrets))
 	for _, r := range s.Secrets {
 		delete(env, r.Name)
@@ -439,12 +447,15 @@ func secretState(r SecretRef, c ClusterSecrets) SecretState {
 }
 
 // NameCount is how many names an environment holds under s: variables,
-// secrets and open requests together, each name once (a request whose name is
+// secrets, the variables of connected resources and open requests together, each name once (a request whose name is
 // a secret or a variable already takes no second place).
 func (s Settings) NameCount(open []SecretRequest) int {
-	n := len(s.Env) + len(s.Secrets)
+	n := len(s.Env) + len(s.Secrets) + len(s.resourceVariables())
 	for _, r := range open {
 		if _, plain := s.Env[r.Name]; plain {
+			continue
+		}
+		if _, taken := s.resourceVariables()[r.Name]; taken {
 			continue
 		}
 		if _, secret := s.Secret(r.Name); !secret {
@@ -462,6 +473,9 @@ func ErrTooManyVars(field string) error {
 // CheckRequest says whether a request for name fits: an open request of that
 // name is renewed, any other takes one more place.
 func (s Settings) CheckRequest(open []SecretRequest, name string) error {
+	if res, ok := s.resourceVariables()[name]; ok {
+		return ErrVariableTaken(name, res)
+	}
 	if slices.ContainsFunc(open, func(r SecretRequest) bool { return r.Name == name }) {
 		return nil
 	}
@@ -477,7 +491,11 @@ func (s Settings) CheckRequest(open []SecretRequest, name string) error {
 func (s Settings) WithEnv(in SetEnv, open []SecretRequest) (Settings, []string, []string, error) {
 	n := s.next(in.RequestedBy)
 	var set, unset []string
+	taken := s.resourceVariables()
 	for k, v := range in.Set {
+		if res, ok := taken[k]; ok {
+			return Settings{}, nil, nil, ErrVariableTaken(k, res)
+		}
 		if _, secret := n.Secret(k); secret {
 			return Settings{}, nil, nil, errx.InvalidField("set", k+" is a secret: remove the secret to make it a plain variable")
 		}
@@ -503,6 +521,9 @@ func (s Settings) WithEnv(in SetEnv, open []SecretRequest) (Settings, []string, 
 // are the open secret requests (the one of ref's name is answered by it and
 // is not counted twice).
 func (s Settings) WithSecret(ref SecretRef, actor identity.UserID, open []SecretRequest) (Settings, error) {
+	if res, ok := s.resourceVariables()[ref.Name]; ok {
+		return Settings{}, ErrVariableTaken(ref.Name, res)
+	}
 	n := s.next(actor)
 	delete(n.Env, ref.Name)
 	n.Secrets = slices.DeleteFunc(n.Secrets, func(r SecretRef) bool { return r.Name == ref.Name })

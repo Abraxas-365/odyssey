@@ -18,21 +18,22 @@ import (
 var agentSA = types.NamespacedName{Namespace: "odyssey-system", Name: "odyssey-agent"}
 
 func namespaces(c client.Client, can func(context.Context, string) (bool, error)) *Namespaces {
-	return &Namespaces{Client: c, Agent: agentSA, CanUseSecrets: can}
+	return &Namespaces{Client: c, Agent: agentSA, CanUseRole: can}
 }
 
 func binding(t *testing.T, c client.Client, ns string) *rbacv1.RoleBinding {
 	t.Helper()
 	var rb rbacv1.RoleBinding
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: SecretsRole}, &rb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: EnvironmentRole}, &rb); err != nil {
 		return nil
 	}
 	return &rb
 }
 
-// The agent may keep Secrets only in the namespaces it creates: it binds the
-// Secrets role there (never cluster-wide) and waits until it applies.
-func TestEnsureBindsTheSecretsRoleInTheEnvironmentNamespace(t *testing.T) {
+// The agent may keep Secrets and erase data only in the namespaces it
+// creates: it binds the environment role there (never cluster-wide) and waits
+// until it applies.
+func TestEnsureBindsTheEnvironmentRoleInTheEnvironmentNamespace(t *testing.T) {
 	ctx := context.Background()
 	_, c := newSyncer(t, interceptor.Funcs{})
 	checks := 0
@@ -48,9 +49,9 @@ func TestEnsureBindsTheSecretsRoleInTheEnvironmentNamespace(t *testing.T) {
 	}
 	rb := binding(t, c, Namespace(env))
 	if rb == nil {
-		t.Fatal("no RoleBinding for the Secrets role")
+		t.Fatal("no RoleBinding for the environment role")
 	}
-	if rb.RoleRef != (rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: SecretsRole}) ||
+	if rb.RoleRef != (rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: EnvironmentRole}) ||
 		len(rb.Subjects) != 1 || rb.Subjects[0] != (rbacv1.Subject{Kind: "ServiceAccount", Name: agentSA.Name, Namespace: agentSA.Namespace}) {
 		t.Fatalf("binding %+v", rb)
 	}
@@ -92,7 +93,7 @@ func TestEnsureRefusesANamespaceItDoesNotManage(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 	if binding(t, c, Namespace(env)) != nil {
-		t.Fatal("bound the Secrets role in a namespace the agent does not manage")
+		t.Fatal("bound the environment role in a namespace the agent does not manage")
 	}
 }
 
@@ -109,7 +110,7 @@ func TestEnsureWithoutServiceAccountBindsNothing(t *testing.T) {
 	}
 }
 
-// After an upgrade (the role used to be cluster-wide) every environment
+// After an upgrade (the role used to be bound under another name) every environment
 // namespace the agent made gets its binding; no other namespace does.
 func TestBindAllCoversOnlyTheAgentsNamespaces(t *testing.T) {
 	managed := func(name string) *corev1.Namespace {

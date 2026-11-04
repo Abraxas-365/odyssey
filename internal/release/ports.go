@@ -38,6 +38,16 @@ type Commands interface {
 	// its access (a new revision; a config deployment when something is
 	// online). Setting a name that is a secret is refused.
 	SetEnv(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input SetEnv) (SettingsChange, error)
+	// ConnectResource connects a resource of the environment to the app
+	// (a new settings revision and, when something is online, a config
+	// deployment that wires its variables). The resource must exist in the
+	// environment and not be deleting; a variable another variable, secret or
+	// resource holds is refused (409 VARIABLE_TAKEN). Connecting it as it
+	// already is changes nothing.
+	ConnectResource(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input ConnectResource) (SettingsChange, error)
+	// DisconnectResource removes the connection (the resource keeps
+	// existing; NotFound when it was not connected).
+	DisconnectResource(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input DisconnectResource) (SettingsChange, error)
 	// RequestSecret asks a person to load a managed secret's value (nothing
 	// changes in the cluster until it is loaded). A secret already there is
 	// returned as it is, without a request.
@@ -135,6 +145,27 @@ type Builder interface {
 	// Source is an uploaded source (NotFound when it is not the
 	// organization's).
 	Source(ctx context.Context, organization identity.OrganizationID, source build.SourceID) (build.Source, error)
+}
+
+// Resources is what release asks the resource domain, through an adapter
+// (releaseresource): whether a resource can be connected. It runs inside the
+// caller's transaction, so a resource being deleted at the same time is seen
+// (the deletion holds the same settings lock, see Usage).
+type Resources interface {
+	// Find is the resource of the environment (NotFound when there is none).
+	Find(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (ResourceInfo, error)
+}
+
+// Usage is what the resource domain asks release (its resourcerelease
+// adapter), implemented by releasesvc.Service.
+type Usage interface {
+	// WithResourceUseLocked runs fn in a transaction holding the lock of the
+	// environment's settings, with the resources connected at that moment.
+	// ConnectResource takes the same lock, so a deletion checking "not in use"
+	// inside fn can never race a connection: either the connection is seen, or
+	// it waits and finds the resource deleting.
+	WithResourceUseLocked(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID,
+		fn func(ctx context.Context, connected []ResourceUse) error) error
 }
 
 // Repository is the persistence contract; only the service depends on it.

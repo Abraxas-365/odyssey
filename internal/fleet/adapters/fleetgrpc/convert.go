@@ -3,6 +3,7 @@ package fleetgrpc
 import (
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 )
 
@@ -16,6 +17,7 @@ func agentFromProto(h *fleetv1.Hello) fleet.Agent {
 		Builder:           builderFromProto(c.GetBuilder()),
 		SecretKey:         secretKeyFromProto(c.GetSecretKey()),
 		SecretStores:      nonNil(c.GetSecretStores()),
+		ResourceKinds:     nonNil(c.GetResourceKinds()),
 	}}
 }
 
@@ -50,7 +52,12 @@ func appToProto(a fleet.App) *fleetv1.App {
 		secrets = append(secrets, &fleetv1.SecretRef{Name: s.Name, Source: s.Source, Version: s.Version,
 			Store: s.Store, Key: s.Key, Property: s.Property})
 	}
+	resources := make([]*fleetv1.ResourceRef, 0, len(a.Resources))
+	for _, r := range a.Resources {
+		resources = append(resources, &fleetv1.ResourceRef{Name: r.Name, Kind: string(r.Kind), Prefix: r.Prefix})
+	}
 	return &fleetv1.App{
+		Resources:      resources,
 		OrganizationId: a.Organization.String(), ProjectId: a.Project.String(), EnvironmentId: a.Environment.String(),
 		Name: a.Name, Revision: a.Revision, Image: a.Image, Port: int32(a.Port), HealthPath: a.HealthPath,
 		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels, Access: &fleetv1.Access{Mode: a.Access}, Secrets: secrets,
@@ -119,6 +126,28 @@ func buildLogFromProto(l *fleetv1.BuildLog) (fleet.BuildLog, error) {
 	out := fleet.BuildLog{Build: id, Lines: make([]fleet.LogLine, 0, len(l.GetLines()))}
 	for _, x := range l.GetLines() {
 		out.Lines = append(out.Lines, fleet.LogLine{Seq: x.GetSeq(), Stream: x.GetStream(), Text: x.GetText()})
+	}
+	return out, nil
+}
+
+func resourceToProto(d fleet.DesiredResource) *fleetv1.ControlMessage {
+	return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_Resource{Resource: &fleetv1.Resource{
+		OrganizationId: d.Organization.String(), ProjectId: d.Project.String(), EnvironmentId: d.Environment.String(),
+		Name: d.Name, Kind: string(d.Kind), Generation: d.Generation, Storage: resourcekind.Storage(d.StorageGi), Deleted: d.Deleted,
+	}}}
+}
+
+// resourceReportFromProto rejects the whole report when a status is
+// unreadable, like reportFromProto.
+func resourceReportFromProto(r *fleetv1.ResourceReport) (fleet.ResourceReport, error) {
+	out := fleet.ResourceReport{Full: r.GetFull(), Resources: make([]fleet.ResourceStatus, 0, len(r.GetResources()))}
+	for _, s := range r.GetResources() {
+		env, err := project.ParseEnvironmentID(s.GetEnvironmentId())
+		if err != nil {
+			return fleet.ResourceReport{}, err
+		}
+		out.Resources = append(out.Resources, fleet.ResourceStatus{Environment: env, Name: s.GetName(),
+			ObservedGeneration: s.GetObservedGeneration(), Phase: fleet.ResourcePhase(s.GetPhase()), Message: s.GetMessage()})
 	}
 	return out, nil
 }

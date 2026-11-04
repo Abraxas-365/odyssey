@@ -29,6 +29,8 @@ tags:
     description: A project groups everything a team ships. The console calls it an "app".
   - name: deployments
     description: What runs in each environment - publishing, progress, history and going back.
+  - name: resources
+    description: An app's databases, caches and file volumes, and their connection to the app.
   - name: clusters
     description: The organization's Kubernetes clusters, where apps run (TI's Infraestructura → Clústeres).
   - name: audit
@@ -495,7 +497,8 @@ paths:
         deployment when a release is online). A name that is a secret is
         refused (remove the secret first); setting a variable to the value it
         has adds no revision. Values never appear in the trail: event
-        `env.changed` carries only the names.
+        `env.changed` carries only the names. A name a connected resource defines is
+        409 `VARIABLE_TAKEN`.
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -525,6 +528,232 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/resources:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [resources]
+      operationId: listResources
+      summary: List the environment's databases, caches and file volumes
+      description: |
+        Oldest first, with what the cluster reports of each (`phase`, `message`:
+        preparing, ready, failed) and whether the app is connected to it. Also
+        the kinds the environment's cluster can prepare (`available_kinds`).
+        Passwords and data never appear: `variables` are only the names the app reads.
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The environment's resources.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, available_kinds]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Resource" }
+                  available_kinds:
+                    type: array
+                    items: { $ref: "#/components/schemas/ResourceKind" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      tags: [resources]
+      operationId: createResource
+      summary: Create a database, cache or file volume
+      description: |
+        Stores the resource and has the environment's cluster prepare it (the
+        environment is placed on the default cluster if it had none). A cluster
+        that cannot prepare the kind refuses with 422 `RESOURCES_UNAVAILABLE` and
+        nothing is stored. With `connect` the app is connected in the same
+        operation (the response carries the settings `revision` and the config
+        `deployment_id`, when one started; 409 `VARIABLE_TAKEN` if a variable it
+        defines is already in use). An environment has at most 10 resources
+        (409 `RESOURCE_LIMIT`); the name is unique among them (409). Event
+        `resource.created`.
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, kind]
+              properties:
+                name: { $ref: "#/components/schemas/ResourceName" }
+                kind: { $ref: "#/components/schemas/ResourceKind" }
+                storage_gi: { type: integer, minimum: 1, maximum: 100, description: "Size in GiB (default 1)." }
+                connect:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    prefix: { $ref: "#/components/schemas/ResourcePrefix" }
+      responses:
+        "201":
+          description: The resource created (and connected, when asked).
+          headers:
+            Location: { schema: { type: string }, description: The resource. }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/resources/{name}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - $ref: "#/components/parameters/ResourceName"
+    get:
+      tags: [resources]
+      operationId: getResource
+      summary: A resource with its state
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The resource.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Resource" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+    patch:
+      tags: [resources]
+      operationId: resizeResource
+      summary: Grow a resource
+      description: |
+        A resource only grows (1–100 GiB): a smaller size is 400, the same size
+        changes nothing. A resource being deleted is 409 `RESOURCE_DELETING`.
+        Event `resource.resized`.
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [storage_gi]
+              properties:
+                storage_gi: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: The resource at its new size.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Resource" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+    delete:
+      tags: [resources]
+      operationId: deleteResource
+      summary: Delete a resource and its data
+      description: |
+        Erases the data: this cannot be undone. A resource the app is connected
+        to is refused with 409 `RESOURCE_IN_USE` (disconnect it first). Answers
+        202: the resource is `deleting` until the cluster confirms the erasure,
+        and then it is forgotten (its name is free again). Events
+        `resource.deleted` and, once confirmed, `resource.removed`.
+      x-permissions: [odyssey:resources:delete]
+      responses:
+        "202":
+          description: The resource, now deleting.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Resource" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/resources/{name}/connection:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - $ref: "#/components/parameters/ResourceName"
+    put:
+      tags: [resources]
+      operationId: connectResource
+      summary: Connect the app to a resource
+      description: |
+        The app receives the resource's variables (`DATABASE_URL`, … with the
+        `prefix` before their names) as the next settings revision, applied like
+        any settings change (a `config` deployment when a release is online).
+        Connecting again with another prefix changes it. 409 `VARIABLE_TAKEN` if
+        a variable it defines is already a plain variable, a secret or another
+        resource's; 409 `RESOURCE_DELETING` for a resource being deleted.
+        Event `resources.changed`.
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                prefix: { $ref: "#/components/schemas/ResourcePrefix" }
+      responses:
+        "202":
+          description: The resource connected and the deployment applying it, if one started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+    delete:
+      tags: [resources]
+      operationId: disconnectResource
+      summary: Disconnect the app from a resource
+      description: The app stops receiving the resource's variables; the resource and its data stay. Event `resources.changed`.
+      x-permissions: [odyssey:projects:write]
+      responses:
+        "202":
+          description: The resource disconnected and the deployment applying it, if one started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
@@ -580,6 +809,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
     delete:
@@ -1743,6 +1973,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ResourceName:
+      name: name
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ResourceName" }
     Deployment:
       name: deployment
       in: path
@@ -2114,7 +2349,7 @@ components:
     EnvironmentSettings:
       type: object
       additionalProperties: false
-      required: [revision, access, env, secrets, secret_key, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available]
+      required: [revision, access, env, resources, secrets, secret_key, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available]
       properties:
         revision: { type: integer, description: "0: the defaults; every change adds one." }
         access:
@@ -2124,6 +2359,10 @@ components:
           properties:
             mode: { $ref: "#/components/schemas/AccessMode" }
         env: { $ref: "#/components/schemas/EnvironmentVariables" }
+        resources:
+          type: array
+          description: The resources the app is connected to, by name.
+          items: { $ref: "#/components/schemas/ResourceUse" }
         secrets:
           type: array
           description: The environment's secrets judged against its cluster, then the open requests (state `missing`), by name.
@@ -2162,7 +2401,7 @@ components:
     SettingsRevision:
       type: object
       additionalProperties: false
-      required: [revision, access, env, secrets]
+      required: [revision, access, env, resources, secrets]
       description: One revision of an environment's configuration (only references to secrets, never a value).
       properties:
         revision: { type: integer }
@@ -2173,6 +2412,9 @@ components:
           properties:
             mode: { $ref: "#/components/schemas/AccessMode" }
         env: { $ref: "#/components/schemas/EnvironmentVariables" }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/ResourceUse" }
         secrets:
           type: array
           items: { $ref: "#/components/schemas/SecretRef" }
@@ -2187,6 +2429,72 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/Deployment"
+    ResourceName:
+      type: string
+      pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
+      maxLength: 30
+      description: Lowercase letters, digits and hyphens; unique among the environment's resources.
+    ResourcePrefix:
+      type: string
+      pattern: "^[A-Z]([A-Z0-9_]*[A-Z0-9])?$"
+      maxLength: 40
+      description: Goes before the variable names (`ANALYTICS` → `ANALYTICS_DATABASE_URL`); empty for none.
+    ResourceKind:
+      type: string
+      enum: [postgres, redis, files]
+      description: "`postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`)."
+    ResourceUse:
+      type: object
+      additionalProperties: false
+      required: [name, kind]
+      description: A resource the app is connected to (in a settings revision).
+      properties:
+        name: { $ref: "#/components/schemas/ResourceName" }
+        kind: { $ref: "#/components/schemas/ResourceKind" }
+        prefix: { type: string }
+    Resource:
+      type: object
+      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, variables]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/ResourceName" }
+        kind: { $ref: "#/components/schemas/ResourceKind" }
+        storage_gi: { type: integer, description: Size in GiB; it only grows. }
+        generation: { type: integer, description: Grows with every change; the cluster ignores an older one. }
+        status:
+          type: string
+          enum: [active, deleting]
+          description: "`deleting` until the cluster confirms the data erased; then the resource is forgotten."
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        phase:
+          type: string
+          enum: [provisioning, ready, failed, deleted]
+          description: What the cluster reports (`provisioning` also while it has reported nothing yet).
+        message: { type: string, description: Why it failed, when it did. }
+        connected: { type: boolean, description: Whether the app receives the resource's variables. }
+        prefix: { type: string, description: The connection's prefix ("" for none). }
+        variables:
+          type: array
+          description: The variable names the app reads the resource by (never their values).
+          items: { type: string }
+    ResourceChange:
+      description: A resource plus what a connection change stored.
+      allOf:
+        - $ref: "#/components/schemas/Resource"
+        - type: object
+          required: [revision, deployment_id]
+          properties:
+            revision: { type: integer, description: "The settings revision in force after the change (0: the environment has never had settings)." }
+            deployment_id:
+              description: The config deployment applying the connection (null when none started).
+              oneOf:
+                - type: "null"
+                - { type: string, format: uuid }
     SecretName:
       type: string
       pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
@@ -2341,10 +2649,10 @@ components:
               properties:
                 code:
                   type: string
-                  enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, PROMOTE_FAILED,
+                  enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, RESOURCE_NOT_READY, PROMOTE_FAILED,
                          UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER,
                          SOURCE_EXPIRED, BUILD_INTERNAL]
-                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side)."
+                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`)."
                 message: { type: string, description: Plain Spanish for whoever deploys. }
                 detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }
@@ -2425,12 +2733,16 @@ components:
             capabilities:
               type: object
               additionalProperties: false
-              required: [kubernetes_version, apis, ingress_classes, storage_classes]
+              required: [kubernetes_version, apis, ingress_classes, storage_classes, resource_kinds]
               properties:
                 kubernetes_version: { type: string }
                 apis: { type: array, items: { type: string } }
                 ingress_classes: { type: array, items: { type: string } }
                 storage_classes: { type: array, items: { type: string } }
+                resource_kinds:
+                  type: array
+                  description: The kinds of resources (`postgres`, `redis`, `files`) its agent can prepare; empty for an agent older than 2b.
+                  items: { type: string }
         certificate:
           type: object
           additionalProperties: false

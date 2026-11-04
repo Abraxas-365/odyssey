@@ -15,6 +15,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - persistentvolumeclaims
   - pods
   verbs:
   - get
@@ -90,14 +91,41 @@ rules:
   - odyssey.dev
   resources:
   - odysseyapps/status
+  - odysseyresources/status
   verbs:
   - get
   - patch
   - update
 - apiGroups:
+  - odyssey.dev
+  resources:
+  - odysseyresources
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - odyssey.dev
+  resources:
+  - odysseyresources/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - rbac.authorization.k8s.io
   resourceNames:
-  - odyssey-agent-secrets
+  - odyssey-agent-environment
   resources:
   - clusterroles
   verbs:

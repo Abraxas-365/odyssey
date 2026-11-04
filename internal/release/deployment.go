@@ -62,6 +62,10 @@ const (
 	ReasonConfig       Reason = "config"        // the serving version again, to apply changed settings (who can open it)
 )
 
+// CodeResourceNotReady: a database, cache or volume the app uses was not
+// ready in time (the agent's failure reason "resource").
+const CodeResourceNotReady = "RESOURCE_NOT_READY"
+
 // Error codes of failed deployments and refused requests.
 const (
 	CodeUnhealthy       = "HEALTH_CHECK_FAILED" // the app started but its health check fails

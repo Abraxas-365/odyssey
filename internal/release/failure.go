@@ -72,7 +72,7 @@ func FailureOf(step string, cause error) Failure {
 // stepCodes are the failures a step reports itself (the rest are inferred);
 // the build step reports its build's own code (build.Code*).
 var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true, CodeImagePull: true, CodeCrashed: true,
-	build.CodeUnsupported: true, build.CodeFailed: true, build.CodeTimeout: true, build.CodeSourceInvalid: true,
+	CodeResourceNotReady: true, build.CodeUnsupported: true, build.CodeFailed: true, build.CodeTimeout: true, build.CodeSourceInvalid: true,
 	build.CodePushFailed: true, build.CodeNoBuilder: true, build.CodeNoCluster: true, build.CodeSourceExpired: true,
 	CodeBuildInternal: true}
 
@@ -87,6 +87,8 @@ func Unready(s AppStatus) error {
 		code, msg = CodeCrashed, "La app se cierra al arrancar."
 	case FailureConfig:
 		code, msg = CodeApplyFailed, "El clúster no pudo aplicar la configuración de la app."
+	case FailureResource:
+		code, msg = CodeResourceNotReady, "Un recurso de la app (base de datos, caché o archivos) no estuvo listo a tiempo."
 	}
 	return Failed(code, msg, s.Message)
 }

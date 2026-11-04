@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Archive, Bot, Database, ExternalLink, Pencil } from 'lucide-react'
+import { Archive, Bot, ExternalLink, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button, ButtonLink } from '@/components/ui/button'
@@ -10,7 +10,6 @@ import {
   AppStatus,
   AppThumbnail,
   Callout,
-  EmptyState,
   ErrorNotice,
   KeyValue,
   Loading,
@@ -32,6 +31,7 @@ import type { Project } from '@/lib/types'
 import { CodePanel } from '@/features/github/code-panel'
 import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
 import { AccessPanel } from '@/features/apps/access-panel'
+import { ResourcesPanel } from '@/features/apps/resources-panel'
 import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
 import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
 
@@ -192,7 +192,7 @@ function Overview({ project: p }: { project: Project }) {
 
       {canRead && production && <SecretsPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
 
-      <EmptyState icon={Database} title="Lo que usa">Base de datos, archivos o IA. Tu asistente los pide cuando la app los necesita.</EmptyState>
+      {canRead && production && <ResourcesPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} technical={technical} />}
 
       {canWrite && (
         <Panel className="border-destructive/35">

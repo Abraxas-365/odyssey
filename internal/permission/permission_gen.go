@@ -21,6 +21,7 @@ const (
 	AuditRead           = "odyssey:audit:read"           // Ver el historial de actividad de la organización
 	AccessPublic        = "odyssey:access:public"        // Dejar que cualquiera con el enlace abra una app, sin iniciar sesión
 	SecretsExternal     = "odyssey:secrets:external"     // Conectar secretos de una app con el almacén de secretos de la empresa
+	ResourcesDelete     = "odyssey:resources:delete"     // Eliminar bases de datos, cachés y archivos de una app (borra sus datos)
 )
 
 // All is the whole catalog, in manifest order.
@@ -36,6 +37,7 @@ var All = []string{
 	AuditRead,
 	AccessPublic,
 	SecretsExternal,
+	ResourcesDelete,
 }
 
 // Labels describe each permission for role editors.
@@ -51,6 +53,7 @@ var Labels = map[string]string{
 	AuditRead:           "Ver el historial de actividad de la organización",
 	AccessPublic:        "Dejar que cualquiera con el enlace abra una app, sin iniciar sesión",
 	SecretsExternal:     "Conectar secretos de una app con el almacén de secretos de la empresa",
+	ResourcesDelete:     "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)",
 }
 
 // Names maps each constant's Go name to its permission (used by the
@@ -67,11 +70,12 @@ var Names = map[string]string{
 	"AuditRead":           AuditRead,
 	"AccessPublic":        AccessPublic,
 	"SecretsExternal":     SecretsExternal,
+	"ResourcesDelete":     ResourcesDelete,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic, SecretsExternal}},
-	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic, SecretsExternal, ResourcesDelete}},
+	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ResourcesDelete}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }

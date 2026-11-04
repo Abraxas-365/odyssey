@@ -55,7 +55,10 @@ type Module struct {
 	Queries  release.Queries
 	HTTP     *releasehttp.Handler
 	// Access finds an environment by id alone, for the access sign-in.
-	Access    release.AccessLookup
+	Access release.AccessLookup
+	// Usage is what the resource domain asks release (resourcerelease adapter).
+	Usage     release.Usage
+	svc       *releasesvc.Service
 	workflows release.Workflows
 }
 
@@ -70,7 +73,7 @@ func New(deps Deps) (Module, error) {
 	svc := releasesvc.New(releasepg.New(deps.DB), deps.Projects, cluster,
 		releasebuild.New(deps.BuildCommands, deps.BuildQueries), deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Options)
-	return Module{Commands: svc, Queries: svc, Access: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
+	return Module{Commands: svc, Queries: svc, Access: svc, Usage: svc, svc: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
 }
 
 // clusterOf picks the Cluster adapter.
@@ -102,3 +105,7 @@ const Schema = releasepg.Schema
 
 // Migrations are the module's *.up.sql files.
 func Migrations() fs.FS { return releasepg.Migrations() }
+
+// UseResources wires the resource domain's port (the resource module is built
+// after this one, since it needs Usage).
+func (m Module) UseResources(r release.Resources) { m.svc.UseResources(r) }

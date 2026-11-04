@@ -46,6 +46,15 @@ type OdysseyAppSpec struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=100
 	Secrets []SecretRefSpec `json:"secrets,omitempty"`
+	// Resources are the environment's resources the app uses (databases,
+	// caches, files). The pod reads their connection from the Secrets the
+	// agent keeps for them (never from here); a resource's variable wins over
+	// the same name in env. The app does not start until every one is ready.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=10
+	Resources []ResourceRefSpec `json:"resources,omitempty"`
 }
 
 // SecretSource is where a secret's value comes from.
@@ -114,7 +123,7 @@ const (
 )
 
 // Reason explains a failed phase.
-// +kubebuilder:validation:Enum="";image_pull;crash;unhealthy;config
+// +kubebuilder:validation:Enum="";image_pull;crash;unhealthy;config;resource
 type Reason string
 
 const (
@@ -123,6 +132,7 @@ const (
 	ReasonCrash     Reason = "crash"      // the app keeps exiting
 	ReasonUnhealthy Reason = "unhealthy"  // it runs but its health check fails
 	ReasonConfig    Reason = "config"     // the spec cannot be applied (e.g. its host is taken)
+	ReasonResource  Reason = "resource"   // a resource the app uses did not become ready in time
 )
 
 // OdysseyAppStatus is what the agent observed.

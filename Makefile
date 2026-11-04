@@ -1,4 +1,4 @@
-.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
+.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-addons cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
 
 # The Railpack library's version names the plans the builder writes (the
 # Dockerfile sets it the same way).
@@ -146,7 +146,17 @@ cluster:
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -f agent/install/crd
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply -k deploy/k3d/registry
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n odyssey-registry rollout status deployment/zot --timeout=180s
+	$(MAKE) cluster-addons
 	@echo "cluster ready: KUBECONFIG=$(KUBECONFIG_LOCAL); connect it with 'make agent-enroll NAME=local', then 'make agent' (or 'make agent-image' for in-cluster, which can also build)"
+
+# Operators the cluster's resources need (docs/resources.md): CloudNativePG
+# makes the databases. Pinned to a release by version and URL; server-side
+# apply because its CRDs are too big for a client-side annotation.
+CNPG_VERSION ?= 1.27.4
+CNPG_URL     ?= https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v$(CNPG_VERSION)/cnpg-$(CNPG_VERSION).yaml
+cluster-addons:
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply --server-side -f $(CNPG_URL)
+	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
 
 cluster-down:
 	k3d cluster delete $(K3D_CLUSTER)

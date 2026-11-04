@@ -121,6 +121,43 @@ spec:
                 maximum: 20
                 minimum: 1
                 type: integer
+              resources:
+                description: |-
+                  Resources are the environment's resources the app uses (databases,
+                  caches, files). The pod reads their connection from the Secrets the
+                  agent keeps for them (never from here); a resource's variable wins over
+                  the same name in env. The app does not start until every one is ready.
+                items:
+                  description: ResourceRefSpec is a resource of the environment an
+                    app uses.
+                  properties:
+                    kind:
+                      description: |-
+                        ResourceKind is what an OdysseyResource provisions (the same names as
+                        pkg/resourcekind: the control plane and the agent share them).
+                      enum:
+                      - postgres
+                      - redis
+                      - files
+                      type: string
+                    name:
+                      description: Name of the OdysseyResource in the app's namespace.
+                      maxLength: 30
+                      type: string
+                    prefix:
+                      description: Prefix goes before the variables the app reads
+                        the resource by.
+                      maxLength: 40
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                maxItems: 10
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               revision:
                 description: |-
                   Revision increases with every deployment of the environment. Whoever
@@ -225,6 +262,7 @@ spec:
                 - crash
                 - unhealthy
                 - config
+                - resource
                 type: string
               url:
                 description: URL is where the app answers.

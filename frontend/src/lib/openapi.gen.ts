@@ -345,9 +345,117 @@ export interface paths {
          *     deployment when a release is online). A name that is a secret is
          *     refused (remove the secret first); setting a variable to the value it
          *     has adds no revision. Values never appear in the trail: event
-         *     `env.changed` carries only the names.
+         *     `env.changed` carries only the names. A name a connected resource defines is
+         *     409 `VARIABLE_TAKEN`.
          */
         patch: operations["setEnvironmentVariables"];
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List the environment's databases, caches and file volumes
+         * @description Oldest first, with what the cluster reports of each (`phase`, `message`:
+         *     preparing, ready, failed) and whether the app is connected to it. Also
+         *     the kinds the environment's cluster can prepare (`available_kinds`).
+         *     Passwords and data never appear: `variables` are only the names the app reads.
+         */
+        get: operations["listResources"];
+        put?: never;
+        /**
+         * Create a database, cache or file volume
+         * @description Stores the resource and has the environment's cluster prepare it (the
+         *     environment is placed on the default cluster if it had none). A cluster
+         *     that cannot prepare the kind refuses with 422 `RESOURCES_UNAVAILABLE` and
+         *     nothing is stored. With `connect` the app is connected in the same
+         *     operation (the response carries the settings `revision` and the config
+         *     `deployment_id`, when one started; 409 `VARIABLE_TAKEN` if a variable it
+         *     defines is already in use). An environment has at most 10 resources
+         *     (409 `RESOURCE_LIMIT`); the name is unique among them (409). Event
+         *     `resource.created`.
+         */
+        post: operations["createResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/resources/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        /** A resource with its state */
+        get: operations["getResource"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a resource and its data
+         * @description Erases the data: this cannot be undone. A resource the app is connected
+         *     to is refused with 409 `RESOURCE_IN_USE` (disconnect it first). Answers
+         *     202: the resource is `deleting` until the cluster confirms the erasure,
+         *     and then it is forgotten (its name is free again). Events
+         *     `resource.deleted` and, once confirmed, `resource.removed`.
+         */
+        delete: operations["deleteResource"];
+        options?: never;
+        head?: never;
+        /**
+         * Grow a resource
+         * @description A resource only grows (1–100 GiB): a smaller size is 400, the same size
+         *     changes nothing. A resource being deleted is 409 `RESOURCE_DELETING`.
+         *     Event `resource.resized`.
+         */
+        patch: operations["resizeResource"];
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/resources/{name}/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Connect the app to a resource
+         * @description The app receives the resource's variables (`DATABASE_URL`, … with the
+         *     `prefix` before their names) as the next settings revision, applied like
+         *     any settings change (a `config` deployment when a release is online).
+         *     Connecting again with another prefix changes it. 409 `VARIABLE_TAKEN` if
+         *     a variable it defines is already a plain variable, a secret or another
+         *     resource's; 409 `RESOURCE_DELETING` for a resource being deleted.
+         *     Event `resources.changed`.
+         */
+        put: operations["connectResource"];
+        post?: never;
+        /**
+         * Disconnect the app from a resource
+         * @description The app stops receiving the resource's variables; the resource and its data stay. Event `resources.changed`.
+         */
+        delete: operations["disconnectResource"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{id}/environments/{environment}/secrets/{name}": {
@@ -1321,6 +1429,8 @@ export interface components {
                 mode: components["schemas"]["AccessMode"];
             };
             env: components["schemas"]["EnvironmentVariables"];
+            /** @description The resources the app is connected to, by name. */
+            resources: components["schemas"]["ResourceUse"][];
             /** @description The environment's secrets judged against its cluster, then the open requests (state `missing`), by name. */
             secrets: components["schemas"]["SecretView"][];
             /** @description The cluster key a managed value is sealed to in the browser (pkg/secretbox; HPKE DHKEM-X25519, HKDF-SHA256, AES-256-GCM). Null when the environment has no cluster or its cluster cannot take managed secrets yet. */
@@ -1346,12 +1456,75 @@ export interface components {
                 mode: components["schemas"]["AccessMode"];
             };
             env: components["schemas"]["EnvironmentVariables"];
+            resources: components["schemas"]["ResourceUse"][];
             secrets: components["schemas"]["SecretRef"][];
         };
         SettingsChange: {
             settings: components["schemas"]["SettingsRevision"];
             /** @description The config deployment applying the change (null when none started). */
             deployment: null | components["schemas"]["Deployment"];
+        };
+        /** @description Lowercase letters, digits and hyphens; unique among the environment's resources. */
+        ResourceName: string;
+        /** @description Goes before the variable names (`ANALYTICS` → `ANALYTICS_DATABASE_URL`); empty for none. */
+        ResourcePrefix: string;
+        /**
+         * @description `postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`).
+         * @enum {string}
+         */
+        ResourceKind: "postgres" | "redis" | "files";
+        /** @description A resource the app is connected to (in a settings revision). */
+        ResourceUse: {
+            name: components["schemas"]["ResourceName"];
+            kind: components["schemas"]["ResourceKind"];
+            prefix?: string;
+        };
+        Resource: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            environment_id: string;
+            name: components["schemas"]["ResourceName"];
+            kind: components["schemas"]["ResourceKind"];
+            /** @description Size in GiB; it only grows. */
+            storage_gi: number;
+            /** @description Grows with every change; the cluster ignores an older one. */
+            generation: number;
+            /**
+             * @description `deleting` until the cluster confirms the data erased; then the resource is forgotten.
+             * @enum {string}
+             */
+            status: "active" | "deleting";
+            /** Format: uuid */
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description What the cluster reports (`provisioning` also while it has reported nothing yet).
+             * @enum {string}
+             */
+            phase: "provisioning" | "ready" | "failed" | "deleted";
+            /** @description Why it failed */
+            message: string;
+            /** @description Whether the app receives the resource's variables. */
+            connected: boolean;
+            /** @description The connection's prefix ("" for none). */
+            prefix: string;
+            /** @description The variable names the app reads the resource by (never their values). */
+            variables: string[];
+        };
+        /** @description A resource plus what a connection change stored. */
+        ResourceChange: components["schemas"]["Resource"] & {
+            /** @description The settings revision in force after the change (0: the environment has never had settings). */
+            revision: number;
+            /** @description The config deployment applying the connection (null when none started). */
+            deployment_id: null | string;
         };
         /** @description An environment variable name; names starting with `ODYSSEY_` are reserved. */
         SecretName: string;
@@ -1487,10 +1660,10 @@ export interface components {
             settings_revision: number | null;
             error: null | {
                 /**
-                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side).
+                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`).
                  * @enum {string}
                  */
-                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL";
+                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL";
                 /** @description Plain Spanish for whoever deploys. */
                 message: string;
                 /** @description The cluster's own words (often English); "" when it said nothing. Show it as technical detail. */
@@ -1547,6 +1720,8 @@ export interface components {
                     apis: string[];
                     ingress_classes: string[];
                     storage_classes: string[];
+                    /** @description The kinds of resources (`postgres`, `redis`, `files`) its agent can prepare; empty for an agent older than 2b. */
+                    resource_kinds: string[];
                 };
             };
             /** @description The client certificate its agent holds now. */
@@ -1958,6 +2133,7 @@ export interface components {
     parameters: {
         ID: string;
         Environment: string;
+        ResourceName: components["schemas"]["ResourceName"];
         Deployment: string;
         Build: string;
         /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
@@ -2498,6 +2674,251 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listResources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The environment's resources. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Resource"][];
+                        available_kinds: components["schemas"]["ResourceKind"][];
+                    };
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: components["schemas"]["ResourceName"];
+                    kind: components["schemas"]["ResourceKind"];
+                    /** @description Size in GiB (default 1). */
+                    storage_gi?: number;
+                    connect?: {
+                        prefix?: components["schemas"]["ResourcePrefix"];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description The resource created (and connected, when asked). */
+            201: {
+                headers: {
+                    /** @description The resource. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The resource. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resource"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The resource, now deleting. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resource"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    resizeResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    storage_gi: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The resource at its new size. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resource"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    connectResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    prefix?: components["schemas"]["ResourcePrefix"];
+                };
+            };
+        };
+        responses: {
+            /** @description The resource connected and the deployment applying it, if one started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    disconnectResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["parameters"]["ResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The resource disconnected and the deployment applying it, if one started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };
@@ -2554,6 +2975,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };

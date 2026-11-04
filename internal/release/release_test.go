@@ -14,6 +14,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -50,6 +51,8 @@ func TestEventContracts(t *testing.T) {
 			Env: map[string]string{"LOG_LEVEL": "debug", "TZ": "America/Lima"}}, []string{"TZ", "LOG_LEVEL"}, []string{"OLD"}, &restore, n),
 		release.NewSecretChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Revision: 5}, release.SecretRef{Name: "STRIPE_API_KEY",
 			Source: release.SecretManaged, Version: 2, KeyID: "k3yIdK3yIdK3yId0"}, release.SecretChangeLoaded, &restore, n),
+		release.NewResourcesChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Organization: org, Revision: 6},
+			release.ResourceConnected, release.ResourceUse{Name: "db", Kind: resourcekind.Postgres, Prefix: "ANALYTICS"}, &restore, n),
 	} {
 		eventtest.Golden(t, e)
 	}
@@ -202,6 +205,7 @@ func TestUnready(t *testing.T) {
 		{release.FailureImagePull, release.CodeImagePull, "no pudo descargar la imagen"},
 		{release.FailureCrash, release.CodeCrashed, "se cierra al arrancar."},
 		{release.FailureConfig, release.CodeApplyFailed, "no pudo aplicar la configuración"},
+		{release.FailureResource, release.CodeResourceNotReady, "Un recurso de la app (base de datos, caché o archivos) no estuvo listo a tiempo."},
 	} {
 		err := release.Unready(release.AppStatus{Phase: release.PhaseFailed, Reason: c.reason, Message: "GET /x: 404 Not Found"})
 		// Code, message and detail survive as the error and as text (the

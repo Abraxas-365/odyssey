@@ -68,6 +68,12 @@ type Options struct {
 	// Secrets stores the managed secrets the control plane delivers; nil:
 	// this agent takes none (its Capabilities have no secret key).
 	Secrets Secrets
+	// Resources applies the resources (databases, caches, files) the control
+	// plane sends and reports them; nil: this agent takes none.
+	Resources Resources
+	// RejectedResource is the status reported for a resource the cluster
+	// refused (IsRejected says which errors are final).
+	RejectedResource RejectedResource
 }
 
 type key struct{ environment, name string }
@@ -79,6 +85,11 @@ type Client struct {
 
 	queue      workqueue.TypedRateLimitingInterface[key]
 	buildQueue workqueue.TypedRateLimitingInterface[string]
+
+	resourceQueue     workqueue.TypedRateLimitingInterface[key]
+	resources         map[key]*fleetv1.Resource       // newest desired generation per resource, until applied
+	rejectedResources map[key]*fleetv1.ResourceStatus // refused resources (their failure is reported)
+	resourcesChanged  map[key]bool                    // resource statuses to report
 
 	mu       sync.Mutex
 	apps     map[key]*fleetv1.App       // newest desired revision per app, until applied
@@ -118,7 +129,11 @@ func New(o Options) *Client {
 			workqueue.NewTypedItemExponentialFailureRateLimiter[key](500*time.Millisecond, 30*time.Second),
 			workqueue.TypedRateLimitingQueueConfig[key]{Name: "odyssey-desired-apps"}),
 		apps: map[key]*fleetv1.App{}, rejected: map[key]*fleetv1.AppStatus{}, changed: map[key]bool{},
-		wake:       make(chan struct{}, 1),
+		wake: make(chan struct{}, 1),
+		resourceQueue: workqueue.NewTypedRateLimitingQueueWithConfig(
+			workqueue.NewTypedItemExponentialFailureRateLimiter[key](500*time.Millisecond, 30*time.Second),
+			workqueue.TypedRateLimitingQueueConfig[key]{Name: "odyssey-desired-resources"}),
+		resources: map[key]*fleetv1.Resource{}, rejectedResources: map[key]*fleetv1.ResourceStatus{}, resourcesChanged: map[key]bool{},
 		buildQueue: newBuildQueue(), buildOps: map[string]buildOp{},
 		refusedBuilds: map[string]*fleetv1.BuildStatus{}, buildsChanged: map[string]bool{},
 	}
@@ -137,8 +152,12 @@ func (c *Client) Changed(environment, name string) {
 func (c *Client) Start(ctx context.Context) error {
 	defer c.queue.ShutDown()
 	defer c.buildQueue.ShutDown()
+	defer c.resourceQueue.ShutDown()
 	for range c.o.Workers {
 		go c.work(ctx)
+	}
+	if c.o.Resources != nil {
+		go c.workResources(ctx)
 	}
 	if c.o.Builds != nil {
 		go c.workBuilds(ctx)
@@ -476,6 +495,9 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 	if err := c.reportAll(ctx, send); err != nil {
 		return err
 	}
+	if err := c.reportResourcesAll(ctx, send); err != nil {
+		return err
+	}
 	builds := c.newBuildSession(ctx, send)
 	if err := c.reportBuilds(ctx, builds, true); err != nil {
 		return err
@@ -523,7 +545,7 @@ func (c *Client) receive(ctx context.Context, st fleetv1.Fleet_ConnectClient, se
 		if err != nil {
 			return err
 		}
-		if c.receiveBuild(m) {
+		if c.receiveBuild(m) || c.receiveResource(m) {
 			continue
 		}
 		if sec := m.GetSecret(); sec != nil {
@@ -605,6 +627,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 			if err := c.reportAll(ctx, send); err != nil {
 				return err
 			}
+			if err := c.reportResourcesAll(ctx, send); err != nil {
+				return err
+			}
 			if err := c.reportBuilds(ctx, builds, true); err != nil {
 				return err
 			}
@@ -616,6 +641,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 			case <-time.After(100 * time.Millisecond):
 			}
 			if err := c.reportChanged(ctx, send); err != nil {
+				return err
+			}
+			if err := c.reportResourcesChanged(ctx, send); err != nil {
 				return err
 			}
 			if err := c.reportBuilds(ctx, builds, false); err != nil {

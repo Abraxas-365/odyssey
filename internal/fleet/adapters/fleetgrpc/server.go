@@ -171,7 +171,7 @@ func (s *Server) signal(sig fleet.Signal) {
 		t.close(fleet.Superseded())
 		return
 	}
-	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build, secret: sig.Secret}, false)
+	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build, secret: sig.Secret, resource: sig.Resource}, false)
 }
 
 func (s *Server) each(fn func(*tunnel)) {
@@ -226,13 +226,15 @@ func (s *Server) Recover(ctx context.Context, req *fleetv1.RecoverRequest) (*fle
 
 // ---- the tunnel -------------------------------------------------------
 
-// key is what changed: an app (environment and name), a build or a secret
-// delivery.
+// key is what changed: an app or a resource (environment and name), a build
+// or a secret delivery.
 type key struct {
 	environment project.EnvironmentID
 	name        string
 	build       fleet.BuildID
 	secret      fleet.SecretDeliveryID
+	// resource: environment and name are a desired resource, not an app.
+	resource bool
 }
 
 type tunnel struct {
@@ -431,6 +433,13 @@ func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slo
 					err = s.agents.Report(ctx, t.agent, t.session, report)
 				}
 			}
+		case m.GetResourceReport() != nil:
+			if err = limit.Wait(ctx); err == nil {
+				var report fleet.ResourceReport
+				if report, err = resourceReportFromProto(m.GetResourceReport()); err == nil {
+					err = s.agents.ReportResources(ctx, t.agent, t.session, report)
+				}
+			}
 		case m.GetBuildReport() != nil:
 			if err = limit.Wait(ctx); err == nil {
 				err = s.agents.ReportBuilds(ctx, t.agent, t.session, buildReportFromProto(m.GetBuildReport()))
@@ -467,10 +476,12 @@ func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slo
 	}
 }
 
-// push sends what changed (or everything): apps, then builds.
+// push sends what changed (or everything): resources, then apps, builds and
+// secret values.
 func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t *tunnel) error {
 	pending, all := t.take()
 	var apps []fleet.App
+	var resources []fleet.DesiredResource
 	var builds []fleet.DesiredBuild
 	var secrets []fleet.SecretDelivery
 	if all {
@@ -479,6 +490,9 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 			return err
 		}
 		apps = desired
+		if resources, err = s.agents.DesiredResources(ctx, t.agent); err != nil {
+			return err
+		}
 		if builds, err = s.agents.DesiredBuilds(ctx, t.agent); err != nil {
 			return err
 		}
@@ -507,6 +521,16 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 				}
 				continue
 			}
+			if k.resource {
+				d, ok, err := s.agents.DesiredResource(ctx, t.agent, k.environment, k.name)
+				if err != nil {
+					return err
+				}
+				if ok {
+					resources = append(resources, d)
+				}
+				continue
+			}
 			a, ok, err := s.agents.DesiredApp(ctx, t.agent, k.environment, k.name)
 			if err != nil {
 				return err
@@ -514,6 +538,12 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 			if ok {
 				apps = append(apps, a)
 			}
+		}
+	}
+	// resources go before the apps that use them: the agent waits for them anyway
+	for _, d := range resources {
+		if err := stream.Send(resourceToProto(d)); err != nil {
+			return err
 		}
 	}
 	for _, a := range apps {

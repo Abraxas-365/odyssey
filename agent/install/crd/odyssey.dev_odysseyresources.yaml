@@ -1,0 +1,126 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: odysseyresources.odyssey.dev
+spec:
+  group: odyssey.dev
+  names:
+    categories:
+    - odyssey
+    kind: OdysseyResource
+    listKind: OdysseyResourceList
+    plural: odysseyresources
+    shortNames:
+    - ores
+    singular: odysseyresource
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.kind
+      name: Kind
+      type: string
+    - jsonPath: .spec.generation
+      name: Generation
+      type: integer
+    - jsonPath: .status.observedGeneration
+      name: Observed
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.storage
+      name: Storage
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          OdysseyResource is one resource (database, cache, files volume) of one
+          environment: the agent turns it into the objects that provide it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              OdysseyResourceSpec is the desired state of one resource of an environment.
+              The CR is named after the resource and lives in the environment's namespace.
+            properties:
+              deleted:
+                description: |-
+                  Deleted asks for the resource and its data to be removed. The agent
+                  reports phase deleted and then removes this object.
+                type: boolean
+              generation:
+                description: |-
+                  Generation grows with every change of the desired state. Whoever
+                  applies the spec never lowers it, so an older message cannot win late;
+                  status.observedGeneration says which generation the status describes.
+                format: int64
+                minimum: 1
+                type: integer
+              kind:
+                description: |-
+                  ResourceKind is what an OdysseyResource provisions (the same names as
+                  pkg/resourcekind: the control plane and the agent share them).
+                enum:
+                - postgres
+                - redis
+                - files
+                type: string
+              storage:
+                description: |-
+                  Storage is the volume's size ("5Gi"). It may grow, never shrink: a
+                  smaller value is ignored.
+                pattern: ^[1-9][0-9]*Gi$
+                type: string
+            required:
+            - generation
+            - kind
+            - storage
+            type: object
+          status:
+            description: OdysseyResourceStatus is what the agent observed.
+            properties:
+              message:
+                description: Message says why it is not ready (in English, short).
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the spec.generation this status
+                  describes.
+                format: int64
+                type: integer
+              phase:
+                description: ResourcePhase is how the cluster sees the resource.
+                enum:
+                - provisioning
+                - ready
+                - failed
+                - deleted
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

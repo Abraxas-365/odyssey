@@ -31,7 +31,7 @@ import (
 // The agent writes the apps' Secrets in the per-environment namespaces (it
 // creates those itself). It reads Secrets only by name through the uncached
 // API reader, so it never needs list or watch. Its access to them is the
-// ClusterRole desired.SecretsRole, bound only in those namespaces (see
+// ClusterRole desired.EnvironmentRole, bound only in those namespaces (see
 // desired.Namespaces and agent/install/rbac.yaml): not cluster-wide.
 
 // Names and labels of what the agent keeps.

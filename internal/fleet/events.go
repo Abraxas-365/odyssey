@@ -26,6 +26,8 @@ const (
 	EventSecretSent         = "cluster.secret_sent"
 	EventSecretDelivered    = "cluster.secret_delivered"
 	EventSecretFailed       = "cluster.secret_failed"
+	EventResourceApplied    = "cluster.resource_applied"
+	EventResourceRemoved    = "cluster.resource_removed"
 )
 
 // SubjectKind prefixes the fleet's event subjects ("cluster/<id>").
@@ -242,4 +244,46 @@ func NewSecretAcked(org identity.OrganizationID, d SecretDelivery, failure strin
 	return event.New(typ, 1, org, identity.UserID{}, event.Subject(SubjectKind, d.Cluster), what,
 		SecretAcked{Cluster: d.Cluster, Delivery: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), App: d.App,
 			Name: d.Name, Version: d.Version, Error: failure})
+}
+
+// ResourceApplied v1: a new desired generation of a resource (create, resize
+// or delete) went to its cluster. Nothing about its credentials is here.
+type ResourceApplied struct {
+	Cluster     ClusterID `json:"cluster_id"`
+	Project     string    `json:"project_id"`
+	Environment string    `json:"environment_id"`
+	Name        string    `json:"name"`
+	Kind        string    `json:"kind"`
+	Generation  int64     `json:"generation"`
+	StorageGi   int       `json:"storage_gi"`
+	Deleted     bool      `json:"deleted"`
+	// Placed is true when this placed the environment on the cluster.
+	Placed bool `json:"placed"`
+}
+
+func NewResourceApplied(org identity.OrganizationID, c Cluster, r DesiredResource, placed bool) event.Event {
+	what := "Envió"
+	if r.Deleted {
+		what = "Envió el borrado de"
+	}
+	return event.New(EventResourceApplied, 1, org, identity.UserID{}, event.Subject(SubjectKind, c.ID),
+		what+" el recurso "+r.Name+" al clúster "+c.Name,
+		ResourceApplied{Cluster: c.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind),
+			Generation: r.Generation, StorageGi: r.StorageGi, Deleted: r.Deleted, Placed: placed})
+}
+
+// ResourceRemoved v1: the cluster reported a resource that was being deleted
+// gone (its data erased); the resource domain forgets it.
+type ResourceRemoved struct {
+	Cluster     ClusterID `json:"cluster_id"`
+	Project     string    `json:"project_id"`
+	Environment string    `json:"environment_id"`
+	Name        string    `json:"name"`
+	Kind        string    `json:"kind"`
+}
+
+func NewResourceRemoved(org identity.OrganizationID, c Cluster, r DesiredResource) event.Event {
+	return event.New(EventResourceRemoved, 1, org, identity.UserID{}, event.Subject(SubjectKind, c.ID),
+		"El clúster "+c.Name+" borró el recurso "+r.Name,
+		ResourceRemoved{Cluster: c.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind)})
 }

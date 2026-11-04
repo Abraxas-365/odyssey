@@ -1,6 +1,7 @@
 package fleet_test
 
 import (
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 	"net/url"
 	"strings"
 	"testing"
@@ -51,6 +52,9 @@ func TestEventContracts(t *testing.T) {
 		fleet.NewSecretSent(org, user, c, secretDelivery, true),
 		fleet.NewSecretAcked(org, secretDelivery, ""),
 		fleet.NewSecretAcked(org, secretDelivery, "the value could not be opened with this cluster's key"),
+		fleet.NewResourceApplied(org, c, fleet.DesiredResource{Project: proj, Environment: env, Name: "db", Kind: resourcekind.Postgres,
+			Generation: 2, StorageGi: 5}, false),
+		fleet.NewResourceRemoved(org, c, fleet.DesiredResource{Project: proj, Environment: env, Name: "db", Kind: resourcekind.Postgres}),
 	} {
 		eventtest.Golden(t, e)
 	}
@@ -131,6 +135,9 @@ func TestAgentURIRoundTrips(t *testing.T) {
 
 func TestReportsAreBounded(t *testing.T) {
 	ok := fleet.AppStatus{Environment: env, Name: "visitas", ObservedRevision: 2, Phase: fleet.PhaseReady, URL: "https://visitas.apps.example"}
+	if err := (fleet.Report{Apps: []fleet.AppStatus{{Environment: env, Name: "a", Phase: fleet.PhaseFailed, Reason: fleet.ReasonResource}}}).Validate(); err != nil {
+		t.Fatalf("the resource reason was rejected: %v", err)
+	}
 	if err := (fleet.Report{Apps: []fleet.AppStatus{ok}}).Validate(); err != nil {
 		t.Fatalf("valid report rejected: %v", err)
 	}

@@ -342,7 +342,7 @@ func affected(res sql.Result, err error, op, notFound string) error {
 
 // ---- environment settings ----
 
-const settingsColumns = `environment_id, organization_id, revision, access_mode, env, secrets, created_by, created_at`
+const settingsColumns = `environment_id, organization_id, revision, access_mode, env, secrets, resources, created_by, created_at`
 
 type settingsRow struct {
 	Environment  project.EnvironmentID   `db:"environment_id"`
@@ -351,6 +351,7 @@ type settingsRow struct {
 	AccessMode   release.AccessMode      `db:"access_mode"`
 	Env          []byte                  `db:"env"`
 	Secrets      []byte                  `db:"secrets"`
+	Resources    []byte                  `db:"resources"`
 	CreatedBy    identity.UserID         `db:"created_by"`
 	CreatedAt    time.Time               `db:"created_at"`
 }
@@ -363,6 +364,9 @@ func (s settingsRow) settings() (release.Settings, error) {
 	}
 	if err := json.Unmarshal(s.Secrets, &out.Secrets); err != nil {
 		return release.Settings{}, errx.Wrap(err, "decode environment secrets", errx.TypeInternal)
+	}
+	if err := json.Unmarshal(s.Resources, &out.Resources); err != nil {
+		return release.Settings{}, errx.Wrap(err, "decode environment resources", errx.TypeInternal)
 	}
 	return out.Normalize(), nil
 }
@@ -411,10 +415,14 @@ func (r *Repository) AppendSettings(ctx context.Context, s release.Settings) (re
 	if err != nil {
 		return release.Settings{}, errx.Wrap(err, "encode environment secrets", errx.TypeInternal)
 	}
+	resources, err := json.Marshal(s.Resources)
+	if err != nil {
+		return release.Settings{}, errx.Wrap(err, "encode environment resources", errx.TypeInternal)
+	}
 	var row settingsRow
-	err = txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, env, secrets, created_by)
-		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4, $5, $6 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
-		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, env, secrets, s.CreatedBy)
+	err = txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, env, secrets, resources, created_by)
+		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4, $5, $6, $7 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
+		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, env, secrets, resources, s.CreatedBy)
 	if err != nil {
 		return release.Settings{}, pgerr.MapWith(err, "append environment settings", messages)
 	}

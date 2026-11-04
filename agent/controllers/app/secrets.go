@@ -32,7 +32,7 @@ import (
 // module is not a dependency) and reads Secrets from the API, never a cache.
 // Secrets: get (gate, prune, adopt), update (prune, owner reference) and
 // delete (a Secret pruned empty); secretstore adds create. No list or watch,
-// and only in the environments' namespaces (desired.SecretsRole).
+// and only in the environments' namespaces (desired.EnvironmentRole).
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;create;update;delete
 
 const (
@@ -394,14 +394,25 @@ func (r *Reconciler) missingSecret(ctx context.Context, a *v1alpha1.OdysseyApp) 
 
 // waited says a's current revision and spec waited for a secret.
 func (r *Reconciler) waited(a *v1alpha1.OdysseyApp) bool {
-	return strings.HasPrefix(a.Annotations[annotationSecretsWaiting], fmt.Sprintf("%d/%d/", a.Spec.Revision, a.Generation))
+	return r.waitedFor(a, annotationSecretsWaiting)
+}
+
+// waitedFor says a's current revision and spec waited (the annotation key
+// records when it first did).
+func (r *Reconciler) waitedFor(a *v1alpha1.OdysseyApp, key string) bool {
+	return strings.HasPrefix(a.Annotations[key], fmt.Sprintf("%d/%d/", a.Spec.Revision, a.Generation))
 }
 
 // waitingSince is when a's revision first waited for its secrets, recording
 // now on the OdysseyApp the first time (so the window survives restarts).
 func (r *Reconciler) waitingSince(ctx context.Context, a *v1alpha1.OdysseyApp) (time.Time, error) {
+	return r.waitingSinceAt(ctx, a, annotationSecretsWaiting)
+}
+
+// waitingSinceAt is waitingSince for the annotation key.
+func (r *Reconciler) waitingSinceAt(ctx context.Context, a *v1alpha1.OdysseyApp, key string) (time.Time, error) {
 	prefix := fmt.Sprintf("%d/%d/", a.Spec.Revision, a.Generation)
-	if v, ok := strings.CutPrefix(a.Annotations[annotationSecretsWaiting], prefix); ok {
+	if v, ok := strings.CutPrefix(a.Annotations[key], prefix); ok {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			return t, nil
 		}
@@ -410,7 +421,7 @@ func (r *Reconciler) waitingSince(ctx context.Context, a *v1alpha1.OdysseyApp) (
 	if a.Annotations == nil {
 		a.Annotations = map[string]string{}
 	}
-	a.Annotations[annotationSecretsWaiting] = prefix + now.UTC().Format(time.RFC3339)
+	a.Annotations[key] = prefix + now.UTC().Format(time.RFC3339)
 	return now, r.Client.Update(ctx, a)
 }
 

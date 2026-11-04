@@ -36,6 +36,9 @@ type DesiredApp struct {
 	Access string `json:"access"`
 	// Secrets are the app's secret variables (references; WithSettings).
 	Secrets []DesiredSecret `json:"secrets"`
+	// Resources are the databases, caches and volumes the app is connected
+	// to (WithSettings): the cluster wires their variables into the app.
+	Resources []DesiredResource `json:"resources"`
 }
 
 // Phase is how the cluster sees an app.
@@ -55,6 +58,7 @@ const (
 	FailureImagePull FailureReason = "image_pull" // the image cannot be downloaded
 	FailureCrash     FailureReason = "crash"      // it keeps exiting on start
 	FailureConfig    FailureReason = "config"     // the cluster cannot apply it (e.g. its host is taken)
+	FailureResource  FailureReason = "resource"   // a database, cache or volume it uses was not ready in time
 )
 
 // AppStatus is what the cluster reports of an app.

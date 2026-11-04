@@ -72,6 +72,14 @@ func (c *commands) RemoveSecret(context.Context, identity.OrganizationID, projec
 	return release.SettingsChange{}, errx.Internal("not an assistant tool")
 }
 
+func (c *commands) ConnectResource(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.ConnectResource) (release.SettingsChange, error) {
+	return release.SettingsChange{}, errx.Internal("not an assistant tool")
+}
+
+func (c *commands) DisconnectResource(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.DisconnectResource) (release.SettingsChange, error) {
+	return release.SettingsChange{}, errx.Internal("not an assistant tool")
+}
+
 func (c *commands) SetAccess(_ context.Context, org identity.OrganizationID, p project.ID, env project.EnvironmentID, in release.SetAccess) (release.AccessChange, error) {
 	c.access = append(c.access, in)
 	if c.accessFn != nil {

@@ -41,10 +41,14 @@ type Service struct {
 	projects project.Queries
 	cluster  release.Cluster
 	builder  release.Builder
-	engine   workflow.Engine
-	tx       txn.Runner
-	events   event.Publisher
-	opts     Options
+	// resources is the resource domain (nil until the module wires it: no
+	// resource can then be connected).
+	resources release.Resources
+	engine    workflow.Engine
+	tx        txn.Runner
+	events    event.Publisher
+	opts      Options
+	now       func() time.Time // the clock (tests set it)
 }
 
 func New(repo release.Repository, projects project.Queries, cluster release.Cluster, builder release.Builder, engine workflow.Engine,
@@ -55,7 +59,7 @@ func New(repo release.Repository, projects project.Queries, cluster release.Clus
 	if opts.PollEvery <= 0 {
 		opts.PollEvery = 2 * time.Second
 	}
-	return &Service{repo: repo, projects: projects, cluster: cluster, builder: builder, engine: engine, tx: tx, events: events, opts: opts}
+	return &Service{repo: repo, projects: projects, cluster: cluster, builder: builder, engine: engine, tx: tx, events: events, opts: opts, now: time.Now}
 }
 
 var (
@@ -63,11 +67,16 @@ var (
 	_ release.Queries      = (*Service)(nil)
 	_ release.AccessLookup = (*Service)(nil)
 	_ release.Workflows    = (*Service)(nil)
+	_ release.Usage        = (*Service)(nil)
 )
 
 // errSuperseded ends the workflow of a deployment that no longer matters (a
 // newer one cancelled it); OnFailure finds it finished and does nothing.
 var errSuperseded = errx.Conflict("deployment superseded")
+
+// UseResources wires the resource domain's port (after construction: the
+// resource domain depends on this service's Usage, so it is built later).
+func (s *Service) UseResources(r release.Resources) { s.resources = r }
 
 // place resolves and checks the project and environment of a request.
 func (s *Service) place(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID) (project.Project, project.Environment, error) {

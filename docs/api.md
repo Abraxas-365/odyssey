@@ -211,9 +211,61 @@ environment serves. The console calls both "versión".
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
-| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, resources[{name, kind, prefix}], secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
 | `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null}` (`{set, unset}`) |
+
+#### Resources (databases, caches, files; `docs/resources.md`)
+
+Under `/api/v1/projects/:id/environments/:environment/resources`. A resource is
+a PostgreSQL database, a Redis cache or a volume of files of the environment;
+the app only receives its variables once it is **connected**. Passwords and data
+never appear in the API: `variables` are the names the app reads.
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `…/resources` | projects:read | 200 `{items[resource], available_kinds}` (oldest first) |
+| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, storage_gi?, connect?:{prefix}}`) |
+| `GET` | `…/resources/:name` | projects:read | 200 resource |
+| `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{storage_gi}`: it only grows) |
+| `DELETE` | `…/resources/:name` | `odyssey:resources:delete` | **202** resource, now `deleting` |
+| `PUT` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` (`{prefix?}`) |
+| `DELETE` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` |
+
+The resource: `{id, organization_id, project_id, environment_id, name, kind
+(postgres\|redis\|files), storage_gi, generation, status (active\|deleting),
+created_by, created_at, updated_at, phase (provisioning\|ready\|failed\|deleted),
+message, connected, prefix, variables[]}`. `phase` and `message` are what the
+cluster reported (read from the fleet, not stored; `provisioning` until the
+agent says otherwise).
+
+- **Limits.** Up to 10 resources per environment (409 `RESOURCE_LIMIT`; those
+  being deleted still count), names unique per environment (409), 1–100 GiB.
+  Names are lowercase letters, digits and hyphens (≤ 30); `prefix` is
+  `[A-Z][A-Z0-9_]*` (≤ 40, no trailing `_`) and goes before the variable names.
+- **Creating** puts the environment on the default cluster if it has none and
+  refuses a kind the cluster cannot make with 422 `RESOURCES_UNAVAILABLE`
+  (nothing is stored). With `connect` the connection is made in the same
+  transaction: a conflict (409 `VARIABLE_TAKEN`) leaves nothing behind.
+- **Connecting** is a settings revision like `PATCH …/env`: a `config`
+  deployment when a release is online (`deployment_id`, `Location` is not set;
+  follow it with `GET …/deployments/:id`). The variables are not written into
+  the plain env: the cluster builds them. 409 `VARIABLE_TAKEN` when a variable
+  it defines is a plain variable, a secret or another resource's (`PATCH …/env`
+  and secrets are refused the same way for a connected resource's names); 409
+  `RESOURCE_DELETING` for one being deleted.
+- **Deleting** erases the data for good. A connected resource is refused with
+  409 `RESOURCE_IN_USE` («Desconéctalo primero»); the check and the connection
+  are serialized on the environment's settings, so they cannot race. The
+  resource shows `deleting` until the agent reports the data gone; then it is
+  forgotten (the row is removed and the name is free again). Events:
+  `resource.created|resized|deleted|removed`, `resources.changed`,
+  `cluster.resource_applied|resource_removed`.
+- Data does **not** move with an environment: after `MovePlacement` the new
+  cluster prepares the resource **empty**.
+- A deploy of an app with resources waits for them (up to 10 min at the
+  cluster); if one is not ready in time the deployment fails with
+  `RESOURCE_NOT_READY` and the resource's own reason as `detail`.
 | `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for `external`) | `managed`: 200 the secret (`missing` until loaded); `external`: **202** `{settings, deployment\|null}` |
 | `DELETE` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for a vault secret: 403 without it) | **202** `{settings, deployment\|null}` |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name/value` | projects:write (+ `odyssey:secrets:external` to replace a vault secret: 403 without it) | **202** `{settings, deployment\|null}` (`{version, key_id, sealed}`: ciphertext only); 409 `SECRET_VERSION_CONFLICT` when `version` is not the secret's `next_version` |
@@ -252,7 +304,8 @@ environment serves. The console calls both "versión".
   are deleted after 7 days (24 h if never built); the image outlives them.
 - **Lifecycle**: `[building →] pending → applying → verifying → ready |
   failed | cancelled`, through the steps `build` (from source only),
-  `apply`, `wait_ready` (≤ 5 min for the health check) and `promote`. Only
+  `apply`, `wait_ready` (≤ 5 min for the health check; an app with resources
+  may wait up to 13 min, as the cluster prepares them first) and `promote`. Only
   `promote` changes what the environment serves, so a version that fails
   never replaces the one online.
 - **One at a time**: a new deployment cancels the one in progress
@@ -340,7 +393,9 @@ environment serves. The console calls both "versión".
 - **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
   path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
   image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),
-  `APPLY_FAILED` (the cluster refused it), `PROMOTE_FAILED`. From the build:
+  `APPLY_FAILED` (the cluster refused it), `RESOURCE_NOT_READY` (a database,
+  cache or volume the app uses was not ready in time; `detail` names it),
+  `PROMOTE_FAILED`. From the build:
   `UNSUPPORTED_APP` (no known way to build or start it), `BUILD_FAILED`,
   `BUILD_TIMEOUT` (25 min), `SOURCE_INVALID`, `SOURCE_EXPIRED`,
   `PUSH_FAILED`, `NO_BUILDER`, `NO_CLUSTER`, `BUILD_INTERNAL`. `message` is

@@ -1,0 +1,11 @@
+{
+  "cluster_id": "00000000-0000-4000-8000-0000000000c1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "environment_id": "00000000-0000-4000-8000-0000000000bb",
+  "name": "db",
+  "kind": "postgres",
+  "generation": 2,
+  "storage_gi": 5,
+  "deleted": false,
+  "placed": false
+}

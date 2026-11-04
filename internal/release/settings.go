@@ -72,7 +72,11 @@ type Settings struct {
 	Env map[string]string `json:"env"`
 	// Secrets are the environment's secret variables, sorted by name: only
 	// references, never a value. A name is in Env or in Secrets, not both.
-	Secrets   []SecretRef     `json:"secrets"`
+	Secrets []SecretRef `json:"secrets"`
+	// Resources are the databases, caches and volumes connected to the app
+	// (2b), sorted by name: references only. The variables they define are
+	// not in Env nor Secrets (see resources.go).
+	Resources []ResourceUse   `json:"resources"`
 	CreatedBy identity.UserID `json:"-"`
 	CreatedAt time.Time       `json:"-"`
 }
@@ -80,7 +84,7 @@ type Settings struct {
 // DefaultSettings are the settings of an environment that never changed them.
 func DefaultSettings(organization identity.OrganizationID, env project.EnvironmentID) Settings {
 	return Settings{Environment: env, Organization: organization, Access: AccessSettings{Mode: DefaultAccess},
-		Env: map[string]string{}, Secrets: []SecretRef{}}
+		Env: map[string]string{}, Secrets: []SecretRef{}, Resources: []ResourceUse{}}
 }
 
 // Normalize fills the empty collections (rows written before 2a have none).
@@ -91,7 +95,11 @@ func (s Settings) Normalize() Settings {
 	if s.Secrets == nil {
 		s.Secrets = []SecretRef{}
 	}
+	if s.Resources == nil {
+		s.Resources = []ResourceUse{}
+	}
 	slices.SortFunc(s.Secrets, func(a, b SecretRef) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(s.Resources, func(a, b ResourceUse) int { return strings.Compare(a.Name, b.Name) })
 	return s
 }
 
@@ -102,6 +110,7 @@ func (s Settings) next(actor identity.UserID) Settings {
 	n.Revision, n.CreatedBy, n.CreatedAt = 0, actor, time.Time{}
 	n.Env = maps.Clone(n.Env)
 	n.Secrets = slices.Clone(n.Secrets)
+	n.Resources = slices.Clone(n.Resources)
 	return n
 }
 

@@ -3,6 +3,7 @@
     "Builder": [
       "connect_repository",
       "create_app",
+      "create_database",
       "deploy_folder",
       "deploy_image",
       "get_app",
@@ -10,6 +11,7 @@
       "get_deployment",
       "list_apps",
       "list_repositories",
+      "list_resources",
       "list_versions",
       "publish_now",
       "request_secret",
@@ -23,12 +25,14 @@
       "get_build_logs",
       "get_deployment",
       "list_apps",
+      "list_resources",
       "list_versions",
       "whoami"
     ],
     "TI": [
       "connect_repository",
       "create_app",
+      "create_database",
       "deploy_folder",
       "deploy_image",
       "get_app",
@@ -36,6 +40,7 @@
       "get_deployment",
       "list_apps",
       "list_repositories",
+      "list_resources",
       "list_versions",
       "publish_now",
       "request_secret",
@@ -200,6 +205,125 @@
         "type": "object"
       },
       "title": "Crear una app"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Crear una base de datos"
+      },
+      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una publicación de configuración que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a configuration deployment that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "environment": {
+            "description": "entorno de la app; production por defecto",
+            "type": "string"
+          },
+          "kind": {
+            "description": "postgres (por defecto), redis o files",
+            "type": "string"
+          },
+          "name": {
+            "description": "nombre del recurso: minúsculas, números y guiones; db por defecto",
+            "type": "string"
+          },
+          "prefix": {
+            "description": "prefijo en MAYÚSCULAS para las variables (ANALYTICS → ANALYTICS_DATABASE_URL), para tener varias bases",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "create_database",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "config_deployment_id": {
+            "description": "la publicación de configuración que conecta la base, si empezó una",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "connected": {
+                "description": "si la app recibe sus variables",
+                "type": "boolean"
+              },
+              "kind": {
+                "description": "postgres, redis o files",
+                "type": "string"
+              },
+              "message": {
+                "description": "por qué falló, si falló",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "description": "preparing (se está preparando), ready (lista), failed (falló: mira message) o deleting (se está eliminando)",
+                "type": "string"
+              },
+              "storage_gi": {
+                "description": "tamaño en GiB",
+                "type": "integer"
+              },
+              "variables": {
+                "description": "nombres de las variables que la app lee (sus valores nunca se muestran)",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "storage_gi",
+              "status",
+              "connected",
+              "variables"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "app",
+          "resource",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Crear una base de datos"
     },
     {
       "annotations": {
@@ -1305,6 +1429,117 @@
         "type": "object"
       },
       "title": "Repositorios de GitHub"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Bases de datos y recursos de una app"
+      },
+      "description": "Lista las bases de datos, cachés y volúmenes de una app, con su tipo, tamaño, estado (preparando, lista, falló) y las variables que la app recibe. Úsala para saber si una base ya está lista. Lists an app's databases, caches and volumes with their kind, size, state (preparing, ready, failed) and the variables the app receives. Use it to see whether a database is ready. app is the slug (see list_apps) or the id; environment defaults to production.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "environment": {
+            "description": "entorno de la app; production por defecto",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "list_resources",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "available_kinds": {
+            "description": "tipos que el clúster de la app puede crear (vacío: sin clúster conectado)",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "resources": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "connected": {
+                  "description": "si la app recibe sus variables",
+                  "type": "boolean"
+                },
+                "kind": {
+                  "description": "postgres, redis o files",
+                  "type": "string"
+                },
+                "message": {
+                  "description": "por qué falló, si falló",
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "description": "preparing (se está preparando), ready (lista), failed (falló: mira message) o deleting (se está eliminando)",
+                  "type": "string"
+                },
+                "storage_gi": {
+                  "description": "tamaño en GiB",
+                  "type": "integer"
+                },
+                "variables": {
+                  "description": "nombres de las variables que la app lee (sus valores nunca se muestran)",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "storage_gi",
+                "status",
+                "connected",
+                "variables"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "app",
+          "resources",
+          "available_kinds",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Bases de datos y recursos de una app"
     },
     {
       "annotations": {

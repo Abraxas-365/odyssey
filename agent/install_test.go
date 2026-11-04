@@ -59,7 +59,7 @@ func decode[T any](t *testing.T, m map[string]any) T {
 // TestAgentCannotReadTheClustersSecrets: the agent holds no access to
 // Secrets cluster-wide. Every ClusterRole bound by a ClusterRoleBinding is
 // free of the secrets resource (and of wildcards); the Secrets role
-// (desired.SecretsRole) exists, is bound by nothing in the install (the agent
+// (desired.EnvironmentRole) exists, is bound by nothing in the install (the agent
 // binds it per environment namespace), the agent may bind exactly that role,
 // and the admission policy that confines its bindings is installed.
 func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
@@ -77,8 +77,8 @@ func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
 			b := decode[rbacv1.ClusterRoleBinding](t, m)
 			bound = append(bound, b.RoleRef.Name)
 		case "RoleBinding":
-			if b := decode[rbacv1.RoleBinding](t, m); b.RoleRef.Name == desired.SecretsRole {
-				t.Errorf("the install binds %s in %s: only the agent binds it, per environment namespace", desired.SecretsRole, b.Namespace)
+			if b := decode[rbacv1.RoleBinding](t, m); b.RoleRef.Name == desired.EnvironmentRole {
+				t.Errorf("the install binds %s in %s: only the agent binds it, per environment namespace", desired.EnvironmentRole, b.Namespace)
 			}
 		case "ValidatingAdmissionPolicy":
 			p := decode[struct {
@@ -87,7 +87,7 @@ func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
 					Validations []struct{ Expression string } `json:"validations"`
 				} `json:"spec"`
 			}](t, m)
-			if p.Metadata.Name == desired.SecretsRole {
+			if p.Metadata.Name == desired.EnvironmentRole {
 				policy = true
 				for _, v := range p.Spec.Validations {
 					policyText += v.Expression + "\n"
@@ -115,7 +115,7 @@ func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
 		}
 	}
 	if !policy {
-		t.Errorf("no ValidatingAdmissionPolicy %s confines the Secrets role's bindings", desired.SecretsRole)
+		t.Errorf("no ValidatingAdmissionPolicy %s confines the Secrets role's bindings", desired.EnvironmentRole)
 	}
 	// The policy names the agent's identity literally: it must be the one
 	// the agent's Deployment runs as (and binds for), or every bind is denied.
@@ -125,19 +125,19 @@ func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
 	if ns, name, _ := strings.Cut(runsAs, "/"); !strings.Contains(policyText, "s.namespace == '"+ns+"'") || !strings.Contains(policyText, "s.name == '"+name+"'") {
 		t.Errorf("the policy does not admit the agent's service account %s:\n%s", runsAs, policyText)
 	}
-	secrets, ok := roles[desired.SecretsRole]
+	secrets, ok := roles[desired.EnvironmentRole]
 	if !ok {
-		t.Fatalf("no ClusterRole %s", desired.SecretsRole)
+		t.Fatalf("no ClusterRole %s", desired.EnvironmentRole)
 	}
-	if slices.Contains(bound, desired.SecretsRole) {
-		t.Errorf("%s is bound cluster-wide", desired.SecretsRole)
+	if slices.Contains(bound, desired.EnvironmentRole) {
+		t.Errorf("%s is bound cluster-wide", desired.EnvironmentRole)
 	}
 	grants := false
 	for _, r := range secrets.Rules {
 		grants = grants || slices.Contains(r.Resources, "secrets")
 	}
 	if !grants {
-		t.Errorf("%s grants no access to secrets", desired.SecretsRole)
+		t.Errorf("%s grants no access to secrets", desired.EnvironmentRole)
 	}
 	canBind := false
 	for _, name := range bound {
@@ -150,8 +150,8 @@ func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
 				t.Errorf("ClusterRole %s, bound cluster-wide, grants %v on %v", name, rule.Verbs, rule.Resources)
 			}
 			if slices.Contains(rule.Resources, "clusterroles") && slices.Contains(rule.Verbs, "bind") {
-				if !slices.Equal(rule.ResourceNames, []string{desired.SecretsRole}) {
-					t.Errorf("ClusterRole %s may bind %v: only %s", name, rule.ResourceNames, desired.SecretsRole)
+				if !slices.Equal(rule.ResourceNames, []string{desired.EnvironmentRole}) {
+					t.Errorf("ClusterRole %s may bind %v: only %s", name, rule.ResourceNames, desired.EnvironmentRole)
 				}
 				canBind = true
 			}
@@ -164,6 +164,112 @@ func TestAgentCannotReadTheClustersSecrets(t *testing.T) {
 		}
 	}
 	if !canBind {
-		t.Errorf("the agent may not bind %s", desired.SecretsRole)
+		t.Errorf("the agent may not bind %s", desired.EnvironmentRole)
+	}
+}
+
+// verbsOn is every verb the rules grant on group/resource ("*" in a rule
+// counts for everything).
+func verbsOn(rules []rbacv1.PolicyRule, group, resource string) []string {
+	var out []string
+	for _, r := range rules {
+		if (slices.Contains(r.APIGroups, group) || slices.Contains(r.APIGroups, "*")) &&
+			(slices.Contains(r.Resources, resource) || slices.Contains(r.Resources, "*")) {
+			out = append(out, r.Verbs...)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// TestAgentCannotEraseDataClusterWide: the verbs that create, grow or erase
+// data (volumes, CloudNativePG databases, deployments and services) are
+// granted only by the environment role, which is bound in environment
+// namespaces: no ClusterRole bound by a ClusterRoleBinding (the generated
+// odyssey-agent one included) grants them, nor a wildcard. The environment
+// role grants exactly what the controllers need.
+func TestAgentCannotEraseDataClusterWide(t *testing.T) {
+	roles := map[string]rbacv1.ClusterRole{}
+	var bound []string
+	for _, m := range manifests(t) {
+		switch m["kind"] {
+		case "ClusterRole":
+			r := decode[rbacv1.ClusterRole](t, m)
+			roles[r.Name] = r
+		case "ClusterRoleBinding":
+			bound = append(bound, decode[rbacv1.ClusterRoleBinding](t, m).RoleRef.Name)
+		}
+	}
+	var clusterWide []rbacv1.PolicyRule
+	for _, name := range bound {
+		r, ok := roles[name]
+		if !ok {
+			continue
+		}
+		for _, rule := range r.Rules {
+			if slices.Contains(rule.Resources, "*") || slices.Contains(rule.Verbs, "*") || slices.Contains(rule.APIGroups, "*") {
+				t.Errorf("ClusterRole %s, bound cluster-wide, has a wildcard: %v %v %v", name, rule.APIGroups, rule.Resources, rule.Verbs)
+			}
+		}
+		clusterWide = append(clusterWide, r.Rules...)
+	}
+	forbidden := []struct {
+		group, resource string
+		verbs           []string
+	}{
+		{"", "persistentvolumeclaims", []string{"create", "update", "patch", "delete", "deletecollection"}},
+		{"apps", "deployments", []string{"delete", "deletecollection"}},
+		{"", "services", []string{"delete", "deletecollection"}},
+		{"postgresql.cnpg.io", "clusters", []string{"create", "update", "patch", "delete", "deletecollection"}},
+	}
+	for _, f := range forbidden {
+		got := verbsOn(clusterWide, f.group, f.resource)
+		for _, v := range f.verbs {
+			if slices.Contains(got, v) {
+				t.Errorf("a cluster-wide role grants %s on %s/%s: only the environment role may", v, f.group, f.resource)
+			}
+		}
+	}
+	// What the caches and watches need stays cluster-wide.
+	for _, want := range []struct{ group, resource string }{{"", "persistentvolumeclaims"}, {"postgresql.cnpg.io", "clusters"}} {
+		got := verbsOn(clusterWide, want.group, want.resource)
+		for _, v := range []string{"get", "list", "watch"} {
+			if !slices.Contains(got, v) {
+				t.Errorf("no cluster-wide %s on %s/%s: the controller's cache needs it", v, want.group, want.resource)
+			}
+		}
+	}
+
+	env, ok := roles[desired.EnvironmentRole]
+	if !ok {
+		t.Fatalf("no ClusterRole %s", desired.EnvironmentRole)
+	}
+	for _, rule := range env.Rules {
+		if slices.Contains(rule.Resources, "*") || slices.Contains(rule.Verbs, "*") || slices.Contains(rule.APIGroups, "*") {
+			t.Errorf("%s has a wildcard: %v %v %v", desired.EnvironmentRole, rule.APIGroups, rule.Resources, rule.Verbs)
+		}
+	}
+	// Exactly what the controllers write (reads come from the cluster-wide role).
+	exact := []struct {
+		group, resource string
+		verbs           []string
+	}{
+		{"", "secrets", []string{"create", "delete", "get", "update"}},
+		{"", "persistentvolumeclaims", []string{"create", "delete", "update"}},
+		{"", "services", []string{"delete"}},
+		{"apps", "deployments", []string{"delete"}},
+		{"postgresql.cnpg.io", "clusters", []string{"create", "delete", "update"}},
+	}
+	granted := 0
+	for _, e := range exact {
+		if got := verbsOn(env.Rules, e.group, e.resource); !slices.Equal(got, e.verbs) {
+			t.Errorf("%s grants %v on %s/%s, want %v", desired.EnvironmentRole, got, e.group, e.resource, e.verbs)
+		}
+	}
+	for _, r := range env.Rules {
+		granted += len(r.Resources)
+	}
+	if granted != len(exact) {
+		t.Errorf("%s grants on %d resources, want %d: %v", desired.EnvironmentRole, granted, len(exact), env.Rules)
 	}
 }

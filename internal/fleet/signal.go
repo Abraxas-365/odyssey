@@ -12,6 +12,9 @@ type Signal struct {
 	// Environment and Name are set when that desired app changed.
 	Environment project.EnvironmentID
 	Name        string
+	// Resource is set (with Environment and Name) when that desired resource
+	// changed instead of an app.
+	Resource bool
 	// Build is set when that desired build changed (dispatched or cancelled).
 	Build BuildID
 	// Secret is set when a managed value waits for the cluster.

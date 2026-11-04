@@ -41,6 +41,7 @@ const protectedResync = 10 * time.Minute
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyresources,verbs=get;list;watch
 // Secrets and ExternalSecrets: see secrets.go and agent/secretstore.
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,namespace=odyssey-system,resources=leases,verbs=get;list;watch;create;update;patch;delete
@@ -94,6 +95,8 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		b = b.Owns(o) // a deleted or edited Middleware is put back
 	}
 	return b.
+		// A resource that becomes ready (or goes away) moves the apps that use it.
+		Watches(&v1alpha1.OdysseyResource{}, handler.EnqueueRequestsFromMapFunc(r.appsUsing)).
 		// Pods are owned by ReplicaSets; map them to their app by label.
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
 			name := o.GetLabels()[LabelApp]
@@ -104,6 +107,24 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		})).
 		Named("odysseyapp").
 		Complete(r)
+}
+
+// appsUsing are the apps of o's namespace that use the resource o.
+func (r *Reconciler) appsUsing(ctx context.Context, o client.Object) []reconcile.Request {
+	var apps v1alpha1.OdysseyAppList
+	if err := r.Client.List(ctx, &apps, client.InNamespace(o.GetNamespace())); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for i := range apps.Items {
+		for _, ref := range apps.Items[i].Spec.Resources {
+			if ref.Name == o.GetName() {
+				out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&apps.Items[i])})
+				break
+			}
+		}
+	}
+	return out
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -172,6 +193,9 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if x.obj == client.Object(d) {
 			// Before the Deployment changes: the running version keeps
 			// serving while a secret of the new one is missing.
+			if done, res, err := r.resourcesStep(ctx, &a); done {
+				return res, err
+			}
 			if done, res, err := r.secretsStep(ctx, &a); done {
 				return res, err
 			}
