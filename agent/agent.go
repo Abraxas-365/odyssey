@@ -81,6 +81,10 @@ type AccessOptions struct {
 	// KeyNamespace and KeyName: the Secret that holds the gate's cookie
 	// key. The agent creates it (the gate only reads it).
 	KeyNamespace, KeyName string
+	// SigningKeyName is the Secret that holds the gate's identity-assertion
+	// key (ODYSSEY_ACCESS_SIGNING_SECRET, default odyssey-access-signing), in
+	// KeyNamespace. The agent creates it too. Empty: not created.
+	SigningKeyName string
 }
 
 // Ready says protected apps can be served: the gate is enabled and its
@@ -91,8 +95,9 @@ func (a AccessOptions) Ready() bool {
 	return a.Enabled && err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.RawQuery == "" && a.KeyName != "" && a.KeyNamespace != ""
 }
 
-// ensureAccessKey creates the gate's cookie-key Secret (once; it never
-// replaces an existing one), retrying until it works.
+// ensureAccessKey creates the gate's cookie-key Secret and its assertion
+// signing-key Secret (each once; it never replaces an existing one), retrying
+// until it works.
 type ensureAccessKey struct {
 	cfg *rest.Config
 	o   AccessOptions
@@ -106,10 +111,13 @@ func (e ensureAccessKey) Start(ctx context.Context) error {
 	}
 	for {
 		err := access.EnsureKey(ctx, kc, e.o.KeyNamespace, e.o.KeyName)
+		if err == nil && e.o.SigningKeyName != "" {
+			err = access.EnsureSigningKey(ctx, kc, e.o.KeyNamespace, e.o.SigningKeyName)
+		}
 		if err == nil {
 			return nil
 		}
-		log.Error(err, "cannot create the gate's cookie key; retrying")
+		log.Error(err, "cannot create the gate's keys; retrying")
 		select {
 		case <-ctx.Done():
 			return nil
@@ -193,6 +201,8 @@ func Run(args []string) error {
 	fs.StringVar(&o.Builds.SourceURL, "source-url", env("ODYSSEY_SOURCE_URL", "http://odyssey-agent-source.odyssey-system.svc:8099"), "URL build pods reach the agent's source server at")
 	fs.BoolVar(&o.Access.Enabled, "access-enabled", envBool("ODYSSEY_ACCESS_ENABLED"), "the sign-in gate (odyssey-agent access) is installed: apps may require sign-in")
 	o.Access.KeyNamespace, o.Access.KeyName = env("POD_NAMESPACE", "odyssey-system"), env("ODYSSEY_ACCESS_SECRET", "odyssey-access")
+	o.Access.SigningKeyName = env("ODYSSEY_ACCESS_SIGNING_SECRET", access.SigningSecretName)
+	fs.StringVar(&o.App.AuthJWKSURL, "access-jwks-url-internal", env("ODYSSEY_ACCESS_JWKS_URL_INTERNAL", app.DefaultAuthJWKSURL), "the gate's /jwks as apps reach it (ODICEA_AUTH_JWKS_URL in protected apps)")
 	if sa := os.Getenv("ODYSSEY_SERVICE_ACCOUNT"); sa != "" {
 		o.ServiceAccount = client.ObjectKey{Namespace: env("POD_NAMESPACE", "odyssey-system"), Name: sa}
 	}

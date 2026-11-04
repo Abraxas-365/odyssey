@@ -18,8 +18,11 @@ type Gate struct {
 	Issuer   string
 	Verifier *Verifier
 	Cookies  *Codec
-	Log      *slog.Logger
-	Now      func() time.Time
+	// Signer signs the identity assertion of every 200 (nil: the gate
+	// refuses to verify, it never lets a request through without it).
+	Signer *Signer
+	Log    *slog.Logger
+	Now    func() time.Time
 }
 
 func (g *Gate) now() time.Time {
@@ -120,7 +123,13 @@ func (g *Gate) verify(w http.ResponseWriter, r *http.Request) {
 	}
 	if c, err := r.Cookie(CookieName); err == nil {
 		if s, err := g.Cookies.Open(c.Value, g.now()); err == nil && g.matches(s, req.want) {
+			if g.Signer == nil {
+				g.Log.Error("verify: no assertion key")
+				http.Error(w, errNoSigner.Error(), http.StatusInternalServerError)
+				return
+			}
 			h := w.Header()
+			h.Set(AssertionHeader, g.Signer.Sign(s, req.want.Aud, g.now()))
 			h.Set(HeaderUser, s.User)
 			h.Set(HeaderEmail, s.Email)
 			h.Set(HeaderName, s.Name)

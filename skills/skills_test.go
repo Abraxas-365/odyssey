@@ -68,7 +68,7 @@ func TestArchiveLayout(t *testing.T) {
 			t.Errorf("entries not sorted: %q before %q", names[i-1], names[i])
 		}
 	}
-	for _, want := range []string{"odicea/SKILL.md", "odicea/references/preparar-app.md", "odicea/references/diagnosticar.md", "odicea/references/github.md"} {
+	for _, want := range []string{"odicea/SKILL.md", "odicea/references/preparar-app.md", "odicea/references/diagnosticar.md", "odicea/references/github.md", "odicea/references/identidad.md"} {
 		if files[want] == "" {
 			t.Errorf("%s missing from the archive", want)
 		}

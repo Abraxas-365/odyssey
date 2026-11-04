@@ -54,8 +54,14 @@ func newFixture(t *testing.T) *fixture {
 	key := make([]byte, 32)
 	rand.Read(key)
 	codec, _ := NewCodec(key)
+	seed := make([]byte, 32)
+	rand.Read(seed)
+	signer, err := NewSigner(seed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	v := &Verifier{Issuer: "http://issuer.test", JWKSURL: f.issuer.URL, Now: func() time.Time { return f.now }}
-	f.gate = &Gate{Issuer: "http://issuer.test", Verifier: v, Cookies: codec, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return f.now }}
+	f.gate = &Gate{Issuer: "http://issuer.test", Verifier: v, Cookies: codec, Signer: signer, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return f.now }}
 	return f
 }
 

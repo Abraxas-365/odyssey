@@ -57,6 +57,8 @@
 // middleware emptied whatever the client sent.
 package access
 
+import "time"
+
 // CookieName is the cookie that holds a signed-in session.
 const CookieName = "__odicea_access"
 
@@ -71,6 +73,18 @@ const TicketType = "odicea-access-ticket"
 const (
 	ModeTeam         = "team"
 	ModeOrganization = "organization"
+)
+
+// The identity assertion (see the package doc).
+const (
+	// AssertionHeader carries the assertion to the app.
+	AssertionHeader = "X-Odicea-Assertion"
+	// AssertionIssuer is the assertion's iss claim.
+	AssertionIssuer = "odicea-gate"
+	// AssertionType is the assertion's typ claim.
+	AssertionType = "odicea-assertion"
+	// AssertionTTL is how long an assertion lives (exp - iat).
+	AssertionTTL = 120 * time.Second
 )
 
 // Headers the gate sets on a verified request.

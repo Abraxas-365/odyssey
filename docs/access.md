@@ -21,13 +21,13 @@ Behind the small `Exposure` port (`agent/controllers/app`), for `team` and
 `traefik.io/v1alpha1` Middlewares in the app's namespace and annotates the
 Ingress `traefik.ingress.kubernetes.io/router.middlewares`:
 
-1. `<app>-odicea-strip`: sets `X-Odicea-User|Email|Name|Org` and their
+1. `<app>-odicea-strip`: sets `X-Odicea-User|Email|Name|Org|Assertion` and their
    underscore spellings (`X_Odicea_*`) to `""` (Traefik removes a header set to
    empty), so a client cannot spoof them.
 2. `<app>-odicea-access`: `forwardAuth` to
    `http://odyssey-access.odyssey-system.svc:8098/verify?env=<env>&org=<app org>&mode=<mode>&host=<app host>&scheme=<http|https>[&port=<n>]`
-   with `trustForwardHeader: false` and the four `X-Odicea-*` headers copied
-   from the answer.
+   with `trustForwardHeader: false` and the five `X-Odicea-*` headers (the four
+   identity ones and `X-Odicea-Assertion`) copied from the answer.
 
 The cookie `__odicea_access` is **not** removed from the request to the app:
 `Cookie` is a single header and Traefik's headers middleware cannot drop one
@@ -108,6 +108,10 @@ generation is not the spec's.
 | gate | `ODYSSEY_ACCESS_ISSUER` | control plane **public** API base URL: the `iss` claim and where browsers are sent. **https in production** |
 | gate | `ODYSSEY_ACCESS_JWKS_URL` | optional server-side keys URL (default `<issuer>/.well-known/odicea-access-keys`) |
 | gate | `ODYSSEY_ACCESS_INSECURE_ISSUER` | `true` allows an http issuer/JWKS that is not local. Without it, http is accepted only for `localhost`, `127.0.0.1`, `*.localhost`, `host.k3d.internal` |
+| agent | `ODYSSEY_ACCESS_SIGNING_SECRET` | name of the assertion-key Secret (default `odyssey-access-signing`) the agent creates |
+| agent | `ODYSSEY_ACCESS_JWKS_URL_INTERNAL` | `/jwks` as apps reach it: the `ODICEA_AUTH_JWKS_URL` they get (default `http://odyssey-access.odyssey-system.svc:8099/jwks`) |
+| gate | `ODYSSEY_ACCESS_SIGNING_SECRET` | same Secret, read by the gate (default `odyssey-access-signing`) |
+| gate | `ODYSSEY_ACCESS_KEYS_LISTEN` | `/jwks` port (default `:8099`), open to the cluster |
 | gate | `ODYSSEY_ACCESS_HEALTH_LISTEN` | liveness port (default `:8097`); the verify port `:8098` accepts only Traefik |
 
 k3d (`deploy/k3d/agent`, a strategic-merge patch by container/env name): issuer
@@ -119,6 +123,16 @@ k3d (`deploy/k3d/agent`, a strategic-merge patch by container/env name): issuer
 - **Cookie key**: the **agent** creates the Secret (32 random bytes, never
   replacing an existing one), so the gate's Role is a single `get` on that
   Secret by name. The gate waits for it at start.
+- **Assertion key**: Secret `odyssey-access-signing`, key `assertion-key` (a
+  32-byte Ed25519 seed). The agent creates it when missing, like the cookie key;
+  the gate's Role is a `get` on `resourceNames: [odyssey-access, odyssey-access-signing]`.
+  Rotation: the operator puts the old seed in `assertion-key-previous` (it stays
+  published in the JWKS and never signs), a new seed in `assertion-key`, and
+  restarts the gate. The gate refuses to start with a seed that is not 32 bytes.
+- **Keys port**: container and Service port `keys` (`8099`, `GET /jwks`). The
+  NetworkPolicy opens it to the whole cluster (apps call it); `8098` stays
+  Traefik-only, and `8097` open for the kubelet. Egress policies (2d) must let
+  apps reach `odyssey-access:8099`.
 - **NetworkPolicy**: the verify port accepts ingress only from Traefik (default
   selector: namespace `kube-system`, pods `app.kubernetes.io/name=traefik`, as
   k3s); override it in your overlay for another install. The health port is open
@@ -129,12 +143,73 @@ k3d (`deploy/k3d/agent`, a strategic-merge patch by container/env name): issuer
   in practice). Keep 1 until the cache is shared.
 - Agent RBAC on Middlewares: `get;list;watch;create;update;patch;delete` (list/watch for the watch above).
 
+## Identity in the app (2c)
+
+`X-Odicea-User|Email|Name|Org` are plain text: they can be trusted only when the
+request came through Traefik. A pod of the cluster that calls the app directly
+can invent them. So on every `/verify` `200` the gate also sets
+**`X-Odicea-Assertion`**, a JWT the app verifies by itself, with no call to the
+control plane. An app that makes permission decisions must verify it and not
+trust `X-Odicea-Email` alone.
+
+```
+header: {"alg":"EdDSA","typ":"JWT","kid":"<key id>"}
+claims:
+  iss     = "odicea-gate"
+  aud     = the app's host[:port], exactly the ticket's aud (an assertion of app A is no good on app B)
+  sub     = the user's id        email, name = the user's (may be empty)
+  org     = the user's organization id       app_org = the app's organization id
+  env     = the environment id   mode = "team" or "organization"
+  iat, exp = Unix seconds; exp = iat + 120
+  typ     = "odicea-assertion"
+```
+
+There is no `jti`: it is signed per request (Ed25519, microseconds) and lives
+two minutes; an app may reject repeats. `kid` = base64url(sha256(public key))[:16],
+unpadded. The key is the gate's own, one per cluster (see "Assertion key" under
+Install). The constants are in `agent/access/access.go` (`AssertionHeader`,
+`AssertionIssuer`, `AssertionType`, `AssertionTTL`).
+
+**JWKS**: `GET /jwks` on the gate's own port `:8099` (`--keys-listen`), a JWK set
+`{"keys":[{"kty":"OKP","crv":"Ed25519","x","kid","use":"sig","alg":"EdDSA"}]}`
+with `Cache-Control: max-age=300`; only `GET`/`HEAD`. During a rotation it also
+lists the previous key.
+
+**Variables** the agent injects in the containers of apps in mode `team` or
+`organization` (never `public`), after the app's own and the resources'
+variables, so they win over everything:
+
+| variable | value |
+|---|---|
+| `ODICEA_AUTH_JWKS_URL` | agent config `ODYSSEY_ACCESS_JWKS_URL_INTERNAL` (default `http://odyssey-access.odyssey-system.svc:8099/jwks`) |
+| `ODICEA_AUTH_ISSUER` | `odicea-gate` |
+| `ODICEA_AUTH_AUDIENCE` | `<app host>[:port]`, exactly the gate's `aud` |
+| `ODICEA_AUTH_HEADER` | `X-Odicea-Assertion` |
+
+Go apps use `pkg/odiceaauth` (`Verifier`, `FromEnv`, `Verify`, `Require`;
+behind `Require` the plain `X-Odicea-*` headers are replaced by the verified
+values). Traefik's strip middleware empties `X-Odicea-Assertion` (and
+`X_Odicea_Assertion`) from the client's request before the gate's value is
+copied in. A public app gets no `ODICEA_AUTH_*`, not even one handed in.
+
+The JWKS travels as plain HTTP inside the cluster: its integrity is the
+cluster network's (2d's egress policy keeps the app → `:8099` path explicit).
+After a rotation the previous key stays trusted until TI removes
+`assertion-key-previous`, and up to 10 min more in an app's key cache.
+
+**Upgrading** an install from before 2c: apply `agent/install/access.yaml`
+(its Role now names `odyssey-access-signing` and the Service exposes `:8099`)
+**before** the new image. A new gate under the old Role cannot read its key and
+exits with `forbidden: apply agent/install/access.yaml…`. Protected apps then
+fail closed until the Role is applied. A listener that cannot bind (`:8098`,
+`:8099`, `:8097`) also makes the gate exit non-zero.
+
 ## The gate: `odyssey-agent access` (`agent/access`)
 
 `GET /verify?env&org&mode&host&scheme[&port]` (forwardAuth; uses `X-Forwarded-Host|Uri|Method`):
 
 - cookie `__odicea_access` valid and bound to {host, env, mode, app_org} → `200`
-  with the identity headers;
+  with the identity headers and `X-Odicea-Assertion` (see "Identity in the app");
 - `X-Forwarded-Uri` starts with `/_odicea/callback` → verifies `ticket`, answers
   `302` to `return` (a path starting with `/`, not `//`; else `/`) made
   absolute on the app's public URL (`scheme://host[:port]` from the query:

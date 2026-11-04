@@ -68,7 +68,7 @@ func TestProtectedAppGetsMiddlewaresAndAnnotation(t *testing.T) {
 			t.Fatalf("%s: middlewares missing: %v %v", mode, strip, auth)
 		}
 		hdrs, _, _ := unstructured.NestedStringMap(strip.Object, "spec", "headers", "customRequestHeaders")
-		for _, h := range []string{"X-Odicea-User", "X-Odicea-Email", "X-Odicea-Name", "X-Odicea-Org", "X_Odicea_User", "X_Odicea_Email", "X_Odicea_Name", "X_Odicea_Org"} {
+		for _, h := range []string{"X-Odicea-User", "X-Odicea-Email", "X-Odicea-Name", "X-Odicea-Org", "X-Odicea-Assertion", "X_Odicea_User", "X_Odicea_Email", "X_Odicea_Name", "X_Odicea_Org", "X_Odicea_Assertion"} {
 			if v, ok := hdrs[h]; !ok || v != "" {
 				t.Errorf("strip must set %s to empty: %v", h, hdrs)
 			}
@@ -78,7 +78,8 @@ func TestProtectedAppGetsMiddlewaresAndAnnotation(t *testing.T) {
 		if fa["address"] != want || fa["trustForwardHeader"] != false {
 			t.Errorf("forwardAuth: %v, want address %s", fa, want)
 		}
-		if resp, _ := fa["authResponseHeaders"].([]any); len(resp) != 4 {
+		resp, _ := fa["authResponseHeaders"].([]any)
+		if len(resp) != 5 || resp[4] != "X-Odicea-Assertion" {
 			t.Errorf("authResponseHeaders: %v", fa["authResponseHeaders"])
 		}
 		for _, m := range []*unstructured.Unstructured{strip, auth} {
@@ -341,5 +342,64 @@ func TestProtectedInvalidIngressUpdateLeavesNothingOpen(t *testing.T) {
 	}
 	if ing := ingressOf(t, base, a); ing != nil {
 		t.Errorf("the old, unprotected Ingress is still live: %v", ing.Annotations)
+	}
+}
+
+func authEnv(t *testing.T, c client.Client, a *v1alpha1.OdysseyApp) map[string]string {
+	t.Helper()
+	var d appsv1.Deployment
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(a), &d); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, e := range d.Spec.Template.Spec.Containers[0].Env {
+		if strings.HasPrefix(e.Name, "ODICEA_") {
+			if _, dup := out[e.Name]; dup {
+				t.Errorf("%s is set twice", e.Name)
+			}
+			out[e.Name] = e.Value
+		}
+	}
+	return out
+}
+
+func TestProtectedAppGetsTheAuthEnvAndItWinsOverTheUsers(t *testing.T) {
+	for _, mode := range []v1alpha1.AccessMode{v1alpha1.AccessTeam, v1alpha1.AccessOrganization} {
+		a := protectedApp(mode)
+		a.Spec.Env = map[string]string{"ODICEA_AUTH_AUDIENCE": "evil.test", "ODICEA_AUTH_ISSUER": "evil", "ODICEA_AUTH_JWKS_URL": "http://evil/", "ODICEA_AUTH_HEADER": "X-Evil", "KEEP": "1"}
+		r, c := exposed(t, traefikMapper(), a)
+		runWith(t, r, c, a)
+		got := authEnv(t, c, a)
+		want := map[string]string{
+			"ODICEA_AUTH_JWKS_URL": DefaultAuthJWKSURL, "ODICEA_AUTH_ISSUER": "odicea-gate",
+			"ODICEA_AUTH_AUDIENCE": "portal.apps.test:8088", "ODICEA_AUTH_HEADER": "X-Odicea-Assertion",
+		}
+		if len(got) != len(want) {
+			t.Errorf("%s: %v", mode, got)
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s: %s = %q, want %q", mode, k, got[k], v)
+			}
+		}
+	}
+	// the JWKS URL is the agent's configuration
+	a := protectedApp(v1alpha1.AccessTeam)
+	env := withAuthEnv(nil, a, Config{Domain: "apps.test", AuthJWKSURL: "http://gate:8099/jwks"})
+	if env[0].Name != "ODICEA_AUTH_JWKS_URL" || env[0].Value != "http://gate:8099/jwks" || env[2].Value != "portal.apps.test" {
+		t.Errorf("%v", env)
+	}
+}
+
+func TestPublicAppGetsNoAuthEnv(t *testing.T) {
+	for name, a := range map[string]*v1alpha1.OdysseyApp{"public": protectedApp(v1alpha1.AccessPublic), "no access": newApp(1)} {
+		a.Spec.Env = map[string]string{"ODICEA_AUTH_ISSUER": "stale", "ODICEA_AUTH_JWKS_URL": "http://evil/"}
+		r, c := exposed(t, traefikMapper(), a)
+		runWith(t, r, c, a)
+		// a public app has no gate behind it: no ODICEA_AUTH_* reaches it,
+		// not even one handed in (only a hand-edited OdysseyApp could)
+		if got := authEnv(t, c, a); len(got) != 0 {
+			t.Errorf("%s: %v", name, got)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
 	"flag"
@@ -25,6 +26,17 @@ import (
 // KeySecretKey is the key of the Secret that holds the cookie HMAC key.
 const KeySecretKey = "cookie-key"
 
+// Keys of the Secret that holds the assertion key (SigningSecretName by
+// default): a 32-byte Ed25519 seed, and optionally the previous one.
+const (
+	AssertionKeyKey         = "assertion-key"
+	AssertionKeyPreviousKey = "assertion-key-previous"
+	// SigningSecretName is the default name of that Secret.
+	SigningSecretName = "odyssey-access-signing"
+	// KeysListen is where the gate serves GET /jwks (open to the cluster).
+	KeysListen = ":8099"
+)
+
 // Run is `odyssey-agent access`: it serves the gate until SIGINT/SIGTERM.
 //
 // Configuration (flag, then environment):
@@ -39,6 +51,13 @@ const KeySecretKey = "cookie-key"
 //	                                      *.localhost and host.k3d.internal)
 //	--listen                              default :8098
 //	--health-listen                       default :8097 (/healthz only: kubelet probes)
+//	--keys-listen / ODYSSEY_ACCESS_KEYS_LISTEN
+//	                                      default :8099: GET /jwks, the public keys of the identity
+//	                                      assertions (open to the whole cluster)
+//	--signing-secret / ODYSSEY_ACCESS_SIGNING_SECRET
+//	                                      the assertion key's Secret (default odyssey-access-signing;
+//	                                      keys assertion-key and, in a rotation,
+//	                                      assertion-key-previous). The agent creates it; a get by name
 //	--secret / --secret-namespace         the cookie key's Secret (default odyssey-access in
 //	                                      $POD_NAMESPACE or odyssey-system). The AGENT creates it
 //	                                      (32 random bytes, EnsureKey); the gate only reads it, so
@@ -48,6 +67,8 @@ func Run(args []string) error {
 	listen := fs.String("listen", env("ODYSSEY_ACCESS_LISTEN", ":8098"), "address of the gate")
 	issuer := fs.String("issuer", os.Getenv("ODYSSEY_ACCESS_ISSUER"), "the control plane's public base URL (iss; where browsers sign in)")
 	jwks := fs.String("jwks-url", os.Getenv("ODYSSEY_ACCESS_JWKS_URL"), "where to fetch the ticket keys (default <issuer>/.well-known/odicea-access-keys)")
+	keysListen := fs.String("keys-listen", env("ODYSSEY_ACCESS_KEYS_LISTEN", KeysListen), "address of GET /jwks (the assertion keys; open to the cluster)")
+	signingSecret := fs.String("signing-secret", env("ODYSSEY_ACCESS_SIGNING_SECRET", SigningSecretName), "the Secret that holds the assertion signing key")
 	healthListen := fs.String("health-listen", env("ODYSSEY_ACCESS_HEALTH_LISTEN", ":8097"), "address of the liveness endpoint (the gate's port accepts only Traefik)")
 	ns := fs.String("secret-namespace", env("POD_NAMESPACE", "odyssey-system"), "namespace of the cookie key's Secret")
 	secret := fs.String("secret", env("ODYSSEY_ACCESS_SECRET", "odyssey-access"), "the Secret that holds the cookie key")
@@ -87,26 +108,52 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	g := &Gate{Issuer: *issuer, Cookies: codec, Log: log, Verifier: &Verifier{Issuer: *issuer, JWKSURL: *jwks}}
+	signer, err := LoadSigner(ctx, kc, *ns, *signingSecret)
+	if err != nil {
+		return fmt.Errorf("assertion key: %w", err)
+	}
+	g := &Gate{Issuer: *issuer, Cookies: codec, Signer: signer, Log: log, Verifier: &Verifier{Issuer: *issuer, JWKSURL: *jwks}}
+	keys := &http.Server{
+		Addr: *keysListen, Handler: signer.Handler(),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: time.Minute,
+		MaxHeaderBytes: 8 << 10,
+	}
 	srv := &http.Server{
 		Addr: *listen, Handler: g.Handler(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: time.Minute,
 		MaxHeaderBytes: 32 << 10,
 	}
 	health := &http.Server{Addr: *healthListen, ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })}
-	go func() { _ = health.ListenAndServe() }()
+	// A side listener that cannot serve stops the gate with its error (a
+	// non-zero exit the kubelet and TI see), never a silent clean exit.
+	failed := make(chan error, 2)
+	side := func(name string, s *http.Server) {
+		if err := s.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Error("a gate listener stopped", "listener", name, "err", err)
+			failed <- fmt.Errorf("%s listener: %w", name, err)
+			stop()
+		}
+	}
+	go side("health", health)
+	go side("keys", keys) // a gate whose apps cannot fetch its keys is not serving
 	go func() {
 		<-ctx.Done()
 		_ = health.Close()
+		_ = keys.Close()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
-	log.Info("odyssey-agent access starting", "listen", *listen, "issuer", *issuer, "jwks", *jwks)
+	log.Info("odyssey-agent access starting", "listen", *listen, "keys", *keysListen, "kid", signer.KID(), "issuer", *issuer, "jwks", *jwks)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	select {
+	case err := <-failed:
+		return err
+	default:
+		return nil
+	}
 }
 
 // EnsureKey creates the Secret that holds the cookie key, with 32 random
@@ -126,6 +173,51 @@ func EnsureKey(ctx context.Context, kc kubernetes.Interface, namespace, name str
 		return nil
 	}
 	return err
+}
+
+// EnsureSigningKey creates the Secret that holds the assertion key (a random
+// Ed25519 seed under assertion-key) unless it exists; an existing Secret, with
+// or without a previous key, is left as it is.
+func EnsureSigningKey(ctx context.Context, kc kubernetes.Interface, namespace, name string) error {
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := rand.Read(seed); err != nil {
+		return err
+	}
+	_, err := kc.CoreV1().Secrets(namespace).Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/part-of": "odyssey"}},
+		Data:       map[string][]byte{AssertionKeyKey: seed},
+	}, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
+// LoadSigner reads the assertion key (and the previous one, if any) from the
+// Secret, waiting for it to exist (the agent creates it) until ctx ends.
+func LoadSigner(ctx context.Context, kc kubernetes.Interface, namespace, name string) (*Signer, error) {
+	for {
+		s, err := kc.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			signer, err := NewSigner(s.Data[AssertionKeyKey], s.Data[AssertionKeyPreviousKey])
+			if err != nil {
+				return nil, fmt.Errorf("secret %s/%s: %w", namespace, name, err)
+			}
+			return signer, nil
+		case apierrors.IsForbidden(err):
+			// An install upgraded in the wrong order: the new gate runs with
+			// the old Role (which named only the cookie key's Secret).
+			return nil, fmt.Errorf("secret %s/%s: forbidden: apply agent/install/access.yaml (its Role names this Secret) before the new image: %w", namespace, name, err)
+		case !apierrors.IsNotFound(err):
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("secret %s/%s does not exist: is the agent running with ODYSSEY_ACCESS_ENABLED?", namespace, name)
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // LoadKey reads the cookie key from the Secret, waiting for it to exist (the

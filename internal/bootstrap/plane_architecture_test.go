@@ -23,6 +23,9 @@ import (
 //   - pkg/ holds code both planes run with the same rules (srcarchive: the
 //     source checks of the upload and of the builder); it imports neither
 //     plane nor Kubernetes;
+//   - pkg/odiceaauth is what app developers import into their own apps: it
+//     takes only the standard library (its tests add only the package
+//     itself), so adding it costs an app no dependency;
 //   - agent/builder is the program of a build's pod (which has no service
 //     account token and talks to nothing but the agent's source server and
 //     the registry): it imports no Kubernetes, no gRPC/proto and no other
@@ -110,6 +113,23 @@ func secretstoreViolations(rel, p, pos string) []string {
 	return []string{pos + ": agent/secretstore takes only the standard library, Kubernetes and controller-runtime from outside this repository (" + p + ")"}
 }
 
+// odiceaauthViolations: pkg/odiceaauth is imported by the apps Odicea runs,
+// so it takes only the standard library; its tests may also import the
+// package itself (external test package).
+func odiceaauthViolations(rel, p, pos string) []string {
+	if !strings.HasPrefix(rel, "pkg/odiceaauth/") {
+		return nil
+	}
+	if p == repoModule+"pkg/odiceaauth" && strings.HasSuffix(rel, "_test.go") {
+		return nil
+	}
+	first, _, _ := strings.Cut(p, "/")
+	if strings.Contains(first, ".") {
+		return []string{pos + ": pkg/odiceaauth is imported by apps and takes only the standard library (" + p + ")"}
+	}
+	return nil
+}
+
 // repoSources parses the .go files (tests included) of the given top-level
 // directories, with paths relative to the repository root.
 func repoSources(t *testing.T, dirs ...string) []goFile {
@@ -153,6 +173,7 @@ func planeViolations(files []goFile) []string {
 			out = append(out, builderViolations(f.rel, p, pos)...)
 			out = append(out, accessViolations(f.rel, p, pos)...)
 			out = append(out, secretstoreViolations(f.rel, p, pos)...)
+			out = append(out, odiceaauthViolations(f.rel, p, pos)...)
 			if agentSide && (strings.HasPrefix(p, repoModule+"internal/") || strings.HasPrefix(p, repoModule+"cmd/")) {
 				out = append(out, pos+": the agent must not import the control plane ("+p+"); they talk through proto/")
 			}
@@ -211,6 +232,8 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"cmd/odyssey-gateway/main.go":                      `package main; import _ "` + m + `internal/bootstrap"`,
 		"cmd/odyssey-agent/main.go":                        `package main; import _ "` + m + `agent"`,
 		"pkg/srcarchive/s.go":                              `package srcarchive; import _ "archive/tar"`,
+		"pkg/odiceaauth/a.go":                              `package odiceaauth; import (_ "crypto/ed25519"; _ "net/http")`,
+		"pkg/odiceaauth/a_test.go":                         `package odiceaauth_test; import (_ "testing"; _ "` + m + `pkg/odiceaauth")`,
 		"agent/builder/b.go":                               `package builder; import (_ "` + m + `pkg/srcarchive"; _ "github.com/railwayapp/railpack/core")`,
 		"agent/builds/m.go":                                `package builds; import (_ "` + m + `agent/controllers/build"; _ "` + m + `pkg/srcarchive"; _ "` + m + `proto/fleet/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client")`,
 		"agent/controllers/build/j.go":                     `package build; import (_ "` + m + `agent/builder"; _ "k8s.io/api/batch/v1")`,
@@ -224,6 +247,8 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"agent/builder/k.go":                         `package builder; import (_ "k8s.io/client-go/kubernetes"; _ "` + m + `agent/api/v1alpha1"; _ "google.golang.org/grpc")`,
 		"agent/builds/r.go":                          `package builds; import _ "github.com/railwayapp/railpack/core/app"`,
 		"pkg/srcarchive/bad.go":                      `package srcarchive; import _ "` + m + `internal/errx"`,
+		"pkg/odiceaauth/bad.go":                      `package odiceaauth; import (_ "github.com/golang-jwt/jwt/v5"; _ "` + m + `pkg/secretbox")`,
+		"pkg/odiceaauth/bad_test.go":                 `package odiceaauth_test; import (_ "github.com/google/uuid"; _ "` + m + `pkg/secretbox")`,
 		"pkg/other/k.go":                             `package other; import (_ "` + m + `agent/api/v1alpha1"; _ "k8s.io/api/core/v1")`,
 		"agent/agent.go":                             `package agent; import _ "` + m + `internal/fleet"`,
 		"proto/fleet/v1/extra.go":                    `package fleetv1; import _ "` + m + `agent/api/v1alpha1"`,
@@ -246,6 +271,10 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"cmd/odyssey-worker/main.go: the control plane never talks to a cluster",
 		"internal/fleet/fleet_test.go: the control plane must not import the agent",
 		"pkg/srcarchive/bad.go: pkg/ is shared by both planes and imports neither",
+		"pkg/odiceaauth/bad.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/golang-jwt/jwt/v5",
+		"pkg/odiceaauth/bad.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/Abraxas-365/odyssey/pkg/secretbox",
+		"pkg/odiceaauth/bad_test.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/google/uuid",
+		"pkg/odiceaauth/bad_test.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/Abraxas-365/odyssey/pkg/secretbox",
 		"pkg/other/k.go: pkg/ is shared by both planes and imports neither",
 		"pkg/other/k.go: pkg/ is shared by both planes and may not use Kubernetes",
 		"agent/builder/k.go: agent/builder runs in a build's pod and imports only pkg/",

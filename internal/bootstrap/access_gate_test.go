@@ -116,7 +116,11 @@ func TestTheGateAcceptsWhatTheControlPlaneSigns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			g := &gate.Gate{Issuer: "https://odicea.test/", Cookies: codec, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			signer, err := gate.NewSigner(bytes.Repeat([]byte{4}, 32), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g := &gate.Gate{Issuer: "https://odicea.test/", Cookies: codec, Signer: signer, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 				Verifier: &gate.Verifier{Issuer: "https://odicea.test/", JWKSURL: jwks.URL}}
 			handler := g.Handler()
 			// ask is one forwardAuth question for the app, as Traefik sends it.

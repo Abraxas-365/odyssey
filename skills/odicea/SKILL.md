@@ -76,6 +76,8 @@ Para que cada push publique la app, sigue [references/github.md](references/gith
 
 Por defecto una app nueva solo la abre **el equipo** de la organización, con su inicio de sesión de Odicea. `get_app` muestra `access.mode`: `team` (solo el equipo), `organization` (toda la empresa) o `public` (cualquiera con el enlace, sin iniciar sesión). Para cambiarlo, `set_access` con el modo que pida el usuario; si la app ya está en línea se vuelve a publicar la misma versión (sigue con `get_deployment`). `public` exige un permiso que suele tener solo TI: si falla por eso, no lo intentes por otro lado; dile al usuario que pida a TI que la deje pública. Si queda en `failed` con «Este clúster no puede proteger apps con inicio de sesión», es de TI, no de la app. No metas inicio de sesión propio en la app para esto: Odicea ya lo hace antes de que llegue.
 
+Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sobre todo, para dar permisos distintos), sigue [references/identidad.md](references/identidad.md): hay que verificar la aserción `X-Odicea-Assertion`, nunca confiar solo en `X-Odicea-Email`.
+
 ## Variables y secretos
 
 - **Variables** (valores que no son secretos: zona horaria, nivel de log, URLs públicas): `set_env` con `set` (nombre → valor) y/o `unset`. Quedan para todas las publicaciones de la app y ganan sobre el `env` de `deploy_folder`. Si la app está en línea se vuelve a publicar la misma versión (sigue con `get_deployment`).

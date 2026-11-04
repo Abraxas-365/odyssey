@@ -7,7 +7,9 @@ package app
 import (
 	"sort"
 	"strconv"
+	"strings"
 
+	"github.com/Abraxas-365/odyssey/agent/access"
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -40,7 +42,13 @@ type Config struct {
 	// ReadyDeadline is how long a rollout may go without progress before the
 	// app is reported failed (its health check never passed).
 	ReadyDeadline int32
+	// AuthJWKSURL is the gate's /jwks as the apps reach it
+	// (ODICEA_AUTH_JWKS_URL); empty: DefaultAuthJWKSURL.
+	AuthJWKSURL string
 }
+
+// DefaultAuthJWKSURL is where protected apps fetch the identity assertion keys.
+const DefaultAuthJWKSURL = "http://odyssey-access.odyssey-system.svc:8099/jwks"
 
 func (c Config) host(a *v1alpha1.OdysseyApp) string { return a.Name + "." + c.Domain }
 
@@ -103,6 +111,50 @@ func env(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
 	return out
 }
 
+// withAuthEnv adds, to a protected app (team/organization; never a public
+// one), the variables pkg/odiceaauth reads to verify the gate's identity
+// assertion. They win over everything: a variable of the same name is dropped
+// first. ODICEA_AUTH_AUDIENCE is the gate's aud for this app, host[:port] as
+// the browser sends it.
+func withAuthEnv(in []corev1.EnvVar, a *v1alpha1.OdysseyApp, cfg Config) []corev1.EnvVar {
+	// A public app gets none, and keeps none it was handed (the control plane
+	// reserves ODICEA_, so only a hand-edited OdysseyApp could carry them).
+	if accessMode(a) == v1alpha1.AccessPublic {
+		out := make([]corev1.EnvVar, 0, len(in))
+		for _, e := range in {
+			if !strings.HasPrefix(e.Name, "ODICEA_AUTH_") {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	aud := strings.ToLower(cfg.host(a))
+	if cfg.URLPort != 0 {
+		aud += ":" + strconv.Itoa(cfg.URLPort)
+	}
+	jwks := cfg.AuthJWKSURL
+	if jwks == "" {
+		jwks = DefaultAuthJWKSURL
+	}
+	auth := []corev1.EnvVar{
+		{Name: "ODICEA_AUTH_JWKS_URL", Value: jwks},
+		{Name: "ODICEA_AUTH_ISSUER", Value: access.AssertionIssuer},
+		{Name: "ODICEA_AUTH_AUDIENCE", Value: aud},
+		{Name: "ODICEA_AUTH_HEADER", Value: access.AssertionHeader},
+	}
+	ours := make(map[string]bool, len(auth))
+	for _, e := range auth {
+		ours[e.Name] = true
+	}
+	out := make([]corev1.EnvVar, 0, len(in)+len(auth))
+	for _, e := range in {
+		if !ours[e.Name] {
+			out = append(out, e)
+		}
+	}
+	return append(out, auth...)
+}
+
 // mutateDeployment sets d to run a's spec revision. Every revision changes
 // the pod template (its revision label), so every deployment rolls out.
 func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) {
@@ -150,7 +202,7 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 				Image:           a.Spec.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: a.Spec.Port, Protocol: corev1.ProtocolTCP}},
-				Env:             env(a),
+				Env:             withAuthEnv(env(a), a, cfg),
 				VolumeMounts:    mounts,
 				// Readiness only: a version is "ready" when its health check
 				// passes. Liveness (restarts) is per-app configuration, later.

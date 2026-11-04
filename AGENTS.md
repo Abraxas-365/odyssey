@@ -71,6 +71,7 @@ cmd/odyssey-gateway/      entry point → bootstrap.RunGateway (+ `ca init`)
 cmd/odyssey-agent/        entry point → agent.Run (and `builder prepare|build` in a build's pod)
 proto/fleet/v1/           the gRPC contract between the planes (fleet.proto + generated code)
 pkg/srcarchive/           source .tar.gz rules (verify while streaming, safe extract), shared by the API and the builder
+pkg/odiceaauth/           verifiable user identity for the apps Odicea runs (verifies the gate's X-Odicea-Assertion JWT via JWKS); stdlib only
 agent/                    DATA PLANE (never imports internal/): manager (agent.go), builds wiring (builds.go)
 agent/api/v1alpha1/       OdysseyApp + OdysseyBuild CRD types (+ generated deepcopy)
 agent/controllers/app/    OdysseyApp → Deployment/Service/Ingress; Observe = the pure phase function
@@ -149,7 +150,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | Only bootstrap subscribes to events; event contracts (`<domain>/events.go`) import no other domain; repos join the tx (`txn.Q`); a svc that writes also publishes; every event type has a golden contract in `testdata/events/` | `TestOnlyTheCompositionRootSubscribes`, `TestEventContractsImportNoDomain`, `TestRepositoriesJoinTheTransaction`, `TestWritesPublishEvents`, `TestEventsHaveContracts`, `TestEventContracts` |
 | River is imported only by `workflowpg` (and bootstrap); only bootstrap registers workflows | `TestRiverStaysInTheAdapter`, `TestOnlyTheCompositionRootRegistersWorkflows` |
 | A foundation port's backends (`blob/adapters/*`, `event/adapters/*`, `workflow/adapters/*`) are opened only by bootstrap; `gocloud.dev` only inside `blob/adapters`; a domain with a service declares `Commands`, `Queries`, `Repository` and has a `<domain>module` | `TestBackendsStayInTheCompositionRoot`, `TestDomainsHaveTheGoldenShape` |
-| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); `pkg/` (code both planes run, e.g. `srcarchive`) imports neither plane nor Kubernetes; `agent/builder` (a build pod's program) imports only `pkg/` — no Kubernetes, gRPC or protobuf — and is the only importer of Railpack; `agent/access` (the sign-in gate) meets the control plane only through the ticket contract (docs/access.md): it imports only `pkg/`, no proto/gRPC, no controller-runtime and no other `agent/` package; in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
+| `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); `pkg/` (code both planes run, e.g. `srcarchive`) imports neither plane nor Kubernetes; `agent/builder` (a build pod's program) imports only `pkg/` — no Kubernetes, gRPC or protobuf — and is the only importer of Railpack; `agent/access` (the sign-in gate) meets the control plane only through the ticket contract (docs/access.md): it imports only `pkg/`, no proto/gRPC, no controller-runtime and no other `agent/` package; `pkg/odiceaauth` (imported by the apps Odicea runs) takes only the standard library (its tests may add only the package itself); in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Deleting a resource and connecting one serialise on the settings lock: `resourcesvc` `Delete` → `WithConnectionsLocked` → `resourcerelease` → `releasesvc.WithResourceUseLocked`, and it, `ConnectResource` and `DisconnectResource` call `lockSettings` | `TestResourceUseIsSerialised` |
 | An upload ticket is spent in one place: `ConsumeUploadTicket` / `FindUploadTicketByHash` (by token hash, cross-org) are called only by `release/releasesvc`; `Commands.RedeemUpload` only by the public route in `releasehttp` (tests aside), never by an MCP tool | `TestUploadTicketsAreSpentInOnePlace` |
@@ -213,9 +214,12 @@ Other rules:
   when a push has no requester; never read from a request.
 - **Access** (`access` on an app: public|team|organization; docs/access.md):
   `odyssey-agent access` is the gate. Agent env: `ODYSSEY_ACCESS_ENABLED`,
-  `ODYSSEY_ACCESS_VERIFY_URL`, `ODYSSEY_ACCESS_SECRET`. Gate env:
+  `ODYSSEY_ACCESS_VERIFY_URL`, `ODYSSEY_ACCESS_SECRET`,
+  `ODYSSEY_ACCESS_SIGNING_SECRET`, `ODYSSEY_ACCESS_JWKS_URL_INTERNAL`. Gate env:
   `ODYSSEY_ACCESS_ISSUER`, `ODYSSEY_ACCESS_JWKS_URL`,
-  `ODYSSEY_ACCESS_INSECURE_ISSUER`, `ODYSSEY_ACCESS_HEALTH_LISTEN`. The agent
+  `ODYSSEY_ACCESS_INSECURE_ISSUER`, `ODYSSEY_ACCESS_HEALTH_LISTEN`,
+  `ODYSSEY_ACCESS_KEYS_LISTEN`, `ODYSSEY_ACCESS_SIGNING_SECRET` (2c: the gate
+  signs `X-Odicea-Assertion`; JWKS on :8099; docs/access.md). The agent
   lists `odicea.access` in `capabilities.apis` (`fleet.CapabilityAccess`) only
   when it can enforce; a protected app never stays exposed when protection
   cannot be applied (fail closed).

@@ -23,9 +23,9 @@ metadata:
     app.kubernetes.io/part-of: odyssey
 automountServiceAccountToken: true
 ---
-# Only to read its own Secret (the cookie key). The agent creates that Secret
-# (agent/controllers/app/traefik.go has the marker), so the gate cannot create
-# or read any other.
+# Only to read its own Secrets (the cookie key, and the assertion signing key
+# of 2c). The agent creates them (agent/controllers/app/traefik.go has the
+# marker), so the gate cannot create or read any other.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -34,7 +34,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["odyssey-access"]
+    resourceNames: ["odyssey-access", "odyssey-access-signing"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -95,6 +95,10 @@ spec:
           ports:
             - name: http
               containerPort: 8098
+            # GET /jwks: the public keys of the identity assertions
+            # (X-Odicea-Assertion). Open to the cluster: apps fetch it.
+            - name: keys
+              containerPort: 8099
             - name: health
               containerPort: 8097
           livenessProbe:
@@ -124,12 +128,16 @@ spec:
     - name: http
       port: 8098
       targetPort: http
+    - name: keys
+      port: 8099
+      targetPort: keys
 ---
 # The gate answers only the ingress controller (Traefik): nobody else in the
 # cluster may ask it to verify (or mint a session for) a request. The
 # selectors below are k3s's Traefik; another install overrides them in its
 # overlay (deploy/k3d/agent shows a patch). The health port stays open for
-# the kubelet.
+# the kubelet, and the keys port (GET /jwks: public keys) for the whole cluster
+# so apps can verify the identity assertions.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -152,3 +160,5 @@ spec:
         - port: 8098
     - ports:
         - port: 8097
+    - ports:
+        - port: 8099

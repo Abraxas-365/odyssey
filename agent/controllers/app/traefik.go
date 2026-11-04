@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Abraxas-365/odyssey/agent/access"
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -17,15 +18,16 @@ import (
 // The agent manages Traefik's Middlewares as unstructured objects (the
 // Traefik Go module is not a dependency). Reading them goes to the API, not
 // the cache.
-// The cookie key's Secret is created by the agent (agent.ensureAccessKey):
-// the gate then needs only to read it.
+// The cookie key's and the assertion key's Secrets (odyssey-access,
+// odyssey-access-signing) are created by the agent (agent.ensureAccessKey):
+// the gate then needs only to read them.
 // +kubebuilder:rbac:groups="",namespace=odyssey-system,resources=secrets,verbs=create
 // +kubebuilder:rbac:groups=traefik.io,resources=middlewares,verbs=get;list;watch;create;update;patch;delete
 
 // Identity headers the gate sets after a successful sign-in. The strip
 // middleware empties them on the way in so an app can trust them only when
 // they come from the gate (Traefik removes a request header set to "").
-var identityHeaders = []string{"X-Odicea-User", "X-Odicea-Email", "X-Odicea-Name", "X-Odicea-Org"}
+var identityHeaders = []string{"X-Odicea-User", "X-Odicea-Email", "X-Odicea-Name", "X-Odicea-Org", access.AssertionHeader}
 
 // stripHeaders are emptied on the way in: the identity headers and their
 // underscore spellings (some frameworks and CGI-style servers map "_" to

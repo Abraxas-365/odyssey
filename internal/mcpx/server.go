@@ -38,6 +38,7 @@ Reglas para que una app funcione en Odicea:
 - Nada de secretos en el código, en env ni en commits.
 - El enlace de subida es de un solo uso: no lo muestres ni lo guardes.
 - Si una tool falla, lee "next_step" en el error: dice qué hacer.
+- Si la app decide permisos según quién es el usuario, verifica la cabecera X-Odicea-Assertion (variables ODICEA_AUTH_*; solo en apps team/organization): nunca confíes en X-Odicea-Email sola. Cómo: la skill, references/identidad.md.
 
 Todavía no / not yet: Odicea aún no entrega bases de datos, secretos ni llaves de IA a las apps. Si la app las necesita, NO las crees en servicios externos (Supabase, Firebase, Vercel, etc.): dile al usuario que Odicea todavía no las ofrece y que TI puede conectar una que ya exista.
 Odicea does not provide databases, secrets or AI keys to apps yet: if the app needs one, do not create it in an external service; tell the user and ask IT to connect an existing one.
