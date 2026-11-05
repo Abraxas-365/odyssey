@@ -5,7 +5,8 @@
 # validation denials. Exits non-zero on any mismatch.
 #
 # SMOKE_CLUSTER=fleet runs the releases on the local k3d cluster through the
-# fleet: real images, and the published URL must answer. It needs the whole
+# fleet: real images; the published URL must ask a stranger to sign in (apps
+# are born "team") and the app must answer inside the cluster. It needs the whole
 # stack up: make gateway, make cluster (k3d + zot registry), make agent-image
 # (the in-cluster agent, which also builds), make worker CLUSTER=fleet and
 # make run CLUSTER=fleet. The "From a folder" section then builds a real Node
@@ -64,27 +65,52 @@ version() { # version NAME -> deploy body
 deploy() { # deploy VERSION -> deployment id
   curl -s -X POST "$deps" "${auth[@]}" "${json[@]}" -d "$(version "$1")" | jq -r .id
 }
-serving() { # serving [WANT] -> the WHOAMI_NAME the published URL answers with (Kubernetes only)
-  local u hostport port n
+# An app is born "team" (cut 1e): its published URL sends a stranger to sign in
+# (302 to the control plane's /access/authorize for this environment), so the
+# smoke checks two things on Kubernetes: the URL is protected, and what the app
+# answers, read from its Service inside the cluster (signing in needs a
+# browser; the console E2E covers it). KUBECONFIG defaults to the local k3d.
+kubeconfig=${KUBECONFIG:-.dev-secrets/kubeconfig}
+app_body() { # app_body -> the body the app's Service answers (one port-forward)
+  local ns="odyssey-$env_id" svc="svc/$slug" pf body lport=$((20000 + RANDOM % 20000))
+  kubectl --kubeconfig "$kubeconfig" -n "$ns" get "$svc" >/dev/null 2>&1 || return 0
+  kubectl --kubeconfig "$kubeconfig" -n "$ns" port-forward "$svc" "$lport:80" >/dev/null 2>&1 & pf=$!
+  for _ in $(seq 1 20); do
+    body=$(curl -s --max-time 2 "localhost:$lport/" || true)
+    [[ -n "$body" ]] && break
+    sleep 0.5
+  done
+  kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true
+  printf '%s' "$body"
+}
+protected() { # protected -> "team" when the published URL sends a stranger to sign in for this environment
+  local u hostport port loc
   u=$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .url)
   hostport=${u#http://}; port=${hostport##*:}
   for _ in $(seq 1 15); do
-    n=$(curl -s --max-time 3 --resolve "${hostport%%:*}:$port:127.0.0.1" "$u" | sed -n 's/^Name: //p' | tr -d '\r')
+    loc=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 3 --resolve "${hostport%%:*}:$port:127.0.0.1" "$u" || true)
+    [[ "$loc" == "302 $base/access/authorize?env=$env_id&mode=team&"* ]] && { echo team; return; }
+    sleep 1
+  done
+  echo "not protected at $u ($loc)"
+}
+serving() { # serving [WANT] -> the WHOAMI_NAME the app answers with (Kubernetes only)
+  local n
+  for _ in $(seq 1 15); do
+    n=$(app_body | sed -n 's/^Name: //p' | tr -d '\r')
     [[ -n "$n" && "$n" == "${1:-$n}" ]] && { echo "$n"; return; }
     sleep 1
   done
-  echo "nothing at $u (${n:-no answer})"
+  echo "nothing in the app (${n:-no answer})"
 }
-serving_text() { # serving_text WANT -> WANT when the published URL's body contains it (Kubernetes only)
-  local u hostport port body
-  u=$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .url)
-  hostport=${u#http://}; port=${hostport##*:}
+serving_text() { # serving_text WANT -> WANT when the app's body contains it (Kubernetes only)
+  local body
   for _ in $(seq 1 15); do
-    body=$(curl -s --max-time 3 --resolve "${hostport%%:*}:$port:127.0.0.1" "$u" || true)
+    body=$(app_body)
     grep -qF -- "$1" <<<"$body" && { echo "$1"; return; }
     sleep 1
   done
-  echo "nothing at $u containing $1 (${body:-no answer})"
+  echo "nothing in the app containing $1 (${body:-no answer})"
 }
 wait_done() { # wait_done DEPLOYMENT [MAX_SECONDS=240] -> final status
   local st
@@ -101,7 +127,8 @@ v1=$(deploy v1)
 expect "v0 replaced by v1" cancelled "$(curl -s -G "$deps" -d status=cancelled "${auth[@]}" | jq -r '.items[0].status')"
 expect "v1 live" ready "$(wait_done "$v1")"
 expect "current is v1" "$v1" "$(curl -s "$api/projects/$id/environments/$env_id/current" "${auth[@]}" | jq -r .deployment.id)"
-[[ -z "$kube" ]] || expect "v1 answers at its URL" v1 "$(serving v1)"
+[[ -z "$kube" ]] || expect "the URL asks a stranger to sign in" team "$(protected)"
+[[ -z "$kube" ]] || expect "v1 answers" v1 "$(serving v1)"
 bad=$(deploy bad)
 expect "unhealthy fails" failed "$(wait_done "$bad")"
 expect "failure code" HEALTH_CHECK_FAILED "$(curl -s "$deps/$bad" "${auth[@]}" | jq -r .error.code)"
