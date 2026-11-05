@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { releaseKeys } from './releases'
-import type { CreateResource, Resource, ResourceChange, ResourceList } from './types'
+import type { CreateResource, CreateResourceResult, PendingApproval, Resource, ResourceChange, ResourceList } from './types'
 
 /** While a resource is being prepared or erased the console asks again every 3 s. */
 export const RESOURCES_POLL_MS = 3000
@@ -24,27 +24,27 @@ export function useResources(project: string, env: string | undefined) {
 }
 
 /** Connecting changes the settings and may start a deployment, so everything under the environment is refreshed. */
-function useResourceWrite<V, R = ResourceChange | Resource>(project: string, env: string, fn: (v: V) => Promise<R>) {
+function useResourceWrite<V, R = ResourceChange | Resource | PendingApproval>(project: string, env: string, fn: (v: V) => Promise<R>) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: fn,
-    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }), qc.invalidateQueries({ queryKey: ['approvals'] })]),
   })
 }
 
 export const useCreateResource = (project: string, env: string) =>
-  useResourceWrite(project, env, (body: CreateResource) => api<ResourceChange>(path(project, env), { method: 'POST', body }))
+  useResourceWrite(project, env, (body: CreateResource) => api<CreateResourceResult>(path(project, env), { method: 'POST', body }))
 
 export const useResizeResource = (project: string, env: string) =>
   useResourceWrite(project, env, ({ name, storage_gi }: { name: string; storage_gi: number }) =>
     api<Resource>(`${path(project, env)}/${enc(name)}`, { method: 'PATCH', body: { storage_gi } }))
 
 export const useDeleteResource = (project: string, env: string) =>
-  useResourceWrite(project, env, (name: string) => api<Resource>(`${path(project, env)}/${enc(name)}`, { method: 'DELETE' }))
+  useResourceWrite(project, env, (name: string) => api<Resource | PendingApproval>(`${path(project, env)}/${enc(name)}`, { method: 'DELETE' }))
 
 export const useConnectResource = (project: string, env: string) =>
   useResourceWrite(project, env, ({ name, prefix }: { name: string; prefix?: string }) =>
-    api<ResourceChange>(`${path(project, env)}/${enc(name)}/connection`, { method: 'PUT', body: prefix ? { prefix } : {} }))
+    api<ResourceChange | PendingApproval>(`${path(project, env)}/${enc(name)}/connection`, { method: 'PUT', body: prefix ? { prefix } : {} }))
 
 export const useDisconnectResource = (project: string, env: string) =>
   useResourceWrite(project, env, (name: string) => api<ResourceChange>(`${path(project, env)}/${enc(name)}/connection`, { method: 'DELETE' }))

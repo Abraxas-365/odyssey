@@ -106,6 +106,14 @@ type Policy interface {
 	Check(ctx context.Context, organization identity.OrganizationID, request gate.Request) (gate.Verdict, error)
 }
 
+// Approvals is where ai holds turning the AI on when IT's rules want it
+// approved (the approvalai adapter; ai never imports approval). The approved
+// action re-runs as the requester with the approval's mark on ctx and
+// redeems it (gate.Approver).
+type Approvals interface {
+	gate.Approver
+}
+
 // Release is how ai reaches the release domain (the airelease adapter):
 // release records the app's use of the AI in the settings it deploys and
 // hands the sealed key to the cluster in the same transaction.

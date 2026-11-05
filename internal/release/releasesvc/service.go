@@ -53,11 +53,14 @@ type Service struct {
 	// policy is IT's rules (the policyrelease adapter); nil refuses every
 	// governed action (see authorize).
 	policy release.Policy
-	engine workflow.Engine
-	tx     txn.Runner
-	events event.Publisher
-	opts   Options
-	now    func() time.Time // the clock (tests set it)
+	// approvals holds what a rule wants approved (the approvalrelease
+	// adapter); nil fails an approval verdict closed.
+	approvals release.Approvals
+	engine    workflow.Engine
+	tx        txn.Runner
+	events    event.Publisher
+	opts      Options
+	now       func() time.Time // the clock (tests set it)
 }
 
 func New(repo release.Repository, projects project.Queries, cluster release.Cluster, builder release.Builder, engine workflow.Engine,
@@ -123,7 +126,7 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
-	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeploy}); err != nil {
+	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy); err != nil {
 		return release.Deployment{}, err
 	}
 	r := release.Release{ID: release.NewID(), Organization: organization, Project: id, Image: input.Image,
@@ -170,7 +173,7 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 		return release.Deployment{}, err
 	}
 	// Judged before the folder is stored: a refused deploy uploads nothing.
-	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeploy}); err != nil {
+	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy); err != nil {
 		return release.Deployment{}, err
 	}
 	src, err := s.builder.Upload(ctx, organization, id, build.Upload{Name: input.Name, UploadedBy: input.RequestedBy}, archive)
@@ -203,7 +206,7 @@ func (s *Service) DeployUploaded(ctx context.Context, organization identity.Orga
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
-	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeploy}); err != nil {
+	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy); err != nil {
 		return release.Deployment{}, err
 	}
 	src, err := s.builder.Source(ctx, organization, input.Source)
@@ -262,7 +265,7 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 		return release.Deployment{}, err
 	}
 	// A rollback puts an older version online: IT's rules judge it like a deploy.
-	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionRollback}); err != nil {
+	if err := s.denyOnly(ctx, p, e, gate.ActionRollback); err != nil {
 		return release.Deployment{}, err
 	}
 	old, err := s.deployment(ctx, organization, id, env, target)
@@ -317,8 +320,19 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 	if d.RequestedVia == "" {
 		d.RequestedVia = release.ViaFor(d.Reason, event.MetaFrom(ctx).Client, s.opts.AntigravityClientID)
 	}
-	actor := d.RequestedBy
+	by := d.RequestedBy
+	// who asked, as they were: the authorize step judges the deployment as
+	// them (a push carries its system actor; the platform's own deployments,
+	// auto_rollback and config, are not judged at all).
+	input := actor.From(ctx)
+	if _, governed := judged(d.Reason); governed && input.IsZero() {
+		// The authorize step lets an actor-less run through (it can only be
+		// one started before 3b): a new one must never be, or it would skip
+		// IT's rules. Fail closed.
+		return release.Deployment{}, nil, errx.Internal("a deployment that IT's rules judge needs who asked for it")
+	}
 	var superseded *release.Deployment
+	var cancelRuns []string // requests of the waiting deployment this one replaces
 	if state.Active != nil {
 		old, err := s.repo.FindDeploymentForUpdate(ctx, p.Organization, *state.Active)
 		if err != nil {
@@ -329,19 +343,29 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 				return release.Deployment{}, nil, err
 			}
 			if old.Build != nil && old.Release == nil { // nobody needs its image now
-				if err := s.builder.Cancel(ctx, p.Organization, *old.Build, build.Cancel{CancelledBy: actor}); err != nil {
+				if err := s.builder.Cancel(ctx, p.Organization, *old.Build, build.Cancel{CancelledBy: by}); err != nil {
 					return release.Deployment{}, nil, err
 				}
 			}
-			if err := s.events.Publish(ctx, release.NewDeploymentCancelled(p.Organization, actor, old, d.ID, names(p, e))); err != nil {
+			if old.Status == release.StatusWaitingApproval && s.approvals != nil {
+				// A newer deployment replaces the one waiting for IT: its
+				// request has no reason to wait any more.
+				cancelRuns = append(cancelRuns, old.Run.String())
+			}
+			if err := s.events.Publish(ctx, release.NewDeploymentCancelled(p.Organization, by, old, d.ID, names(p, e))); err != nil {
 				return release.Deployment{}, nil, err
 			}
 			superseded = &old
 		}
 	}
+	for _, run := range cancelRuns {
+		if err := s.approvals.CancelRun(ctx, p.Organization, run); err != nil {
+			return release.Deployment{}, nil, err
+		}
+	}
 	run, err := s.engine.Start(ctx, workflow.Start{Workflow: release.WorkflowDeploy, Organization: p.Organization,
-		Actor: actor, Subject: event.Subject(release.DeploymentSubjectKind, d.ID),
-		Input: release.DeployInput{Deployment: d.ID}, IdempotencyKey: d.ID.String()})
+		Actor: by, Subject: event.Subject(release.DeploymentSubjectKind, d.ID),
+		Input: release.DeployInput{Deployment: d.ID, Actor: input}, IdempotencyKey: d.ID.String()})
 	if err != nil {
 		return release.Deployment{}, nil, err
 	}
@@ -352,7 +376,7 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 	if err := s.repo.Begin(ctx, p.Organization, e.ID, d.ID, d.Revision); err != nil {
 		return release.Deployment{}, nil, err
 	}
-	if err := s.events.Publish(ctx, release.NewDeploymentStarted(p.Organization, actor, d, names(p, e))); err != nil {
+	if err := s.events.Publish(ctx, release.NewDeploymentStarted(p.Organization, by, d, names(p, e))); err != nil {
 		return release.Deployment{}, nil, err
 	}
 	created, err := s.repo.FindDeployment(ctx, p.Organization, d.ID)
@@ -523,8 +547,13 @@ func (s *Service) SetAccess(ctx context.Context, organization identity.Organizat
 			return release.AccessChange{}, err
 		}
 		if !judged && current.Access.Mode != input.Mode {
-			if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionSetAccess, AccessMode: string(input.Mode)}); err != nil {
+			pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionSetAccess, AccessMode: string(input.Mode)}, gate.Hold{
+				Summary: accessSummary(p, e, input.Mode), Payload: accessPayload(input.Mode)})
+			if err != nil {
 				return release.AccessChange{}, err
+			}
+			if pending != nil { // held for IT: nothing changed
+				return release.AccessChange{Outcome: gate.Holding(*pending)}, nil
 			}
 			judged = true
 		}

@@ -11,6 +11,7 @@ package mcpx
 
 import (
 	"context"
+	"reflect"
 	"slices"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
@@ -65,7 +66,12 @@ type Tool struct {
 
 	// add registers the typed handler on a per-request server (set by Typed).
 	add adder
+	// out is the handler's output type (set by Typed), for contract tests.
+	out reflect.Type
 }
+
+// OutputType is the Go type of the tool's result (nil before Typed).
+func (t Tool) OutputType() reflect.Type { return t.out }
 
 // Principal is who calls: the user, their organization, the MCP client they
 // call through and the permissions this authorization grants (the scopes

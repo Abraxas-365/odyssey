@@ -81,6 +81,9 @@ func (h *Handler) enable(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if done, err := httpx.Held(c, out.Outcome); done {
+		return err
+	}
 	return c.Status(fiber.StatusAccepted).JSON(out)
 }
 

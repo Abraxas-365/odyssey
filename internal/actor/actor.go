@@ -38,6 +38,9 @@ func (a Actor) ID() string {
 // Can reports whether the actor holds the permission.
 func (a Actor) Can(permission string) bool { return slices.Contains(a.Permissions, permission) }
 
+// IsZero reports that nobody is named: neither a user nor a system actor.
+func (a Actor) IsZero() bool { return a.User.IsZero() && a.System == "" }
+
 type key struct{}
 
 // With puts the actor on ctx.

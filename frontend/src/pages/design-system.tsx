@@ -14,6 +14,7 @@ import {
   appStatuses,
   AppThumbnail,
   ApprovalDetail,
+  ApprovalItem,
   ApprovalRow,
   AskBox,
   AssistantBy,
@@ -274,6 +275,7 @@ function AppsAndVersions({ technical }: { technical: boolean }) {
       <Panel>
         <PanelHeader title="Versiones" meta="5" />
         <PanelList>
+          <VersionRow technical={technical} version={{ id: '6', kind: 'waiting', message: 'Publicar en producción', when: 'hace 3 min', by: 'tu asistente' }} />
           <VersionRow technical={technical} version={{ id: '4', kind: 'failed', message: 'Agrega exportar a Excel', when: 'hace 10 min', by: 'tu asistente', sha: '9e8d7c6b' }} onOpen={() => {}} />
           <VersionRow technical={technical} version={{ id: '3', kind: 'preview', message: 'Nuevo diseño del formulario', when: 'hace 1 h', by: 'Ana', sha: '5d4c3b2a', branch: 'diseno' }} onPublish={() => {}} />
           <VersionRow technical={technical} version={{ id: '2', kind: 'live', message: 'Agrega fotos a la visita', when: 'hace 2 h', by: 'Ana', sha: 'a1b2c3d4' }} />
@@ -365,6 +367,21 @@ function Approvals() {
           <PanelFooter className="justify-end"><Button variant="outline">No aprobar</Button><Button>Aprobar</Button></PanelFooter>
         </Panel>
       </div>
+      <Panel>
+        <PanelHeader title="Solicitudes de la Bandeja" description="Lo que las reglas de TI dejaron esperando: la frase, quién, por qué, qué regla, cuándo y hasta cuándo." />
+        <PanelList>
+          <ApprovalItem
+            item={{ id: 'i1', sentence: 'Hacer pública «Inventario»', who: 'Ana Ruiz', why: 'Hacer pública una app requiere aprobación de TI', rules: '«Hacer pública una app requiere aprobación de TI»', when: 'hace 20 min', until: 'Vence en 7 días', status: { label: 'Esperando a TI', tone: 'info' } }}
+            actions={<><Button variant="outline" size="sm">Rechazar</Button><Button variant="primary" size="sm">Aprobar</Button></>}
+          />
+          <ApprovalItem
+            item={{ id: 'i2', sentence: 'Publicar «Pedidos» en producción', who: 'Tú', why: 'Publicar en producción requiere aprobación de TI', when: 'ayer', until: 'Aprobada por TI · hace 3 horas', status: { label: 'Aprobada', tone: 'ok' }, note: 'Revisado con Seguridad.' }}
+          />
+          <ApprovalItem
+            item={{ id: 'i3', sentence: 'Activar la IA en «Pedidos»', who: 'Tú', why: 'Activar la IA requiere aprobación de TI', when: 'hace 2 días', status: { label: 'Aprobada', tone: 'ok' }, problem: 'Ya no tienes permiso para esto. Pídelo de nuevo.' }}
+          />
+        </PanelList>
+      </Panel>
       <Panel>
         <PanelHeader icon={ShieldCheck} title="Datos y accesos" description="Quién puede usar qué, y por cuánto tiempo" />
         <RuleRow checked={rules.expire} onCheckedChange={v => setRules(r => ({ ...r, expire: v }))}>Las aprobaciones de datos vencen a los <b>6 meses</b></RuleRow>

@@ -3,6 +3,7 @@ package mcpx
 import (
 	"context"
 	"log/slog"
+	"reflect"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,10 +23,12 @@ type Handler[In, Out any] func(ctx context.Context, caller Principal, in In) (Ou
 // outputSchema, and the SDK validates arguments against In before h runs.
 func Typed[In, Out any](t Tool, h Handler[In, Out]) Tool {
 	permissions := t.Permissions
+	t.out = reflect.TypeFor[Out]()
 	t.add = func(s *mcp.Server, tool *mcp.Tool, log *slog.Logger) {
 		mcp.AddTool(s, tool, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 			var zero Out
 			ctx = callContext(ctx, req)
+			ctx = withSession(ctx, req)
 			caller, ok := FromContext(ctx)
 			if !ok {
 				return nil, zero, toolErrorOf(ctx, errx.Unauthorized("missing or invalid bearer token"), log)

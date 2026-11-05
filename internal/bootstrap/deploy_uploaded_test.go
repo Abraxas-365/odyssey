@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/build/adapters/buildfake"
@@ -97,7 +98,8 @@ func TestDeployUploaded(t *testing.T) {
 	}
 	cfg := release.Config{Port: 3000, HealthPath: "/"}
 	deploy := func(src build.Source) (release.Deployment, error) {
-		return platform.Releases.Commands.DeployUploaded(ctx, org, proj.ID, env,
+		// as the API would: who asked is on the context (IT's rules judge them)
+		return platform.Releases.Commands.DeployUploaded(actor.With(ctx, actor.Actor{User: user}), org, proj.ID, env,
 			release.DeployUploaded{Source: src.ID, Config: cfg, RequestedBy: user})
 	}
 

@@ -48,6 +48,9 @@ type Service struct {
 	opts     Options
 	// policy is IT's rules (the policyai adapter); nil refuses turning the AI on.
 	policy ai.Policy
+	// approvals holds what a rule wants approved (the approvalai adapter);
+	// nil fails an approval verdict closed.
+	approvals ai.Approvals
 }
 
 // New builds the service. A nil provider means the organization has no AI:
@@ -68,20 +71,18 @@ func New(repo ai.Repository, provider ai.Provider, rel ai.Release, projects proj
 }
 
 // authorize is the one seam where ai asks IT's rules before turning the AI
-// on: nil lets it go on, deny is 403 POLICY_DENIED, approval 409
-// APPROVAL_REQUIRED. Phase 3b replaces the approval branch here with "create
-// the approval request and answer 202".
-func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request) error {
-	if s.policy == nil {
-		return errx.Internal("IT's rules are not wired")
-	}
+// on: nil, nil lets it go on; a Pending means a rule wants IT's approval, the
+// request was stored and nothing may change (the caller answers 202); an
+// error is POLICY_DENIED (403). The approved action re-runs as the requester
+// with the approval's mark on ctx and redeems it here (gate.Enforce).
+func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request, hold gate.Hold) (*gate.Pending, error) {
 	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
-	verdict, err := s.policy.Check(ctx, p.Organization, request)
-	if err != nil {
-		return err
-	}
-	return verdict.Err()
+	hold.Project, hold.Environment = p.ID.String(), e.ID.String()
+	return gate.Enforce(ctx, p.Organization, s.policy, s.approvals, request, hold)
 }
+
+// UseApprovals wires where approvals are held (the approvalai adapter).
+func (s *Service) UseApprovals(a ai.Approvals) { s.approvals = a }
 
 var (
 	_ ai.Commands  = (*Service)(nil)
@@ -169,8 +170,14 @@ func (s *Service) Enable(ctx context.Context, org identity.OrganizationID, id pr
 	if has := statusesOf(current); has[ai.StatusActive] || has[ai.StatusCreating] {
 		return s.view(ctx, org, id, e.ID, current)
 	}
-	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionEnableAI}); err != nil {
+	pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionEnableAI}, gate.Hold{
+		Summary: "Activar la IA de «" + p.Name + "» (" + e.Slug + ")",
+		Payload: ai.EnableApproval{Op: ai.OpEnable}})
+	if err != nil {
 		return ai.View{}, err
+	}
+	if pending != nil { // held for IT: the AI stays off
+		return ai.View{Outcome: gate.Holding(*pending)}, nil
 	}
 	var keys []ai.Key
 	err = s.tx.Do(ctx, func(ctx context.Context) error {

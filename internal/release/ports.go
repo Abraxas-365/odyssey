@@ -181,12 +181,25 @@ type AIStatus interface {
 
 // Policy is what release asks IT's rules (the policy domain, through the
 // policyrelease adapter; release never imports policy): may this action
-// happen? release enforces it where each action starts (Deploy*, Rollback,
-// SetAccess, ConnectResource: releasesvc.authorize, the one seam 3b replaces
-// with "ask for approval and answer 202").
+// happen? release enforces it where each action starts (SetAccess,
+// ConnectResource: releasesvc.authorize) and, for a deployment or a rollback,
+// in the deploy workflow's authorize step (a cheap deny-only check at the
+// request, so a refused deploy answers 403 at once).
 type Policy interface {
 	// Check decides the request for the organization, as the actor on ctx.
 	Check(ctx context.Context, organization identity.OrganizationID, request gate.Request) (gate.Verdict, error)
+}
+
+// Approvals is where release holds an action IT's rules want approved (the
+// approvalrelease adapter on the approval domain; release never imports
+// approval). A direct action (SetAccess, ConnectResource) is Held and answers
+// pending_approval; when it is approved it re-runs as the requester with the
+// approval's mark on ctx (gate.WithApproval) and Redeems it. A deployment
+// holds itself from the workflow's authorize step (Run set), is released by
+// the decision signal and Consumes the approval; a deployment a newer one
+// replaced has its request cancelled (CancelRun).
+type Approvals interface {
+	gate.RunApprover
 }
 
 // Usage is what the resource domain asks release (its resourcerelease
@@ -202,8 +215,11 @@ type Usage interface {
 	// AuthorizeConnect asks IT's rules whether a resource of the kind may be
 	// connected to the environment's app, as the actor on ctx, and changes
 	// nothing. Creating a resource that connects asks it before provisioning
-	// anything; ConnectResource (Judged) then does not ask again.
-	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, kind string) error
+	// anything; ConnectResource (Judged) then does not ask again. A rule
+	// that wants approval holds the operation described by detail and returns
+	// the pending answer (nothing else may then happen); the approved
+	// operation re-runs and redeems it here.
+	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, kind string, detail gate.Detail) (*gate.Pending, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.

@@ -37,8 +37,14 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 		if err != nil {
 			return release.SettingsChange{}, err
 		}
-		if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(info.Kind)}); err != nil {
+		pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(info.Kind)}, gate.Hold{
+			Summary: "Conectar " + string(info.Kind) + " «" + info.Name + "» a " + where(p, e),
+			Payload: release.ConnectResourceApproval{Op: release.OpConnectResource, Name: input.Name, Prefix: input.Prefix}})
+		if err != nil {
 			return release.SettingsChange{}, err
+		}
+		if pending != nil { // held for IT: nothing changed
+			return release.SettingsChange{Outcome: gate.Holding(*pending)}, nil
 		}
 	}
 	var out release.SettingsChange
@@ -78,13 +84,15 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 }
 
 // AuthorizeConnect is IT's rules' answer to connecting a resource of the kind
-// (nil: allowed). It writes nothing; see release.Usage.
-func (s *Service) AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, kind string) error {
+// (nil, nil: allowed; a Pending: held, detail describes what will re-run). It
+// writes nothing but the approval request; see release.Usage.
+func (s *Service) AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, kind string, detail gate.Detail) (*gate.Pending, error) {
 	p, e, err := s.placeWritable(ctx, organization, id, env)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: kind})
+	return s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: kind}, gate.Hold{
+		Summary: detail.Summary, Payload: detail.Payload})
 }
 
 // DisconnectResource removes the connection; the resource keeps existing.

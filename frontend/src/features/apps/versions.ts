@@ -22,8 +22,15 @@ export function progressSteps(d: Deployment): ProgressStepItem[] {
 
 export const isPublishing = (c: CurrentRelease | undefined) => !!c?.active
 
+/** IT's rules asked for approval before this deployment builds (docs/approvals.md): it has not started. */
+export const waitingForIT = (d: Pick<Deployment, 'status'> | null | undefined) => d?.status === 'waiting_approval'
+
+/** The word for a deployment's state where it is listed or opened: "Esperando aprobación de TI". */
+export const waitingLabel = 'Esperando aprobación de TI'
+
 export function appStatus(archived: boolean, current: CurrentRelease | undefined, latest: Deployment | undefined): { status: AppStatusKind; label?: string } {
   if (archived) return { status: 'archived' }
+  if (waitingForIT(current?.active)) return { status: 'waiting', label: waitingLabel }
   if (current?.active) return { status: 'building' }
   if (current?.release) return { status: 'live' }
   if (latest?.status === 'failed') return { status: 'attention', label: 'No se publicó' }
@@ -35,7 +42,7 @@ export function appStatus(archived: boolean, current: CurrentRelease | undefined
  * and replaced attempts don't count: after a failure the platform's restore
  * is newer, but the person's last attempt is still the failed one.
  */
-const inProgress = new Set<Deployment['status']>(['building', 'pending', 'applying', 'verifying'])
+const inProgress = new Set<Deployment['status']>(['building', 'waiting_approval', 'pending', 'applying', 'verifying'])
 
 export function lastProblem(deployments: Deployment[]): Deployment | undefined {
   const last = deployments.find(d => d.reason !== 'auto_rollback' && d.status !== 'cancelled' && !inProgress.has(d.status))
@@ -99,13 +106,15 @@ export interface VersionItem extends VersionData {
 /**
  * Versiones, newest first. In-progress and replaced (cancelled) attempts are
  * left out: the first shows as progress, the second never mattered to anyone.
+ * One waiting for IT is listed ("Esperando aprobación de TI"): it is the only
+ * in-progress one that has not started anything yet.
  */
 export function versions(deployments: Deployment[], current: CurrentRelease | undefined, me: string, now = Date.now()): VersionItem[] {
   const live = current?.deployment?.id
   return deployments
-    .filter(d => d.status === 'ready' || d.status === 'failed')
+    .filter(d => d.status === 'ready' || d.status === 'failed' || d.status === 'waiting_approval')
     .map(d => {
-      const kind = d.status === 'failed' ? 'failed' : d.id === live ? 'live' : 'previous'
+      const kind = d.status === 'waiting_approval' ? 'waiting' : d.status === 'failed' ? 'failed' : d.id === live ? 'live' : 'previous'
       return {
         id: d.id,
         deployment: d,

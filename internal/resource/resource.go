@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
@@ -122,6 +123,9 @@ type View struct {
 	// Variables are the names the app reads the resource by: with the
 	// connection's prefix, or without one while not connected.
 	Variables []string `json:"variables"`
+	// Outcome: the action was held for IT's approval and did not happen (the
+	// rest of the view is then empty); the transport answers 202.
+	gate.Outcome
 }
 
 // NewView puts a resource together with what is observed and its connection.

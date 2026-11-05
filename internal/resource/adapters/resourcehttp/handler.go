@@ -102,6 +102,9 @@ func (h *Handler) create(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if done, err := httpx.Held(c, out.Outcome); done {
+		return err
+	}
 	return httpx.Created(c, out.Name, out)
 }
 
@@ -133,6 +136,9 @@ func (h *Handler) delete(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if done, err := httpx.Held(c, out.Outcome); done {
+		return err
+	}
 	return c.Status(fiber.StatusAccepted).JSON(out)
 }
 
@@ -152,6 +158,9 @@ func (h *Handler) connect(c *fiber.Ctx) error {
 	in.Name, in.RequestedBy = c.Params("name"), at.user
 	out, err := h.commands.Connect(c.UserContext(), at.org, at.project, at.environment, in)
 	if err != nil {
+		return err
+	}
+	if done, err := httpx.Held(c, out.Outcome); done {
 		return err
 	}
 	return c.Status(fiber.StatusAccepted).JSON(out)

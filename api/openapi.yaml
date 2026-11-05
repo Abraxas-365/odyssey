@@ -37,6 +37,8 @@ tags:
     description: The organization's tamper-evident activity trail.
   - name: policy
     description: IT's rules (CEL) that allow, block or ask approval for actions on apps.
+  - name: approvals
+    description: Actions IT's rules hold until someone with the permission approves them.
   - name: github
     description: Connecting apps to their GitHub repositories.
   - name: access
@@ -548,12 +550,17 @@ paths:
                 mode: { $ref: "#/components/schemas/AccessMode" }
       responses:
         "202":
-          description: The settings stored and the deployment applying them, if one started.
+          description: |
+            The settings stored and the deployment applying them, if one started; or
+            `pending_approval` when IT's rules hold the change (nothing changed yet).
           headers:
             Location: { schema: { type: string }, description: "The config deployment, when there is one." }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AccessChange" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AccessChange"
+                  - $ref: "#/components/schemas/PendingApproval"
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -661,7 +668,9 @@ paths:
         `deployment_id`, when one started; 409 `VARIABLE_TAKEN` if a variable it
         defines is already in use). An environment has at most 10 resources
         (409 `RESOURCE_LIMIT`); the name is unique among them (409). Event
-        `resource.created`.
+        `resource.created`. When IT's rules want approval for connecting it
+        (`connect_resource`), nothing is provisioned: 202 `PendingApproval`,
+        and the creation runs as the requester once approved.
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -688,6 +697,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ResourceChange" }
+        "202":
+          description: |
+            `pending_approval` when IT's rules hold the connection that a create with
+            `connect` asks for (nothing was created yet).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingApproval" }
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -764,10 +780,13 @@ paths:
       x-permissions: [odyssey:resources:delete]
       responses:
         "202":
-          description: The resource, now deleting.
+          description: The resource, now deleting; or `pending_approval` when IT's rules hold the deletion.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Resource" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Resource"
+                  - $ref: "#/components/schemas/PendingApproval"
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -805,10 +824,13 @@ paths:
                 prefix: { $ref: "#/components/schemas/ResourcePrefix" }
       responses:
         "202":
-          description: The resource connected and the deployment applying it, if one started.
+          description: The resource connected and the deployment applying it, if one started; or `pending_approval` when IT's rules hold it.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ResourceChange" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ResourceChange"
+                  - $ref: "#/components/schemas/PendingApproval"
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -881,10 +903,13 @@ paths:
       x-permissions: [odyssey:projects:write]
       responses:
         "202":
-          description: Accepted; poll the GET for `status`.
+          description: Accepted; poll the GET for `status`. Or `pending_approval` when IT's rules hold it.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AI" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AI"
+                  - $ref: "#/components/schemas/PendingApproval"
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1581,6 +1606,157 @@ paths:
         "413": { $ref: "#/components/responses/Validation" }
         "415": { $ref: "#/components/responses/Validation" }
         "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/approvals:
+    get:
+      tags: [approvals]
+      operationId: listApprovals
+      summary: List approval requests
+      description: |
+        What the caller may see, newest first: the requests they made, and the
+        ones they could decide (they hold one of the request's approver
+        permissions). Nothing else is ever listed (another organization's
+        requests, or other people's that the caller cannot decide, do not exist
+        for them). `mine` keeps only the caller's own; `decidable` only the
+        pending ones the caller may decide now (what the console's bell counts).
+        Pagination: `limit`, `offset`.
+      x-permissions: []
+      parameters:
+        - name: status
+          in: query
+          description: Repeatable (OR). Default all.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ApprovalStatus" }
+          style: form
+          explode: true
+        - name: mine
+          in: query
+          schema: { type: boolean }
+        - name: decidable
+          in: query
+          schema: { type: boolean }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/approvals/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [approvals]
+      operationId: getApproval
+      summary: Read an approval request
+      description: A request the caller made or could decide; any other is 404.
+      x-permissions: []
+      responses:
+        "200":
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/approvals/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [approvals]
+      operationId: approveApproval
+      summary: Approve a request
+      description: |
+        Needs ANY ONE of the request's `approvers` permissions (otherwise 403) and
+        cannot be the person who asked (403 `APPROVAL_SELF`). Only a pending
+        request can be decided (409 `APPROVAL_DECIDED`). A direct action is run
+        again as the person who asked, with what they could do when they asked;
+        if that fails the request says why in `execution_error` and the
+        approval is still recorded. A deployment waiting for it goes on.
+        Events `approval.approved` (and `approval.consumed`, or
+        `approval.execution_failed` when the action could not run).
+      x-permissions: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalDecision" }
+      responses:
+        "200":
+          description: The request, approved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRequest" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/approvals/{id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [approvals]
+      operationId: rejectApproval
+      summary: Reject a request
+      description: |
+        Same rules as approving. Nothing runs; a waiting deployment is cancelled.
+        Event `approval.rejected`.
+      x-permissions: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalDecision" }
+      responses:
+        "200":
+          description: The request, rejected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRequest" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/approvals/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [approvals]
+      operationId: cancelApproval
+      summary: Take back your own pending request
+      description: |
+        Only the person who asked can cancel, and only while it is pending (403
+        otherwise; 409 `APPROVAL_DECIDED` when it was already decided). A waiting
+        deployment is cancelled. Event `approval.cancelled`.
+      x-permissions: []
+      responses:
+        "200":
+          description: The request, cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/Internal" }
 
   /api/v1/github:
@@ -2645,7 +2821,96 @@ components:
 
     DeploymentStatus:
       type: string
-      enum: [building, pending, applying, verifying, ready, failed, cancelled]
+      enum: [building, waiting_approval, pending, applying, verifying, ready, failed, cancelled]
+      description: |
+        `waiting_approval`: IT's rules ask for approval before the deployment builds
+        (the first step of its workflow); it goes on when someone with the permission
+        approves and is `cancelled` when they reject it, it expires or the requester
+        takes it back (the event `deployment.cancelled` says which).
+
+    PendingApproval:
+      type: object
+      additionalProperties: false
+      description: |
+        The answer (202) of an action IT's rules hold for approval: nothing happened
+        yet. Approving runs it again as the person who asked.
+      required: [status, request_id, message]
+      properties:
+        status: { type: string, enum: [pending_approval] }
+        request_id: { type: string, format: uuid, description: "The request (`GET /api/v1/approvals/{id}`)." }
+        message: { type: string, description: "What to tell the person asking, in plain Spanish." }
+
+    ApprovalStatus:
+      type: string
+      enum: [pending, approved, rejected, expired, cancelled]
+
+    ApprovalRule:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+
+    Approval:
+      description: A request as the caller sees it (with what they may do).
+      allOf:
+        - $ref: "#/components/schemas/ApprovalRequest"
+        - type: object
+          required: [mine, can_decide]
+          properties:
+            mine: { type: boolean, description: The caller asked for it. }
+            can_decide: { type: boolean, description: "The caller may approve or reject it now (pending, not theirs, holding one of its approvers)." }
+
+    ApprovalDecision:
+      type: object
+      additionalProperties: false
+      description: The whole body is optional.
+      properties:
+        note: { type: string, maxLength: 500, description: Why (shown to the person who asked). }
+
+    ApprovalList:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Approval" }
+        page: { $ref: "#/components/schemas/Page" }
+
+    ApprovalRequest:
+      type: object
+      description: One action held for IT's approval.
+      required: [id, action, project_id, environment_id, summary, payload, requested_by, reason, rules, approvers, status,
+                 decided_by, decided_at, decision_note, expires_at, consumed_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string, enum: [deploy, rollback, set_access, connect_resource, delete_resource, enable_ai], description: The action held. }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        summary: { type: string, description: The action as one plain Spanish sentence. }
+        payload: { type: object, description: "The domain's own description of the action (what re-runs)." }
+        requested_by: { type: string, pattern: "^([0-9a-f-]{36})?$", description: "Who asked; empty for the platform (a GitHub push)." }
+        requested_system: { type: string, description: "Set when the platform asked (for example `github:ana`)." }
+        reason: { type: string, description: "Why it was held (the rules' names), in words." }
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/ApprovalRule" }
+        approvers:
+          type: array
+          description: The permissions that can decide; holding ANY ONE is enough.
+          items: { type: string }
+        status: { $ref: "#/components/schemas/ApprovalStatus" }
+        decided_by: { type: [string, "null"], format: uuid }
+        decided_at: { type: [string, "null"], format: date-time }
+        decision_note: { type: string }
+        expires_at: { type: string, format: date-time, description: Seven days after it was asked. }
+        consumed_at: { type: [string, "null"], format: date-time, description: "When the approval was used (an approval is good for one use)." }
+        execution_error: { type: string, description: "Why an approved action could not run (plain Spanish); the requester can ask again." }
+        run_id: { type: string, format: uuid, description: The workflow run waiting for it (a deployment); absent for direct actions. }
+        run_step: { type: string }
+        created_at: { type: string, format: date-time }
 
     GitRef:
       type: object

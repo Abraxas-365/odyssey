@@ -61,14 +61,21 @@ const Slash = () => <span aria-hidden className="text-[22px] font-light text-bor
 
 export interface Notification { id: string; tone: Tone; icon: LucideIcon; title: ReactNode; when: string; unread?: boolean; onSelect?: () => void }
 
-/** The bell: the same for every persona (UX v3 §10). */
-export function NotificationsMenu({ items, onSeeAll }: { items: Notification[]; onSeeAll?: () => void }) {
-  const unread = items.filter(i => i.unread).length
+/**
+ * The bell: the same for every persona (UX v3 §10). `count` is what waits for
+ * this person (IT's pending approvals): a number badge, 9+ past nine.
+ */
+export function NotificationsMenu({ items, onSeeAll, seeAllLabel = 'Ver toda la actividad', count = 0 }: { items: Notification[]; onSeeAll?: () => void; seeAllLabel?: string; count?: number }) {
+  const unread = items.filter(i => i.unread).length + count
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="relative" aria-label={unread ? `Notificaciones, ${unread} sin leer` : 'Notificaciones'} />}>
         <Bell />
-        {unread > 0 && <span aria-hidden className="absolute top-1.5 right-1.5 size-2 rounded-full border-2 border-background bg-warning" />}
+        {count > 0 ? (
+          <Badge variant="count" aria-hidden className="absolute -top-0.5 -right-0.5 border-2 border-background">{count > 9 ? '9+' : count}</Badge>
+        ) : (
+          unread > 0 && <span aria-hidden className="absolute top-1.5 right-1.5 size-2 rounded-full border-2 border-background bg-warning" />
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-[360px]">
         <DropdownMenuGroup>
@@ -87,7 +94,7 @@ export function NotificationsMenu({ items, onSeeAll }: { items: Notification[]; 
         {onSeeAll && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onSeeAll}>Ver toda la actividad</DropdownMenuItem>
+            <DropdownMenuItem onClick={onSeeAll}>{seeAllLabel}</DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>

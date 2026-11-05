@@ -9,6 +9,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input'
 import { Callout, ChipGroup, EmptyState, ErrorNotice, Panel, PanelBody, PanelFooter, PanelHeader, TechnicalDetails } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
+import { afterWrite } from '@/features/approvals/notice'
 import { permissions } from '@/lib/permissions'
 import { useConnectResource, useCreateResource, useDeleteResource, useDisconnectResource, useResizeResource, useResources } from '@/lib/resources'
 import type { Resource, ResourceKind } from '@/lib/types'
@@ -38,7 +39,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
 
   const change = (r: Resource, on: boolean) => {
     const done = (out: { deployment_id: string | null }) => toast.success(applied(out.deployment_id))
-    if (on) connect.mutate({ name: r.name }, { onSuccess: done })
+    if (on) connect.mutate({ name: r.name }, { onSuccess: out => afterWrite(out, done) })
     else disconnect.mutate(r.name, { onSuccess: done })
   }
 
@@ -147,7 +148,7 @@ function AddResourceDialog({ project, env, kinds, taken, onClose }: { project: s
       { name: n, kind, storage_gi: size, ...(connectIt ? { connect: prefix.trim() ? { prefix: prefix.trim() } : {} } : {}) },
       {
         onSuccess: out => {
-          toast.success(out.connected ? applied(out.deployment_id) : 'Listo. Falta conectarla a la app.')
+          afterWrite(out, o => toast.success(o.connected ? applied(o.deployment_id) : 'Listo. Falta conectarla a la app.'))
           onClose()
         },
       },
@@ -236,7 +237,7 @@ function DeleteDialog({ project, env, resource, onClose }: { project: string; en
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    remove.mutate(resource.name, { onSuccess: () => { toast.success('Eliminando…'); onClose() } })
+    remove.mutate(resource.name, { onSuccess: out => { afterWrite(out, () => toast.success('Eliminando…')); onClose() } })
   }
   return (
     <AlertDialog open onOpenChange={v => !v && !remove.isPending && onClose()}>

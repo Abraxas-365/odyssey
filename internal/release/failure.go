@@ -74,7 +74,7 @@ func FailureOf(step string, cause error) Failure {
 var stepCodes = map[string]bool{CodeUnhealthy: true, CodeNotReady: true, CodeApplyFailed: true, CodeImagePull: true, CodeCrashed: true,
 	CodeResourceNotReady: true, build.CodeUnsupported: true, build.CodeFailed: true, build.CodeTimeout: true, build.CodeSourceInvalid: true,
 	build.CodePushFailed: true, build.CodeNoBuilder: true, build.CodeNoCluster: true, build.CodeSourceExpired: true,
-	CodeBuildInternal: true}
+	CodeBuildInternal: true, CodePolicyDenied: true}
 
 // Unready explains, for the person deploying, why the cluster reports the
 // app failed: the plain consequence, with the cluster's words as the detail.

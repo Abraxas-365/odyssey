@@ -40,6 +40,9 @@ func repack(r io.Reader, w io.Writer, root string, limits srcarchive.Limits) (ta
 // which the worker could not know later.
 func requester(ctx context.Context, by identity.UserID) actor.Actor {
 	a := actor.From(ctx)
+	if by.IsZero() && a.IsZero() {
+		return github("") // nobody named: judged as the system, never as nobody
+	}
 	if a.User != by {
 		return actor.Actor{User: by} // no token on the context: the user, with no permissions
 	}
@@ -80,15 +83,17 @@ func retryable(err error) error {
 
 // refused reports a definitive answer: retrying would get the same one.
 // A refusal by IT's rules is one (the deploy step fails the push with the
-// rule's name as its detail). Other Conflicts are not: Postgres reports
-// deadlocks and serialization failures as Conflict, and a persistent one
-// still ends when the attempts run out.
+// rule's name as its detail). A rule that wants approval is NOT a refusal
+// since 3b: the push's deployment waits for IT at its own authorize step (the
+// push is the system actor), and this step never sees it. Other Conflicts are
+// not: Postgres reports deadlocks and serialization failures as Conflict, and
+// a persistent one still ends when the attempts run out.
 func refused(err error) bool {
 	var e *errx.Error
 	if !errors.As(err, &e) {
 		return false
 	}
-	if gate.Refusal(e) { // IT's rules answered: POLICY_DENIED, and APPROVAL_REQUIRED (a Conflict) too
+	if gate.Refusal(e) { // IT's rules answered: POLICY_DENIED (and the legacy APPROVAL_REQUIRED, a Conflict)
 		return true
 	}
 	if e.Code == build.CodeSourceQuota { // older sources expire meanwhile

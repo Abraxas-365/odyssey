@@ -1,0 +1,20 @@
+{
+  "approval_id": "00000000-0000-4000-8000-0000000000aa",
+  "action": "set_access",
+  "project_id": "00000000-0000-4000-8000-0000000000bb",
+  "environment_id": "00000000-0000-4000-8000-0000000000cc",
+  "summary": "Hacer pública «tienda» (producción)",
+  "requested_by": "00000000-0000-4000-8000-000000000002",
+  "reason": "La regla de TI «Acceso público» pide aprobación.",
+  "rules": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000dd",
+      "name": "Acceso público"
+    }
+  ],
+  "approvers": [
+    "odyssey:approvals:decide"
+  ],
+  "expires_at": "2026-01-08T10:00:00Z",
+  "run_id": "run-1"
+}

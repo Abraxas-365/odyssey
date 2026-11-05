@@ -94,13 +94,17 @@ type DeploymentFailed struct {
 	AutoRollback *DeploymentID `json:"auto_rollback_id"`
 }
 
-// DeploymentCancelled v1: a newer deployment of the environment superseded it.
+// DeploymentCancelled v1: a newer deployment of the environment superseded it
+// (Reason "superseded", SupersededBy set), or IT's decision ended it: Reason
+// approval_rejected, approval_expired or approval_cancelled, SupersededBy
+// null (Reason and the null are additive since v1).
 type DeploymentCancelled struct {
-	Deployment   DeploymentID `json:"deployment_id"`
-	Project      string       `json:"project_id"`
-	Environment  string       `json:"environment_id"`
-	Release      *ID          `json:"release_id"` // null when it was still building
-	SupersededBy DeploymentID `json:"superseded_by"`
+	Deployment   DeploymentID  `json:"deployment_id"`
+	Project      string        `json:"project_id"`
+	Environment  string        `json:"environment_id"`
+	Release      *ID           `json:"release_id"` // null when it was still building
+	SupersededBy *DeploymentID `json:"superseded_by"`
+	Reason       string        `json:"reason"`
 }
 
 func NewCreated(org identity.OrganizationID, actor identity.UserID, r Release, n Names) event.Event {
@@ -161,7 +165,24 @@ func NewDeploymentFailed(org identity.OrganizationID, actor identity.UserID, d D
 func NewDeploymentCancelled(org identity.OrganizationID, actor identity.UserID, d Deployment, by DeploymentID, n Names) event.Event {
 	return event.New(EventDeploymentCancelled, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID),
 		"Se canceló una publicación de "+n.where()+" (la reemplazó otra)",
-		DeploymentCancelled{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release, SupersededBy: by})
+		DeploymentCancelled{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release,
+			SupersededBy: &by, Reason: CancelSuperseded})
+}
+
+// NewDeploymentHeld is deployment.cancelled for a deployment IT's decision
+// ended before it ran (reason: one of the CancelApproval* values).
+func NewDeploymentHeld(org identity.OrganizationID, actor identity.UserID, d Deployment, reason string, n Names) event.Event {
+	why := "TI no la aprobó"
+	switch reason {
+	case CancelApprovalExpired:
+		why = "nadie de TI la aprobó a tiempo"
+	case CancelApprovalCanceled:
+		why = "se retiró la solicitud de aprobación"
+	}
+	return event.New(EventDeploymentCancelled, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID),
+		"Se canceló una publicación de "+n.where()+" ("+why+")",
+		DeploymentCancelled{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release,
+			Reason: reason})
 }
 
 // UploadTicketIssued v1. Neither the token nor its hash is ever in the trail.

@@ -523,6 +523,9 @@ func (h *Handler) setAccess(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if done, err := httpx.Held(c, out.Outcome); done {
+		return err
+	}
 	if out.Deployment != nil { // a sibling of /access, like rollback's
 		base := strings.TrimRight(c.Path(), "/")
 		c.Set(fiber.HeaderLocation, base[:strings.LastIndex(base, "/")+1]+"deployments/"+out.Deployment.ID.String())

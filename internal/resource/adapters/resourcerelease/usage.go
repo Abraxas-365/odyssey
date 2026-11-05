@@ -7,6 +7,7 @@ package resourcerelease
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -59,8 +60,8 @@ func (u *Usage) Connect(ctx context.Context, org identity.OrganizationID, id pro
 	return applied(out), nil
 }
 
-func (u *Usage) AuthorizeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, kind resourcekind.Kind) error {
-	return u.usage.AuthorizeConnect(ctx, org, id, env, string(kind))
+func (u *Usage) AuthorizeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, kind resourcekind.Kind, detail gate.Detail) (*gate.Pending, error) {
+	return u.usage.AuthorizeConnect(ctx, org, id, env, string(kind), detail)
 }
 
 func (u *Usage) Disconnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, by identity.UserID) (resource.Applied, error) {

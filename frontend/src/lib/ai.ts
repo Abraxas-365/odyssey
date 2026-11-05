@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { releaseKeys } from './releases'
-import type { AppAI } from './types'
+import type { AppAI, PendingApproval } from './types'
 
 /** While the AI is turning on, renewing or turning off the console asks again every 3 s. */
 export const AI_POLL_MS = 3000
@@ -30,8 +30,8 @@ export function useAI(project: string, env: string | undefined) {
 function useAIWrite(project: string, env: string, method: 'PUT' | 'POST' | 'DELETE', suffix = '') {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => api<AppAI>(`${path(project, env)}${suffix}`, { method }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+    mutationFn: () => api<AppAI | PendingApproval>(`${path(project, env)}${suffix}`, { method }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }), qc.invalidateQueries({ queryKey: ['approvals'] })]),
   })
 }
 

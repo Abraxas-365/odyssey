@@ -9,12 +9,28 @@ import { formatBytes } from '@/lib/format'
 import { useBuildLog, useDeploy, useDeploySource, useRollback } from '@/lib/releases'
 import { packSource, planProblem, planSource, SOURCE_LIMITS, type SourcePlan } from '@/lib/tarball'
 import type { BuildLogLine, Deployment } from '@/lib/types'
-import { progressSteps, type VersionItem } from './versions'
+import { progressSteps, waitingForIT, waitingLabel, type VersionItem } from './versions'
 
 /** "Publicando una nueva versión" with its steps (UX v3 §7); the build's log stays one click away. */
 export function PublishingPanel({ deployment, technical }: { deployment: Deployment; technical: boolean }) {
   const restoring = deployment.reason !== 'deploy'
   const building = deployment.status === 'building'
+  if (waitingForIT(deployment)) {
+    return (
+      <Panel>
+        <PanelHeader
+          title={waitingLabel}
+          description="Las reglas de TI piden aprobar esta publicación antes de empezar. Tu app sigue funcionando con la versión actual y te avisamos cuando lo decidan."
+          meta={technical ? <span className="font-mono text-xs">rev {deployment.revision}</span> : undefined}
+        />
+        <PanelBody>
+          <Callout tone="info" title="Ya le pedimos a TI que lo apruebe.">
+            Puedes seguir la solicitud, o cancelarla, en «Mis solicitudes».
+          </Callout>
+        </PanelBody>
+      </Panel>
+    )
+  }
   return (
     <Panel>
       <PanelHeader

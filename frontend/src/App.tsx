@@ -5,6 +5,7 @@ import { AuthGate } from '@/lib/auth'
 import { AppOverviewPage } from '@/pages/app-overview'
 import { AssistantPage } from '@/pages/assistant'
 import { AuthCallbackPage } from '@/pages/auth-callback'
+import { BandejaPage } from '@/pages/bandeja'
 import { ClustersPage } from '@/pages/clusters'
 import { ConsoleLayout } from '@/pages/console-layout'
 import { GitHubSettingsPage } from '@/pages/github-settings'
@@ -24,6 +25,7 @@ export function App() {
         <Route element={<AuthGate><ConsoleLayout /></AuthGate>}>
           <Route index element={<HomePage />} />
           <Route path="asistente" element={<AssistantPage />} />
+          <Route path="bandeja" element={<BandejaPage />} />
           <Route path="apps/:id" element={<AppOverviewPage />} />
           <Route path="infraestructura/clusteres" element={<ClustersPage />} />
           <Route path="configuracion/github" element={<GitHubSettingsPage />} />

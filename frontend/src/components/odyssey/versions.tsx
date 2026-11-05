@@ -1,4 +1,4 @@
-import { Check, ChevronRight, FlaskConical, RotateCcw, X } from 'lucide-react'
+import { Check, ChevronRight, Clock, FlaskConical, RotateCcw, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -8,9 +8,10 @@ import { IconBadge } from './icon-badge'
 /**
  * A version ("Versión", never "deployment"). `live` = currently published,
  * `preview` = Versión de prueba, `failed` = No se publicó, `previous` = an
- * older published version you can restore.
+ * older published version you can restore, `waiting` = IT has to approve it
+ * before it starts.
  */
-export type VersionKind = 'live' | 'previous' | 'preview' | 'failed'
+export type VersionKind = 'live' | 'previous' | 'preview' | 'failed' | 'waiting'
 
 export interface VersionData {
   id: string
@@ -24,8 +25,8 @@ export interface VersionData {
   git?: { branch: string; sha: string; author: string }
 }
 
-const icon = { live: Check, previous: Check, preview: FlaskConical, failed: X }
-const tone = { live: 'ok', previous: 'ok', preview: 'neutral', failed: 'bad' } as const
+const icon = { live: Check, previous: Check, preview: FlaskConical, failed: X, waiting: Clock }
+const tone = { live: 'ok', previous: 'ok', preview: 'neutral', failed: 'bad', waiting: 'info' } as const
 
 /**
  * One row of the Versiones list. The title is the link to the detail (or to
@@ -48,6 +49,7 @@ export function VersionRow({ version: v, technical, onOpen, onRestore, onPublish
           {v.kind === 'live' && <Badge variant="success">Publicada ahora</Badge>}
           {v.kind === 'preview' && <Badge>Versión de prueba</Badge>}
           {v.kind === 'failed' && <Badge variant="destructive">No se publicó</Badge>}
+          {v.kind === 'waiting' && <Badge variant="info">Esperando aprobación de TI</Badge>}
         </div>
         {v.git ? (
           <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">

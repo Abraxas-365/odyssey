@@ -14,6 +14,7 @@ import type {
   EnvironmentList,
   EnvironmentSettings,
   List,
+  PendingApproval,
   PutEnvironmentSecret,
   SecretView,
   SetEnvironmentVariables,
@@ -89,8 +90,9 @@ export function useSettings(project: string, env: string | undefined) {
 export function useSetAccess(project: string, env: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (mode: AccessMode) => api<AccessChange>(`${envPath(project, env)}/access`, { method: 'PUT', body: { mode } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }),
+    // 202 {status: "pending_approval"} when IT's rules hold it (lib/approvals `isPending`)
+    mutationFn: (mode: AccessMode) => api<AccessChange | PendingApproval>(`${envPath(project, env)}/access`, { method: 'PUT', body: { mode } }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }), qc.invalidateQueries({ queryKey: ['approvals'] })]),
   })
 }
 

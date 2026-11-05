@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice, TechnicalDetails } from '@/components/odyssey'
 import { useAI, useDisableAI, useEnableAI, useRotateAI } from '@/lib/ai'
+import { afterWrite } from '@/features/approvals/notice'
 import { aiActions, aiState, aiUnavailable, aiVariablesText } from './ai'
 import { anchors } from './uses'
 
@@ -42,7 +43,7 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
         {canWrite && (
           <div className="flex items-center gap-1.5">
             {(a.status === 'off' || a.status === 'revoke_failed') && (
-              <Button size="sm" variant="outline" disabled={!can.enable || pending} onClick={() => enable.mutate(undefined, { onSuccess: () => toast.success('Activando la IA. La app recibe la llave en unos instantes.') })}>
+              <Button size="sm" variant="outline" disabled={!can.enable || pending} onClick={() => enable.mutate(undefined, { onSuccess: out => afterWrite(out, () => toast.success('Activando la IA. La app recibe la llave en unos instantes.')) })}>
                 Activar
               </Button>
             )}

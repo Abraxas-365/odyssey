@@ -29,7 +29,7 @@ Lo que **sí** ofrece: **bases de datos** (ver «Bases de datos») y **IA** (ver
 Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él **se pierde al reiniciar o publicar**.
 <!-- ODICEA:LIMITES-ACTUALES fin -->
 
-## Qué puedes hacer (las 19 herramientas)
+## Qué puedes hacer (las 21 herramientas)
 
 | Quiero… | Herramienta |
 |---|---|
@@ -48,6 +48,7 @@ Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él
 | Crear una base de datos (o caché, o volumen de archivos) y conectarla | `create_database` |
 | Ver las bases de datos de la app y si ya están listas | `list_resources` |
 | Darle IA a la app (llave propia, variables listas para las librerías de OpenAI y Anthropic) | `enable_ai` |
+| Ver cómo va algo que quedó esperando a TI | `get_request`, `list_requests` |
 
 Solo ves las herramientas que tu rol permite (por ejemplo, un Lector solo lee). Si una falla por permisos, llama a `whoami` y explica qué permiso falta.
 
@@ -99,7 +100,7 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 
 ## Reglas de TI (cuando algo «no se permite» o «necesita aprobación»)
 
-TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `create_database`, `enable_ai`) falla con `POLICY_DENIED` o `APPROVAL_REQUIRED`, sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta).
+TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `create_database`, `enable_ai`) falla con `POLICY_DENIED`, o responde `pending_approval` (la solicitud quedó pendiente de TI y se hace sola cuando la aprueben), sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta). Con `get_request` ves cómo va. Antes de volver atrás en producción o hacer pública una app, pregunta al usuario y usa `confirm: true` solo si dijo que sí.
 
 ## Cómo hablar con el usuario
 

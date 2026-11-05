@@ -26,6 +26,8 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/ai/adapters/aimcp"
 	"github.com/Abraxas-365/odyssey/internal/ai/aimodule"
 	"github.com/Abraxas-365/odyssey/internal/ai/aisvc"
+	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalmcp"
+	"github.com/Abraxas-365/odyssey/internal/approval/approvalmodule"
 	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/audit/auditmodule"
 	"github.com/Abraxas-365/odyssey/internal/blob"
@@ -266,6 +268,7 @@ func Migrations() []migrate.Set {
 		{Owner: resourcemodule.Schema, Files: resourcemodule.Migrations()},
 		{Owner: aimodule.Schema, Files: aimodule.Migrations()},
 		{Owner: policymodule.Schema, Files: policymodule.Migrations()},
+		{Owner: approvalmodule.Schema, Files: approvalmodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
 	}
@@ -302,6 +305,7 @@ type Platform struct {
 	AI        aimodule.Module
 	Audit     auditmodule.Module
 	Policy    policymodule.Module
+	Approvals approvalmodule.Module
 }
 
 // Options are the process-specific parts of a Platform.
@@ -418,12 +422,20 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Config: opts.AI, Provider: opts.AIProvider, Policy: policies.AI, Options: opts.AIService})
 	// the ai module needs release.AI, so release learns of it afterwards
 	releases.UseAIStatus(releaseai.New(ais.Queries))
+	// approval is built last: it re-runs what the governed domains held
+	// through their commands, and gives each of them its own Approvals port.
+	approvals := approvalmodule.New(approvalmodule.Deps{DB: db, Events: events, Engine: engine,
+		Release: releases.Commands, Resource: resources.Commands, AI: ais.Commands})
+	releases.UseApprovals(approvals.ReleaseApprovals)
+	resources.UseApprovals(approvals.ResourceApprovals)
+	ais.UseApprovals(approvals.AIApprovals)
 	p := &Platform{
 		DB:        db,
 		Bus:       bus,
 		Events:    events,
 		Projects:  projects,
 		Policy:    policies,
+		Approvals: approvals,
 		Releases:  releases,
 		Access:    accesses,
 		Builds:    builds,
@@ -437,11 +449,13 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	p.Audit.Subscribe(bus)
 	p.Sources.Subscribe(bus)
 	p.Resources.Subscribe(bus)
+	p.Approvals.Subscribe(bus)
 	bus.Seal()
 	p.Releases.Register(registry)
 	p.AI.Register(registry)
 	p.Builds.Register(registry)
 	p.Sources.Register(registry)
+	p.Approvals.Register(registry)
 	registry.Every(workflow.Schedule{Name: "fleet.secret_sweep", Every: time.Hour, Run: func(ctx context.Context) error {
 		n, err := p.Fleet.Commands.SweepSecrets(ctx)
 		if n > 0 {
@@ -576,6 +590,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.AI.HTTP,
 		p.Audit.HTTP,
 		p.Policy.HTTP,
+		p.Approvals.HTTP,
 		assistantRoutes,
 	)
 }
@@ -605,6 +620,7 @@ func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
 		sourcemcp.Tools(p.Projects.Queries, p.Sources.Commands, sources, sourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
 		resourcemcp.Tools(p.Projects.Queries, p.Resources.Commands, p.Resources.Queries, resourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
 		aimcp.Tools(p.Projects.Queries, p.AI.Commands, aimcp.Options{ConsoleURL: cfg.ConsoleURL}),
+		approvalmcp.Tools(p.Approvals.Queries, approvalmcp.Options{ConsoleURL: cfg.ConsoleURL}),
 	)
 }
 

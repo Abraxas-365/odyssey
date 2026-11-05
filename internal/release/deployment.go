@@ -3,9 +3,11 @@ package release
 import (
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
@@ -13,9 +15,14 @@ import (
 
 // Status is a deployment's lifecycle:
 //
-//	(building →) pending → applying → verifying → ready
+//	(waiting_approval →) (building →) pending → applying → verifying → ready
 //	   (build, apply or health check fails) ↘ failed
-//	(any unfinished) → cancelled: a newer deployment superseded it
+//	(any unfinished) → cancelled: a newer deployment superseded it, or IT
+//	                   did not approve it (see CancelReason)
+//
+// The workflow's first step, authorize, asks IT's rules; a rule that wants
+// approval parks the deployment in waiting_approval until someone with the
+// permission decides (docs/approvals.md).
 //
 // A deployment from source starts building: its release (the built image
 // plus its configuration) exists only once the build succeeded. A finished
@@ -27,18 +34,23 @@ import (
 type Status string
 
 const (
-	StatusBuilding  Status = "building"
-	StatusPending   Status = "pending"
-	StatusApplying  Status = "applying"
-	StatusVerifying Status = "verifying"
-	StatusReady     Status = "ready"
-	StatusFailed    Status = "failed"
-	StatusCancelled Status = "cancelled"
+	StatusBuilding Status = "building"
+	// StatusWaitingApproval: IT's rules asked for approval before it builds
+	// (the workflow's authorize step); it continues when someone with the
+	// permission approves, and is cancelled when they reject, it expires or
+	// the requester takes it back.
+	StatusWaitingApproval Status = "waiting_approval"
+	StatusPending         Status = "pending"
+	StatusApplying        Status = "applying"
+	StatusVerifying       Status = "verifying"
+	StatusReady           Status = "ready"
+	StatusFailed          Status = "failed"
+	StatusCancelled       Status = "cancelled"
 )
 
 func (s Status) Valid() bool {
 	switch s {
-	case StatusBuilding, StatusPending, StatusApplying, StatusVerifying, StatusReady, StatusFailed, StatusCancelled:
+	case StatusBuilding, StatusWaitingApproval, StatusPending, StatusApplying, StatusVerifying, StatusReady, StatusFailed, StatusCancelled:
 		return true
 	}
 	return false
@@ -50,7 +62,7 @@ func (s Status) Finished() bool {
 }
 
 // StatusMessage is the 400 text for a value outside the set.
-const StatusMessage = "status must be building, pending, applying, verifying, ready, failed or cancelled"
+const StatusMessage = "status must be building, waiting_approval, pending, applying, verifying, ready, failed or cancelled"
 
 // Reason is why a deployment exists.
 type Reason string
@@ -81,6 +93,9 @@ const (
 	// build's INTERNAL, named apart from the API's own INTERNAL errors. The
 	// other build failures keep the build's code (build.Code*).
 	CodeBuildInternal = "BUILD_INTERNAL"
+	// CodePolicyDenied: IT's rules refused the deployment at its authorize
+	// step (a rule changed or the tier moved after it was asked for).
+	CodePolicyDenied = gate.CodeDenied
 )
 
 // Where a deployment was requested from (Deployment.RequestedVia).
@@ -113,6 +128,12 @@ const WorkflowDeploy = "release.deploy"
 // DeployInput is the deploy workflow's input.
 type DeployInput struct {
 	Deployment DeploymentID `json:"deployment_id"`
+	// Actor is who asked for the deployment, as they were then (the user and
+	// the permissions of their token; the system actor for a push): the
+	// authorize step has IT's rules judge the deployment as them, and an
+	// approval request keeps it to run as them. Zero for the platform's own
+	// deployments (auto-rollback, config), which are not judged.
+	Actor actor.Actor `json:"actor"`
 }
 
 // Steps of the deploy workflow, in order (the console's progress).
@@ -125,6 +146,25 @@ const (
 
 // Steps lists the deploy workflow's steps in order.
 func Steps() []string { return []string{StepBuild, StepApply, StepWaitReady, StepPromote} }
+
+// The workflow's gate steps run before the visible ones and are not part of
+// the console's progress: StepAuthorize asks IT's rules (and, when a rule
+// wants approval, parks the run until someone decides); StepApproval acts on
+// that decision (continue, or cancel the deployment). A scan gate
+// (`authorize_scan`, after the build) joins them in phase 3c.
+const (
+	StepAuthorize = "authorize"
+	StepApproval  = "approval"
+)
+
+// Why IT's decision cancelled a deployment (DeploymentCancelled.Reason, and
+// the console's wording); a deployment a newer one replaced says "superseded".
+const (
+	CancelSuperseded       = "superseded"
+	CancelApprovalRejected = "approval_rejected"
+	CancelApprovalExpired  = "approval_expired"
+	CancelApprovalCanceled = "approval_cancelled"
+)
 
 // StepNames are the steps d goes through: an image deployment skips build.
 func (d Deployment) StepNames() []string {
@@ -302,7 +342,7 @@ func (d Deployment) WithProgress() Deployment {
 				p.Status = StepFailed
 			case StatusCancelled:
 				p.Status = StepSkipped
-			case StatusPending:
+			case StatusPending, StatusWaitingApproval:
 				p.Status = StepPending
 			default:
 				p.Status = StepRunning

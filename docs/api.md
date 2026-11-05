@@ -57,11 +57,18 @@ One `errx.Type` per status. Nothing else decides a status.
 
 Domain codes in use: `PROJECT_ARCHIVED` (422). IT's rules (`docs/policy.md`)
 add `POLICY_DENIED` (403 `AUTHORIZATION`: a rule forbids the action),
-`APPROVAL_REQUIRED` (409 `CONFLICT`: a rule asks for IT's approval),
 `POLICY_INVALID` (422: the expression does not compile) and `POLICY_BUILTIN`
-(422: a built-in rule can only be switched off). The two refusals carry
-`details.rules` (rule ids) and, for approval, `details.approvers`; clients
-branch on `code`, not on the status alone.
+(422: a built-in rule can only be switched off). `POLICY_DENIED` carries
+`details.rules` (rule ids). A rule that asks for IT's approval is **not an
+error**: the action answers `202 {"status":"pending_approval","request_id",
+"message"}` (§11 Approvals; the old 409 `APPROVAL_REQUIRED` no longer exists
+for governed actions). Approvals (`docs/approvals.md`) add `APPROVAL_SELF` (403:
+you cannot decide your own request), `APPROVAL_DECIDED` (409: it is not
+pending any more) and `APPROVAL_NOT_USABLE` (409: an approval cannot be
+redeemed: not approved, already used, or for another action). The MCP
+endpoint adds `CONFIRMATION_REQUIRED` / `CONFIRMATION_DECLINED` (409) for
+actions that need the user's yes first. Clients branch on `code`, not on the
+status alone.
 
 ## 3. Error body
 
@@ -216,6 +223,13 @@ A **release** is an image pinned by digest plus its configuration; it never
 changes. A **deployment** is one attempt to make a release the one an
 environment serves. The console calls both "versión".
 
+A deployment's `status` is `building`, `waiting_approval` (an IT rule asked for
+approval; it has not built or applied yet: see Approvals), `pending`,
+`applying`, `verifying`, `ready`, `failed` or `cancelled`. The deploy and
+rollback routes only refuse what a rule **denies** (403 `POLICY_DENIED`) when
+they are called, a cheap check; the full judgement, as the person who asked,
+is the `authorize` step that starts the deployment's workflow.
+
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active, applied_settings_revision}` |
@@ -264,7 +278,7 @@ never appear in the API: `variables` are the names the app reads.
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `…/resources` | projects:read | 200 `{items[resource], available_kinds}` (oldest first) |
-| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, storage_gi?, connect?:{prefix}}`) |
+| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, storage_gi?, connect?:{prefix}}`); **202** `pending_approval` when a rule holds the connection of a create with `connect` (nothing created yet) |
 | `GET` | `…/resources/:name` | projects:read | 200 resource |
 | `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{storage_gi}`: it only grows) |
 | `DELETE` | `…/resources/:name` | `odyssey:resources:delete` | **202** resource, now `deleting` |
@@ -610,8 +624,46 @@ list or evaluate of an organization creates its four built-in rules.
   a non-compiling one is 422 `POLICY_INVALID`.
 - **Enforcement** is not an endpoint: the governed actions (`deploy`,
   `rollback`, `set_access`, `connect_resource`, `delete_resource`,
-  `enable_ai`) fail with 403 `POLICY_DENIED` / 409 `APPROVAL_REQUIRED` (§2).
+  `enable_ai`) fail with 403 `POLICY_DENIED` when a rule denies them, and are
+  held as an approval request (§11 Approvals) when a rule asks for approval.
 - Events: `policy.rule_created`, `policy.rule_updated`, `policy.rule_deleted`.
+
+### Approvals (`GET/POST /api/v1/approvals…`; `docs/approvals.md`)
+
+What an `approval` rule holds. No permission gates the routes: a request is
+visible to its **requester** and to whoever holds **any one** of its
+`approvers` permissions (default `odyssey:approvals:decide`); the service
+decides per record (anything else is 404). The permission model is also in
+`api/openapi.yaml` (`x-permissions` and the operation descriptions).
+
+| Method | Path | Who | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/approvals` | the caller's own and the ones they could decide | 200 `{items, page}`, newest first (filters `status` (repeatable), `mine`, `decidable`) |
+| `GET` | `/api/v1/approvals/:id` | requester or approver | 200 request + `mine`, `can_decide` |
+| `POST` | `/api/v1/approvals/:id/approve` | an approver, not the requester | 200 request (body `{note?}`) |
+| `POST` | `/api/v1/approvals/:id/reject` | an approver, not the requester | 200 request (body `{note?}`) |
+| `POST` | `/api/v1/approvals/:id/cancel` | the requester, while pending | 200 request |
+
+- **Held direct actions** (`PUT …/access`, `POST …/resources` and `PUT
+  …/resources/:name/connection`, `DELETE …/resources/:name`, `PUT …/ai`)
+  answer
+  **202** `{"status":"pending_approval","request_id","message"}` instead of
+  their usual body: nothing changed yet. On approval the action runs again **as
+  the requester, with the permissions they had when they asked** (a snapshot),
+  so approving never widens what the requester could do; if it fails, the
+  request says why in `execution_error`.
+- **Deployments** are accepted (202) and judged by the first step of their
+  workflow (`authorize`): a rule that asks for approval puts the deployment in
+  **`waiting_approval`** until it is decided; approve → it builds and applies,
+  reject / expire / cancel → it is `cancelled` with `reason`
+  `approval_rejected` / `approval_expired` / `approval_cancelled`.
+- A request expires after 7 days (checked every 5 minutes): `expired`.
+- Errors: 403 `APPROVAL_SELF`, 403 (no permission, or cancelling someone
+  else's), 409 `APPROVAL_DECIDED` (not pending any more), 404 (not yours to see,
+  or another organization's).
+- Events: `approval.requested`, `approval.approved`, `approval.rejected`,
+  `approval.expired`, `approval.cancelled`, `approval.consumed`,
+  `approval.execution_failed`.
 
 The organization's activity trail: one entry per domain event, written by the
 `audit` subscriber, append-only and hash-chained per organization (each

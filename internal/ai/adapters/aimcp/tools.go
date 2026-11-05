@@ -96,9 +96,14 @@ type EnableAIIn struct {
 }
 
 // EnableAIOut is enable_ai's result.
+//
+// It does not embed mcpx.Pending: its own `status` would shadow Pending's, and a
+// held result would serialise an empty status. The held case sets Status
+// itself (pending_approval) and RequestID, explicitly.
 type EnableAIOut struct {
 	App        string   `json:"app" jsonschema:"slug de la app"`
-	Status     string   `json:"status" jsonschema:"enabling (la llave se está preparando), enabled (lista) o off"`
+	Status     string   `json:"status" jsonschema:"enabling (la llave se está preparando), enabled (lista), off, o pending_approval (las reglas de TI lo dejaron esperando su aprobación: no se hizo nada todavía)"`
+	RequestID  string   `json:"request_id,omitempty" jsonschema:"la solicitud de aprobación cuando status es pending_approval; get_request muestra cómo va"`
 	BaseURL    string   `json:"base_url" jsonschema:"dirección de la IA que recibe la app"`
 	Variables  []string `json:"variables" jsonschema:"nombres de las variables que la app lee (la llave nunca se muestra)"`
 	ConsoleURL string   `json:"console_url" jsonschema:"enlace a la app en la consola"`
@@ -117,6 +122,11 @@ func (t tools) enable(ctx context.Context, caller mcpx.Principal, in EnableAIIn)
 			return EnableAIOut{}, mcpx.NextStep(ee, "Muestra el mensaje al usuario tal cual; si habla de un nombre de variable, quítalo con set_env (unset) y vuelve a intentar.")
 		}
 		return EnableAIOut{}, err
+	}
+	if v.Held() {
+		held := mcpx.PendingOf(v.Pending)
+		return EnableAIOut{App: p.Slug, Status: held.Status, RequestID: held.RequestID, NextStep: mcpx.PendingStep(v.Pending),
+			ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String()}, nil
 	}
 	out := EnableAIOut{App: p.Slug, Status: v.Status, BaseURL: v.BaseURL, Variables: v.Variables,
 		ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String()}

@@ -40,7 +40,11 @@ import (
 type operation struct {
 	method, path string // path in Fiber syntax (/projects/:id)
 	permissions  []string
-	public       bool
+	// anyUser: `x-permissions: []` written out on purpose: any authenticated
+	// token may call it and the service decides per record (approvals: your
+	// own requests, or the ones you can decide). A missing key stays an error.
+	anyUser bool
+	public  bool
 	// mcp: secured by the agents' OAuth resource (scheme "mcp"), whose
 	// permissions are per tool (mcp_tools_test), not per route.
 	mcp bool
@@ -108,6 +112,7 @@ func operations(t *testing.T) []operation {
 				if err := node.Decode(&o.permissions); err != nil {
 					t.Fatalf("%s %s: x-permissions: %v", method, path, err)
 				}
+				o.anyUser = len(o.permissions) == 0
 			}
 			out = append(out, o)
 		}
@@ -262,12 +267,20 @@ func TestOperationPermissionsMatchTheRoutes(t *testing.T) {
 			}
 			continue
 		}
-		if len(o.permissions) == 0 {
+		if len(o.permissions) == 0 && !o.anyUser {
 			t.Errorf("%s: secured operation without x-permissions", name)
 			continue
 		}
 		if s := probe(o, ""); s != http.StatusUnauthorized {
 			t.Errorf("%s without a token: %d, want 401", name, s)
+		}
+		if o.anyUser {
+			// no permission needed: a token with none still gets in (what it
+			// sees or may do is the service's call, per record).
+			if s := probe(o, httpxtest.Token(org)); s == http.StatusForbidden || s == http.StatusUnauthorized {
+				t.Errorf("%s with a token holding no permission: %d (the spec says any user)", name, s)
+			}
+			continue
 		}
 		if s := probe(o, httpxtest.Token(org, o.permissions...)); s == http.StatusForbidden || s == http.StatusUnauthorized {
 			t.Errorf("%s with exactly %v: %d (the route requires more than the spec says)", name, o.permissions, s)

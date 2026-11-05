@@ -35,6 +35,11 @@ export type Deployment = Schemas['Deployment']
 export type DeploymentStatus = Schemas['DeploymentStatus']
 export type DeploymentStep = Schemas['DeploymentStep']
 export type CurrentRelease = Schemas['CurrentRelease']
+/** An action IT's rules hold (cut 3b, docs/approvals.md): the API answers 202 with this instead of the usual body. */
+export type PendingApproval = Schemas['PendingApproval']
+export type Approval = Schemas['Approval']
+export type ApprovalStatus = Schemas['ApprovalStatus']
+export type ApprovalList = Schemas['ApprovalList']
 /** Who can open an app (cut 1e): the environment's settings and the answer to changing them. */
 export type AccessMode = Schemas['AccessMode']
 export type EnvironmentSettings = Schemas['EnvironmentSettings']
@@ -53,6 +58,9 @@ export type ResourceKind = Schemas['ResourceKind']
 export type ResourceChange = Schemas['ResourceChange']
 export type ResourceList = operations['listResources']['responses'][200]['content']['application/json']
 export type CreateResource = operations['createResource']['requestBody']['content']['application/json']
+/** What createResource answers: 201 the change, or 202 `pending_approval` (derived from the spec, so the two cannot drift). */
+type CreateResourceResponses = operations['createResource']['responses']
+export type CreateResourceResult = CreateResourceResponses[201]['content']['application/json'] | CreateResourceResponses[202]['content']['application/json']
 /** The app's own access to the organization's AI (docs/api.md §11, docs/ai.md); never carries the key. */
 export type AppAI = Schemas['AI']
 export type SecretView = Schemas['SecretView']

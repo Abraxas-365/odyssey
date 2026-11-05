@@ -16,10 +16,22 @@ import (
 
 // Workflows returns the deploy workflow:
 //
+//	authorize  IT's rules judge the deployment as who asked for it; a rule that
+//	           wants approval holds it (waiting_approval) until someone decides
+//	approval   act on that decision: carry on, or cancel the deployment
 //	build      (from source) build the uploaded folder, then record its release
 //	apply      hand the desired app (with the deployment's revision) to the cluster
 //	wait_ready poll the cluster until that revision answers its health check
 //	promote    make the release the environment's current one (the only place it changes)
+//
+// authorize and approval are first so nothing is built, uploaded or applied
+// before IT agrees. Phase 3c adds `authorize_scan` after build, with the
+// image's scan, judged the same way (see authorizeStep).
+//
+// Workflow steps are positional, so a run already in flight when authorize and
+// approval were added resumes at the same index, one or two steps earlier in
+// the new list: approval treats a run with no authorize output as allowed, and
+// build, apply and wait_ready are idempotent, so it simply repeats work.
 //
 // On failure (a coded error, retries exhausted or the readiness timeout) the
 // deployment fails and, when another release was serving and the cluster
@@ -30,6 +42,8 @@ func (s *Service) Workflows() []workflow.Definition {
 	return []workflow.Definition{{
 		Name: release.WorkflowDeploy,
 		Steps: []workflow.Step{
+			{Name: release.StepAuthorize, Run: s.authorizeStep, MaxAttempts: 8},
+			{Name: release.StepApproval, Run: s.approvalStep, MaxAttempts: 8},
 			// Polls don't count as attempts; the build's own timeout ends it
 			// first, the step's Timeout bounds a build that never reports.
 			{Name: release.StepBuild, Run: s.build, Timeout: build.Timeout + 5*time.Minute, MaxAttempts: 30},

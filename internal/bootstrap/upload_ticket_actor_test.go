@@ -82,11 +82,12 @@ func TestUploadTicketIsJudgedAsWhoAskedForIt(t *testing.T) {
 		t.Fatalf("a ticket asked for without it: %v", err)
 	}
 
-	// the rule sees who asked
+	// a rule that wants approval no longer refuses the upload: the deployment
+	// is accepted and its authorize step holds it, judged as who asked (the
+	// end-to-end approval test covers that).
 	rule("Alguien en particular necesita aprobación", "action == 'deploy' && actor.id == '"+user.String()+"'", gate.Approval)
-	err = redeem(issue(holds...))
-	if errCode(err) != gate.CodeApprovalRequired || !strings.Contains(err.Error(), "Alguien en particular") {
-		t.Fatalf("approval by actor.id: %v", err)
+	if err := redeem(issue(holds...)); err != nil {
+		t.Fatalf("a rule that asks for approval refused the upload at its start: %v", err)
 	}
 }
 

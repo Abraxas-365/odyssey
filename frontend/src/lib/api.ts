@@ -91,14 +91,15 @@ const messages: Record<string, string> = {
   INVALID_MOVE_TARGET: 'Las apps solo pueden ir a otro clúster conectado. Elige otro.',
   CLUSTER_NOT_REVOKED: 'Solo se mueven las apps de un clúster revocado.',
   FLEET_DISABLED: 'Esta instalación de Odicea todavía no puede conectar clústeres. Pídele a TI que configure el gateway.',
+  // approvals (docs/approvals.md): the API's text is for logs; people read these
+  APPROVAL_SELF: 'No puedes decidir tu propia solicitud. Tiene que hacerlo otra persona de TI.',
+  APPROVAL_DECIDED: 'Esta solicitud ya se decidió. Recarga para ver cómo quedó.',
+  APPROVAL_NOT_USABLE: 'Esta aprobación ya no sirve. Vuelve a pedirla.',
 }
 
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (messages[error.code]) return messages[error.code]
-    // IT's rules (docs/policy.md) write their own sentence naming the rule; the
-    // approval one is a CONFLICT, which would otherwise read as "changed at the same time".
-    if (error.code === 'APPROVAL_REQUIRED') return error.message
     switch (error.type) {
       case 'NOT_FOUND': return 'No encontramos lo que buscas. Puede que se haya borrado o que no tengas acceso.'
       case 'CONFLICT':

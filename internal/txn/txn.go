@@ -136,6 +136,31 @@ func Q(ctx context.Context, db *sqlx.DB) Querier {
 	return db
 }
 
+// Attempt runs fn so that its writes can be undone alone: inside the
+// transaction in ctx it runs in a savepoint, rolled back when fn fails (the
+// error is returned and the transaction stays usable); with no transaction
+// it just runs fn. An event handler uses it to try an action and record why
+// it failed without losing its own delivery.
+func Attempt(ctx context.Context, fn func(ctx context.Context) error) error {
+	tx, ok := Tx(ctx)
+	if !ok {
+		return fn(ctx)
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT txn_attempt`); err != nil {
+		return errx.Wrap(err, "attempt savepoint", errx.TypeInternal)
+	}
+	if err := fn(ctx); err != nil {
+		if _, rerr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT txn_attempt`); rerr != nil {
+			return errx.Wrap(rerr, "attempt rollback", errx.TypeInternal)
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT txn_attempt`); err != nil {
+		return errx.Wrap(err, "attempt release", errx.TypeInternal)
+	}
+	return nil
+}
+
 // Passthrough runs fn without a transaction: for unit tests with fake
 // repositories (and a fake event publisher).
 type Passthrough struct{}

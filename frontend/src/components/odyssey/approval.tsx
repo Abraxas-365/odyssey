@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react'
 import { Check, ShieldAlert, X } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { Callout } from './callout'
 import { Avatar } from './identity'
 import { KeyValue } from './stat'
+import { toneBadge, type Tone } from './tone'
 
 /**
  * Request in an approver's Bandeja (UX v3 §10) or TI's Solicitudes (§11).
@@ -102,5 +104,57 @@ function CanList({ title, items, ok }: { title: string; items: string[]; ok?: bo
         ))}
       </ul>
     </div>
+  )
+}
+
+/**
+ * One request of the Bandeja (docs/approvals.md): the sentence, who and why,
+ * the rule, when and until when. `actions` carries Aprobar / Rechazar for
+ * IT, or Cancelar for the person who asked.
+ */
+export interface ApprovalItemData {
+  id: string
+  /** "Hacer pública «Inventario»": the action in one sentence. */
+  sentence: string
+  who: string
+  /** Why it was held, in words ("Hacer pública una app requiere aprobación de TI"). */
+  why: string
+  rules?: string
+  when: string
+  /** "Vence en 6 días" (pending) or how it ended (decided). */
+  until?: string
+  status: { label: string; tone: Tone }
+  /** The note the decider left. */
+  note?: string
+  /** An approved action that could not run. */
+  problem?: string
+}
+
+export function ApprovalItem({ item: i, actions }: { item: ApprovalItemData; actions?: ReactNode }) {
+  return (
+    <li className="flex flex-col gap-2.5 px-5 py-4">
+      <div className="flex flex-wrap items-start gap-3.5">
+        <Avatar name={i.who} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">{i.sentence}</div>
+          <div className="text-xs text-muted-foreground">
+            {i.who} · {i.when}
+            {i.until && <> · {i.until}</>}
+          </div>
+        </div>
+        <Badge variant={toneBadge[i.status.tone]}>{i.status.label}</Badge>
+      </div>
+      <div className="pl-[46px] text-[13px] text-muted-foreground">
+        {i.why}
+        {i.rules && <> · Regla {i.rules}</>}
+      </div>
+      {i.note && <blockquote className="ml-[46px] rounded-md border bg-inset p-3 text-[13px] text-foreground">“{i.note}”</blockquote>}
+      {i.problem && (
+        <Callout tone="warn" title="Se aprobó, pero no se pudo hacer." className="ml-[46px]">
+          {i.problem}
+        </Callout>
+      )}
+      {actions && <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>}
+    </li>
   )
 }

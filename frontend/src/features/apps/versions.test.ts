@@ -71,6 +71,12 @@ describe('versions', () => {
     expect(items.map(i => i.restorable)).toEqual([false, false, false]) // v1 is the release online
     expect(versions(history, current(v2), 'me').filter(i => i.restorable).map(i => i.id)).toEqual([restore.id, v1.id])
   })
+
+  it('lists a deployment waiting for IT as such, never restorable', () => {
+    const waiting = dep({ status: 'waiting_approval', finished_at: null })
+    const items = versions([waiting, v1], current(v1, waiting), 'me')
+    expect(items.map(i => [i.id, i.kind, i.restorable])).toEqual([[waiting.id, 'waiting', false], [v1.id, 'live', false]])
+  })
 })
 
 describe('attribution', () => {
@@ -98,6 +104,8 @@ describe('lastProblem', () => {
     expect(lastProblem([restore, bad, v1])).toBe(bad)
     expect(lastProblem([dep({}), restore, bad, v1])).toBeUndefined()
     expect(lastProblem([dep({ status: 'verifying' }), bad])).toBe(bad)
+    // waiting for IT is in progress, not a problem
+    expect(lastProblem([dep({ status: 'waiting_approval' }), bad])).toBe(bad)
     expect(lastProblem([])).toBeUndefined()
   })
 })
@@ -107,6 +115,9 @@ describe('appStatus', () => {
   it('follows the plain-language states', () => {
     expect(appStatus(true, current(d), undefined).status).toBe('archived')
     expect(appStatus(false, current(d, dep({ status: 'applying' })), undefined).status).toBe('building')
+    // IT has to approve before it starts: its own word, not "Publicando…"
+    expect(appStatus(false, current(d, dep({ status: 'waiting_approval' })), undefined)).toEqual({ status: 'waiting', label: 'Esperando aprobación de TI' })
+    expect(appStatus(false, undefined, undefined).status).not.toBe('waiting')
     expect(appStatus(false, current(d), undefined).status).toBe('live')
     expect(appStatus(false, undefined, dep({ status: 'failed' }))).toEqual({ status: 'attention', label: 'No se publicó' })
     expect(appStatus(false, undefined, undefined)).toEqual({ status: 'paused', label: 'Sin publicar' })

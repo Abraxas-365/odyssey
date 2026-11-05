@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/approval"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
@@ -32,6 +33,13 @@ type refusal struct {
 		Rules     []string `json:"rules"`
 		Approvers []string `json:"approvers"`
 	} `json:"details"`
+}
+
+// pendingBody is the 202 of a direct action IT's rules hold for approval.
+type pendingBody struct {
+	Status    string `json:"status"`
+	RequestID string `json:"request_id"`
+	Message   string `json:"message"`
 }
 
 func refused(t *testing.T, res httpxtest.Response, status int, code string) refusal {
@@ -119,6 +127,34 @@ func TestITRulesGovernTheActions(t *testing.T) {
 		t.Fatalf("deployment %s did not become ready", d.ID)
 		return d
 	}
+	// waiting: the deploy was accepted and its workflow parked it for IT.
+	waiting := func(res httpxtest.Response) release.Deployment {
+		t.Helper()
+		httpxtest.Want(t, res, http.StatusAccepted)
+		d := httpxtest.JSON[release.Deployment](t, res)
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			got := httpxtest.JSON[release.Deployment](t, checked(t, app, http.MethodGet, base+"/deployments/"+d.ID.String(), token, nil))
+			if got.Status == release.StatusWaitingApproval {
+				return got
+			}
+		}
+		t.Fatalf("deployment %s never waited for approval", d.ID)
+		return d
+	}
+	// approvalOf is the request a waiting deployment's workflow opened (the
+	// requester sees their own).
+	approvalOf := func(d release.Deployment) approval.Request {
+		t.Helper()
+		res := checked(t, app, http.MethodGet, "/api/v1/approvals?mine=true", token, nil)
+		httpxtest.Want(t, res, http.StatusOK)
+		for _, r := range httpxtest.JSON[query.Paginated[approval.View]](t, res).Items {
+			if r.Run == d.Run.String() {
+				return r.Request
+			}
+		}
+		t.Fatalf("no request for run %s", d.Run)
+		return approval.Request{}
+	}
 	type rules struct {
 		Items []policy.Rule `json:"items"`
 	}
@@ -161,37 +197,36 @@ func TestITRulesGovernTheActions(t *testing.T) {
 	// Internal apps deploy freely: no rule matches.
 	v1 := ready(deploy(token, base, "1"))
 
-	// Production: the deploy asks for IT's approval, before anything is stored.
+	// Production: the deploy is accepted (the rules are judged by its workflow's
+	// first step, before anything is built) and waits for IT.
 	res := checked(t, app, http.MethodPut, tierURL, it, map[string]any{"tier": "production"})
 	httpxtest.Want(t, res, http.StatusOK)
 	if got := httpxtest.JSON[project.Project](t, res); got.Tier != project.TierProduction {
 		t.Fatalf("tier after the change %q", got.Tier)
 	}
 	applied := len(cluster.Applied())
-	got := refused(t, deploy(token, base, "2"), http.StatusConflict, gate.CodeApprovalRequired)
+	held := waiting(deploy(token, base, "2"))
 	prod := byBuiltin(policy.BuiltinProductionDeploy)
-	if !strings.Contains(got.Message, "Publicar en producción requiere aprobación de TI") ||
-		len(got.Details.Rules) != 1 || got.Details.Rules[0] != prod.ID.String() ||
-		len(got.Details.Approvers) != 1 || got.Details.Approvers[0] != permission.ApprovalsDecide {
-		t.Fatalf("approval refusal %+v", got)
-	}
-	res = checked(t, app, http.MethodGet, base+"/deployments", token, nil)
-	if n := len(httpxtest.JSON[query.Paginated[release.Deployment]](t, res).Items); n != 1 {
-		t.Fatalf("a refused deploy left a deployment: %d", n)
+	req := approvalOf(held)
+	if !strings.Contains(req.Reason, "Publicar en producción requiere aprobación de TI") ||
+		len(req.Rules) != 1 || req.Rules[0].ID != prod.ID.String() ||
+		len(req.Approvers) != 1 || req.Approvers[0] != permission.ApprovalsDecide {
+		t.Fatalf("the request %+v", req)
 	}
 	if len(cluster.Applied()) != applied {
-		t.Fatal("a refused deploy reached the cluster")
+		t.Fatal("a deploy waiting for IT reached the cluster")
 	}
 
-	// Switching the built-in off lets the deploy through; back on, it asks again.
+	// Switching the built-in off lets the next deploy through (and replaces the
+	// waiting one); back on, it asks again.
 	httpxtest.Want(t, setEnabled(it, prod, false), http.StatusOK)
 	ready(deploy(token, base, "2"))
 	httpxtest.Want(t, setEnabled(it, prod, true), http.StatusOK)
-	refused(t, deploy(token, base, "3"), http.StatusConflict, gate.CodeApprovalRequired)
+	waiting(deploy(token, base, "3"))
 
 	// Sandbox cannot be public: deny names the rule, and the mode stays.
 	httpxtest.Want(t, checked(t, app, http.MethodPut, tierURL, it, map[string]any{"tier": "sandbox"}), http.StatusOK)
-	got = refused(t, checked(t, app, http.MethodPut, base+"/access", token, map[string]any{"mode": "public"}), http.StatusForbidden, gate.CodeDenied)
+	got := refused(t, checked(t, app, http.MethodPut, base+"/access", token, map[string]any{"mode": "public"}), http.StatusForbidden, gate.CodeDenied)
 	if got.Message != "La regla de TI «Sandbox no puede ser pública» no permite esto." {
 		t.Fatalf("denial message %q", got.Message)
 	}
@@ -202,9 +237,14 @@ func TestITRulesGovernTheActions(t *testing.T) {
 	// a mode that does not match any rule goes through.
 	httpxtest.Want(t, checked(t, app, http.MethodPut, base+"/access", token, map[string]any{"mode": "organization"}), http.StatusAccepted)
 
-	// Internal and public: only the approval rule matches.
+	// Internal and public: only the approval rule matches, and the answer is
+	// 202 pending_approval (nothing was refused).
 	httpxtest.Want(t, checked(t, app, http.MethodPut, tierURL, it, map[string]any{"tier": "internal"}), http.StatusOK)
-	refused(t, checked(t, app, http.MethodPut, base+"/access", token, map[string]any{"mode": "public"}), http.StatusConflict, gate.CodeApprovalRequired)
+	res = checked(t, app, http.MethodPut, base+"/access", token, map[string]any{"mode": "public"})
+	httpxtest.Want(t, res, http.StatusAccepted)
+	if p := httpxtest.JSON[pendingBody](t, res); p.Status != "pending_approval" || p.RequestID == "" {
+		t.Fatalf("pending answer %s", res.Body)
+	}
 
 	// Only a CHANGE is judged: asking for the mode already in force is a no-op
 	// that no rule refuses, even one that matches that very mode.

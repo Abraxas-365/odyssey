@@ -632,7 +632,13 @@ func (s *Service) deploy(ctx context.Context, st *workflow.State) (any, error) {
 		if err != nil {
 			return err
 		}
-		d, err := s.deployer.DeployUploaded(actor.With(ctx, in.Actor), push.Organization, push.Project, env.ID,
+		// An import queued before 3b carries no actor: judged as the system
+		// (no permissions), never as nobody (which would skip IT's rules).
+		who := in.Actor
+		if who.IsZero() {
+			who = github("")
+		}
+		d, err := s.deployer.DeployUploaded(actor.With(ctx, who), push.Organization, push.Project, env.ID,
 			s.release(out.Source, conn, push))
 		if err != nil {
 			return err

@@ -19,12 +19,16 @@ type AccessOut struct {
 
 // SetAccessIn is set_access's input.
 type SetAccessIn struct {
-	App  string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
-	Mode string `json:"mode" jsonschema:"team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace; exige odyssey:access:public)"`
+	App     string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
+	Mode    string `json:"mode" jsonschema:"team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace; exige odyssey:access:public)"`
+	Confirm bool   `json:"confirm,omitempty" jsonschema:"true si el usuario ya confirmó abrir la app a cualquiera con el enlace (mode public); se le pregunta antes"`
 }
 
 // SetAccessOut is set_access's result.
 type SetAccessOut struct {
+	// Pending: IT's rules hold the change for approval (status, request_id);
+	// nothing changed yet.
+	mcpx.Pending
 	App    string    `json:"app" jsonschema:"slug de la app"`
 	Access AccessOut `json:"access"`
 	// Version is the publication that applies the change; absent when it was
@@ -49,9 +53,17 @@ func (t tools) setAccess(ctx context.Context, caller mcpx.Principal, in SetAcces
 	if err != nil {
 		return SetAccessOut{}, err
 	}
+	if mode == release.AccessPublic {
+		if err := mcpx.Confirm(ctx, in.Confirm, "«"+p.Name+"» quedaría abierta a cualquiera que tenga el enlace, sin iniciar sesión. ¿Quieres seguir?"); err != nil {
+			return SetAccessOut{}, err
+		}
+	}
 	out, err := t.commands.SetAccess(ctx, caller.Organization, p.ID, env.ID, release.SetAccess{Mode: mode, RequestedBy: caller.User})
 	if err != nil {
 		return SetAccessOut{}, err
+	}
+	if out.Held() {
+		return SetAccessOut{Pending: mcpx.PendingOf(out.Pending), App: p.Slug, NextStep: mcpx.PendingStep(out.Pending)}, nil
 	}
 	res := SetAccessOut{App: p.Slug, Access: AccessOut{Mode: string(out.Settings.Access.Mode)}}
 	switch {

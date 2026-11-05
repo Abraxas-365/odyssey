@@ -39,13 +39,18 @@ type Module struct {
 	Commands resource.Commands
 	Queries  resource.Queries
 	HTTP     *resourcehttp.Handler
+	svc      *resourcesvc.Service
 }
+
+// UseApprovals wires where resource holds what a rule wants approved (the
+// approvalresource adapter; the approval module is built after this one).
+func (m Module) UseApprovals(a resource.Approvals) { m.svc.UseApprovals(a) }
 
 func New(deps Deps) Module {
 	svc := resourcesvc.New(resourcepg.New(deps.DB), resourcefleet.New(deps.Fleet),
 		resourcerelease.New(deps.ReleaseCommands, deps.ReleaseQueries, deps.ReleaseUsage),
 		deps.Projects, txn.Postgres{DB: deps.DB}, deps.Events, deps.Policy)
-	return Module{Commands: svc, Queries: svc, HTTP: resourcehttp.New(svc, svc)}
+	return Module{Commands: svc, Queries: svc, HTTP: resourcehttp.New(svc, svc), svc: svc}
 }
 
 // ForgetOnRemoved is the subscription that forgets a resource once its

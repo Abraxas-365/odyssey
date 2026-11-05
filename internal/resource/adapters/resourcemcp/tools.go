@@ -137,6 +137,8 @@ type CreateDatabaseIn struct {
 
 // CreateDatabaseOut is create_database's result.
 type CreateDatabaseOut struct {
+	// Pending: IT's rules hold the connection for approval; nothing was created.
+	mcpx.Pending
 	App      string   `json:"app" jsonschema:"slug de la app"`
 	Resource Resource `json:"resource"`
 	// ConfigDeployment is set when a configuration deployment started.
@@ -162,6 +164,10 @@ func (t tools) createDatabase(ctx context.Context, caller mcpx.Principal, in Cre
 		Connect: &resource.ConnectOptions{Prefix: in.Prefix}, RequestedBy: caller.User})
 	if err != nil {
 		return CreateDatabaseOut{}, err
+	}
+	if out.Held() {
+		return CreateDatabaseOut{Pending: mcpx.PendingOf(out.Pending), App: p.Slug, NextStep: mcpx.PendingStep(out.Pending),
+			ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String()}, nil
 	}
 	res := CreateDatabaseOut{App: p.Slug, Resource: view(out.View), ConfigDeployment: out.Deployment,
 		ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String()}

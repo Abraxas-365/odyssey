@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 )
@@ -184,6 +185,9 @@ type View struct {
 	// when the app has the AI again with a new key); RevokeError is why.
 	Warning     string `json:"warning,omitempty"`
 	RevokeError string `json:"revoke_error,omitempty"`
+	// Outcome: turning the AI on was held for IT's approval and did not
+	// happen (the rest of the view is then empty); the transport answers 202.
+	gate.Outcome
 }
 
 // NewView puts an environment's keys together as a View (available and

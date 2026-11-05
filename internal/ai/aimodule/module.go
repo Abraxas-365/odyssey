@@ -46,7 +46,12 @@ type Module struct {
 	Queries   ai.Queries
 	HTTP      *aihttp.Handler
 	workflows ai.Workflows
+	svc       *aisvc.Service
 }
+
+// UseApprovals wires where ai holds what a rule wants approved (the
+// approvalai adapter; the approval module is built after this one).
+func (m Module) UseApprovals(a ai.Approvals) { m.svc.UseApprovals(a) }
 
 func New(deps Deps) Module {
 	provider := deps.Provider
@@ -59,7 +64,7 @@ func New(deps Deps) Module {
 	}
 	svc := aisvc.New(aipg.New(deps.DB), provider, airelease.New(deps.Release), deps.Projects, deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Policy, opts)
-	return Module{Commands: svc, Queries: svc, HTTP: aihttp.New(svc, svc), workflows: svc}
+	return Module{Commands: svc, Queries: svc, HTTP: aihttp.New(svc, svc), workflows: svc, svc: svc}
 }
 
 // Register adds the module's workflows to r, and the sweep that retries the

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Callout, ErrorNotice, OptionCards, Panel, PanelBody, PanelFooter, PanelHeader } from '@/components/odyssey'
 import { anchors } from './uses'
 import { useAuth } from '@/lib/auth'
+import { afterWrite } from '@/features/approvals/notice'
 import { permissions } from '@/lib/permissions'
 import { useSetAccess, useSettings } from '@/lib/releases'
 import type { AccessMode, CurrentRelease } from '@/lib/types'
@@ -20,6 +21,7 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
   const settings = useSettings(project, env)
   const save = useSetAccess(project, env)
   const [chosen, setChosen] = useState<AccessMode>()
+  const [asked, setAsked] = useState(false)
   const inForce = settings.data?.access.mode
   const mode = chosen ?? inForce
   const notice = accessNotice(settings.data, current, chosen)
@@ -35,7 +37,10 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
           <OptionCards
             label="Quién puede abrir la app"
             value={mode}
-            onChange={setChosen}
+            onChange={m => {
+              setAsked(false)
+              setChosen(m)
+            }}
             options={accessOptions.map(o => ({
               value: o.value,
               title: o.title,
@@ -44,6 +49,11 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
               disabled: optionDisabled(o.value, { canWrite, canPublic: can(permissions.accessPublic), inForce, protectionAvailable }),
             }))}
           />
+        )}
+        {asked && (
+          <Callout tone="info" title="Le pedimos a TI que lo apruebe.">
+            Hasta que lo decidan, la app sigue como estaba. Puedes seguir la solicitud en «Mis solicitudes».
+          </Callout>
         )}
         {notice && (
           <Callout tone={notice === 'applying' || notice === 'pending' ? 'neutral' : 'warn'} title={noticeText[notice].title}>
@@ -59,10 +69,20 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
             onClick={() =>
               mode &&
               save.mutate(mode, {
-                onSuccess: out => {
-                  setChosen(undefined)
-                  toast.success(out.deployment ? 'Cambiando quién puede abrirla…' : 'Guardado')
-                },
+                onSuccess: out =>
+                  afterWrite(
+                    out,
+                    done => {
+                      setAsked(false)
+                      setChosen(undefined)
+                      toast.success(done.deployment ? 'Cambiando quién puede abrirla…' : 'Guardado')
+                    },
+                    () => {
+                      // IT's rules hold it: nothing changed yet, so the options go back to what is in force
+                      setChosen(undefined)
+                      setAsked(true)
+                    },
+                  ),
               })
             }
           >

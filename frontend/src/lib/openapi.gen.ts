@@ -441,7 +441,9 @@ export interface paths {
          *     `deployment_id`, when one started; 409 `VARIABLE_TAKEN` if a variable it
          *     defines is already in use). An environment has at most 10 resources
          *     (409 `RESOURCE_LIMIT`); the name is unique among them (409). Event
-         *     `resource.created`.
+         *     `resource.created`. When IT's rules want approval for connecting it
+         *     (`connect_resource`), nothing is provisioned: 202 `PendingApproval`,
+         *     and the creation runs as the requester once approved.
          */
         post: operations["createResource"];
         delete?: never;
@@ -985,6 +987,130 @@ export interface paths {
          *     is an unsaved candidate tried among the saved ones.
          */
         post: operations["evaluatePolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List approval requests
+         * @description What the caller may see, newest first: the requests they made, and the
+         *     ones they could decide (they hold one of the request's approver
+         *     permissions). Nothing else is ever listed (another organization's
+         *     requests, or other people's that the caller cannot decide, do not exist
+         *     for them). `mine` keeps only the caller's own; `decidable` only the
+         *     pending ones the caller may decide now (what the console's bell counts).
+         *     Pagination: `limit`, `offset`.
+         */
+        get: operations["listApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read an approval request
+         * @description A request the caller made or could decide; any other is 404.
+         */
+        get: operations["getApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a request
+         * @description Needs ANY ONE of the request's `approvers` permissions (otherwise 403) and
+         *     cannot be the person who asked (403 `APPROVAL_SELF`). Only a pending
+         *     request can be decided (409 `APPROVAL_DECIDED`). A direct action is run
+         *     again as the person who asked, with what they could do when they asked;
+         *     if that fails the request says why in `execution_error` and the
+         *     approval is still recorded. A deployment waiting for it goes on.
+         *     Events `approval.approved` (and `approval.consumed`, or
+         *     `approval.execution_failed` when the action could not run).
+         */
+        post: operations["approveApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject a request
+         * @description Same rules as approving. Nothing runs; a waiting deployment is cancelled.
+         *     Event `approval.rejected`.
+         */
+        post: operations["rejectApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take back your own pending request
+         * @description Only the person who asked can cancel, and only while it is pending (403
+         *     otherwise; 409 `APPROVAL_DECIDED` when it was already decided). A waiting
+         *     deployment is cancelled. Event `approval.cancelled`.
+         */
+        post: operations["cancelApproval"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1596,8 +1722,104 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * @description `waiting_approval`: IT's rules ask for approval before the deployment builds
+         *     (the first step of its workflow); it goes on when someone with the permission
+         *     approves and is `cancelled` when they reject it, it expires or the requester
+         *     takes it back (the event `deployment.cancelled` says which).
+         * @enum {string}
+         */
+        DeploymentStatus: "building" | "waiting_approval" | "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
+        /**
+         * @description The answer (202) of an action IT's rules hold for approval: nothing happened
+         *     yet. Approving runs it again as the person who asked.
+         */
+        PendingApproval: {
+            /** @enum {string} */
+            status: "pending_approval";
+            /**
+             * Format: uuid
+             * @description The request (`GET /api/v1/approvals/{id}`).
+             */
+            request_id: string;
+            /** @description What to tell the person asking, in plain Spanish. */
+            message: string;
+        };
         /** @enum {string} */
-        DeploymentStatus: "building" | "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
+        ApprovalStatus: "pending" | "approved" | "rejected" | "expired" | "cancelled";
+        ApprovalRule: {
+            id: string;
+            name: string;
+        };
+        /** @description A request as the caller sees it (with what they may do). */
+        Approval: components["schemas"]["ApprovalRequest"] & {
+            /** @description The caller asked for it. */
+            mine: boolean;
+            /** @description The caller may approve or reject it now (pending, not theirs, holding one of its approvers). */
+            can_decide: boolean;
+        };
+        /** @description The whole body is optional. */
+        ApprovalDecision: {
+            /** @description Why (shown to the person who asked). */
+            note?: string;
+        };
+        ApprovalList: {
+            items: components["schemas"]["Approval"][];
+            page: components["schemas"]["Page"];
+        };
+        /** @description One action held for IT's approval. */
+        ApprovalRequest: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description The action held.
+             * @enum {string}
+             */
+            action: "deploy" | "rollback" | "set_access" | "connect_resource" | "delete_resource" | "enable_ai";
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            environment_id: string;
+            /** @description The action as one plain Spanish sentence. */
+            summary: string;
+            /** @description The domain's own description of the action (what re-runs). */
+            payload: Record<string, never>;
+            /** @description Who asked; empty for the platform (a GitHub push). */
+            requested_by: string;
+            /** @description Set when the platform asked (for example `github:ana`). */
+            requested_system?: string;
+            /** @description Why it was held (the rules' names), in words. */
+            reason: string;
+            rules: components["schemas"]["ApprovalRule"][];
+            /** @description The permissions that can decide; holding ANY ONE is enough. */
+            approvers: string[];
+            status: components["schemas"]["ApprovalStatus"];
+            /** Format: uuid */
+            decided_by: string | null;
+            /** Format: date-time */
+            decided_at: string | null;
+            decision_note: string;
+            /**
+             * Format: date-time
+             * @description Seven days after it was asked.
+             */
+            expires_at: string;
+            /**
+             * Format: date-time
+             * @description When the approval was used (an approval is good for one use).
+             */
+            consumed_at: string | null;
+            /** @description Why an approved action could not run (plain Spanish); the requester can ask again. */
+            execution_error?: string;
+            /**
+             * Format: uuid
+             * @description The workflow run waiting for it (a deployment); absent for direct actions.
+             */
+            run_id?: string;
+            run_step?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         /** @description A commit of a repository; where a source imported from git came from. */
         GitRef: {
             /** @enum {string} */
@@ -3181,7 +3403,10 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The settings stored and the deployment applying them, if one started. */
+            /**
+             * @description The settings stored and the deployment applying them, if one started; or
+             *     `pending_approval` when IT's rules hold the change (nothing changed yet).
+             */
             202: {
                 headers: {
                     /** @description The config deployment, when there is one. */
@@ -3189,7 +3414,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AccessChange"];
+                    "application/json": components["schemas"]["AccessChange"] | components["schemas"]["PendingApproval"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3310,6 +3535,18 @@ export interface operations {
                     "application/json": components["schemas"]["ResourceChange"];
                 };
             };
+            /**
+             * @description `pending_approval` when IT's rules hold the connection that a create with
+             *     `connect` asks for (nothing was created yet).
+             */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingApproval"];
+                };
+            };
             400: components["responses"]["Validation"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -3363,13 +3600,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The resource, now deleting. */
+            /** @description The resource, now deleting; or `pending_approval` when IT's rules hold the deletion. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Resource"];
+                    "application/json": components["schemas"]["Resource"] | components["schemas"]["PendingApproval"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3437,13 +3674,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The resource connected and the deployment applying it, if one started. */
+            /** @description The resource connected and the deployment applying it, if one started; or `pending_approval` when IT's rules hold it. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResourceChange"];
+                    "application/json": components["schemas"]["ResourceChange"] | components["schemas"]["PendingApproval"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3526,13 +3763,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Accepted; poll the GET for `status`. */
+            /** @description Accepted; poll the GET for `status`. Or `pending_approval` when IT's rules hold it. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AI"];
+                    "application/json": components["schemas"]["AI"] | components["schemas"]["PendingApproval"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -4278,6 +4515,156 @@ export interface operations {
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listApprovals: {
+        parameters: {
+            query?: {
+                /** @description Repeatable (OR). Default all. */
+                status?: components["schemas"]["ApprovalStatus"][];
+                mine?: boolean;
+                decidable?: boolean;
+                /** @description 1–100 (larger values are clamped), default 20. */
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of requests. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    approveApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecision"];
+            };
+        };
+        responses: {
+            /** @description The request, approved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequest"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            415: components["responses"]["Validation"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    rejectApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecision"];
+            };
+        };
+        responses: {
+            /** @description The request, rejected. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequest"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            415: components["responses"]["Validation"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    cancelApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request, cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequest"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["Internal"];
         };
     };

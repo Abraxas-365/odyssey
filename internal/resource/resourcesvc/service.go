@@ -30,6 +30,9 @@ type Service struct {
 	events   event.Publisher
 	// policy is IT's rules (the policyresource adapter); nil refuses deleting.
 	policy resource.Policy
+	// approvals holds what a rule wants approved (the approvalresource
+	// adapter); nil fails an approval verdict closed.
+	approvals resource.Approvals
 }
 
 func New(repo resource.Repository, cluster resource.Cluster, usage resource.Usage, projects project.Queries,
@@ -37,25 +40,24 @@ func New(repo resource.Repository, cluster resource.Cluster, usage resource.Usag
 	return &Service{repo: repo, cluster: cluster, usage: usage, projects: projects, tx: tx, events: events, policy: policy}
 }
 
+// UseApprovals wires where approvals are held (the approvalresource adapter).
+func (s *Service) UseApprovals(a resource.Approvals) { s.approvals = a }
+
 var (
 	_ resource.Commands = (*Service)(nil)
 	_ resource.Queries  = (*Service)(nil)
 )
 
 // authorize is the one seam where resource asks IT's rules before deleting
-// (connecting is judged by release, where it is applied): nil lets it go on,
-// deny is 403 POLICY_DENIED, approval 409 APPROVAL_REQUIRED. Phase 3b replaces
-// the approval branch here with "create the approval request and answer 202".
-func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request) error {
-	if s.policy == nil {
-		return errx.Internal("IT's rules are not wired")
-	}
+// (connecting is judged by release, where it is applied): nil, nil lets it go
+// on; a Pending means a rule wants IT's approval, the request was stored and
+// nothing may change (the caller answers 202); an error is POLICY_DENIED
+// (403). The approved action re-runs as the requester with the approval's
+// mark on ctx and redeems it here (gate.Enforce).
+func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request, hold gate.Hold) (*gate.Pending, error) {
 	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
-	verdict, err := s.policy.Check(ctx, p.Organization, request)
-	if err != nil {
-		return err
-	}
-	return verdict.Err()
+	hold.Project, hold.Environment = p.ID.String(), e.ID.String()
+	return gate.Enforce(ctx, p.Organization, s.policy, s.approvals, request, hold)
 }
 
 // place resolves the project and environment of a request.
@@ -73,6 +75,10 @@ func (s *Service) place(ctx context.Context, org identity.OrganizationID, id pro
 
 func names(p project.Project, e project.Environment) resource.Names {
 	return resource.Names{Project: p.Name, Environment: e.Slug}
+}
+
+func where(p project.Project, e project.Environment) string {
+	return "«" + p.Name + "» (" + e.Slug + ")"
 }
 
 // view puts a stored resource together with what the cluster reports and
@@ -119,8 +125,15 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 	// Judged (not asked again). A tier changed in the milliseconds between
 	// this check and the connection is ignored on purpose.
 	if input.Connect != nil {
-		if err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, input.Kind); err != nil {
+		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, input.Kind, gate.Detail{
+			Summary: "Crear " + string(input.Kind) + " «" + input.Name + "» y conectarla a " + where(p, e),
+			Payload: resource.CreateApproval{Op: resource.OpCreate, Name: input.Name, Kind: string(input.Kind),
+				StorageGi: input.StorageGi, Prefix: input.Connect.Prefix}})
+		if err != nil {
 			return resource.Result{}, err
+		}
+		if pending != nil { // held for IT: nothing was created
+			return resource.Result{View: resource.View{Outcome: gate.Holding(*pending)}}, nil
 		}
 	}
 	var applied resource.Applied
@@ -221,8 +234,14 @@ func (s *Service) Delete(ctx context.Context, org identity.OrganizationID, id pr
 	if err != nil {
 		return resource.View{}, err
 	}
-	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeleteResource, ResourceKind: string(found.Kind)}); err != nil {
+	pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeleteResource, ResourceKind: string(found.Kind)}, gate.Hold{
+		Summary: "Eliminar " + string(found.Kind) + " «" + name + "» de " + where(p, e) + " y todos sus datos",
+		Payload: resource.DeleteApproval{Op: resource.OpDelete, Name: name}})
+	if err != nil {
 		return resource.View{}, err
+	}
+	if pending != nil { // held for IT: nothing was deleted
+		return resource.View{Outcome: gate.Holding(*pending)}, nil
 	}
 	var r resource.Resource
 	var connected []resource.Connection
@@ -275,8 +294,14 @@ func (s *Service) Connect(ctx context.Context, org identity.OrganizationID, id p
 		return resource.Result{}, err
 	}
 	if found.Status != resource.StatusDeleting {
-		if err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, found.Kind); err != nil {
+		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, found.Kind, gate.Detail{
+			Summary: "Conectar " + string(found.Kind) + " «" + input.Name + "» a " + where(p, e),
+			Payload: resource.ConnectApproval{Op: resource.OpConnect, Name: input.Name, Prefix: input.Prefix}})
+		if err != nil {
 			return resource.Result{}, err
+		}
+		if pending != nil { // held for IT: nothing was connected
+			return resource.Result{View: resource.View{Outcome: gate.Holding(*pending)}}, nil
 		}
 	}
 	var applied resource.Applied

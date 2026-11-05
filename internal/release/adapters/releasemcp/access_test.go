@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasemcp"
@@ -75,9 +76,12 @@ func TestSetAccessRefusals(t *testing.T) {
 	if len(f.commands.access) != 0 {
 		t.Fatalf("a refused call reached the command: %+v", f.commands.access)
 	}
-	// with the permission, public goes through
+	// with the permission, public goes through once the user confirmed it
 	cs = f.connect(t, f.org, append([]string{permission.AccessPublic}, accessWriter...)...)
-	if out, res := call[releasemcp.SetAccessOut](t, cs, "set_access", map[string]any{"app": "cotizador", "mode": "public"}); res.IsError || out.Access.Mode != "public" {
+	if _, res := call[releasemcp.SetAccessOut](t, cs, "set_access", map[string]any{"app": "cotizador", "mode": "public"}); !res.IsError || !strings.Contains(text(res), mcpx.CodeConfirmationRequired) {
+		t.Fatalf("public without the user's yes: %+v", res)
+	}
+	if out, res := call[releasemcp.SetAccessOut](t, cs, "set_access", map[string]any{"app": "cotizador", "mode": "public", "confirm": true}); res.IsError || out.Access.Mode != "public" {
 		t.Fatalf("public: %+v %+v", out, res)
 	}
 	// another organization's app is not found

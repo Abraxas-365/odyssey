@@ -1,4 +1,4 @@
-# Reglas de TI — policy (cut 3a)
+# Reglas de TI — policy (cuts 3a and 3b)
 
 IT decides what may happen to the organization's apps **before** it happens.
 Two inputs: the app's **tier** and IT's **rules**, written in CEL. The `policy`
@@ -6,9 +6,9 @@ domain answers one question: *what does the organization's rule set say about
 this action?* Everything that governs an action (release, resource, ai) asks
 that question through a port it owns; none of them imports `policy`.
 
-Phase 3a is the verdict and the refusal. Phase 3b turns "needs approval" into
-a request that someone from IT decides (`202` instead of `409`), and 3b/3c feed
-the vulnerability scan; the seams for both are marked below.
+Phase 3a is the verdict and the refusal. Phase 3b (`docs/approvals.md`) turns
+"needs approval" into a request that someone from IT decides (`202` instead of
+`409`); 3c feeds the vulnerability scan; the seam for it is marked below.
 
 ## Tiers
 
@@ -89,12 +89,12 @@ claims; for MCP the **connection's** permissions (the ones the user consented
 to for that assistant, not everything the user could do). So
 `!('odyssey:access:public' in actor.permissions)` means what it says on both.
 
-`scan.known` is `false` until a scan exists. Deploy is judged **at its start,
-before the build**, so in 3a `scan.known` is always `false` and
-`production_critical_vulnerabilities` cannot match yet. Rules about scans
-should say `scan.known && …` (an unknown scan is not a clean one). 3b/3c move
-the deploy check into a workflow `authorize` step after the scan, with the
-real numbers.
+`scan.known` is `false` until a scan exists. Deploy is judged by the workflow's
+`authorize` step, **before the build**, so `scan.known` is still always `false`
+and `production_critical_vulnerabilities` cannot match yet. Rules about scans
+should say `scan.known && …` (an unknown scan is not a clean one). 3c adds a
+second step, `authorize_scan`, after the build with the real numbers (the hook
+is marked in `releasesvc/workflows.go`).
 
 ## Evaluation
 
@@ -156,7 +156,12 @@ On purpose; for most of it TI can still add a rule:
 - **Rollback** is not governed by a *built-in*. It is an enforced action
   (`rollback`), so TI can write a rule for it (e.g. "only TI rolls back"), but
   none comes by default: going back to a version that was already approved is
-  the undo of a bad deploy, and slowing it down is the wrong default.
+  the undo of a bad deploy, and slowing it down is the wrong default. If a TI
+  rule does hold a rollback in production, it becomes a `waiting_approval`
+  deployment that **holds the environment's slot**: a newer deployment or
+  rollback supersedes it (cancelling its request) and the serving version stays
+  as it is meanwhile. Rollbacks stay judged by the rules, not by code: TI who do
+  not want them held switch the rule off (`docs/approvals.md` "Deployments").
 - **`set_secret`** is a valid action name but **nothing asks about it**:
   setting an environment secret/variable (`SetEnv`) is not judged. Secret values
   never reach the rules' input, so a rule would have nothing to look at;
@@ -196,12 +201,13 @@ push**: `!('odyssey:projects:tier' in actor.permissions)` matches every
 push-triggered deploy. To treat pushes apart, match on
 `actor.id.startsWith('github:')`.
 
-A refusal there is **definitive**: the deploy step does not retry it (an
-approval's 409 is a `Conflict`, which the workflow otherwise retries). The push
+A refusal there is **definitive**: the deploy step does not retry it. The push
 fails at once with `DEPLOY_REFUSED` and the rule's message as its detail
 («La regla de TI «…» no permite esto.»), shown in the console and in the
 assistant's `publish_now` / push status text, and the imported source is
-dropped. 3b turns the approval case into a request that waits.
+dropped. A rule that asks for **approval** is not a refusal: the deployment
+the push creates is a system actor's, and it waits for IT at its own
+`authorize` step (`waiting_approval`) instead of failing.
 
 ## Enforcement
 
@@ -213,32 +219,38 @@ authenticated principal by `httpx` (REST) and `mcpx` (MCP).
 
 | action | where | when |
 |---|---|---|
-| `deploy` | release: publish an image, a folder, a git commit | at the start, before anything is stored, uploaded or built |
-| `rollback` | release: restore an older version | before it goes online |
+| `deploy` | release: publish an image, a folder, a git commit | the deployment's workflow, **first step** (`authorize`), before anything is built; a cheap deny-only pre-check also runs when it is asked for |
+| `rollback` | release: restore an older version | same: the workflow's `authorize` step (and the deny-only pre-check) |
 | `set_access` | release: change who can open the app | before the setting is stored |
 | `connect_resource` | release: connect an existing resource to an app | before connecting |
 | `delete_resource` | resource: delete | before deleting |
 | `enable_ai` | ai: turn the app's AI on | before turning on |
 
-Refusals are errors, with the rule's own name in the message:
+A **deny** is an error, with the rule's own name in the message; an
+**approval** is not an error:
 
-| effect | status | `code` | message |
+| effect | answer | `code` | message |
 |---|---|---|---|
 | deny | 403 `AUTHORIZATION` | `POLICY_DENIED` | La regla de TI «…» no permite esto. |
-| approval | 409 `CONFLICT` | `APPROVAL_REQUIRED` | Esta acción necesita aprobación de TI (regla «…»). |
+| approval | **202** `{status:"pending_approval", request_id, message}` (a deployment: accepted, then `waiting_approval`) | — | Le pedimos a TI que lo apruebe. |
 
-`details.rules` lists the rule ids (`details.approvers` for an approval). Over
-MCP both are tool errors whose `next_step` tells the assistant to show IT's
-message as it is and **not retry or look for a workaround**.
+`details.rules` lists the rule ids of a denial. Over MCP a denial is a tool
+error whose `next_step` tells the assistant to show IT's message as it is and
+**not retry or look for a workaround**; an approval is a `pending_approval`
+result with `request_id` and a `next_step` (wait for IT; `get_request` follows it).
 
 **3b seam.** `authorize` in `releasesvc`/`resourcesvc`/`aisvc` is the only place
-the approval branch lives. 3b replaces it (and only it) with "create the
-approval request, answer 202" and re-runs the action when someone with the
-`approvers` permission decides.
+the approval branch lives: an `approval` verdict is turned into a `gate.Hold`
+and handed to the domain's own `Approvals` port (implemented by
+`approval/adapters/approval{release,resource,ai}`), which opens the request
+and returns `gate.Pending`; the service answers it as a typed outcome
+(`gate.Outcome`), never an error. When someone with the `approvers` permission
+approves, the action runs again as the requester (see `docs/approvals.md`).
 
 ## Architecture rules
 
-Tested in `internal/bootstrap` (`policy_architecture_test.go`):
+Tested in `internal/bootstrap` (`policy_architecture_test.go`; the approval
+side in `approval_architecture_test.go`):
 
 - only `policy/adapters/policycel` imports cel-go: the domain and service know
   the `Engine` port, not the language;

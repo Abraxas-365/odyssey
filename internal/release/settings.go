@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 )
@@ -174,6 +175,8 @@ type AccessChange = SettingsChange
 type SettingsChange struct {
 	Settings   Settings    `json:"settings"`
 	Deployment *Deployment `json:"deployment"`
+	// Outcome says the change was held for IT's approval (nothing changed).
+	gate.Outcome
 }
 
 // AppliedSettings is the settings revision the deployment handed to the

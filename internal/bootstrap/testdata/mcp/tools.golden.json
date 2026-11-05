@@ -10,8 +10,10 @@
       "get_app",
       "get_build_logs",
       "get_deployment",
+      "get_request",
       "list_apps",
       "list_repositories",
+      "list_requests",
       "list_resources",
       "list_versions",
       "publish_now",
@@ -25,7 +27,9 @@
       "get_app",
       "get_build_logs",
       "get_deployment",
+      "get_request",
       "list_apps",
+      "list_requests",
       "list_resources",
       "list_versions",
       "whoami"
@@ -40,8 +44,10 @@
       "get_app",
       "get_build_logs",
       "get_deployment",
+      "get_request",
       "list_apps",
       "list_repositories",
+      "list_requests",
       "list_resources",
       "list_versions",
       "publish_now",
@@ -269,6 +275,10 @@
             "description": "qué hacer ahora",
             "type": "string"
           },
+          "request_id": {
+            "description": "la solicitud de aprobación; get_request muestra cómo va",
+            "type": "string"
+          },
           "resource": {
             "additionalProperties": false,
             "properties": {
@@ -315,6 +325,10 @@
               "variables"
             ],
             "type": "object"
+          },
+          "status": {
+            "description": "pending_approval cuando la acción quedó esperando la aprobación de TI (no se hizo nada todavía)",
+            "type": "string"
           }
         },
         "required": [
@@ -605,8 +619,12 @@
             "description": "qué hacer ahora",
             "type": "string"
           },
+          "request_id": {
+            "description": "la solicitud de aprobación cuando status es pending_approval; get_request muestra cómo va",
+            "type": "string"
+          },
           "status": {
-            "description": "enabling (la llave se está preparando), enabled (lista) o off",
+            "description": "enabling (la llave se está preparando), enabled (lista), off, o pending_approval (las reglas de TI lo dejaron esperando su aprobación: no se hizo nada todavía)",
             "type": "string"
           },
           "variables": {
@@ -1551,6 +1569,99 @@
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
+        "title": "Estado de una solicitud a TI"
+      },
+      "description": "Muestra cómo va una solicitud de aprobación que las reglas de TI abrieron al pedir algo (set_access, enable_ai, create_database, una publicación…): si sigue pendiente, quién la decidió y con qué nota, cuándo vence y, si ya se aprobó pero no se pudo hacer, por qué. Úsala con el request_id que devolvió la herramienta que quedó pendiente; no reintentes esa herramienta mientras tanto. Shows how an approval request that IT's rules opened is going (set_access, enable_ai, create_database, a publication…): whether it is still pending, who decided it and with what note, when it expires and, if it was approved but could not run, why. Use it with the request_id the pending tool returned; do not retry that tool meanwhile.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "description": "la solicitud (request_id que devolvió la herramienta que quedó pendiente, o de list_requests)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_request",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "qué se pidió: deploy, rollback, set_access, connect_resource, delete_resource o enable_ai",
+            "type": "string"
+          },
+          "console_url": {
+            "description": "enlace a la bandeja de solicitudes en la consola",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "decided_at": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decision_note": {
+            "description": "la nota de quien decidió",
+            "type": "string"
+          },
+          "done": {
+            "description": "true cuando ya se decidió o venció (si es false sigue esperando a TI)",
+            "type": "boolean"
+          },
+          "execution_error": {
+            "description": "si se aprobó pero no se pudo hacer: por qué (puede pedirse de nuevo)",
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "reason": {
+            "description": "por qué hizo falta la aprobación (la regla de TI)",
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "status": {
+            "description": "pending (espera a TI), approved (aprobada), rejected (rechazada), expired (nadie decidió a tiempo) o cancelled (se retiró)",
+            "type": "string"
+          },
+          "summary": {
+            "description": "lo pedido en una frase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "action",
+          "summary",
+          "status",
+          "reason",
+          "expires_at",
+          "created_at",
+          "done",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Estado de una solicitud a TI"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
         "title": "Listar apps"
       },
       "description": "Lista las apps de la organización con su slug, nombre, estado y enlace a la consola. Úsala para encontrar el slug de una app antes de pedir su estado o sus versiones; por defecto solo las activas (status=archived para las archivadas). Lists the organization's apps with slug, name, status and console link. Use it to find an app's slug before asking for its state or versions; active apps only by default (status=archived for archived ones). Paginated: pass next_offset as offset to read more.",
@@ -1745,6 +1856,138 @@
         "type": "object"
       },
       "title": "Repositorios de GitHub"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Solicitudes a TI"
+      },
+      "description": "Lista las solicitudes de aprobación del usuario (las que pidió él), de la más reciente a la más antigua; con status filtra (pending, approved, rejected, expired, cancelled). Úsala para ver qué sigue esperando a TI. Lists the user's approval requests (the ones they asked for), newest first; status filters (pending, approved, rejected, expired, cancelled). Use it to see what is still waiting for IT. Paginated: pass next_offset as offset to read more.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "cuántas devolver (por defecto 20, máximo 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "desde qué posición seguir (usa next_offset de la respuesta anterior)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "filtra por estado: pending, approved, rejected, expired o cancelled; vacío son todas",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_requests",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "console_url": {
+            "description": "enlace a la bandeja de solicitudes en la consola",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "description": "qué se pidió: deploy, rollback, set_access, connect_resource, delete_resource o enable_ai",
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "decided_at": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "decision_note": {
+                  "description": "la nota de quien decidió",
+                  "type": "string"
+                },
+                "done": {
+                  "description": "true cuando ya se decidió o venció (si es false sigue esperando a TI)",
+                  "type": "boolean"
+                },
+                "execution_error": {
+                  "description": "si se aprobó pero no se pudo hacer: por qué (puede pedirse de nuevo)",
+                  "type": "string"
+                },
+                "expires_at": {
+                  "type": "string"
+                },
+                "reason": {
+                  "description": "por qué hizo falta la aprobación (la regla de TI)",
+                  "type": "string"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "description": "pending (espera a TI), approved (aprobada), rejected (rechazada), expired (nadie decidió a tiempo) o cancelled (se retiró)",
+                  "type": "string"
+                },
+                "summary": {
+                  "description": "lo pedido en una frase",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "request_id",
+                "action",
+                "summary",
+                "status",
+                "reason",
+                "expires_at",
+                "created_at",
+                "done"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "next_offset": {
+            "description": "offset para pedir la siguiente página; ausente si no hay más",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Solicitudes a TI"
     },
     {
       "annotations": {
@@ -2161,6 +2404,10 @@
             "description": "slug o id de la app (list_apps los muestra)",
             "type": "string"
           },
+          "confirm": {
+            "description": "true si el usuario ya confirmó volver atrás; en una app de producción se le pregunta antes",
+            "type": "boolean"
+          },
           "deployment_id": {
             "description": "versión a la que volver (list_versions); si falta, la última que estuvo en línea antes de la actual",
             "type": "string"
@@ -2292,6 +2539,10 @@
             "description": "slug o id de la app (list_apps los muestra)",
             "type": "string"
           },
+          "confirm": {
+            "description": "true si el usuario ya confirmó abrir la app a cualquiera con el enlace (mode public); se le pregunta antes",
+            "type": "boolean"
+          },
           "mode": {
             "description": "team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace; exige odyssey:access:public)",
             "type": "string"
@@ -2331,6 +2582,14 @@
           },
           "next_step": {
             "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "la solicitud de aprobación; get_request muestra cómo va",
+            "type": "string"
+          },
+          "status": {
+            "description": "pending_approval cuando la acción quedó esperando la aprobación de TI (no se hizo nada todavía)",
             "type": "string"
           },
           "version": {

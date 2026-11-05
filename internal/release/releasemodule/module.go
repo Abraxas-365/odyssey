@@ -119,3 +119,7 @@ func (m Module) UseResources(r release.Resources) { m.svc.UseResources(r) }
 // UseAIStatus wires the ai domain's port (the ai module is built after this
 // one, since it needs release.AI).
 func (m Module) UseAIStatus(a release.AIStatus) { m.svc.UseAIStatus(a) }
+
+// UseApprovals wires where release holds what a rule wants approved (the
+// approvalrelease adapter; the approval module is built after this one).
+func (m Module) UseApprovals(a release.Approvals) { m.svc.UseApprovals(a) }

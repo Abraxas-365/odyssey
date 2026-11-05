@@ -268,6 +268,9 @@ func (t tools) deploymentOut(p project.Project, d release.Deployment, cur releas
 		out.NextStep = "No quedó en línea: lee failure.message. Corrige y vuelve a publicar con deploy_folder, o usa list_versions y rollback."
 	case d.Status == release.StatusCancelled:
 		out.NextStep = "Otra publicación la reemplazó: llama a get_deployment sin deployment_id para ver la vigente."
+	case d.Status == release.StatusWaitingApproval:
+		out.NextStep = "Esta publicación espera la aprobación de TI (antes de construirse): dile al usuario que quedó pendiente y que le avisaremos. " +
+			"No la repitas; get_request o get_deployment muestran cómo va."
 	case d.Status == release.StatusBuilding:
 		out.NextStep = "Se está construyendo: vuelve a llamar a get_deployment con wait_seconds=45 hasta que done sea true. Si quieres ver el avance, " + logs
 	default:
@@ -398,12 +401,20 @@ func (r *ring) lines() []string {
 type RollbackIn struct {
 	App          string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
 	DeploymentID string `json:"deployment_id,omitempty" jsonschema:"versión a la que volver (list_versions); si falta, la última que estuvo en línea antes de la actual"`
+	Confirm      bool   `json:"confirm,omitempty" jsonschema:"true si el usuario ya confirmó volver atrás; en una app de producción se le pregunta antes"`
 }
 
 func (t tools) rollback(ctx context.Context, caller mcpx.Principal, in RollbackIn) (DeployOut, error) {
 	p, env, err := t.resolve(ctx, caller.Organization, in.App)
 	if err != nil {
 		return DeployOut{}, err
+	}
+	// Going back in a production app replaces what the company is using now:
+	// the user says yes first (the other tiers go straight through).
+	if p.Tier == project.TierProduction {
+		if err := mcpx.Confirm(ctx, in.Confirm, "«"+p.Name+"» es una app de producción: volver a una versión anterior reemplaza la que usa la empresa ahora. ¿Quieres seguir?"); err != nil {
+			return DeployOut{}, err
+		}
 	}
 	var target release.DeploymentID
 	if id := strings.TrimSpace(in.DeploymentID); id != "" {
