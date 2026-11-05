@@ -135,7 +135,7 @@ func (m Module) signalRun(ctx context.Context, e event.Event) error {
 		approval.EventExpired:   gate.DecisionExpired,
 		approval.EventCancelled: gate.DecisionCancelled,
 	}[e.Type]
-	err = m.engine.Signal(ctx, e.Organization, run, gate.SignalApproval,
+	err = m.engine.Signal(ctx, e.Organization, run, gate.SignalFor(p.RunStep),
 		gate.Decision{Request: p.Approval, Status: status, Note: p.Note})
 	switch {
 	case err == nil:

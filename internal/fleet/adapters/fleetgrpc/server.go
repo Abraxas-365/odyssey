@@ -446,6 +446,10 @@ func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slo
 			if err = limit.Wait(ctx); err == nil {
 				err = s.agents.ReportBuilds(ctx, t.agent, t.session, buildReportFromProto(m.GetBuildReport()))
 			}
+		case m.GetScanReport() != nil:
+			if err = limit.Wait(ctx); err == nil {
+				err = s.agents.ReportScans(ctx, t.agent, t.session, scanReportFromProto(m.GetScanReport()))
+			}
 		case m.GetBuildLog() != nil:
 			if err = logs.Wait(ctx); err == nil {
 				var l fleet.BuildLog

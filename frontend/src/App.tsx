@@ -10,6 +10,7 @@ import { ClustersPage } from '@/pages/clusters'
 import { ConsoleLayout } from '@/pages/console-layout'
 import { GitHubSettingsPage } from '@/pages/github-settings'
 import { HomePage } from '@/pages/home'
+import { InventoryPage } from '@/pages/inventory'
 import { NotFoundPage } from '@/pages/not-found'
 import { PolicyRulesPage } from '@/pages/policy-rules'
 
@@ -26,6 +27,7 @@ export function App() {
           <Route index element={<HomePage />} />
           <Route path="asistente" element={<AssistantPage />} />
           <Route path="bandeja" element={<BandejaPage />} />
+          <Route path="inventario" element={<InventoryPage />} />
           <Route path="apps/:id" element={<AppOverviewPage />} />
           <Route path="infraestructura/clusteres" element={<ClustersPage />} />
           <Route path="configuracion/github" element={<GitHubSettingsPage />} />

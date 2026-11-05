@@ -166,6 +166,41 @@ a field, or changing a success status, needs `/v2` or `Deprecation` +
 
 ## 11. Endpoints
 
+### Inventory and attention (`odyssey:inventory:read` / `odyssey:projects:read`; `docs/inventory.md`)
+
+Read-only views composed from the other domains' own reads.
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/inventory` | `inventory:read` (TI) | 200 `{items, page, truncated, unavailable}`, one row per app and environment; `?format=csv` downloads every match |
+| `GET` | `/api/v1/attention` | `projects:read` | 200 `{items, unavailable, truncated}` |
+
+- **Inventory filters**: `tier` (repeatable, OR), `cluster`, `needs_attention`
+  (`true`/`false`), `search` (name or slug), `limit`/`offset`, `format`
+  (`json` | `csv`; anything else is 400 `VALIDATION`). A bad `tier` or `cluster`
+  is 400 too.
+- **CSV**: `text/csv; charset=utf-8` with a BOM, `inventario.csv`, Spanish
+  headers; every row the filters match, no paging. Cells that start with `=`,
+  `+`, `-`, `@`, a tab or a carriage return get a leading `'`. Header
+  `X-Inventory-Truncated` (`true`/`false`) says apps were left out;
+  `X-Inventory-Unavailable` (`clusters`) says `cluster=` could not be applied.
+- **`cluster=` with the clusters unreadable** answers `unavailable: ["clusters"]`
+  and no rows (not a silent empty list); see `docs/inventory.md` for the cost of
+  each request.
+- **Limits**: one read looks at 500 apps (`truncated: true` beyond); each
+  attention source holds at most 100 items. Per-environment reads (the
+  `needs_attention` filter, the CSV) run 8 at a time.
+- **Degradation**: a row's `unavailable` names the parts that could not be read
+  (the value is unknown, not fine); `/attention`'s `unavailable` names the
+  sources (`approvals`, `apps`, `clusters`, `requests`). An empty `items` with a
+  non-empty `unavailable` is **not** "all in order". The rest is still answered.
+- **Who sees what** (`/attention`): `scope: mine` for everyone (their own apps'
+  needs and their own requests); `scope: it` adds the requests the caller may
+  decide (`approvals:decide`) and, with `inventory:read`, the org's critical
+  vulnerabilities, failed publications (24 h) and clusters that do not answer or
+  do not apply their network policy. The tenant is the token's, never a request
+  field.
+
 ### Projects (`odyssey:projects:read` / `odyssey:projects:write`)
 
 A project groups everything a team ships: environments, services, builds,
@@ -355,6 +390,14 @@ agent says otherwise).
   whose agent fetches the source through the tunnel. Its log is readable
   while it runs (`/builds/:build/logs`, poll with `after`). Uploaded sources
   are deleted after 7 days (24 h if never built); the image outlives them.
+- **Scan** (3c, `docs/scan.md`): the build carries `scan`, the vulnerability
+  scan of its image (`{digest, critical, high, medium, low, tool,
+  db_updated_at, error, scanned_at}`). It is `null` until the cluster reports it
+  (the build never waits for it) and, once recorded, never absent: when it
+  could not be done, `error` says why in plain Spanish and the counts mean
+  nothing. `deploy_image` has no build, so no scan. After the build, IT's rules
+  judge the deployment again with the scan (`authorize_scan`, waiting up to 10
+  minutes; `POLICY_DENIED` names the rule).
 - **Lifecycle**: `[building →] pending → applying → verifying → ready |
   failed | cancelled`, through the steps `build` (from source only),
   `apply`, `wait_ready` (≤ 5 min for the health check; an app with resources
@@ -585,7 +628,9 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
 ### IT's rules (`odyssey:policy:manage`; `docs/policy.md`)
 
 The organization's rules, in CEL, checked before an action happens. The first
-list or evaluate of an organization creates its four built-in rules.
+list or evaluate of an organization creates its five built-in rules (the fifth,
+`production_requires_scan`, disabled; an organization that predates a built-in
+gets it on its next read in its default state).
 
 | Method | Path | Permission | Success |
 |---|---|---|---|

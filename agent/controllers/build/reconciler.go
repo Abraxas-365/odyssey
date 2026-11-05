@@ -27,10 +27,12 @@ import (
 // +kubebuilder:rbac:groups=odyssey.dev,namespace=odyssey-builds,resources=odysseybuilds,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=odyssey.dev,namespace=odyssey-builds,resources=odysseybuilds/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=odyssey.dev,namespace=odyssey-builds,resources=odysseybuilds/finalizers,verbs=update
-// +kubebuilder:rbac:groups=batch,namespace=odyssey-builds,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=batch,namespace=odyssey-builds,resources=jobs,verbs=get;list;watch;create;delete;patch
 // +kubebuilder:rbac:groups="",namespace=odyssey-builds,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",namespace=odyssey-builds,resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",namespace=odyssey-builds,resources=secrets,verbs=get;create;delete
+// +kubebuilder:rbac:groups="",namespace=odyssey-builds,resources=persistentvolumeclaims,verbs=get;create
+// +kubebuilder:rbac:groups=odyssey.dev,namespace=odyssey-builds,resources=odysseybuilds,verbs=patch
 
 // Reconciler runs OdysseyBuilds.
 type Reconciler struct {
@@ -117,6 +119,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // any more) at once, the build itself once Retention has passed (the tunnel
 // has reported it by then; its Job goes with it).
 func (r *Reconciler) finished(ctx context.Context, b *v1alpha1.OdysseyBuild) (ctrl.Result, error) {
+	// The scan is queued here, before anything else: the control plane drops
+	// the build as soon as it has its status, and the scan's Job does not
+	// depend on the build after this (the build never waits for it). A scan
+	// that cannot be queued NEVER blocks the cleanup below (the token Secret
+	// and Retention): it is retried on the side and, past scanStartWindow,
+	// given up with a recorded reason (the control plane then knows "never").
+	var retry time.Duration
+	if err := r.ensureScan(ctx, b); err != nil {
+		retry = r.scanFailedToStart(ctx, b, err)
+	}
 	// (its Job is left to its TTL: its pod's log may still be being read.
 	// Nothing that could still push is final: Observe waits on pulls.)
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: JobName(b), Namespace: Namespace}}
@@ -128,6 +140,9 @@ func (r *Reconciler) finished(ctx context.Context, b *v1alpha1.OdysseyBuild) (ct
 		at = b.Status.FinishedAt.Time
 	}
 	if left := at.Add(r.Config.withDefaults().Retention).Sub(r.now()); left > 0 {
+		if retry > 0 {
+			left = min(left, retry)
+		}
 		return ctrl.Result{RequeueAfter: left}, nil
 	}
 	return ctrl.Result{}, client.IgnoreNotFound(r.Client.Delete(ctx, b, client.PropagationPolicy(metav1.DeletePropagationBackground)))

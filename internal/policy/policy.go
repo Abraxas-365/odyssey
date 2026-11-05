@@ -235,10 +235,20 @@ type ResourceInput struct {
 	Kind string `json:"kind"`
 }
 
-// ScanInput is the vulnerability scan of the image being published. Known is
-// false until a scan exists (the deploy asks before building: 3c feeds it).
+// ScanInput is the vulnerability scan of the image being published.
+//
+// Checked says the scan has been looked at: it is false at the deployment's
+// first judgment (authorize, before anything is built, so there is no scan to
+// know) and true at the second (authorize_scan, after the build), whatever
+// came of the scan. Known says the scan exists and is usable (it was done, of
+// this image); Critical and High are meaningful only then. So:
+//
+//	!checked           first judgment: nothing is known yet
+//	checked && !known  the scan failed, never came, or the cluster has none
+//	known              the counts are real (and checked is true)
 type ScanInput struct {
 	Known    bool `json:"known"`
+	Checked  bool `json:"checked"`
 	Critical int  `json:"critical"`
 	High     int  `json:"high"`
 }

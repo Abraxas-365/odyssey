@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -23,6 +24,11 @@ type Options struct {
 	// GitHubEnabled reports whether apps can be connected to GitHub here.
 	// Nil means no.
 	GitHubEnabled func(ctx context.Context) bool
+	// NeedingAttention says which of the apps need somebody (a publication
+	// that failed, critical vulnerabilities): the composition root wires the
+	// inventory's, so project does not know it. Nil: list_apps leaves
+	// needs_attention out.
+	NeedingAttention func(ctx context.Context, org identity.OrganizationID, apps []project.ID) (map[project.ID]bool, error)
 }
 
 // Tools are whoami, list_apps and create_app.
@@ -48,8 +54,16 @@ func Tools(commands project.Commands, queries project.Queries, opts Options) []m
 			Title: "Listar apps",
 			Description: "Lista las apps de la organización con su slug, nombre, estado y enlace a la consola. Úsala para encontrar " +
 				"el slug de una app antes de pedir su estado o sus versiones; por defecto solo las activas (status=archived para las archivadas). " +
+				"needs_attention marca las apps cuya última publicación falló o que tienen vulnerabilidades críticas en línea " +
+				"(solo con lo que ya se sabe de todas las apps: para el detalle de una usa get_app, para lo que te toca a ti get_attention). " +
+				"Como get_attention, solo se marca lo que te corresponde ver: con permiso de inventario (TI) todas las apps; sin él, solo las apps que creaste " +
+				"(en las demás el campo no aparece, que no significa que estén bien). " +
 				"Lists the organization's apps with slug, name, status and console link. Use it to find an app's slug before asking " +
 				"for its state or versions; active apps only by default (status=archived for archived ones). " +
+				"needs_attention flags the apps whose last publication failed or that have critical vulnerabilities online " +
+				"(only what is known for every app at once: use get_app for one app's detail, get_attention for what is yours to do). " +
+				"Like get_attention it flags only what you may see: with the inventory permission (IT) every app; without it, only the apps you created " +
+				"(for the others the field is absent, which does not mean they are fine). " +
 				"Paginated: pass next_offset as offset to read more.",
 			Toolset:     "apps",
 			Permissions: []string{permission.ProjectsRead},
@@ -155,6 +169,8 @@ type App struct {
 	Status      string    `json:"status" jsonschema:"active o archived"`
 	ConsoleURL  string    `json:"console_url" jsonschema:"enlace a la app en la consola"`
 	CreatedAt   time.Time `json:"created_at"`
+	// NeedsAttention is absent when it could not be judged now.
+	NeedsAttention *bool `json:"needs_attention,omitempty" jsonschema:"true si la última publicación falló o hay vulnerabilidades críticas en línea; ausente si no se pudo revisar o si la app no es tuya y no tienes permiso de inventario"`
 }
 
 // ListAppsOut is list_apps's result.
@@ -184,9 +200,25 @@ func (t tools) listApps(ctx context.Context, caller mcpx.Principal, in ListAppsI
 		return ListAppsOut{}, err
 	}
 	out := ListAppsOut{Items: make([]App, 0, len(page.Items)), Total: page.Page.Total, Limit: page.Page.Limit, Offset: page.Page.Offset}
+	var flags map[project.ID]bool
+	if t.opts.NeedingAttention != nil && len(page.Items) > 0 {
+		ids := make([]project.ID, len(page.Items))
+		for i, p := range page.Items {
+			ids[i] = p.ID
+		}
+		// One batch for the whole page; if it cannot be read the flag is
+		// left out (never a wrong false) and the list still answers.
+		if got, err := t.opts.NeedingAttention(ctx, caller.Organization, ids); err == nil {
+			flags = got
+		}
+	}
 	for _, p := range page.Items {
-		out.Items = append(out.Items, App{ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description,
-			Status: string(p.Status), ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String(), CreatedAt: p.CreatedAt})
+		app := App{ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description,
+			Status: string(p.Status), ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String(), CreatedAt: p.CreatedAt}
+		if needs, ok := flags[p.ID]; ok {
+			app.NeedsAttention = &needs
+		}
+		out.Items = append(out.Items, app)
 	}
 	if next := out.Offset + len(page.Items); len(page.Items) > 0 && next < out.Total {
 		out.NextOffset = &next

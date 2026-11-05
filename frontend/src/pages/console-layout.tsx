@@ -38,6 +38,7 @@ function Chrome() {
   const commands = [
     ...useCoreCommands(),
     ...(auth.can(permissions.clustersRead) ? [{ id: 'clusters', label: 'Clústeres', group: 'Infraestructura', onSelect: () => navigate('/infraestructura/clusteres') }] : []),
+    ...(auth.can(permissions.inventoryRead) ? [{ id: 'inventory', label: 'Inventario', group: 'Infraestructura', onSelect: () => navigate('/inventario') }] : []),
     ...(apps.data?.items ?? []).map(p => ({ id: p.id, label: p.name, group: 'Apps', onSelect: () => navigate(`/apps/${p.id}`) })),
   ]
 
@@ -47,6 +48,7 @@ function Chrome() {
         { to: '/', label: 'Inicio', end: true },
         { to: '/asistente', label: 'Asistente' },
         { to: '/bandeja', label: 'Bandeja', count: decider ? pendingCount : undefined },
+        ...(auth.can(permissions.inventoryRead) ? [{ to: '/inventario', label: 'Inventario' }] : []),
         ...(auth.can(permissions.clustersRead) ? [{ to: '/infraestructura/clusteres', label: 'Infraestructura' }] : []),
         ...(auth.can(permissions.integrationsManage) ? [{ to: '/configuracion/github', label: 'Configuración' }] : []),
         ...(auth.can(permissions.policyManage) ? [{ to: '/configuracion/reglas', label: 'Reglas de TI' }] : []),

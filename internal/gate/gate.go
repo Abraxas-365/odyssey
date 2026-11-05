@@ -70,8 +70,14 @@ type Request struct {
 	AccessMode   string // set_access: the mode being set
 	ResourceKind string // connect_resource, delete_resource
 	// Scan is the vulnerability scan of what is being published; nil when
-	// there is none yet (deploy asks before building).
+	// there is none yet (deploy asks before building) or it is unknown.
 	Scan *Scan
+	// ScanChecked says this is the judgment made after the build, with the
+	// scan's outcome in view (authorize_scan): a nil Scan then means the scan
+	// is unknown for good (failed, never came, not supported), not "not yet".
+	// It is what lets a rule require a scan (`scan.checked && !scan.known`)
+	// without firing at the first judgment, where the scan never exists.
+	ScanChecked bool
 }
 
 // Scan is the count of findings of an image scan.

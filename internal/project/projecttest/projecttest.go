@@ -71,6 +71,36 @@ func (m *Repo) ListEnvironments(_ context.Context, org identity.OrganizationID, 
 
 var _ project.Repository = (*Repo)(nil)
 
+func (m *Repo) FindMany(_ context.Context, org identity.OrganizationID, ids []project.ID) ([]project.Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []project.Project{}
+	for _, id := range ids {
+		if p, ok := m.rows[id]; ok && p.Organization == org {
+			out = append(out, p)
+		}
+	}
+	slices.SortFunc(out, func(a, b project.Project) int {
+		if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID.String(), b.ID.String())
+	})
+	return out, nil
+}
+
+func (m *Repo) ListEnvironmentsOf(_ context.Context, org identity.OrganizationID, ids []project.ID) ([]project.Environment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []project.Environment{}
+	for _, e := range m.envs {
+		if e.Organization == org && slices.Contains(ids, e.Project) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 func (m *Repo) Create(_ context.Context, org identity.OrganizationID, id project.ID, in project.Create) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -122,6 +152,9 @@ func (m *Repo) List(_ context.Context, org identity.OrganizationID, f project.Fi
 	search := strings.ToLower(p.Search)
 	for _, r := range m.rows {
 		if r.Organization != org || !slices.Contains(f.Status, r.Status) {
+			continue
+		}
+		if len(f.Tier) > 0 && !slices.Contains(f.Tier, r.Tier) || !f.CreatedBy.IsZero() && r.CreatedBy != f.CreatedBy {
 			continue
 		}
 		if search != "" && !strings.Contains(strings.ToLower(r.Name), search) && !strings.Contains(r.Slug, search) {

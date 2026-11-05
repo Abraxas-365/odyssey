@@ -33,6 +33,10 @@ type Commands interface {
 // Queries are the read operations, implemented by buildsvc.Service.
 type Queries interface {
 	Find(ctx context.Context, organization identity.OrganizationID, build ID) (Build, error)
+	// Scans is the recorded scan of each of the builds (at most MaxScans), in
+	// one query: what the inventory shows. A build with no scan recorded is
+	// absent. It changes nothing.
+	Scans(ctx context.Context, organization identity.OrganizationID, builds []ID) ([]BuildScan, error)
 	FindSource(ctx context.Context, organization identity.OrganizationID, source SourceID) (Source, error)
 	// Logs pages a build's log: live from the runner while it runs, from the
 	// archive once it ended.
@@ -57,6 +61,9 @@ type Runner interface {
 	Cancel(ctx context.Context, build Build) error
 	// Forget drops what the runner keeps of a build whose log is archived.
 	Forget(ctx context.Context, build Build) error
+	// ObserveScan says where the scan of a succeeded build's image is
+	// (ScanUnsupported for a runner or cluster that does not scan).
+	ObserveScan(ctx context.Context, build Build) (ScanObservation, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -91,6 +98,10 @@ type Repository interface {
 
 	CreateBuild(ctx context.Context, build Build) error
 	FindBuild(ctx context.Context, organization identity.OrganizationID, build ID) (Build, error)
+	// ListScans is the recorded scan of each of the builds (at most MaxScans)
+	// in one query; a build without one (not scanned yet, never, or not the
+	// organization's) is absent.
+	ListScans(ctx context.Context, organization identity.OrganizationID, builds []ID) ([]BuildScan, error)
 	// FindBuildForUpdate locks the row until the transaction ends.
 	FindBuildForUpdate(ctx context.Context, organization identity.OrganizationID, build ID) (Build, error)
 	// MarkRunning moves a queued build to running (no-op otherwise).
@@ -100,4 +111,8 @@ type Repository interface {
 	// SetLogs records where a finished build's log is archived, with its
 	// index (where to start reading for a seq).
 	SetLogs(ctx context.Context, organization identity.OrganizationID, build ID, key string, index LogIndex) error
+	// SetScan records the scan of a succeeded build, once: false when it
+	// already has one (NotFound when the build is unknown or did not
+	// succeed).
+	SetScan(ctx context.Context, organization identity.OrganizationID, build ID, scan Scan) (bool, error)
 }

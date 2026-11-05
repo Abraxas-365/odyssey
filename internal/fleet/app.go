@@ -15,6 +15,9 @@ import (
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
+// MaxPlacements bounds Queries.Placements (one read of the inventory).
+const MaxPlacements = 2000
+
 // App is the desired state of one app of an environment: what the agent of
 // its cluster turns into an OdysseyApp.
 type App struct {

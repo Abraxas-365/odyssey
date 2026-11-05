@@ -61,6 +61,8 @@ type Config struct {
 	// Retention keeps a finished OdysseyBuild this long (its status is
 	// reported on every reconnect meanwhile); longer than TTL.
 	Retention time.Duration
+	// Scan runs Trivy over every image built (scan.go); zero: no scans.
+	Scan ScanConfig
 }
 
 func (c Config) withDefaults() Config {
@@ -69,6 +71,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Retention <= c.TTL {
 		c.Retention = 3 * c.TTL
+	}
+	if c.Scan.Deadline <= 0 {
+		c.Scan.Deadline = 15 * time.Minute
+	}
+	if c.Scan.TTL <= 0 {
+		c.Scan.TTL = c.Retention + time.Hour
 	}
 	return c
 }

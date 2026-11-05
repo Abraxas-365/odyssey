@@ -63,7 +63,24 @@ func Held(p *Pending) Outcome {
 // decision (a deployment's authorize step) what became of its request; its
 // payload is a Decision. The approval domain sends it, the governed domain's
 // workflow waits for it: they share only this vocabulary.
+//
+// A run may hold more than one request (a deployment: authorize, then
+// authorize_scan), each tied to its own step. Their signals are named after
+// the step (SignalFor), so a decision can never be taken by the wrong wait.
 const SignalApproval = "approval"
+
+// firstStep is the step whose signal is plain SignalApproval: the name runs
+// in flight before there were two steps already wait on.
+const firstStep = "authorize"
+
+// SignalFor is the signal that carries the decision of the request tied to
+// step ("" is the first step's, for events from before steps were published).
+func SignalFor(step string) string {
+	if step == "" || step == firstStep {
+		return SignalApproval
+	}
+	return SignalApproval + "." + step
+}
 
 // Decision values: what became of a request (approval.Status, as text).
 const (
@@ -153,9 +170,9 @@ type RunApprover interface {
 	Approver
 	// Consume marks an approved request used (idempotent).
 	Consume(ctx context.Context, organization identity.OrganizationID, request string) error
-	// CancelRun cancels the pending request of a workflow run (nothing
-	// pending is a no-op).
-	CancelRun(ctx context.Context, organization identity.OrganizationID, run string) error
+	// CancelRun cancels the pending request a workflow run holds at step
+	// (nothing pending is a no-op).
+	CancelRun(ctx context.Context, organization identity.OrganizationID, run, step string) error
 }
 
 // Enforce is the single enforcement function every governed service's

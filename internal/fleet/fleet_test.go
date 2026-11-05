@@ -232,6 +232,23 @@ func TestAppAccessModes(t *testing.T) {
 	}
 }
 
+// What an agent says of a scan is made safe to show; the database date is kept
+// (normalized to UTC) when it reads and dropped when it does not.
+func TestScanReportsAreCleaned(t *testing.T) {
+	id := fleet.MustParseBuildID("00000000-0000-4000-8000-0000000000b1")
+	s := fleet.ScanStatus{Build: id, Digest: "sha256:" + strings.Repeat("a", 64), Tool: "trivy\x00 0.76.2", High: 3,
+		DBUpdatedAt: "2026-11-05T08:09:41-05:00"}.Clean()
+	if s.Tool != "trivy 0.76.2" || s.DBUpdatedAt != "2026-11-05T13:09:41Z" || s.High != 3 {
+		t.Errorf("cleaned to %+v", s)
+	}
+	if s := (fleet.ScanStatus{DBUpdatedAt: "yesterday"}).Clean(); s.DBUpdatedAt != "" {
+		t.Errorf("an unreadable date was kept: %q", s.DBUpdatedAt)
+	}
+	if s := (fleet.ScanStatus{Error: "boom", Critical: 4}).Clean(); s.Critical != 0 {
+		t.Errorf("the counts of a failed scan were kept: %+v", s)
+	}
+}
+
 func mustDelivery(raw string) fleet.SecretDeliveryID {
 	id, err := fleet.ParseSecretDeliveryID(raw)
 	if err != nil {

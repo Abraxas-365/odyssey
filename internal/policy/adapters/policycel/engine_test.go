@@ -76,6 +76,28 @@ func TestMatches(t *testing.T) {
 			t.Errorf("%q: got %v, %v want %v", expr, got, err, want)
 		}
 	}
+	// scan.checked tells "not looked at yet" (the first judgment) from "looked
+	// at and unknown": the production_requires_scan rule needs the difference.
+	requires := rule(`action == 'deploy' && project.tier == 'production' && scan.checked && !scan.known`)
+	prod := policy.Input{Action: "deploy", Project: policy.ProjectInput{Tier: "production"}}
+	for name, c := range map[string]struct {
+		scan policy.ScanInput
+		want bool
+	}{
+		"first judgment, no scan yet": {policy.ScanInput{}, false},
+		"checked, scan failed":        {policy.ScanInput{Checked: true}, true},
+		"checked, scan done":          {policy.ScanInput{Checked: true, Known: true, Critical: 9}, false},
+		"known implies checked (dry)": {policy.ScanInput{Known: true}, false},
+	} {
+		in := prod
+		in.Scan = c.scan
+		if got, err := e.Matches(context.Background(), requires, in); err != nil || got != c.want {
+			t.Errorf("%s: got %v, %v want %v", name, got, err, c.want)
+		}
+	}
+	if got, err := e.Matches(context.Background(), rule(`scan.checked`), policy.Input{Scan: policy.ScanInput{Known: true}}); err != nil || !got {
+		t.Errorf("a known scan is checked: %v %v", got, err)
+	}
 	// no actor permissions at all is an empty list, not an error
 	if got, err := e.Matches(context.Background(), rule(`size(actor.permissions) == 0`), policy.Input{}); err != nil || !got {
 		t.Errorf("empty permissions: %v %v", got, err)

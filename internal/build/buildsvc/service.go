@@ -32,6 +32,8 @@ type Options struct {
 	PollEvery time.Duration
 	// Timeout bounds a build (default build.Timeout).
 	Timeout time.Duration
+	// ScanTimeout bounds the wait for a scan (default build.ScanTimeout).
+	ScanTimeout time.Duration
 	// Limits bound uploaded archives (default archive.Default()).
 	Limits archive.Limits
 	// SourceQuota bounds the bytes of an organization's unexpired sources
@@ -70,6 +72,9 @@ func New(repo build.Repository, projects project.Queries, runner build.Runner, b
 	}
 	if opts.Limits == (archive.Limits{}) {
 		opts.Limits = archive.Default()
+	}
+	if opts.ScanTimeout <= 0 {
+		opts.ScanTimeout = build.ScanTimeout
 	}
 	if opts.SourceQuota <= 0 {
 		opts.SourceQuota = defaultSourceQuota
@@ -358,6 +363,16 @@ func (s *Service) Sweep(ctx context.Context) (int, error) {
 
 func (s *Service) Find(ctx context.Context, organization identity.OrganizationID, id build.ID) (build.Build, error) {
 	return s.repo.FindBuild(ctx, organization, id)
+}
+
+func (s *Service) Scans(ctx context.Context, organization identity.OrganizationID, ids []build.ID) ([]build.BuildScan, error) {
+	if len(ids) == 0 {
+		return []build.BuildScan{}, nil
+	}
+	if len(ids) > build.MaxScans {
+		return nil, errx.Validation("too many builds in one read")
+	}
+	return s.repo.ListScans(ctx, organization, ids)
 }
 
 func (s *Service) FindSource(ctx context.Context, organization identity.OrganizationID, id build.SourceID) (build.Source, error) {

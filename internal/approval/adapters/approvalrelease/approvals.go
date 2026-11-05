@@ -33,8 +33,8 @@ func (a *Approvals) Consume(ctx context.Context, org identity.OrganizationID, re
 	return approval.ConsumeRequest(ctx, a.commands, org, request)
 }
 
-func (a *Approvals) CancelRun(ctx context.Context, org identity.OrganizationID, run string) error {
-	return a.commands.CancelRun(ctx, org, run)
+func (a *Approvals) CancelRun(ctx context.Context, org identity.OrganizationID, run, step string) error {
+	return a.commands.CancelRun(ctx, org, run, step)
 }
 
 // Executor re-runs the direct actions release holds. A held deployment is not

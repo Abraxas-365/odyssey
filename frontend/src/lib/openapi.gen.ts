@@ -922,8 +922,9 @@ export interface paths {
         /**
          * List IT's rules
          * @description The organization's rulebook: the built-in rules first, then IT's own by
-         *     age. The first read of an organization creates its four built-in rules
-         *     (docs/policy.md).
+         *     age. The first read of an organization creates its built-in rules (five;
+         *     a built-in added later reaches existing organizations switched off;
+         *     docs/policy.md).
          */
         get: operations["listPolicyRules"];
         put?: never;
@@ -1111,6 +1112,46 @@ export interface paths {
          *     deployment is cancelled. Event `approval.cancelled`.
          */
         post: operations["cancelApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the organization runs
+         * @description One row per environment of every active app, in app-name order (production first within an app): owner (who created it), tier, access, URL, the version online, what it uses, secrets, the last scan, the cluster and whether someone has something to do. It composes what each domain already knows and writes nothing. With `format=csv` it downloads every row that matches, without paging (header `X-Inventory-Truncated` says whether more than 500 apps were left out). Cells that start with `=`, `+`, `-` or `@` are prefixed with an apostrophe so a spreadsheet never runs them. `needs_attention=true` reads each candidate's uses, a few at a time (at most 500 apps). A row's `unavailable` names the parts that could not be read right now.
+         */
+        get: operations["listInventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What needs your attention
+         * @description "Necesita tu atención". Everyone gets their own apps (the ones they created) with what the app's uses list for people, and their own requests to IT that wait, were rejected or could not run (`scope: mine`). Holders of `odyssey:approvals:decide` also get the requests waiting for their decision; holders of `odyssey:inventory:read` also get the apps with critical vulnerabilities, the publications that failed in the last 24 hours and the clusters that do not answer or do not apply their network policy (`scope: it`). IT's items come first, then by severity. Each source degrades on its own: the ones that could not be read are in `unavailable`, so an empty list with `unavailable` is not "all in order".
+         */
+        get: operations["getAttention"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1869,6 +1910,24 @@ export interface components {
             started_at: string | null;
             /** Format: date-time */
             finished_at: string | null;
+            /** @description The image's vulnerability scan (3c). null until the cluster reports it (the build never waits for it) and for a build that did not succeed; a succeeded build ends up with one, even when it could not be done (see `error`). */
+            scan: null | components["schemas"]["BuildScan"];
+        };
+        BuildScan: {
+            /** @description The scanned image's digest (always the build's own). */
+            digest: string;
+            critical: number;
+            high: number;
+            medium: number;
+            low: number;
+            /** @description The scanner and its version ("trivy 0.76.2"). */
+            tool: string;
+            /** @description When the scanner's vulnerability database was built (RFC 3339; empty when unknown). */
+            db_updated_at: string;
+            /** @description Why the image could not be scanned, in plain Spanish; empty when it was. With an error the counts mean nothing and IT's rules see `scan.known = false`. */
+            error: string;
+            /** Format: date-time */
+            scanned_at: string;
         };
         BuildFailure: {
             /** @enum {string} */
@@ -2242,10 +2301,10 @@ export interface components {
             settings_revision: number | null;
             error: null | {
                 /**
-                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`).
+                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule.
                  * @enum {string}
                  */
-                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL";
+                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL" | "POLICY_DENIED";
                 /** @description Plain Spanish for whoever deploys. */
                 message: string;
                 /** @description The cluster's own words (often English); "" when it said nothing. Show it as technical detail. */
@@ -2437,6 +2496,123 @@ export interface components {
             prev_hash: string;
             hash: string;
         };
+        InventoryPage: {
+            items: components["schemas"]["InventoryRow"][];
+            page: components["schemas"]["Page"];
+            /** @description The organization has more apps than one read looks at (500); the filters narrow it. */
+            truncated: boolean;
+            /** @description Sources the filter needed and that could not be read now. With `cluster=` and the clusters (or placements) unreadable it is `["clusters"]` and `items` is empty because nothing could be matched, NOT because no environment runs there. Empty when everything was read. */
+            unavailable: "clusters"[];
+        };
+        /** @description One environment of one app. */
+        InventoryRow: {
+            app: {
+                /** Format: uuid */
+                id: string;
+                slug: string;
+                name: string;
+                tier: components["schemas"]["ProjectTier"];
+            };
+            environment: {
+                /** Format: uuid */
+                id: string;
+                slug: string;
+                kind: components["schemas"]["EnvironmentKind"];
+            };
+            /**
+             * Format: uuid
+             * @description Who created the app.
+             */
+            owner: string;
+            /** @description Empty when the uses could not be read (see `unavailable`). */
+            access: components["schemas"]["AccessMode"] | "";
+            /** @description Where the app answers; empty before its first deployment. */
+            url: string;
+            /**
+             * @description `failed` when the last publication failed (the previous version, if any, keeps running).
+             * @enum {string}
+             */
+            status: "not_deployed" | "deploying" | "online" | "failed";
+            /** @description The version being served; null when nothing is. */
+            online: null | {
+                image: string;
+                /** Format: date-time */
+                since: string | null;
+            };
+            resources: {
+                name: string;
+                kind: components["schemas"]["ResourceKind"];
+                /** @description ready, provisioning, failed or unknown. */
+                status: string;
+            }[];
+            /** @description The app has the AI gateway enabled. */
+            ai: boolean;
+            secrets: {
+                total: number;
+                /** @description Keys the app asks for and nobody uploaded (names only). */
+                missing: string[];
+            };
+            /** @description The scan of the image online. */
+            scan: {
+                /**
+                 * @description `none`: nothing built here is online (an image published as it was is never scanned); `pending`: built, the scan is not recorded yet; `unknown`: it could not be done (see `error`); `clean`; `vulnerable`.
+                 * @enum {string}
+                 */
+                state: "none" | "pending" | "unknown" | "clean" | "vulnerable";
+                critical: number;
+                high: number;
+                /** @description Plain Spanish; only with `unknown`. */
+                error?: string;
+                /** Format: date-time */
+                scanned_at: string | null;
+            };
+            cluster: null | {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            };
+            needs_attention: boolean;
+            /** @description What the app's uses list (the same items as the uses endpoint). */
+            attention: {
+                kind: string;
+                message: string;
+                /** @enum {string} */
+                who: "owner" | "it" | "wait";
+            }[];
+            /** @description The parts that could not be read now (scan, cluster, uses, resources, secrets, ai, egress). */
+            unavailable: string[];
+        };
+        Attention: {
+            items: components["schemas"]["AttentionItem"][];
+            /** @description Sources that could not be read now; the list is then incomplete. */
+            unavailable: ("approvals" | "apps" | "clusters" | "requests")[];
+            /** @description A source had more than 100 items. */
+            truncated: boolean;
+        };
+        AttentionItem: {
+            /** @enum {string} */
+            kind: "approval_pending" | "app_vulnerable" | "cluster_disconnected" | "cluster_policy" | "deployment_failed" | "app_attention" | "request_pending" | "request_rejected" | "request_failed";
+            /** @enum {string} */
+            scope: "it" | "mine";
+            /** @enum {string} */
+            severity: "critical" | "warning" | "info";
+            /** @description What is going on, in plain Spanish. */
+            sentence: string;
+            /** @description The console path that solves it. */
+            link: string;
+            /** @description With `app_attention`, the uses' attention kind. */
+            detail?: string;
+            /** Format: uuid */
+            app_id: string | null;
+            /** Format: uuid */
+            environment_id: string | null;
+            /** Format: uuid */
+            cluster_id: string | null;
+            /** Format: uuid */
+            request_id?: string;
+            /** Format: date-time */
+            at: string | null;
+        };
         AuditEntryList: {
             items: components["schemas"]["AuditEntry"][];
             page: components["schemas"]["Page"];
@@ -2546,8 +2722,10 @@ export interface components {
                 kind?: string;
             };
             scan?: {
-                /** @description Whether a vulnerability scan exists (false until the scan runs). */
+                /** @description Whether a vulnerability scan exists and was done (false until it runs, and when it failed). */
                 known?: boolean;
+                /** @description Whether the scan was looked at: false at the first judgment of a deployment (before the build), true after it whatever came of the scan. `checked && !known` is a scan that failed, never came or does not exist (the built-in `production_requires_scan` reads it). `known` implies `checked`. */
+                checked?: boolean;
                 critical?: number;
                 high?: number;
             };
@@ -4665,6 +4843,70 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listInventory: {
+        parameters: {
+            query?: {
+                /** @description Repeatable (OR). */
+                tier?: components["schemas"]["ProjectTier"][];
+                /** @description Only the environments that run on this cluster. If the clusters cannot be read now the answer says so in `unavailable` (never a silently empty list). */
+                cluster?: string;
+                needs_attention?: boolean;
+                /** @description `json` (default) or `csv`. */
+                format?: "json" | "csv";
+                search?: components["parameters"]["Search"];
+                /** @description 1–100 (larger values are clamped), default 20. */
+                limit?: components["parameters"]["Limit"];
+                offset?: components["parameters"]["Offset"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of rows, or the CSV file. */
+            200: {
+                headers: {
+                    /** @description Only with `format=csv`. */
+                    "X-Inventory-Truncated"?: "true" | "false";
+                    /** @description Only with `format=csv`. Comma-separated sources the filter needed and that could not be read (`clusters`, with `cluster=`); empty when all were. The CSV is then incomplete. */
+                    "X-Inventory-Unavailable"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryPage"];
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getAttention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
         };
     };

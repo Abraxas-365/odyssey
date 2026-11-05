@@ -23,9 +23,9 @@ type Commands interface {
 	Reject(ctx context.Context, organization identity.OrganizationID, id ID, input Decide) (Request, error)
 	// Cancel is the requester taking back their own pending request.
 	Cancel(ctx context.Context, organization identity.OrganizationID, id ID, input Cancel) (Request, error)
-	// CancelRun cancels the pending request of a workflow run (a newer
-	// deployment replaced the one waiting); nothing pending is a no-op.
-	CancelRun(ctx context.Context, organization identity.OrganizationID, run string) error
+	// CancelRun cancels the pending request a workflow run holds at step (a
+	// newer deployment replaced the one waiting); nothing pending is a no-op.
+	CancelRun(ctx context.Context, organization identity.OrganizationID, run, step string) error
 	// Redeem is how a governed domain uses an approval: it must be approved,
 	// unused, for the actor on ctx (the requester) and for this very action
 	// (same action, place and payload). It is consumed atomically (409
@@ -78,7 +78,8 @@ type Repository interface {
 	FindOpen(ctx context.Context, organization identity.OrganizationID, key string) (Request, error)
 	Find(ctx context.Context, organization identity.OrganizationID, id ID) (Request, error)
 	FindForUpdate(ctx context.Context, organization identity.OrganizationID, id ID) (Request, error)
-	FindByRun(ctx context.Context, organization identity.OrganizationID, run string) (Request, error)
+	// FindByRun is the request a run holds at step (the latest, whatever its status).
+	FindByRun(ctx context.Context, organization identity.OrganizationID, run, step string) (Request, error)
 	List(ctx context.Context, organization identity.OrganizationID, viewer Viewer, filter Filter, page query.Pagination) (query.Paginated[Request], error)
 	// ListExpired reads (and locks, skipping rows others hold) up to limit
 	// pending requests of any organization whose time ran out by now.

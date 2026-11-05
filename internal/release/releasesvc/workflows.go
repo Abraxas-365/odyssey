@@ -25,13 +25,21 @@ import (
 //	promote    make the release the environment's current one (the only place it changes)
 //
 // authorize and approval are first so nothing is built, uploaded or applied
-// before IT agrees. Phase 3c adds `authorize_scan` after build, with the
-// image's scan, judged the same way (see authorizeStep).
+// before IT agrees. Phase 3c adds `authorize_scan` (and `approval_scan`) right
+// after build, with the image's scan, judged the same way (see
+// authorizeScanStep).
 //
-// Workflow steps are positional, so a run already in flight when authorize and
-// approval were added resumes at the same index, one or two steps earlier in
-// the new list: approval treats a run with no authorize output as allowed, and
-// build, apply and wait_ready are idempotent, so it simply repeats work.
+// Workflow steps are positional (a run stores the index of its step), so a run
+// already in flight when steps were added resumes at the same index, which now
+// names an EARLIER step: with authorize and approval added (3b) it repeated
+// work; with authorize_scan and approval_scan added after build (3c, two more)
+// a run that was at apply resumes at authorize_scan (it judges the build's scan
+// like a new deployment would; a run with no build or actor is let through, see
+// authorizeScanStep), one at wait_ready at approval_scan (no output of
+// authorize_scan: nothing was asked, carry on) and one at promote at
+// apply. approval treats a run with no gate output as allowed, and build,
+// apply and wait_ready are idempotent, so it simply repeats work and never
+// skips a step.
 //
 // On failure (a coded error, retries exhausted or the readiness timeout) the
 // deployment fails and, when another release was serving and the cluster
@@ -47,6 +55,11 @@ func (s *Service) Workflows() []workflow.Definition {
 			// Polls don't count as attempts; the build's own timeout ends it
 			// first, the step's Timeout bounds a build that never reports.
 			{Name: release.StepBuild, Run: s.build, Timeout: build.Timeout + 5*time.Minute, MaxAttempts: 30},
+			// The scan is recorded by build.scan on its own. Polls don't count
+			// as attempts; ScanWait, inside the step, ends the wait (no step
+			// Timeout: the step may also park for an approval).
+			{Name: release.StepAuthorizeScan, Run: s.authorizeScanStep, MaxAttempts: 8},
+			{Name: release.StepApprovalScan, Run: s.approvalScanStep, MaxAttempts: 8},
 			// ~4 min of retries (backoff 2^n s) ride out a cluster briefly unreachable.
 			{Name: release.StepApply, Run: s.apply, MaxAttempts: 8},
 			// Polls don't count as attempts; errors (cluster or DB unreachable)

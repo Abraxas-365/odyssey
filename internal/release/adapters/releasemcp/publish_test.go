@@ -144,6 +144,10 @@ func (b *builds) add(status build.Status, owner project.ID) build.ID {
 	return bl.ID
 }
 
+func (b *builds) Scans(context.Context, identity.OrganizationID, []build.ID) ([]build.BuildScan, error) {
+	return nil, nil
+}
+
 func (b *builds) Find(_ context.Context, org identity.OrganizationID, id build.ID) (build.Build, error) {
 	bl, ok := b.byID[id]
 	if !ok || org != b.org {

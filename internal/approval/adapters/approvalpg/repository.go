@@ -156,8 +156,8 @@ func (r *Repository) FindForUpdate(ctx context.Context, org identity.Organizatio
 	return r.one(ctx, `organization_id = $1 AND id = $2`, " FOR UPDATE", org, id)
 }
 
-func (r *Repository) FindByRun(ctx context.Context, org identity.OrganizationID, run string) (approval.Request, error) {
-	return r.one(ctx, `organization_id = $1 AND run_id = $2`, "", org, run)
+func (r *Repository) FindByRun(ctx context.Context, org identity.OrganizationID, run, step string) (approval.Request, error) {
+	return r.one(ctx, `organization_id = $1 AND run_id = $2 AND run_step = $3`, "", org, run, step)
 }
 
 // filterSQL is the WHERE of List: the organization, what the viewer may see

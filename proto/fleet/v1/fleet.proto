@@ -108,6 +108,12 @@ message AgentMessage {
     // policy_ack answers a ControlMessage.cluster_policy (and is sent again
     // right after Hello for the generation the agent keeps).
     PolicyAck policy_ack = 7;
+    // scan_report says what the vulnerability scan (3c) found in built images:
+    // sent when a scan ends, and again for every scan the cluster still holds
+    // right after Hello. A separate message, not a field of BuildStatus: a
+    // build's status is final once it succeeds (and the build is dropped from
+    // the cluster right after), while its scan ends minutes later.
+    ScanReport scan_report = 8;
   }
 }
 
@@ -234,6 +240,8 @@ message Capabilities {
   // "postgres" (CloudNativePG installed), "redis" (always, with a storage
   // class) and "files" (a default storage class). An agent that does not
   // list a kind (every agent older than 2b) must not be sent one.
+  // The capability "odicea.scan" (3c), among apis, says the agent scans the
+  // images it builds. Without it, builds of the cluster have no scan.
   repeated string resource_kinds = 8;
 }
 
@@ -297,6 +305,35 @@ message BuildStatus {
   // "timeout" or "failed".
   string reason = 4;
   string message = 5;
+}
+
+// ScanReport carries the scans that ended. A cluster whose agent lists the
+// capability "odicea.scan" scans every image it builds, right after the build
+// succeeds, and never delays the build for it.
+message ScanReport {
+  repeated ScanStatus scans = 1;
+}
+
+// ScanStatus is the outcome of one image scan. The control plane keeps it
+// only when image_digest is the one the build reported.
+message ScanStatus {
+  string build_id = 1;
+  // image_digest ("sha256:<64 hex>") is what was scanned.
+  string image_digest = 2;
+  // Findings by severity, counted once per vulnerability and package.
+  int32 critical = 3;
+  int32 high = 4;
+  int32 medium = 5;
+  int32 low = 6;
+  // tool names the scanner and its version ("trivy 0.76.2").
+  string tool = 7;
+  // db_updated_at (RFC 3339) is when the scanner's vulnerability database
+  // was built; empty when unknown.
+  string db_updated_at = 8;
+  // error is non-empty when the scan could not be done (no network to
+  // download the database, the registry refused it, ...): the counts mean
+  // nothing and the image counts as not scanned.
+  string error = 9;
 }
 
 message BuildLog {

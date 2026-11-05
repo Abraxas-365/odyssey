@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
@@ -31,31 +32,62 @@ func code(err error) string {
 	return ""
 }
 
-func TestFirstReadSeedsTheFourBuiltinsOnceAndInOrder(t *testing.T) {
+func TestFirstReadSeedsTheBuiltinsOnceAndInOrder(t *testing.T) {
 	svc, events, repo := setup(&policytest.Engine{})
 	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
 	rules, err := svc.List(context.Background(), org)
-	if err != nil || len(rules) != 4 {
+	if err != nil || len(rules) != 5 {
 		t.Fatalf("list: %d rules, %v", len(rules), err)
 	}
 	for _, r := range rules {
-		if !r.IsBuiltin() || !r.Enabled || r.Approvers != permission.ApprovalsDecide || r.Version != 1 {
+		// production_requires_scan is born off: it holds back deployments of
+		// organizations that did not ask for it
+		wantOn := *r.Builtin != policy.BuiltinRequiresScan
+		if !r.IsBuiltin() || r.Enabled != wantOn || r.Approvers != permission.ApprovalsDecide || r.Version != 1 {
 			t.Errorf("built-in %+v", r)
 		}
 	}
-	if rules[0].Name != "Publicar en producción requiere aprobación de TI" || rules[3].Name != "Sandbox no puede ser pública" {
-		t.Errorf("names/order: %q … %q", rules[0].Name, rules[3].Name)
+	if rules[0].Name != "Publicar en producción requiere aprobación de TI" || rules[4].Name != "Producción exige revisión de vulnerabilidades" {
+		t.Errorf("names/order: %q … %q", rules[0].Name, rules[4].Name)
 	}
 	// reading again (even through a second service: another replica) adds nothing
 	again := policysvc.New(repo, &policytest.Engine{}, txn.Passthrough{}, events)
-	if rules, _ := again.List(context.Background(), org); len(rules) != 4 {
+	if rules, _ := again.List(context.Background(), org); len(rules) != 5 {
 		t.Fatalf("re-seeded: %d", len(rules))
 	}
-	if rules, _ := svc.List(context.Background(), other); len(rules) != 4 {
+	if rules, _ := svc.List(context.Background(), other); len(rules) != 5 {
 		t.Fatalf("other org: %d", len(rules))
 	}
 	if len(events.Events()) != 0 {
 		t.Fatalf("seeding published %v", events.Types())
+	}
+}
+
+// An organization born before a builtin existed gets it on its next read, and
+// production_requires_scan arrives OFF for it, whatever else it switched.
+func TestANewBuiltinReachesAnExistingOrganizationDisabled(t *testing.T) {
+	ctx := context.Background()
+	svc, _, repo := setup(&policytest.Engine{})
+	org := identity.NewOrganizationID()
+	old := policy.Builtins(org, time.Now().UTC())
+	old = old[:len(old)-1] // the rulebook before production_requires_scan existed
+	if _, err := repo.SeedBuiltins(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := svc.List(ctx, org)
+	if err != nil || len(rules) != 5 {
+		t.Fatalf("list: %d rules, %v", len(rules), err)
+	}
+	for _, r := range rules {
+		if *r.Builtin == policy.BuiltinRequiresScan {
+			if r.Enabled {
+				t.Fatal("production_requires_scan must arrive disabled")
+			}
+			continue
+		}
+		if !r.Enabled {
+			t.Errorf("%s was switched off by the seeding", *r.Builtin)
+		}
 	}
 }
 
@@ -166,7 +198,7 @@ func TestTheRulebookHasALimit(t *testing.T) {
 	svc, _, _ := setup(&policytest.Engine{})
 	ctx, org := context.Background(), identity.NewOrganizationID()
 	d := policy.Draft{Name: "x", Expression: "true", Effect: policy.EffectAllow}
-	for i := 4; i < policy.MaxRules; i++ { // the 4 built-ins count
+	for i := 5; i < policy.MaxRules; i++ { // the 5 built-ins count
 		if _, err := svc.Create(ctx, org, policy.Create{CreatedBy: user, Draft: d}); err != nil {
 			t.Fatalf("rule %d: %v", i, err)
 		}
@@ -263,7 +295,7 @@ func TestARuleThatCannotBeEvaluatedFailsClosedAtItsOwnStrength(t *testing.T) {
 	if err != nil || ev.Effect != policy.EffectAllow || len(ev.Rules) != 0 {
 		t.Fatalf("an erroring allow rule blocked: %+v %v", ev, err)
 	}
-	if len(ev.Results) != 5 || ev.Results[4].Rule.ID != rs["rota"].ID || ev.Results[4].Error == "" || ev.Results[4].Matched {
+	if len(ev.Results) != 6 || ev.Results[5].Rule.ID != rs["rota"].ID || ev.Results[5].Error == "" || ev.Results[5].Matched {
 		t.Fatalf("results %+v", ev.Results)
 	}
 
@@ -293,12 +325,12 @@ func TestACandidateRuleIsTriedWithoutSavingIt(t *testing.T) {
 	before, published := len(mustList(t, repo, org)), len(events.Events())
 
 	ev, err := svc.Explain(ctx, org, deploy, &policy.Candidate{Draft: policy.Draft{Expression: "deny-it", Effect: policy.EffectApproval}})
-	if err != nil || ev.Effect != policy.EffectDeny || len(ev.Results) != 6 {
+	if err != nil || ev.Effect != policy.EffectDeny || len(ev.Results) != 7 {
 		t.Fatalf("candidate among saved rules: %+v %v", ev, err)
 	}
 	ev, _ = svc.Explain(ctx, org, deploy, &policy.Candidate{Replaces: stored["guardada"].ID,
 		Draft: policy.Draft{Name: "editada", Expression: "other", Effect: policy.EffectDeny}})
-	if ev.Effect != policy.EffectAllow || len(ev.Results) != 5 || ev.Results[4].Rule.Name != "editada" {
+	if ev.Effect != policy.EffectAllow || len(ev.Results) != 6 || ev.Results[5].Rule.Name != "editada" {
 		t.Fatalf("a candidate replacing the stored rule: %+v", ev)
 	}
 	_, err = svc.Explain(ctx, org, deploy, &policy.Candidate{Draft: policy.Draft{Expression: "nope ==", Effect: policy.EffectDeny}})

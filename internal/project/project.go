@@ -180,16 +180,28 @@ func (a Archive) Validate() error {
 	return nil
 }
 
+// MaxBatch bounds FindMany and EnvironmentsOf (a page of an inventory).
+const MaxBatch = 500
+
 // Filter narrows List. Pagination.Search matches name and slug. Repeated
-// statuses mean OR; none means active only.
+// statuses mean OR; none means active only. Tier (repeated: OR) and
+// CreatedBy (the app's creator, its owner) narrow it further; the zero values
+// match everything.
 type Filter struct {
-	Status []Status
+	Status    []Status
+	Tier      []Tier
+	CreatedBy identity.UserID
 }
 
 func (f Filter) Validate() error {
 	for _, s := range f.Status {
 		if !s.Valid() {
 			return errx.InvalidField("status", StatusMessage)
+		}
+	}
+	for _, t := range f.Tier {
+		if !t.Valid() {
+			return errx.InvalidField("tier", TierMessage)
 		}
 	}
 	return nil

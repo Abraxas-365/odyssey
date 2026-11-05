@@ -181,6 +181,12 @@ func (q *projects) ListEnvironments(ctx context.Context, org identity.Organizati
 func (q *projects) List(context.Context, identity.OrganizationID, project.Filter, query.Pagination) (query.Paginated[project.Project], error) {
 	return query.Paginated[project.Project]{}, nil
 }
+func (q *projects) FindMany(context.Context, identity.OrganizationID, []project.ID) ([]project.Project, error) {
+	return nil, nil
+}
+func (q *projects) EnvironmentsOf(context.Context, identity.OrganizationID, []project.ID) ([]project.Environment, error) {
+	return nil, nil
+}
 
 // upload is what the builder double received.
 type upload struct {

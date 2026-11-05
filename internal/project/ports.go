@@ -33,6 +33,13 @@ type Queries interface {
 	FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, project ID, slug string) (Environment, error)
 	// ListEnvironments returns the project's environments, production first.
 	ListEnvironments(ctx context.Context, organization identity.OrganizationID, project ID, filter EnvironmentFilter) ([]Environment, error)
+	// FindMany reads several projects at once (the ones that exist in the
+	// organization; any other id is simply absent): one query for a read
+	// model that would otherwise ask once per app.
+	FindMany(ctx context.Context, organization identity.OrganizationID, projects []ID) ([]Project, error)
+	// EnvironmentsOf reads the environments of several projects at once, in
+	// the order of ListEnvironments (project, then production first).
+	EnvironmentsOf(ctx context.Context, organization identity.OrganizationID, projects []ID) ([]Environment, error)
 	// Hold is Find that keeps the project as it is (SELECT … FOR SHARE) until
 	// the caller's transaction ends: it cannot be archived meanwhile, so a
 	// check of its status stays true while the caller writes. Call it inside
@@ -61,4 +68,6 @@ type Repository interface {
 	FindEnvironment(ctx context.Context, organization identity.OrganizationID, project ID, environment EnvironmentID) (Environment, error)
 	FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, project ID, slug string) (Environment, error)
 	ListEnvironments(ctx context.Context, organization identity.OrganizationID, project ID, filter EnvironmentFilter) ([]Environment, error)
+	FindMany(ctx context.Context, organization identity.OrganizationID, projects []ID) ([]Project, error)
+	ListEnvironmentsOf(ctx context.Context, organization identity.OrganizationID, projects []ID) ([]Environment, error)
 }

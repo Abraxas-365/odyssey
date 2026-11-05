@@ -76,6 +76,16 @@ export async function api<T>(path: string, options?: RequestOptions): Promise<T>
   return res.status === 204 ? (undefined as T) : (res.json() as Promise<T>)
 }
 
+/**
+ * A file the API serves (the inventory's CSV): the same authenticated request,
+ * read as a Blob, with the response headers (a browser link could not carry
+ * the bearer token).
+ */
+export async function apiFile(path: string, options?: Pick<RequestOptions, 'signal'>): Promise<{ blob: Blob; headers: Headers }> {
+  const res = await request(path, options)
+  return { blob: await res.blob(), headers: res.headers }
+}
+
 // Plain-Spanish messages per error code (UX v3 §4: consequences, not codes).
 const messages: Record<string, string> = {
   ...githubMessages,

@@ -44,6 +44,9 @@ type Options struct {
 	Registry string
 	// Behavior decides each build's outcome (default: success).
 	Behavior func(build.Job) Outcome
+	// Scan decides what ObserveScan answers for a succeeded build (default:
+	// the fake does not scan, ScanUnsupported); SetScan overrides one build.
+	Scan func(build.Build) build.ScanObservation
 	// Now is the clock (tests).
 	Now func() time.Time
 }
@@ -55,6 +58,7 @@ type Runner struct {
 	outcomes  map[build.ID]Outcome
 	cancelled map[build.ID]bool
 	forgotten map[build.ID]bool
+	scans     map[build.ID]build.ScanObservation
 	down      error
 }
 
@@ -80,7 +84,7 @@ func New(opts Options) *Runner {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Runner{opts: opts, outcomes: map[build.ID]Outcome{}, cancelled: map[build.ID]bool{}, forgotten: map[build.ID]bool{}}
+	return &Runner{opts: opts, outcomes: map[build.ID]Outcome{}, cancelled: map[build.ID]bool{}, forgotten: map[build.ID]bool{}, scans: map[build.ID]build.ScanObservation{}}
 }
 
 // SetDown makes every call fail with err (nil brings the runner back).
@@ -239,4 +243,28 @@ func (r *Runner) Forget(_ context.Context, b build.Build) error {
 	r.forgotten[b.ID] = true
 	delete(r.outcomes, b.ID)
 	return nil
+}
+
+// ObserveScan: the fake builds nothing, so it scans nothing, unless a test
+// scripts a scan (SetScan).
+func (r *Runner) ObserveScan(_ context.Context, b build.Build) (build.ScanObservation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.down != nil {
+		return build.ScanObservation{}, r.down
+	}
+	if s, ok := r.scans[b.ID]; ok {
+		return s, nil
+	}
+	if r.opts.Scan != nil {
+		return r.opts.Scan(b), nil
+	}
+	return build.ScanObservation{Phase: build.ScanUnsupported}, nil
+}
+
+// SetScan scripts what ObserveScan answers for a build (tests).
+func (r *Runner) SetScan(b build.ID, o build.ScanObservation) {
+	r.mu.Lock()
+	r.scans[b] = o
+	r.mu.Unlock()
 }

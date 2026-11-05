@@ -63,8 +63,8 @@ func (f *Repo) FindForUpdate(ctx context.Context, org identity.OrganizationID, i
 	return f.Find(ctx, org, id)
 }
 
-func (f *Repo) FindByRun(_ context.Context, org identity.OrganizationID, run string) (approval.Request, error) {
-	return f.find(org, func(x approval.Request) bool { return x.Run == run })
+func (f *Repo) FindByRun(_ context.Context, org identity.OrganizationID, run, step string) (approval.Request, error) {
+	return f.find(org, func(x approval.Request) bool { return x.Run == run && x.RunStep == step })
 }
 
 func (f *Repo) List(_ context.Context, org identity.OrganizationID, v approval.Viewer, fl approval.Filter, p query.Pagination) (query.Paginated[approval.Request], error) {

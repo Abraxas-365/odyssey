@@ -12,10 +12,10 @@ import { usePreferences } from '@/lib/preferences'
 import { useProjects } from '@/lib/projects'
 import type { ProjectStatus } from '@/lib/types'
 import { CreateAppDialog } from '@/features/apps/create-app-dialog'
+import { AttentionSection } from '@/features/inventory/attention-section'
 
 /**
- * Inicio. UX v3 §3 puts "Necesita tu atención" on top; it is wired when the
- * API exposes builds/requests. Today it lists apps (projects).
+ * Inicio. "Necesita tu atención" (UX v3 §3) goes on top, then the apps.
  */
 export function HomePage() {
   const { user, can } = useAuth()
@@ -50,6 +50,8 @@ export function HomePage() {
           </>
         }
       />
+
+      <AttentionSection />
 
       <SectionHeader
         title="Apps"

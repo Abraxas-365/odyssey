@@ -118,6 +118,10 @@ func (r *releases) Secrets(_ context.Context, org identity.OrganizationID, _ pro
 	return release.Secrets{Items: []release.SecretView{}}, nil
 }
 
+func (r *releases) Serving(context.Context, identity.OrganizationID, []project.EnvironmentID) ([]release.Serving, error) {
+	return nil, nil
+}
+
 func (r *releases) Uses(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Uses, error) {
 	if err := r.place(org, env); err != nil {
 		return release.Uses{}, err

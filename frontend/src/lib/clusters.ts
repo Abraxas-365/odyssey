@@ -15,11 +15,12 @@ export const WAITING_POLL_MS = 3000
 /** Otherwise every 30 s: "Conectado" means heard from in the last 90 s. */
 export const CLUSTERS_POLL_MS = 30_000
 
-export function useClusters(status?: ClusterStatus) {
+export function useClusters(status?: ClusterStatus, enabled = true) {
   return useQuery({
     queryKey: clusterKeys.list(status),
     queryFn: ({ signal }) => api<ClusterList>(`/clusters${params({ status, limit: 100 })}`, { signal }),
     placeholderData: keepPreviousData,
+    enabled,
     refetchInterval: q => (q.state.data?.items.some(c => awaitingAgent(c)) ? WAITING_POLL_MS : CLUSTERS_POLL_MS),
   })
 }

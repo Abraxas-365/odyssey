@@ -50,6 +50,10 @@ type Decided struct {
 	DecidedBy   string `json:"decided_by"`
 	Note        string `json:"note"`
 	Run         string `json:"run_id"`
+	// RunStep is the workflow step that waits for the decision ("" for a
+	// direct action, and for events published before steps were named: the
+	// run's first step then).
+	RunStep string `json:"run_step"`
 }
 
 // Consumed v1: the approval was used (the action ran, or the deployment it
@@ -100,7 +104,7 @@ func NewRequested(r Request) event.Event {
 
 func decided(r Request, by identity.UserID, note string) Decided {
 	return Decided{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: r.Environment.String(),
-		RequestedBy: requester(r), DecidedBy: userText(by), Note: note, Run: r.Run}
+		RequestedBy: requester(r), DecidedBy: userText(by), Note: note, Run: r.Run, RunStep: r.RunStep}
 }
 
 func NewApproved(r Request, by identity.UserID, note string) event.Event {

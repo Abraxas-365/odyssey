@@ -73,6 +73,20 @@ export type DeploySourceConfig = Schemas['DeploySourceConfig']
 export type Build = Schemas['Build']
 export type BuildLogPage = Schemas['BuildLogPage']
 export type BuildLogLine = BuildLogPage['lines'][number]
+/** The image's vulnerability scan (cut 3c): null until the cluster reports it. */
+export type BuildScan = Schemas['BuildScan']
+
+/** The inventory (IT) and "Necesita tu atención" (everyone), cut 3c. */
+export type InventoryPage = Schemas['InventoryPage']
+export type InventoryRow = Schemas['InventoryRow']
+export type InventoryScan = InventoryRow['scan']
+export type InventoryStatus = InventoryRow['status']
+export type Attention = Schemas['Attention']
+export type AttentionItem = Schemas['AttentionItem']
+export type AttentionKind = AttentionItem['kind']
+export type AttentionSource = Attention['unavailable'][number]
+/** Query of GET /inventory (the page is the standard one). */
+export type InventoryFilter = Omit<NonNullable<operations['listInventory']['parameters']['query']>, 'format'>
 
 /** The organization's Kubernetes clusters (TI: Infraestructura → Clústeres). */
 export type Cluster = Schemas['Cluster']

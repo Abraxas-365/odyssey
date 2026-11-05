@@ -225,6 +225,19 @@ func main() {
 			t.Fatalf("build log: %d lines, finished=%v", len(lines), finished)
 		}
 		t.Logf("build log: %d lines", len(lines))
+
+		// The build did not wait for the scan: Trivy runs after it, as a Job,
+		// and the control plane records what it found (or why it could not).
+		var scanned build.Build
+		waitFor(t, ctx, "the image's scan to be recorded", 8*time.Minute, func() bool {
+			scanned = k.build(p, b.ID)
+			return scanned.Scan != nil
+		})
+		s := scanned.Scan
+		if s.Known() && (s.Digest != build.DigestOf(b.Image) || s.Tool == "" || s.Critical < 0 || s.High < 0) {
+			t.Fatalf("scan %+v for image %s", s, b.Image)
+		}
+		t.Logf("scan: %+v", *s) // known=false is acceptable offline: the reason is in Error
 	})
 
 	// (b) an app with its own Dockerfile: built with it, not with Railpack.

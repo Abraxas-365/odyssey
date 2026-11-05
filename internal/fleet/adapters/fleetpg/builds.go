@@ -162,6 +162,66 @@ func (r *Repository) ObserveBuilds(ctx context.Context, organization identity.Or
 	return live, nil
 }
 
+// ObserveScans upserts the reported scans of builds desired on this cluster,
+// in one statement, while session is the cluster's tunnel. A scan is dropped
+// unless its digest is the one the build's succeeded status reported (so an
+// agent cannot attach a scan to another image, and a scan cannot arrive
+// before the build is known to have succeeded: the agent resends all of them
+// periodically, so an early one is only late).
+func (r *Repository) ObserveScans(ctx context.Context, organization identity.OrganizationID, cluster fleet.ClusterID, session fleet.Session, scans []fleet.ScanStatus) (bool, error) {
+	n := len(scans)
+	ids, digests, tools, dbs, errs := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+	crit, high, med, low := make([]int64, n), make([]int64, n), make([]int64, n), make([]int64, n)
+	for i, s := range scans {
+		ids[i], digests[i], tools[i], dbs[i], errs[i] = s.Build.String(), s.Digest, s.Tool, s.DBUpdatedAt, s.Error
+		crit[i], high[i], med[i], low[i] = int64(s.Critical), int64(s.High), int64(s.Medium), int64(s.Low)
+	}
+	var live bool
+	err := txn.Q(ctx, r.db).GetContext(ctx, &live,
+		`WITH tunnel AS (
+		    SELECT 1 FROM fleet.clusters WHERE organization_id = $1 AND id = $2 AND status = 'active' AND session_id = $3
+		 ), reported AS (
+		    SELECT DISTINCT ON (r.id) r.id, r.digest, r.critical, r.high, r.medium, r.low, r.tool, r.db, r.error
+		    FROM unnest($4::uuid[], $5::text[], $6::bigint[], $7::bigint[], $8::bigint[], $9::bigint[], $10::text[], $11::text[], $12::text[])
+		         WITH ORDINALITY AS r(id, digest, critical, high, medium, low, tool, db, error, ord)
+		    JOIN fleet.desired_builds d ON d.organization_id = $1 AND d.cluster_id = $2 AND d.id = r.id
+		    JOIN fleet.build_status s ON s.organization_id = $1 AND s.build_id = r.id
+		         AND s.phase = 'succeeded' AND s.image_digest = r.digest
+		    WHERE EXISTS (SELECT 1 FROM tunnel)
+		    ORDER BY r.id, r.ord DESC
+		 ), upserted AS (
+		    INSERT INTO fleet.build_scans (build_id, organization_id, image_digest, critical, high, medium, low, tool, db_updated_at, error, observed_at)
+		    SELECT id, $1, digest, critical, high, medium, low, tool, db, error, now() FROM reported
+		    ON CONFLICT (build_id) DO UPDATE SET image_digest = EXCLUDED.image_digest, critical = EXCLUDED.critical,
+		        high = EXCLUDED.high, medium = EXCLUDED.medium, low = EXCLUDED.low, tool = EXCLUDED.tool,
+		        db_updated_at = EXCLUDED.db_updated_at, error = EXCLUDED.error, observed_at = now()
+		    WHERE fleet.build_scans.organization_id = $1
+		    RETURNING 1
+		 )
+		 SELECT EXISTS (SELECT 1 FROM tunnel)`,
+		organization, cluster, session, pq.Array(ids), pq.Array(digests), pq.Array(crit), pq.Array(high), pq.Array(med),
+		pq.Array(low), pq.Array(tools), pq.Array(dbs), pq.Array(errs))
+	if err != nil {
+		return false, pgerr.Map(err, "observe scans")
+	}
+	return live, nil
+}
+
+// FindBuildScan is the stored scan of a build (NotFound before one).
+func (r *Repository) FindBuildScan(ctx context.Context, organization identity.OrganizationID, id fleet.BuildID) (fleet.ScanStatus, error) {
+	var s fleet.ScanStatus
+	err := txn.Q(ctx, r.db).GetContext(ctx, &s,
+		`SELECT build_id, image_digest, critical, high, medium, low, tool, db_updated_at, error, observed_at
+		 FROM fleet.build_scans WHERE organization_id = $1 AND build_id = $2`, organization, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fleet.ScanStatus{}, errx.NotFound("scan not found")
+	}
+	if err != nil {
+		return fleet.ScanStatus{}, pgerr.Map(err, "find scan")
+	}
+	return s, nil
+}
+
 // ObserveBuildLog stores the lines of a build desired on this cluster, in
 // one statement, while session is the cluster's tunnel: lines already
 // stored are skipped (a resend), and the first line that would take the

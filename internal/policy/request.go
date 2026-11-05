@@ -22,7 +22,9 @@ func FromRequest(a actor.Actor, r gate.Request) Input {
 		Resource: ResourceInput{Kind: r.ResourceKind},
 	}
 	if r.Scan != nil {
-		in.Scan = ScanInput{Known: true, Critical: r.Scan.Critical, High: r.Scan.High}
+		in.Scan = ScanInput{Known: true, Checked: true, Critical: r.Scan.Critical, High: r.Scan.High}
+	} else {
+		in.Scan.Checked = r.ScanChecked
 	}
 	return in
 }

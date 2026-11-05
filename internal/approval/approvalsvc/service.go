@@ -162,9 +162,9 @@ func (s *Service) Cancel(ctx context.Context, org identity.OrganizationID, id ap
 	return out, err
 }
 
-func (s *Service) CancelRun(ctx context.Context, org identity.OrganizationID, run string) error {
+func (s *Service) CancelRun(ctx context.Context, org identity.OrganizationID, run, step string) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		r, err := s.repo.FindByRun(ctx, org, run)
+		r, err := s.repo.FindByRun(ctx, org, run, step)
 		if errx.IsType(err, errx.TypeNotFound) {
 			return nil
 		}

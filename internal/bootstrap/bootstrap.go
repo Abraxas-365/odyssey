@@ -43,6 +43,8 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/fleet/fleetmodule"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/inventory/adapters/inventorymcp"
+	"github.com/Abraxas-365/odyssey/internal/inventory/inventorymodule"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/permission"
@@ -306,6 +308,8 @@ type Platform struct {
 	Audit     auditmodule.Module
 	Policy    policymodule.Module
 	Approvals approvalmodule.Module
+	// Inventory only reads the other domains (docs/inventory.md).
+	Inventory inventorymodule.Module
 }
 
 // Options are the process-specific parts of a Platform.
@@ -445,6 +449,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Resources: resources,
 		AI:        ais,
 		Audit:     auditmodule.New(auditmodule.Deps{DB: db}),
+		Inventory: inventorymodule.New(inventorymodule.Deps{Projects: projects.Queries, Releases: releases.Queries, Builds: builds.Queries,
+			Fleet: fleets.Queries, Approvals: approvals.Queries}),
 	}
 	p.Audit.Subscribe(bus)
 	p.Sources.Subscribe(bus)
@@ -591,6 +597,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.Audit.HTTP,
 		p.Policy.HTTP,
 		p.Approvals.HTTP,
+		p.Inventory.HTTP,
 		assistantRoutes,
 	)
 }
@@ -602,7 +609,8 @@ func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
 	sources := p.Sources.Queries
 	return slices.Concat(
 		projectmcp.Tools(p.Projects.Commands, p.Projects.Queries, projectmcp.Options{ConsoleURL: cfg.ConsoleURL,
-			GitHubEnabled: func(context.Context) bool { return github }}),
+			GitHubEnabled:    func(context.Context) bool { return github },
+			NeedingAttention: p.Inventory.Queries.NeedingAttention}),
 		releasemcp.Tools(p.Projects.Queries, p.Releases.Commands, p.Releases.Queries, p.Builds.Queries, releasemcp.Options{
 			ConsoleURL: cfg.ConsoleURL, APIURL: PublicAPIURL(cfg),
 			// release does not know where a source came from; the
@@ -621,6 +629,7 @@ func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
 		resourcemcp.Tools(p.Projects.Queries, p.Resources.Commands, p.Resources.Queries, resourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
 		aimcp.Tools(p.Projects.Queries, p.AI.Commands, aimcp.Options{ConsoleURL: cfg.ConsoleURL}),
 		approvalmcp.Tools(p.Approvals.Queries, approvalmcp.Options{ConsoleURL: cfg.ConsoleURL}),
+		inventorymcp.Tools(p.Inventory.Queries, inventorymcp.Options{ConsoleURL: cfg.ConsoleURL}),
 	)
 }
 

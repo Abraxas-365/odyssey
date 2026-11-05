@@ -516,6 +516,7 @@ type AgentMessage struct {
 	//	*AgentMessage_SecretAck
 	//	*AgentMessage_ResourceReport
 	//	*AgentMessage_PolicyAck
+	//	*AgentMessage_ScanReport
 	Message       isAgentMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -621,6 +622,15 @@ func (x *AgentMessage) GetPolicyAck() *PolicyAck {
 	return nil
 }
 
+func (x *AgentMessage) GetScanReport() *ScanReport {
+	if x != nil {
+		if x, ok := x.Message.(*AgentMessage_ScanReport); ok {
+			return x.ScanReport
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Message interface {
 	isAgentMessage_Message()
 }
@@ -663,6 +673,15 @@ type AgentMessage_PolicyAck struct {
 	PolicyAck *PolicyAck `protobuf:"bytes,7,opt,name=policy_ack,json=policyAck,proto3,oneof"`
 }
 
+type AgentMessage_ScanReport struct {
+	// scan_report says what the vulnerability scan (3c) found in built images:
+	// sent when a scan ends, and again for every scan the cluster still holds
+	// right after Hello. A separate message, not a field of BuildStatus: a
+	// build's status is final once it succeeds (and the build is dropped from
+	// the cluster right after), while its scan ends minutes later.
+	ScanReport *ScanReport `protobuf:"bytes,8,opt,name=scan_report,json=scanReport,proto3,oneof"`
+}
+
 func (*AgentMessage_Hello) isAgentMessage_Message() {}
 
 func (*AgentMessage_Report) isAgentMessage_Message() {}
@@ -676,6 +695,8 @@ func (*AgentMessage_SecretAck) isAgentMessage_Message() {}
 func (*AgentMessage_ResourceReport) isAgentMessage_Message() {}
 
 func (*AgentMessage_PolicyAck) isAgentMessage_Message() {}
+
+func (*AgentMessage_ScanReport) isAgentMessage_Message() {}
 
 type ControlMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1274,6 +1295,8 @@ type Capabilities struct {
 	// "postgres" (CloudNativePG installed), "redis" (always, with a storage
 	// class) and "files" (a default storage class). An agent that does not
 	// list a kind (every agent older than 2b) must not be sent one.
+	// The capability "odicea.scan" (3c), among apis, says the agent scans the
+	// images it builds. Without it, builds of the cluster have no scan.
 	ResourceKinds []string `protobuf:"bytes,8,rep,name=resource_kinds,json=resourceKinds,proto3" json:"resource_kinds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1812,6 +1835,171 @@ func (x *BuildStatus) GetMessage() string {
 	return ""
 }
 
+// ScanReport carries the scans that ended. A cluster whose agent lists the
+// capability "odicea.scan" scans every image it builds, right after the build
+// succeeds, and never delays the build for it.
+type ScanReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scans         []*ScanStatus          `protobuf:"bytes,1,rep,name=scans,proto3" json:"scans,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScanReport) Reset() {
+	*x = ScanReport{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScanReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScanReport) ProtoMessage() {}
+
+func (x *ScanReport) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScanReport.ProtoReflect.Descriptor instead.
+func (*ScanReport) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ScanReport) GetScans() []*ScanStatus {
+	if x != nil {
+		return x.Scans
+	}
+	return nil
+}
+
+// ScanStatus is the outcome of one image scan. The control plane keeps it
+// only when image_digest is the one the build reported.
+type ScanStatus struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	BuildId string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	// image_digest ("sha256:<64 hex>") is what was scanned.
+	ImageDigest string `protobuf:"bytes,2,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	// Findings by severity, counted once per vulnerability and package.
+	Critical int32 `protobuf:"varint,3,opt,name=critical,proto3" json:"critical,omitempty"`
+	High     int32 `protobuf:"varint,4,opt,name=high,proto3" json:"high,omitempty"`
+	Medium   int32 `protobuf:"varint,5,opt,name=medium,proto3" json:"medium,omitempty"`
+	Low      int32 `protobuf:"varint,6,opt,name=low,proto3" json:"low,omitempty"`
+	// tool names the scanner and its version ("trivy 0.76.2").
+	Tool string `protobuf:"bytes,7,opt,name=tool,proto3" json:"tool,omitempty"`
+	// db_updated_at (RFC 3339) is when the scanner's vulnerability database
+	// was built; empty when unknown.
+	DbUpdatedAt string `protobuf:"bytes,8,opt,name=db_updated_at,json=dbUpdatedAt,proto3" json:"db_updated_at,omitempty"`
+	// error is non-empty when the scan could not be done (no network to
+	// download the database, the registry refused it, ...): the counts mean
+	// nothing and the image counts as not scanned.
+	Error         string `protobuf:"bytes,9,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScanStatus) Reset() {
+	*x = ScanStatus{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScanStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScanStatus) ProtoMessage() {}
+
+func (x *ScanStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScanStatus.ProtoReflect.Descriptor instead.
+func (*ScanStatus) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ScanStatus) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *ScanStatus) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *ScanStatus) GetCritical() int32 {
+	if x != nil {
+		return x.Critical
+	}
+	return 0
+}
+
+func (x *ScanStatus) GetHigh() int32 {
+	if x != nil {
+		return x.High
+	}
+	return 0
+}
+
+func (x *ScanStatus) GetMedium() int32 {
+	if x != nil {
+		return x.Medium
+	}
+	return 0
+}
+
+func (x *ScanStatus) GetLow() int32 {
+	if x != nil {
+		return x.Low
+	}
+	return 0
+}
+
+func (x *ScanStatus) GetTool() string {
+	if x != nil {
+		return x.Tool
+	}
+	return ""
+}
+
+func (x *ScanStatus) GetDbUpdatedAt() string {
+	if x != nil {
+		return x.DbUpdatedAt
+	}
+	return ""
+}
+
+func (x *ScanStatus) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type BuildLog struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	BuildId       string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
@@ -1822,7 +2010,7 @@ type BuildLog struct {
 
 func (x *BuildLog) Reset() {
 	*x = BuildLog{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[25]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1834,7 +2022,7 @@ func (x *BuildLog) String() string {
 func (*BuildLog) ProtoMessage() {}
 
 func (x *BuildLog) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[25]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1847,7 +2035,7 @@ func (x *BuildLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildLog.ProtoReflect.Descriptor instead.
 func (*BuildLog) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{25}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *BuildLog) GetBuildId() string {
@@ -1878,7 +2066,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[26]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1890,7 +2078,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[26]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1903,7 +2091,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{26}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *LogLine) GetSeq() int64 {
@@ -1962,7 +2150,7 @@ type App struct {
 
 func (x *App) Reset() {
 	*x = App{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[27]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1974,7 +2162,7 @@ func (x *App) String() string {
 func (*App) ProtoMessage() {}
 
 func (x *App) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[27]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1987,7 +2175,7 @@ func (x *App) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use App.ProtoReflect.Descriptor instead.
 func (*App) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{27}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *App) GetOrganizationId() string {
@@ -2114,7 +2302,7 @@ type AI struct {
 
 func (x *AI) Reset() {
 	*x = AI{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[28]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2126,7 +2314,7 @@ func (x *AI) String() string {
 func (*AI) ProtoMessage() {}
 
 func (x *AI) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[28]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2139,7 +2327,7 @@ func (x *AI) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AI.ProtoReflect.Descriptor instead.
 func (*AI) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{28}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AI) GetBaseUrl() string {
@@ -2178,7 +2366,7 @@ type SecretRef struct {
 
 func (x *SecretRef) Reset() {
 	*x = SecretRef{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[29]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2190,7 +2378,7 @@ func (x *SecretRef) String() string {
 func (*SecretRef) ProtoMessage() {}
 
 func (x *SecretRef) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[29]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2203,7 +2391,7 @@ func (x *SecretRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretRef.ProtoReflect.Descriptor instead.
 func (*SecretRef) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{29}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *SecretRef) GetName() string {
@@ -2262,7 +2450,7 @@ type Access struct {
 
 func (x *Access) Reset() {
 	*x = Access{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[30]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2274,7 +2462,7 @@ func (x *Access) String() string {
 func (*Access) ProtoMessage() {}
 
 func (x *Access) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[30]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2287,7 +2475,7 @@ func (x *Access) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Access.ProtoReflect.Descriptor instead.
 func (*Access) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{30}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *Access) GetMode() string {
@@ -2309,7 +2497,7 @@ type AppReport struct {
 
 func (x *AppReport) Reset() {
 	*x = AppReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[31]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2321,7 +2509,7 @@ func (x *AppReport) String() string {
 func (*AppReport) ProtoMessage() {}
 
 func (x *AppReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[31]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2334,7 +2522,7 @@ func (x *AppReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppReport.ProtoReflect.Descriptor instead.
 func (*AppReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{31}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *AppReport) GetFull() bool {
@@ -2372,7 +2560,7 @@ type AppStatus struct {
 
 func (x *AppStatus) Reset() {
 	*x = AppStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[32]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2384,7 +2572,7 @@ func (x *AppStatus) String() string {
 func (*AppStatus) ProtoMessage() {}
 
 func (x *AppStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[32]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2397,7 +2585,7 @@ func (x *AppStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppStatus.ProtoReflect.Descriptor instead.
 func (*AppStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{32}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *AppStatus) GetEnvironmentId() string {
@@ -2474,7 +2662,7 @@ type ResourceRef struct {
 
 func (x *ResourceRef) Reset() {
 	*x = ResourceRef{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[33]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2486,7 +2674,7 @@ func (x *ResourceRef) String() string {
 func (*ResourceRef) ProtoMessage() {}
 
 func (x *ResourceRef) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[33]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2499,7 +2687,7 @@ func (x *ResourceRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceRef.ProtoReflect.Descriptor instead.
 func (*ResourceRef) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{33}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ResourceRef) GetName() string {
@@ -2548,7 +2736,7 @@ type Resource struct {
 
 func (x *Resource) Reset() {
 	*x = Resource{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[34]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2560,7 +2748,7 @@ func (x *Resource) String() string {
 func (*Resource) ProtoMessage() {}
 
 func (x *Resource) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[34]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2573,7 +2761,7 @@ func (x *Resource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resource.ProtoReflect.Descriptor instead.
 func (*Resource) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{34}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *Resource) GetOrganizationId() string {
@@ -2646,7 +2834,7 @@ type ResourceReport struct {
 
 func (x *ResourceReport) Reset() {
 	*x = ResourceReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[35]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2658,7 +2846,7 @@ func (x *ResourceReport) String() string {
 func (*ResourceReport) ProtoMessage() {}
 
 func (x *ResourceReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[35]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2671,7 +2859,7 @@ func (x *ResourceReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceReport.ProtoReflect.Descriptor instead.
 func (*ResourceReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{35}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ResourceReport) GetFull() bool {
@@ -2705,7 +2893,7 @@ type ResourceStatus struct {
 
 func (x *ResourceStatus) Reset() {
 	*x = ResourceStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[36]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2717,7 +2905,7 @@ func (x *ResourceStatus) String() string {
 func (*ResourceStatus) ProtoMessage() {}
 
 func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[36]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2730,7 +2918,7 @@ func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceStatus.ProtoReflect.Descriptor instead.
 func (*ResourceStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{36}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ResourceStatus) GetEnvironmentId() string {
@@ -2802,7 +2990,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\vcertificate\x18\x03 \x01(\v2\x15.fleet.v1.CertificateR\vcertificate\"6\n" +
 	"\vCertificate\x12\x10\n" +
 	"\x03pem\x18\x01 \x01(\fR\x03pem\x12\x15\n" +
-	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\x91\x03\n" +
+	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\"\xca\x03\n" +
 	"\fAgentMessage\x12'\n" +
 	"\x05hello\x18\x01 \x01(\v2\x0f.fleet.v1.HelloH\x00R\x05hello\x12-\n" +
 	"\x06report\x18\x02 \x01(\v2\x13.fleet.v1.AppReportH\x00R\x06report\x12:\n" +
@@ -2812,7 +3000,9 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"secret_ack\x18\x05 \x01(\v2\x13.fleet.v1.SecretAckH\x00R\tsecretAck\x12C\n" +
 	"\x0fresource_report\x18\x06 \x01(\v2\x18.fleet.v1.ResourceReportH\x00R\x0eresourceReport\x124\n" +
 	"\n" +
-	"policy_ack\x18\a \x01(\v2\x13.fleet.v1.PolicyAckH\x00R\tpolicyAckB\t\n" +
+	"policy_ack\x18\a \x01(\v2\x13.fleet.v1.PolicyAckH\x00R\tpolicyAck\x127\n" +
+	"\vscan_report\x18\b \x01(\v2\x14.fleet.v1.ScanReportH\x00R\n" +
+	"scanReportB\t\n" +
 	"\amessage\"\xc7\x02\n" +
 	"\x0eControlMessage\x12%\n" +
 	"\x05apply\x18\x01 \x01(\v2\r.fleet.v1.AppH\x00R\x05apply\x12'\n" +
@@ -2895,7 +3085,21 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12!\n" +
 	"\fimage_digest\x18\x03 \x01(\tR\vimageDigest\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x18\n" +
-	"\amessage\x18\x05 \x01(\tR\amessage\"N\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\"8\n" +
+	"\n" +
+	"ScanReport\x12*\n" +
+	"\x05scans\x18\x01 \x03(\v2\x14.fleet.v1.ScanStatusR\x05scans\"\xf2\x01\n" +
+	"\n" +
+	"ScanStatus\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12!\n" +
+	"\fimage_digest\x18\x02 \x01(\tR\vimageDigest\x12\x1a\n" +
+	"\bcritical\x18\x03 \x01(\x05R\bcritical\x12\x12\n" +
+	"\x04high\x18\x04 \x01(\x05R\x04high\x12\x16\n" +
+	"\x06medium\x18\x05 \x01(\x05R\x06medium\x12\x10\n" +
+	"\x03low\x18\x06 \x01(\x05R\x03low\x12\x12\n" +
+	"\x04tool\x18\a \x01(\tR\x04tool\x12\"\n" +
+	"\rdb_updated_at\x18\b \x01(\tR\vdbUpdatedAt\x12\x14\n" +
+	"\x05error\x18\t \x01(\tR\x05error\"N\n" +
 	"\bBuildLog\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12'\n" +
 	"\x05lines\x18\x02 \x03(\v2\x11.fleet.v1.LogLineR\x05lines\"G\n" +
@@ -2997,7 +3201,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -3024,68 +3228,72 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*CancelBuild)(nil),        // 22: fleet.v1.CancelBuild
 	(*BuildReport)(nil),        // 23: fleet.v1.BuildReport
 	(*BuildStatus)(nil),        // 24: fleet.v1.BuildStatus
-	(*BuildLog)(nil),           // 25: fleet.v1.BuildLog
-	(*LogLine)(nil),            // 26: fleet.v1.LogLine
-	(*App)(nil),                // 27: fleet.v1.App
-	(*AI)(nil),                 // 28: fleet.v1.AI
-	(*SecretRef)(nil),          // 29: fleet.v1.SecretRef
-	(*Access)(nil),             // 30: fleet.v1.Access
-	(*AppReport)(nil),          // 31: fleet.v1.AppReport
-	(*AppStatus)(nil),          // 32: fleet.v1.AppStatus
-	(*ResourceRef)(nil),        // 33: fleet.v1.ResourceRef
-	(*Resource)(nil),           // 34: fleet.v1.Resource
-	(*ResourceReport)(nil),     // 35: fleet.v1.ResourceReport
-	(*ResourceStatus)(nil),     // 36: fleet.v1.ResourceStatus
-	nil,                        // 37: fleet.v1.App.EnvEntry
-	nil,                        // 38: fleet.v1.App.LabelsEntry
+	(*ScanReport)(nil),         // 25: fleet.v1.ScanReport
+	(*ScanStatus)(nil),         // 26: fleet.v1.ScanStatus
+	(*BuildLog)(nil),           // 27: fleet.v1.BuildLog
+	(*LogLine)(nil),            // 28: fleet.v1.LogLine
+	(*App)(nil),                // 29: fleet.v1.App
+	(*AI)(nil),                 // 30: fleet.v1.AI
+	(*SecretRef)(nil),          // 31: fleet.v1.SecretRef
+	(*Access)(nil),             // 32: fleet.v1.Access
+	(*AppReport)(nil),          // 33: fleet.v1.AppReport
+	(*AppStatus)(nil),          // 34: fleet.v1.AppStatus
+	(*ResourceRef)(nil),        // 35: fleet.v1.ResourceRef
+	(*Resource)(nil),           // 36: fleet.v1.Resource
+	(*ResourceReport)(nil),     // 37: fleet.v1.ResourceReport
+	(*ResourceStatus)(nil),     // 38: fleet.v1.ResourceStatus
+	nil,                        // 39: fleet.v1.App.EnvEntry
+	nil,                        // 40: fleet.v1.App.LabelsEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
 	8,  // 1: fleet.v1.RenewResponse.certificate:type_name -> fleet.v1.Certificate
 	8,  // 2: fleet.v1.RecoverResponse.certificate:type_name -> fleet.v1.Certificate
 	16, // 3: fleet.v1.AgentMessage.hello:type_name -> fleet.v1.Hello
-	31, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
+	33, // 4: fleet.v1.AgentMessage.report:type_name -> fleet.v1.AppReport
 	23, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
-	25, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
+	27, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
 	15, // 7: fleet.v1.AgentMessage.secret_ack:type_name -> fleet.v1.SecretAck
-	35, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
+	37, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
 	13, // 9: fleet.v1.AgentMessage.policy_ack:type_name -> fleet.v1.PolicyAck
-	27, // 10: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
-	20, // 11: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
-	22, // 12: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
-	14, // 13: fleet.v1.ControlMessage.secret:type_name -> fleet.v1.Secret
-	34, // 14: fleet.v1.ControlMessage.resource:type_name -> fleet.v1.Resource
-	11, // 15: fleet.v1.ControlMessage.cluster_policy:type_name -> fleet.v1.ClusterPolicy
-	12, // 16: fleet.v1.ClusterPolicy.egress:type_name -> fleet.v1.EgressPolicy
-	17, // 17: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
-	19, // 18: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
-	18, // 19: fleet.v1.Capabilities.secret_key:type_name -> fleet.v1.SecretKey
-	21, // 20: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
-	24, // 21: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
-	26, // 22: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
-	37, // 23: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	38, // 24: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
-	30, // 25: fleet.v1.App.access:type_name -> fleet.v1.Access
-	29, // 26: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
-	33, // 27: fleet.v1.App.resources:type_name -> fleet.v1.ResourceRef
-	28, // 28: fleet.v1.App.ai:type_name -> fleet.v1.AI
-	32, // 29: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
-	36, // 30: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
-	2,  // 31: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 32: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 33: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 34: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 35: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 36: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 37: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 38: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 39: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 40: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	36, // [36:41] is the sub-list for method output_type
-	31, // [31:36] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	25, // 10: fleet.v1.AgentMessage.scan_report:type_name -> fleet.v1.ScanReport
+	29, // 11: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
+	20, // 12: fleet.v1.ControlMessage.build:type_name -> fleet.v1.Build
+	22, // 13: fleet.v1.ControlMessage.cancel_build:type_name -> fleet.v1.CancelBuild
+	14, // 14: fleet.v1.ControlMessage.secret:type_name -> fleet.v1.Secret
+	36, // 15: fleet.v1.ControlMessage.resource:type_name -> fleet.v1.Resource
+	11, // 16: fleet.v1.ControlMessage.cluster_policy:type_name -> fleet.v1.ClusterPolicy
+	12, // 17: fleet.v1.ClusterPolicy.egress:type_name -> fleet.v1.EgressPolicy
+	17, // 18: fleet.v1.Hello.capabilities:type_name -> fleet.v1.Capabilities
+	19, // 19: fleet.v1.Capabilities.builder:type_name -> fleet.v1.Builder
+	18, // 20: fleet.v1.Capabilities.secret_key:type_name -> fleet.v1.SecretKey
+	21, // 21: fleet.v1.Build.source:type_name -> fleet.v1.SourceRef
+	24, // 22: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
+	26, // 23: fleet.v1.ScanReport.scans:type_name -> fleet.v1.ScanStatus
+	28, // 24: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
+	39, // 25: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	40, // 26: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	32, // 27: fleet.v1.App.access:type_name -> fleet.v1.Access
+	31, // 28: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
+	35, // 29: fleet.v1.App.resources:type_name -> fleet.v1.ResourceRef
+	30, // 30: fleet.v1.App.ai:type_name -> fleet.v1.AI
+	34, // 31: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
+	38, // 32: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
+	2,  // 33: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 34: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 35: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 36: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 37: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 38: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 39: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 40: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 41: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 42: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	38, // [38:43] is the sub-list for method output_type
+	33, // [33:38] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -3101,6 +3309,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 		(*AgentMessage_SecretAck)(nil),
 		(*AgentMessage_ResourceReport)(nil),
 		(*AgentMessage_PolicyAck)(nil),
+		(*AgentMessage_ScanReport)(nil),
 	}
 	file_proto_fleet_v1_fleet_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlMessage_Apply)(nil),
@@ -3116,7 +3325,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   39,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

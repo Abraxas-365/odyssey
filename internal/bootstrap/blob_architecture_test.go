@@ -62,6 +62,11 @@ var shapePorts = []string{"Commands", "Queries", "Repository"}
 // app up through release.AccessLookup.
 var statelessDomains = map[string]bool{"access": true}
 
+// readOnlyDomains compose what other domains answer and change nothing:
+// no Commands to give and no Repository to keep (TestInventoryIsReadOnly
+// holds them to it).
+var readOnlyDomains = map[string]bool{"inventory": true}
+
 func shapeViolations(files []goFile) []string {
 	type domain struct {
 		svc, module bool
@@ -105,7 +110,7 @@ func shapeViolations(files []goFile) []string {
 			continue
 		}
 		for _, p := range shapePorts {
-			if !d.ports[p] && !(p == "Repository" && statelessDomains[name]) {
+			if !d.ports[p] && !(p == "Repository" && statelessDomains[name]) && !(p != "Queries" && readOnlyDomains[name]) {
 				out = append(out, name+"/ports.go: domain "+name+" has a service but declares no "+p+" port")
 			}
 		}
@@ -135,15 +140,18 @@ func TestBackendAndShapeRulesCatchViolations(t *testing.T) {
 		"widget/adapters/widgetpg/r.go":  `package widgetpg`,
 
 		// violations
-		"order/ports.go":                `package order; type Commands interface{}; type Repository struct{}`,
-		"order/ordersvc/s.go":           `package ordersvc; import _ "` + m + `blob/adapters/gocloudblob"`,
-		"order/adapters/orderblob/a.go": `package orderblob; import _ "gocloud.dev/blob/s3blob"`,
-		"order/ordermodule/m.go":        `package ordermodule; import _ "` + m + `event/adapters/outboxpg"`,
-		"invoice/invoicesvc/s.go":       `package invoicesvc`,
-		"invoice/ports.go":              `package invoice; type Commands interface{}; type Queries interface{}; type Repository interface{}`,
-		"access/accessmodule/m.go":      `package accessmodule`,
-		"access/accesssvc/s.go":         `package accesssvc`,
-		"access/ports.go":               `package access; type Commands interface{}; type Queries interface{}`, // stateless: no Repository
+		"order/ports.go":                 `package order; type Commands interface{}; type Repository struct{}`,
+		"order/ordersvc/s.go":            `package ordersvc; import _ "` + m + `blob/adapters/gocloudblob"`,
+		"order/adapters/orderblob/a.go":  `package orderblob; import _ "gocloud.dev/blob/s3blob"`,
+		"order/ordermodule/m.go":         `package ordermodule; import _ "` + m + `event/adapters/outboxpg"`,
+		"invoice/invoicesvc/s.go":        `package invoicesvc`,
+		"invoice/ports.go":               `package invoice; type Commands interface{}; type Queries interface{}; type Repository interface{}`,
+		"access/accessmodule/m.go":       `package accessmodule`,
+		"access/accesssvc/s.go":          `package accesssvc`,
+		"access/ports.go":                `package access; type Commands interface{}; type Queries interface{}`, // stateless: no Repository
+		"inventory/inventorymodule/m.go": `package inventorymodule`,
+		"inventory/inventorysvc/s.go":    `package inventorysvc`,
+		"inventory/ports.go":             `package inventory; type Queries interface{}`, // read-only: no Commands, no Repository
 	})
 	expectViolations(t, backendViolations(files),
 		"order/ordersvc/s.go: svc order/ordersvc imports the backend blob/adapters/gocloudblob",

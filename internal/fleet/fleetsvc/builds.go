@@ -139,6 +139,66 @@ func (s *Service) ReportBuilds(ctx context.Context, agent fleet.AgentRef, sessio
 	return nil
 }
 
+// ReportScans stores what the agent says of its scans. Invalid ones are
+// dropped (and answered with a validation error) while the valid ones are
+// kept, like ReportBuilds.
+func (s *Service) ReportScans(ctx context.Context, agent fleet.AgentRef, session fleet.Session, scans []fleet.ScanStatus) error {
+	if len(scans) > fleet.MaxReportScans {
+		return errx.Validation("too many scans in one report")
+	}
+	valid := make([]fleet.ScanStatus, 0, len(scans))
+	bad := 0
+	for _, sc := range scans {
+		if err := sc.Validate(); err != nil {
+			bad++
+			continue
+		}
+		valid = append(valid, sc.Clean())
+	}
+	live, err := s.repo.ObserveScans(ctx, agent.Organization, agent.Cluster, session, valid)
+	if err != nil {
+		return err
+	}
+	if !live {
+		return s.lost(ctx, agent)
+	}
+	if bad > 0 {
+		return errx.Validation(strconv.Itoa(bad) + " reported scans were not valid and were dropped")
+	}
+	return nil
+}
+
+// BuildScan answers where a build's scan is: the stored outcome; otherwise
+// pending while the build's cluster lists CapabilityScan, unsupported when it
+// does not (or the build is unknown: there is nothing to wait for).
+func (s *Service) BuildScan(ctx context.Context, organization identity.OrganizationID, id fleet.BuildID) (fleet.BuildScan, error) {
+	sc, err := s.repo.FindBuildScan(ctx, organization, id)
+	if err == nil {
+		return fleet.BuildScan{Phase: fleet.ScanDone, Status: sc}, nil
+	}
+	if !errx.IsType(err, errx.TypeNotFound) {
+		return fleet.BuildScan{}, err
+	}
+	b, err := s.repo.FindBuild(ctx, organization, id)
+	if errx.IsType(err, errx.TypeNotFound) {
+		return fleet.BuildScan{Phase: fleet.ScanUnsupported}, nil
+	}
+	if err != nil {
+		return fleet.BuildScan{}, err
+	}
+	c, err := s.repo.FindCluster(ctx, organization, b.Cluster)
+	if errx.IsType(err, errx.TypeNotFound) {
+		return fleet.BuildScan{Phase: fleet.ScanUnsupported}, nil
+	}
+	if err != nil {
+		return fleet.BuildScan{}, err
+	}
+	if !c.Agent.Capabilities.CanScan() {
+		return fleet.BuildScan{Phase: fleet.ScanUnsupported}, nil
+	}
+	return fleet.BuildScan{Phase: fleet.ScanPending}, nil
+}
+
 func (s *Service) LogBuild(ctx context.Context, agent fleet.AgentRef, session fleet.Session, log fleet.BuildLog) error {
 	if err := log.Validate(); err != nil {
 		return err

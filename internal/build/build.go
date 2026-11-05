@@ -228,6 +228,9 @@ type Build struct {
 	LogsKey string `json:"-" db:"logs_key"`
 	// LogsIndex says where to start reading the archive for a seq.
 	LogsIndex LogIndex `json:"-" db:"-"`
+	// Scan is the vulnerability scan of the image; nil until it is recorded
+	// (and always for a build that did not succeed).
+	Scan *Scan `json:"scan" db:"-"`
 }
 
 // LogMark is a line of an archived log: its seq and the byte it starts at.

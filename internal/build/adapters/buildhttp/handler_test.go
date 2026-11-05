@@ -20,6 +20,10 @@ type queries struct {
 	asked build.LogQuery
 }
 
+func (q *queries) Scans(context.Context, identity.OrganizationID, []build.ID) ([]build.BuildScan, error) {
+	return nil, nil
+}
+
 func (q *queries) Find(_ context.Context, org identity.OrganizationID, id build.ID) (build.Build, error) {
 	if org != q.b.Organization || id != q.b.ID {
 		return build.Build{}, errx.NotFound("build not found")

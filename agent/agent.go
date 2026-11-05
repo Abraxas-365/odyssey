@@ -214,6 +214,8 @@ func Run(args []string) error {
 	fs.BoolVar(&o.Builds.InsecureRegistry, "registry-insecure", envBool("ODYSSEY_REGISTRY_INSECURE"), "talk to the registry over plain HTTP (a local registry)")
 	fs.StringVar(&o.Builds.Platform, "build-platform", os.Getenv("ODYSSEY_BUILD_PLATFORM"), "platform images are built for (default linux/<the agent's arch>)")
 	fs.StringVar(&o.Builds.AgentImage, "agent-image", os.Getenv("ODYSSEY_AGENT_IMAGE"), "the agent's own image (it runs each build's prepare step)")
+	fs.BoolVar(&o.Builds.NoScan, "no-scan", os.Getenv("ODYSSEY_SCAN") == "false", "do not scan built images for vulnerabilities (a cluster that cannot download Trivy's database)")
+	fs.StringVar(&o.Builds.ScanImage, "scan-image", os.Getenv("ODYSSEY_SCAN_IMAGE"), "Trivy's image, pinned by digest (default: the agent's pinned one)")
 	fs.StringVar(&o.Builds.SourceAddr, "source-addr", env("ODYSSEY_SOURCE_ADDR", ":8099"), "address the agent serves sources to build pods on")
 	fs.StringVar(&o.Builds.SourceURL, "source-url", env("ODYSSEY_SOURCE_URL", "http://odyssey-agent-source.odyssey-system.svc:8099"), "URL build pods reach the agent's source server at")
 	fs.BoolVar(&o.Access.Enabled, "access-enabled", envBool("ODYSSEY_ACCESS_ENABLED"), "the sign-in gate (odyssey-agent access) is installed: apps may require sign-in")

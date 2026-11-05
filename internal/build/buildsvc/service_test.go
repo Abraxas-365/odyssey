@@ -116,6 +116,12 @@ func (q projects) FindEnvironmentBySlug(context.Context, identity.OrganizationID
 func (q projects) ListEnvironments(context.Context, identity.OrganizationID, project.ID, project.EnvironmentFilter) ([]project.Environment, error) {
 	return []project.Environment{q.e}, nil
 }
+func (q projects) FindMany(context.Context, identity.OrganizationID, []project.ID) ([]project.Project, error) {
+	return []project.Project{q.p}, nil
+}
+func (q projects) EnvironmentsOf(context.Context, identity.OrganizationID, []project.ID) ([]project.Environment, error) {
+	return []project.Environment{q.e}, nil
+}
 func (q projects) Hold(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
 	return q.Find(ctx, org, id)
 }

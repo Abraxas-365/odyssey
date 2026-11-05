@@ -29,12 +29,13 @@ Lo que **sí** ofrece: **bases de datos** (ver «Bases de datos») y **IA** (ver
 Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él **se pierde al reiniciar o publicar**.
 <!-- ODICEA:LIMITES-ACTUALES fin -->
 
-## Qué puedes hacer (las 21 herramientas)
+## Qué puedes hacer (las 22 herramientas)
 
 | Quiero… | Herramienta |
 |---|---|
 | Saber con qué cuenta y permisos estoy | `whoami` |
-| Ver las apps y su estado, y lo que usan y les falta | `list_apps`, `get_app` (`uses` y `needs_attention`) |
+| Ver las apps y su estado, y lo que usan y les falta | `list_apps` (con `needs_attention`), `get_app` (`uses` y `needs_attention`) |
+| Saber qué necesita atención ahora (lo mío, y lo de TI si el usuario es de TI) | `get_attention` |
 | Crear una app vacía | `create_app` |
 | Publicar la carpeta del usuario | `deploy_folder` (+ ejecutar el comando que devuelve) |
 | Publicar un repositorio de GitHub | `list_repositories`, `connect_repository`, `publish_now` |

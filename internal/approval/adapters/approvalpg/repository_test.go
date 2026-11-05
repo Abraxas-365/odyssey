@@ -96,10 +96,23 @@ func TestInsertIsIdempotentWhileOpen(t *testing.T) {
 	if ok, err := repo.Insert(ctx, again); err != nil || ok {
 		t.Fatalf("run step inserted twice: %v %v", ok, err)
 	}
-	if got, err := repo.FindByRun(ctx, org, "r1"); err != nil || got.ID != step.ID || got.Status != approval.StatusApproved {
+	if got, err := repo.FindByRun(ctx, org, "r1", "authorize"); err != nil || got.ID != step.ID || got.Status != approval.StatusApproved {
 		t.Fatalf("by run: %+v %v", got, err)
 	}
-	if _, err := repo.FindByRun(ctx, identity.NewOrganizationID(), "r1"); !errx.IsType(err, errx.TypeNotFound) {
+	// a run holds one request per step: another step's request is not this one
+	if _, err := repo.FindByRun(ctx, org, "r1", "authorize_scan"); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("the authorize request answers for authorize_scan: %v", err)
+	}
+	scan := request(org, "run:r1/authorize_scan")
+	scan.Run, scan.RunStep = "r1", "authorize_scan"
+	insert(t, repo, ctx, scan)
+	if got, err := repo.FindByRun(ctx, org, "r1", "authorize_scan"); err != nil || got.ID != scan.ID || got.Status != approval.StatusPending {
+		t.Fatalf("by run and step: %+v %v", got, err)
+	}
+	if got, err := repo.FindByRun(ctx, org, "r1", "authorize"); err != nil || got.ID != step.ID {
+		t.Fatalf("the scan request replaced the authorize one: %+v %v", got, err)
+	}
+	if _, err := repo.FindByRun(ctx, identity.NewOrganizationID(), "r1", "authorize"); !errx.IsType(err, errx.TypeNotFound) {
 		t.Fatalf("other org reads the run's request: %v", err)
 	}
 }

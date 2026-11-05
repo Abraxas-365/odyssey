@@ -114,3 +114,28 @@ func (r *Runner) Forget(ctx context.Context, b build.Build) error {
 	}
 	return r.fleet.ForgetBuildLogs(ctx, b.Organization, id)
 }
+
+// ObserveScan is what the cluster reported of the image's scan: pending
+// while its agent scans, unsupported when it does not list the capability.
+func (r *Runner) ObserveScan(ctx context.Context, b build.Build) (build.ScanObservation, error) {
+	id, err := buildID(b)
+	if err != nil {
+		return build.ScanObservation{}, err
+	}
+	s, err := r.fleet.BuildScan(ctx, b.Organization, id)
+	if err != nil {
+		return build.ScanObservation{}, err
+	}
+	switch s.Phase {
+	case fleet.ScanDone:
+		sc := build.Scan{Digest: s.Status.Digest, Critical: s.Status.Critical, High: s.Status.High, Medium: s.Status.Medium,
+			Low: s.Status.Low, Tool: s.Status.Tool, DBUpdatedAt: s.Status.DBUpdatedAt, Error: s.Status.Error, ScannedAt: s.Status.ObservedAt}
+		if sc.Error != "" {
+			sc.Error = build.ScanFailedMessage + " " + sc.Error
+		}
+		return build.ScanObservation{Phase: build.ScanDone, Scan: sc}, nil
+	case fleet.ScanPending:
+		return build.ScanObservation{Phase: build.ScanPending}, nil
+	}
+	return build.ScanObservation{Phase: build.ScanUnsupported}, nil
+}

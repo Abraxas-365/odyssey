@@ -31,9 +31,16 @@ func TestEventContracts(t *testing.T) {
 		build.NewSucceeded(org, b, n),
 		build.NewFailed(org, b, f, n),
 		build.NewCancelled(org, user, b, n),
+		build.NewScanned(org, withScan(b), n),
 	} {
 		eventtest.Golden(t, e)
 	}
+}
+
+func withScan(b build.Build) build.Build {
+	b.Scan = &build.Scan{Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Critical: 2, High: 5, Medium: 11, Low: 30, Tool: "trivy 0.76.2"}
+	return b
 }
 
 func TestUploadNormalize(t *testing.T) {

@@ -51,7 +51,90 @@ func (s *Service) Workflows() []workflow.Definition {
 			Name:  build.WorkflowArchive,
 			Steps: []workflow.Step{{Name: build.StepArchive, Run: s.archive, MaxAttempts: 10}},
 		},
+		{
+			// Polls don't count as attempts; the step's Timeout bounds a
+			// cluster that never reports and OnFailure then records why.
+			Name:      build.WorkflowScan,
+			Steps:     []workflow.Step{{Name: build.StepScan, Run: s.scan, Timeout: s.opts.ScanTimeout, MaxAttempts: 30}},
+			OnFailure: s.scanFailed,
+		},
 	}
+}
+
+// scan follows the runner's scan of a succeeded build and records it, once.
+// A runner that does not scan, one that reports another image's scan or one
+// that never reports (the timeout) leaves the build "not scanned" with the
+// reason: a deployment waiting for the scan then proceeds as known=false.
+func (s *Service) scan(ctx context.Context, st *workflow.State) (any, error) {
+	b, err := s.load(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	if b.Status != build.StatusSucceeded || b.Scan != nil {
+		return nil, nil
+	}
+	o, err := s.runner.ObserveScan(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	var scan build.Scan
+	switch o.Phase {
+	case build.ScanPending:
+		return nil, workflow.Poll(s.opts.PollEvery)
+	case build.ScanDone:
+		scan = o.Scan
+		if d := build.DigestOf(b.Image); d == "" || scan.Digest != d {
+			scan = build.Scan{Error: build.ScanMismatchMessage}
+		}
+	default:
+		scan = build.Scan{Error: build.ScanUnsupportedMessage}
+	}
+	if scan.Error != "" {
+		scan.Critical, scan.High, scan.Medium, scan.Low = 0, 0, 0, 0
+	}
+	return nil, s.record(ctx, b.Organization, b.ID, scan)
+}
+
+// scanFailed records the scan that never came (the step timed out or kept
+// failing). It runs in the transaction that marks the run failed.
+func (s *Service) scanFailed(ctx context.Context, st *workflow.State, _ error) error {
+	b, err := s.load(ctx, st)
+	if errx.IsType(err, errx.TypeNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if b.Status != build.StatusSucceeded || b.Scan != nil {
+		return nil
+	}
+	return s.record(ctx, b.Organization, b.ID, build.Scan{Error: build.ScanTimeoutMessage})
+}
+
+// record stores a build's scan once and publishes build.scanned in the same
+// transaction.
+func (s *Service) record(ctx context.Context, org identity.OrganizationID, id build.ID, scan build.Scan) error {
+	if scan.ScannedAt.IsZero() {
+		scan.ScannedAt = time.Now().UTC()
+	}
+	return s.tx.Do(ctx, func(ctx context.Context) error {
+		b, err := s.repo.FindBuildForUpdate(ctx, org, id)
+		if err != nil {
+			return err
+		}
+		if b.Status != build.StatusSucceeded || b.Scan != nil {
+			return nil
+		}
+		if ok, err := s.repo.SetScan(ctx, org, id, scan); err != nil || !ok {
+			return err
+		}
+		b.Scan = &scan
+		n, err := s.names(ctx, org, b.Project)
+		if err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, build.NewScanned(org, b, n))
+	})
 }
 
 // load reads the run's build.
@@ -184,7 +267,14 @@ func (s *Service) settle(ctx context.Context, b build.Build, status build.Status
 		return err
 	}
 	if status == build.StatusSucceeded {
-		return s.events.Publish(ctx, build.NewSucceeded(b.Organization, b, n))
+		if err := s.events.Publish(ctx, build.NewSucceeded(b.Organization, b, n)); err != nil {
+			return err
+		}
+		// The scan is followed on its own: the build never waits for it.
+		_, err := s.engine.Start(ctx, workflow.Start{Workflow: build.WorkflowScan, Organization: b.Organization,
+			Subject: event.Subject(build.SubjectKind, b.ID), Input: build.RunInput{Build: b.ID},
+			IdempotencyKey: b.ID.String()})
+		return err
 	}
 	return s.events.Publish(ctx, build.NewFailed(b.Organization, b, *f, n))
 }

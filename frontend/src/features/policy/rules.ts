@@ -65,23 +65,41 @@ export function draftUnchanged(r: PolicyRule, d: PolicyDraft) {
   return r.name === d.name && r.description === (d.description ?? '') && r.expression === d.expression && r.effect === d.effect && r.approvers === (d.approvers ?? r.approvers)
 }
 
+/**
+ * The scan as the rules will see it in the example: `none` is the deployment's
+ * first judgment (nothing built yet: `scan.checked` false), `failed` is the
+ * second one with no usable scan (it failed, never came or the cluster has
+ * none: `scan.checked` true, `scan.known` false) and `done` has the numbers.
+ */
+export type ScanScenario = 'none' | 'failed' | 'done'
+
 /** The form of "Probar": a made-up action, as the rules will see it. */
 export interface Scenario {
   action: PolicyAction
   tier: ProjectTier
   mode: string
-  scanKnown: boolean
+  scan: ScanScenario
   critical: number
 }
 
-export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', scanKnown: false, critical: 0 }
+export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', scan: 'none', critical: 0 }
+
+export const scanOptions: { value: ScanScenario; label: string }[] = [
+  { value: 'none', label: 'Todavía no se analiza (antes de construir)' },
+  { value: 'failed', label: 'No se pudo analizar' },
+  { value: 'done', label: 'Ya se analizó' },
+]
 
 export function scenarioInput(s: Scenario, candidate?: Candidate): PolicyInput {
   const input: PolicyInput = {
     action: s.action,
     project: { tier: s.tier },
     access: { mode: s.action === 'set_access' ? s.mode : '' },
-    scan: { known: s.scanKnown, critical: s.scanKnown ? Math.max(0, Math.trunc(s.critical) || 0) : 0 },
+    scan: {
+      known: s.scan === 'done',
+      checked: s.scan !== 'none',
+      critical: s.scan === 'done' ? Math.max(0, Math.trunc(s.critical) || 0) : 0,
+    },
   }
   if (candidate) input.rule = candidateRule(candidate)
   return input
@@ -112,8 +130,9 @@ export const expressionVariables: { name: string; description: string }[] = [
   { name: 'actor.id', description: 'quién lo hace (una publicación por push de GitHub aparece como «github:usuario»)' },
   { name: 'actor.permissions', description: 'lista de permisos de quien lo hace; vacía en las publicaciones por push' },
   { name: 'resource.kind', description: "el tipo de dato, al conectar o borrar: 'postgres', 'redis' o 'files'" },
-  { name: 'scan.known', description: 'si ya hay un análisis de vulnerabilidades (todavía siempre false)' },
+  { name: 'scan.known', description: 'si hay un análisis de vulnerabilidades hecho de esta imagen (false mientras no lo hay o si falló)' },
   { name: 'scan.critical', description: 'vulnerabilidades críticas (también scan.high); úsalo junto con scan.known' },
+  { name: 'scan.checked', description: 'si ya se revisó el análisis: false al pedir la publicación (antes de construir), true después, haya salido bien o no. «scan.checked && !scan.known» es una imagen que no se pudo analizar' },
 ]
 
 /** What the dry-run answers, as one sentence. */

@@ -262,6 +262,78 @@ func (r *Repository) FindState(ctx context.Context, organization identity.Organi
 	return s, nil
 }
 
+// ---- batch reads (inventory, attention) ----
+
+type servingRow struct {
+	Environment project.EnvironmentID `db:"environment_id"`
+	Project     project.ID            `db:"project_id"`
+	URL         string                `db:"url"`
+	Image       string                `db:"image"`
+	Build       *build.ID             `db:"build_id"`
+	Since       *time.Time            `db:"since"`
+	LastID      *release.DeploymentID `db:"last_id"`
+	LastStatus  *release.Status       `db:"last_status"`
+	LastReason  *release.Reason       `db:"last_reason"`
+	ErrorCode   *string               `db:"error_code"`
+	ErrorMsg    *string               `db:"error_message"`
+	ErrorDetail *string               `db:"error_detail"`
+	LastCreated *time.Time            `db:"last_created_at"`
+	LastEnded   *time.Time            `db:"last_finished_at"`
+}
+
+// ListServing reads, in one statement, what each environment serves (its
+// current deployment's build and the time it went live) and how its latest
+// deployment stands. Environments with no state row are absent.
+func (r *Repository) ListServing(ctx context.Context, organization identity.OrganizationID, envs []project.EnvironmentID) ([]release.Serving, error) {
+	rows := []servingRow{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `
+		SELECT s.environment_id, s.project_id, s.url, COALESCE(rel.image, '') AS image,
+		       (SELECT b.build_id FROM release.deployments b
+		         WHERE b.organization_id = s.organization_id AND b.release_id = s.current_release_id AND b.build_id IS NOT NULL
+		         ORDER BY b.created_at LIMIT 1) AS build_id,
+		       cd.finished_at AS since,
+		       l.id AS last_id, l.status AS last_status, l.reason AS last_reason, l.error_code, l.error_message, l.error_detail,
+		       l.created_at AS last_created_at, l.finished_at AS last_finished_at
+		  FROM release.environment_states s
+		  LEFT JOIN release.releases rel ON rel.id = s.current_release_id
+		  LEFT JOIN release.deployments cd ON cd.id = s.current_deployment_id
+		  LEFT JOIN LATERAL (SELECT d.id, d.status, d.reason, d.error_code, d.error_message, d.error_detail, d.created_at, d.finished_at
+		                       FROM release.deployments d
+		                      WHERE d.organization_id = s.organization_id AND d.environment_id = s.environment_id
+		                      ORDER BY d.created_at DESC, d.revision DESC LIMIT 1) l ON true
+		 WHERE s.organization_id = $1 AND s.environment_id = ANY($2::uuid[])
+		 ORDER BY s.environment_id`, organization, pq.Array(envStrings(envs)))
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list environments serving", messages)
+	}
+	out := make([]release.Serving, len(rows))
+	for i, row := range rows {
+		s := release.Serving{Environment: row.Environment, Project: row.Project, URL: row.URL, Image: row.Image, Build: row.Build, Since: row.Since}
+		if row.LastID != nil && row.LastStatus != nil && row.LastReason != nil && row.LastCreated != nil {
+			s.Last = &release.LastDeployment{ID: *row.LastID, Status: *row.LastStatus, Reason: *row.LastReason, CreatedAt: *row.LastCreated, FinishedAt: row.LastEnded}
+			if row.ErrorCode != nil {
+				s.Last.Error = &release.Failure{Code: *row.ErrorCode}
+				if row.ErrorMsg != nil {
+					s.Last.Error.Message = *row.ErrorMsg
+				}
+				if row.ErrorDetail != nil {
+					s.Last.Error.Detail = *row.ErrorDetail
+				}
+			}
+		}
+		out[i] = s
+	}
+	return out, nil
+}
+
+func envStrings(ids []project.EnvironmentID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
+	}
+	return out
+}
+
 // FindStateByEnvironment finds a state by environment id alone (the access
 // sign-in); NotFound when there is none.
 func (r *Repository) FindStateByEnvironment(ctx context.Context, env project.EnvironmentID) (release.EnvironmentState, error) {

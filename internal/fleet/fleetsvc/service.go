@@ -247,6 +247,16 @@ func (s *Service) Find(ctx context.Context, organization identity.OrganizationID
 	return s.repo.FindCluster(ctx, organization, id)
 }
 
+func (s *Service) Placements(ctx context.Context, organization identity.OrganizationID, envs []project.EnvironmentID) (map[project.EnvironmentID]fleet.ClusterID, error) {
+	if len(envs) == 0 {
+		return map[project.EnvironmentID]fleet.ClusterID{}, nil
+	}
+	if len(envs) > fleet.MaxPlacements {
+		return nil, errx.Validation("too many environments in one read")
+	}
+	return s.repo.ListPlacementsOf(ctx, organization, envs)
+}
+
 func (s *Service) List(ctx context.Context, organization identity.OrganizationID, filter fleet.Filter, page query.Pagination) (query.Paginated[fleet.Cluster], error) {
 	if err := filter.Validate(); err != nil {
 		return query.Paginated[fleet.Cluster]{}, err

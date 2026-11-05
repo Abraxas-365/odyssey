@@ -112,6 +112,18 @@ func (r *Repository) List(ctx context.Context, organization identity.Organizatio
 		args = append(args, pq.Array(values))
 		where = append(where, "status = ANY($"+strconv.Itoa(len(args))+")")
 	}
+	if len(filter.Tier) > 0 {
+		values := make([]string, len(filter.Tier))
+		for i, v := range filter.Tier {
+			values[i] = string(v)
+		}
+		args = append(args, pq.Array(values))
+		where = append(where, "tier = ANY($"+strconv.Itoa(len(args))+")")
+	}
+	if !filter.CreatedBy.IsZero() {
+		args = append(args, filter.CreatedBy)
+		where = append(where, "created_by = $"+strconv.Itoa(len(args)))
+	}
 	if pattern := query.EscapeLike(page.Search); pattern != "" {
 		args = append(args, pattern)
 		n := strconv.Itoa(len(args))
@@ -222,6 +234,38 @@ func (r *Repository) ListEnvironments(ctx context.Context, organization identity
 		return nil, pgerr.MapWith(err, "list environments", environmentMessages)
 	}
 	return out, nil
+}
+
+// FindMany reads the organization's projects among ids in one query (name
+// order, like List); an id that is not the organization's is absent.
+func (r *Repository) FindMany(ctx context.Context, organization identity.OrganizationID, ids []project.ID) ([]project.Project, error) {
+	out := []project.Project{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT `+columns+` FROM project.projects
+		WHERE organization_id = $1 AND id = ANY($2::uuid[]) ORDER BY lower(name), id`, organization, pq.Array(idStrings(ids)))
+	if err != nil {
+		return nil, pgerr.MapWith(err, "find projects", messages)
+	}
+	return out, nil
+}
+
+// ListEnvironmentsOf reads the environments of several projects in one query.
+func (r *Repository) ListEnvironmentsOf(ctx context.Context, organization identity.OrganizationID, ids []project.ID) ([]project.Environment, error) {
+	out := []project.Environment{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT `+environmentColumns+` FROM project.environments
+		WHERE organization_id = $1 AND project_id = ANY($2::uuid[])
+		ORDER BY project_id, array_position(ARRAY['production','staging','preview'], kind), slug, id`, organization, pq.Array(idStrings(ids)))
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list environments of projects", environmentMessages)
+	}
+	return out, nil
+}
+
+func idStrings(ids []project.ID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
+	}
+	return out
 }
 
 // affected maps "no row matched" to NotFound.

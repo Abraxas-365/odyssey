@@ -20,6 +20,7 @@ type builds struct {
 	dispatchErr error
 	sent        fleet.DesiredBuild
 	status      fleet.BuildStatus
+	scan        fleet.BuildScan
 }
 
 func (f *builds) DispatchBuild(_ context.Context, b fleet.DesiredBuild) error {
@@ -37,6 +38,9 @@ func (f *builds) BuildLogs(context.Context, identity.OrganizationID, fleet.Build
 }
 func (f *builds) ForgetBuildLogs(context.Context, identity.OrganizationID, fleet.BuildID) error {
 	return nil
+}
+func (f *builds) BuildScan(context.Context, identity.OrganizationID, fleet.BuildID) (fleet.BuildScan, error) {
+	return f.scan, nil
 }
 
 func job() build.Job {

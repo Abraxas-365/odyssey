@@ -133,6 +133,21 @@ func buildReportFromProto(r *fleetv1.BuildReport) []fleet.BuildStatus {
 	return out
 }
 
+// scanReportFromProto skips unreadable build ids (validation drops the rest).
+func scanReportFromProto(r *fleetv1.ScanReport) []fleet.ScanStatus {
+	out := make([]fleet.ScanStatus, 0, len(r.GetScans()))
+	for _, s := range r.GetScans() {
+		id, err := fleet.ParseBuildID(s.GetBuildId())
+		if err != nil {
+			continue
+		}
+		out = append(out, fleet.ScanStatus{Build: id, Digest: s.GetImageDigest(),
+			Critical: int(s.GetCritical()), High: int(s.GetHigh()), Medium: int(s.GetMedium()), Low: int(s.GetLow()),
+			Tool: s.GetTool(), DBUpdatedAt: s.GetDbUpdatedAt(), Error: s.GetError()})
+	}
+	return out
+}
+
 func buildLogFromProto(l *fleetv1.BuildLog) (fleet.BuildLog, error) {
 	id, err := fleet.ParseBuildID(l.GetBuildId())
 	if err != nil {

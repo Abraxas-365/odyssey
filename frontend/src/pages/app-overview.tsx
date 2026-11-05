@@ -26,7 +26,7 @@ import { formatDateTime, formatRelative, safeAppUrl } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
 import { useArchiveProject, useProject, useUpdateProject } from '@/lib/projects'
-import { useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
+import { useBuild, useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
 import type { Project } from '@/lib/types'
 import { CodePanel } from '@/features/github/code-panel'
 import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
@@ -36,6 +36,7 @@ import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
 import { UsesCard } from '@/features/apps/uses-card'
 import { TierField } from '@/features/apps/tier-field'
 import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
+import { buildScanText, toneClass as scanTone } from '@/features/inventory/inventory'
 
 /** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
 export function AppOverviewPage() {
@@ -76,6 +77,9 @@ function Overview({ project: p }: { project: Project }) {
   const status = appStatus(archived, current.data, problem)
   const live = current.data?.release ? current.data : undefined
   const liveUrl = safeAppUrl(live?.url)
+  // The scan of the version online (its build; an image published as it was has none).
+  const liveBuild = useBuild(p.id, live?.deployment?.build_id)
+  const scan = live ? buildScanText(live.deployment?.build_id ? liveBuild.data : null, !!live.deployment?.build_id && liveBuild.isPending) : undefined
 
   return (
     <>
@@ -161,6 +165,7 @@ function Overview({ project: p }: { project: Project }) {
                 ['Creada', formatDateTime(p.created_at)],
                 [<Term help="Qué tan importante es la app. Las reglas de TI se apoyan en él: por ejemplo, publicar en producción pide aprobación. Solo TI lo cambia.">Nivel</Term>, <TierField project={p} canChange={can(permissions.projectsTier)} />],
                 ['Último cambio', formatRelative(p.updated_at)],
+                ...(scan ? ([[<Term help="Revisamos la imagen de la versión en línea en busca de vulnerabilidades conocidas. Una imagen publicada tal cual no se revisa.">Seguridad</Term>, <span><span className={scanTone[scan.tone]}>{scan.label}</span>{scan.detail && <span className="block text-xs text-muted-foreground">{scan.detail}</span>}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
                 ...(technical ? ([['ID', <span className="font-mono text-xs break-all">{p.id}</span>], ['Organización', <span className="font-mono text-xs break-all">{p.organization_id}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
                 ...(technical && live?.release ? ([['Imagen', <span className="font-mono text-xs break-all">{live.release.image}</span>], ['Puerto', live.release.config.port], ['Ruta de salud', <span className="font-mono text-xs">{live.release.config.health_path}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
               ]}

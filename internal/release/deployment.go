@@ -147,15 +147,24 @@ const (
 // Steps lists the deploy workflow's steps in order.
 func Steps() []string { return []string{StepBuild, StepApply, StepWaitReady, StepPromote} }
 
-// The workflow's gate steps run before the visible ones and are not part of
-// the console's progress: StepAuthorize asks IT's rules (and, when a rule
+// The workflow's gate steps are not part of the console's progress:
+// StepAuthorize asks IT's rules before anything is built (and, when a rule
 // wants approval, parks the run until someone decides); StepApproval acts on
-// that decision (continue, or cancel the deployment). A scan gate
-// (`authorize_scan`, after the build) joins them in phase 3c.
+// that decision (continue, or cancel the deployment). StepAuthorizeScan asks
+// them again after the build, with the image's vulnerability scan, and
+// StepApprovalScan acts on that decision the same way. The scan is not part
+// of the build: the build.scan workflow records it on its own, and the gate
+// waits for it up to ScanWait.
 const (
-	StepAuthorize = "authorize"
-	StepApproval  = "approval"
+	StepAuthorize     = "authorize"
+	StepApproval      = "approval"
+	StepAuthorizeScan = "authorize_scan"
+	StepApprovalScan  = "approval_scan"
 )
+
+// ScanWait is how long authorize_scan waits for the scan of a built image
+// before it judges the deployment as "scan unknown".
+const ScanWait = 10 * time.Minute
 
 // Why IT's decision cancelled a deployment (DeploymentCancelled.Reason, and
 // the console's wording); a deployment a newer one replaced says "superseded".

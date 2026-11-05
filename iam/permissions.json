@@ -15,10 +15,11 @@
     { "name": "odyssey:resources:delete", "label": "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)" },
     { "name": "odyssey:projects:tier", "label": "Cambiar el nivel de una app (sandbox, interna o producción)" },
     { "name": "odyssey:policy:manage", "label": "Ver y editar las reglas de TI de la organización" },
-    { "name": "odyssey:approvals:decide", "label": "Aprobar o rechazar acciones que las reglas de TI dejan pendientes" }
+    { "name": "odyssey:approvals:decide", "label": "Aprobar o rechazar acciones que las reglas de TI dejan pendientes" },
+    { "name": "odyssey:inventory:read", "label": "Ver el inventario de todas las apps de la organización y exportarlo" }
   ],
   "roles": [
-    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external", "odyssey:resources:delete", "odyssey:projects:tier", "odyssey:policy:manage", "odyssey:approvals:decide"] },
+    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external", "odyssey:resources:delete", "odyssey:projects:tier", "odyssey:policy:manage", "odyssey:approvals:decide", "odyssey:inventory:read"] },
     { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:resources:delete"] },
     { "name": "Lector", "permissions": ["odyssey:projects:read", "odyssey:deployments:read"] }
   ]

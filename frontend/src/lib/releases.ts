@@ -5,6 +5,7 @@ import { fromBase64, sealSecret } from './secretbox'
 import type {
   AccessChange,
   AccessMode,
+  Build,
   BuildLogLine,
   BuildLogPage,
   CurrentRelease,
@@ -181,6 +182,20 @@ export const useDeploySource = (project: string, env: string) =>
 
 /** While a build runs its log is polled every second (plan 1b). */
 export const BUILD_LOG_POLL_MS = 1000
+
+/**
+ * A build, for its scan: the scan lands after the build and never blocks it,
+ * so while it is missing (null) the console asks again, a few times, then stops.
+ */
+export const SCAN_POLL_MS = 10_000
+export function useBuild(project: string, build: string | null | undefined) {
+  return useQuery({
+    queryKey: ['projects', 'detail', project, 'builds', build ?? ''] as const,
+    queryFn: ({ signal }) => api<Build>(`/projects/${enc(project)}/builds/${enc(build!)}`, { signal }),
+    enabled: !!build,
+    refetchInterval: q => (q.state.data && q.state.data.status === 'succeeded' && !q.state.data.scan && q.state.dataUpdateCount < 30 ? SCAN_POLL_MS : false),
+  })
+}
 
 /**
  * A build's whole log, read page by page: each poll asks only for the lines

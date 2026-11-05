@@ -363,6 +363,28 @@ func (r *Repository) FindPlacement(ctx context.Context, organization identity.Or
 	return id, pgerr.Map(err, "find placement")
 }
 
+func (r *Repository) ListPlacementsOf(ctx context.Context, organization identity.OrganizationID, envs []project.EnvironmentID) (map[project.EnvironmentID]fleet.ClusterID, error) {
+	strs := make([]string, len(envs))
+	for i, e := range envs {
+		strs[i] = e.String()
+	}
+	var rows []struct {
+		Environment project.EnvironmentID `db:"environment_id"`
+		Cluster     fleet.ClusterID       `db:"cluster_id"`
+	}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows,
+		`SELECT environment_id, cluster_id FROM fleet.placements WHERE organization_id = $1 AND environment_id = ANY($2::uuid[])`,
+		organization, pq.Array(strs))
+	if err != nil {
+		return nil, pgerr.Map(err, "list placements")
+	}
+	out := make(map[project.EnvironmentID]fleet.ClusterID, len(rows))
+	for _, row := range rows {
+		out[row.Environment] = row.Cluster
+	}
+	return out, nil
+}
+
 func (r *Repository) Place(ctx context.Context, organization identity.OrganizationID, p project.ID, environment project.EnvironmentID, cluster fleet.ClusterID) (fleet.ClusterID, error) {
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`INSERT INTO fleet.placements (environment_id, organization_id, project_id, cluster_id)

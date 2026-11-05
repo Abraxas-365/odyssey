@@ -80,6 +80,7 @@ type approvals struct {
 	held      []gate.Hold
 	consumed  []string
 	cancelled []string
+	steps     []string // the step each cancel was for
 }
 
 func (a *approvals) Hold(_ context.Context, _ identity.OrganizationID, h gate.Hold) (gate.Pending, error) {
@@ -90,8 +91,9 @@ func (a *approvals) Consume(_ context.Context, _ identity.OrganizationID, reques
 	a.consumed = append(a.consumed, request)
 	return nil
 }
-func (a *approvals) CancelRun(_ context.Context, _ identity.OrganizationID, run string) error {
+func (a *approvals) CancelRun(_ context.Context, _ identity.OrganizationID, run, step string) error {
 	a.cancelled = append(a.cancelled, run)
+	a.steps = append(a.steps, step)
 	return nil
 }
 

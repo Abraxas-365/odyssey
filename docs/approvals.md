@@ -118,9 +118,12 @@ denial answers 403 right away instead of becoming a failed deployment. **Not
 judged**: config deployments (a settings change; `set_access` is judged where
 it is asked) and auto-rollback (the platform restoring the version that worked).
 
-> **3c hook.** After the build there will be a second gate, `authorize_scan`,
-> with the scan's numbers (`scan.known`, `scan.critical`, …). The marked spot is
-> in `releasesvc/workflows.go`; it reuses the same `authorize` machinery.
+> **3c.** After the build there is a second gate, `authorize_scan`, with the
+> scan's numbers (`scan.known`, `scan.critical`, …); see `docs/scan.md`. It uses
+> the same `authorize` machinery: a deny fails the deployment, an approval is
+> held at `step = authorize_scan` (the run parks on its own signal, and
+> `approval_scan` acts on the decision), and a rule that already asked at
+> `authorize` is not asked again.
 
 ## Expiry
 

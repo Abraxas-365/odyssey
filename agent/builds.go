@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"time"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
@@ -15,6 +16,7 @@ import (
 	"github.com/Abraxas-365/odyssey/agent/source"
 	"github.com/Abraxas-365/odyssey/agent/tunnel"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,7 +24,9 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -33,6 +37,8 @@ import (
 var (
 	BuildKitImage = "moby/buildkit:v0.34.1-rootless@sha256:f68752a5a94acfcdad2d07867b7075601a421638e17fc5f28efc1c814d0c4f89"
 	FrontendImage = "ghcr.io/railwayapp/railpack-frontend:v0.43.0@sha256:355ef61fae6f2551103cd8b10c710cb07167dd353d561f15c69b8d7ac1c676cc"
+	// ScanImage is Trivy (the multi-arch index's digest, so any node pulls its own).
+	ScanImage = "aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb"
 )
 
 // BuildOptions turn the agent into its cluster's builder.
@@ -48,6 +54,12 @@ type BuildOptions struct {
 	AgentImage    string
 	BuildKitImage string
 	Frontend      string
+	// ScanImage is Trivy's image (pinned by digest); empty: no scans, and the
+	// agent does not list the capability odicea.scan. Default: ScanImage.
+	ScanImage string
+	// NoScan turns scans off (ODYSSEY_SCAN=false): an air-gapped cluster
+	// cannot download the vulnerability database.
+	NoScan bool
 	// SourceAddr is where the agent serves sources to build pods; SourceURL
 	// is how they reach it (the odyssey-agent-source Service).
 	SourceAddr string
@@ -66,6 +78,12 @@ func (b *BuildOptions) defaults() {
 	if b.Frontend == "" {
 		b.Frontend = FrontendImage
 	}
+	if b.ScanImage == "" && !b.NoScan {
+		b.ScanImage = ScanImage
+	}
+	if b.NoScan {
+		b.ScanImage = ""
+	}
 	if b.SourceAddr == "" {
 		b.SourceAddr = ":8099"
 	}
@@ -81,17 +99,27 @@ func (b BuildOptions) check() error {
 	return nil
 }
 
-// capabilities adds the builder to what the cluster can do.
+// capabilities adds the builder to what the cluster can do (and the scan,
+// when scans run).
 type capabilities struct {
 	tunnel.Desired
 	builder *fleetv1.Builder
+	scan    bool
 }
 
 func (c capabilities) Capabilities(ctx context.Context) *fleetv1.Capabilities {
 	out := c.Desired.Capabilities(ctx)
 	out.Builder = c.builder
+	if c.scan {
+		out.Apis = append(out.Apis, CapabilityScan)
+		slices.Sort(out.Apis)
+	}
 	return out
 }
+
+// CapabilityScan is listed among the APIs when the agent scans the images it
+// builds (same string as fleet.CapabilityScan).
+const CapabilityScan = "odicea.scan"
 
 // addBuilds runs builds: the controller (every replica, leader-elected by
 // the manager), the source server (every replica; only the leader's tunnel
@@ -114,8 +142,14 @@ func addBuilds(cfg *rest.Config, mgr ctrl.Manager, o Options, t *tunnel.Options)
 	rec := &buildctl.Reconciler{Client: mgr.GetClient(), Config: buildctl.Config{
 		AgentImage: b.AgentImage, BuildKitImage: b.BuildKitImage, Frontend: b.Frontend, SourceURL: b.SourceURL,
 		InsecureRegistry: b.InsecureRegistry, Platform: b.Platform,
+		Scan: buildctl.ScanConfig{Image: b.ScanImage},
 	}}
 	if err := rec.SetupWithManager(mgr); err != nil {
+		return nil, err
+	}
+	// One scan Job at a time per cluster, and the databases kept warm (the
+	// queue is leader-only, like the controller).
+	if err := mgr.Add(&buildctl.ScanQueue{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Config: rec.Config}); err != nil {
 		return nil, err
 	}
 	m := &builds.Manager{Client: mgr.GetClient(), Registry: b.Registry,
@@ -123,7 +157,7 @@ func addBuilds(cfg *rest.Config, mgr ctrl.Manager, o Options, t *tunnel.Options)
 			return cs.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: container, Follow: true}).Stream(ctx)
 		}}
 	t.Builds = m
-	t.Desired = capabilities{Desired: t.Desired, builder: &fleetv1.Builder{Registry: b.Registry, Platforms: []string{b.Platform}}}
+	t.Desired = capabilities{Desired: t.Desired, builder: &fleetv1.Builder{Registry: b.Registry, Platforms: []string{b.Platform}}, scan: b.ScanImage != ""}
 	return func(c *tunnel.Client) error {
 		srv := source.New(mgr.GetAPIReader(), func(ctx context.Context, id string) (io.ReadCloser, error) {
 			r, err := c.FetchSource(ctx, id)
@@ -140,12 +174,51 @@ func addBuilds(cfg *rest.Config, mgr ctrl.Manager, o Options, t *tunnel.Options)
 		if err := mgr.Add(source.Runnable{Addr: b.SourceAddr, Server: srv}); err != nil {
 			return err
 		}
-		return watchBuilds(mgr, c)
+		return watchBuilds(mgr, c, b.ScanImage != "")
 	}, nil
 }
 
+// watchScans reports a build's scan when its Job or pod changes.
+func watchScans(mgr ctrl.Manager, c *tunnel.Client) error {
+	inScans := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		_, ok := o.GetLabels()[buildctl.LabelScan]
+		return ok && o.GetNamespace() == buildctl.Namespace
+	})
+	toBuild := func(o client.Object) []reconcile.Request {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: buildctl.Namespace, Name: o.GetLabels()[buildctl.LabelScan]}}}
+	}
+	return ctrl.NewControllerManagedBy(mgr).
+		Named("odyssey-scan-report").
+		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+			return toBuild(o)
+		}), builder.WithPredicates(inScans)).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+			return toBuild(o)
+		}), builder.WithPredicates(inScans)).
+		// a scan given up before it started is recorded on its build
+		Watches(&v1alpha1.OdysseyBuild{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+			return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(o)}}
+		}), builder.WithPredicates(predicate.Funcs{
+			CreateFunc:  func(event.CreateEvent) bool { return false },
+			DeleteFunc:  func(event.DeleteEvent) bool { return false },
+			GenericFunc: func(event.GenericEvent) bool { return false },
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				return e.ObjectOld.GetAnnotations()[buildctl.AnnotationScanError] != e.ObjectNew.GetAnnotations()[buildctl.AnnotationScanError]
+			},
+		})).
+		Complete(reconcile.Func(func(_ context.Context, req reconcile.Request) (reconcile.Result, error) {
+			c.ScanChanged(req.Name)
+			return reconcile.Result{}, nil
+		}))
+}
+
 // watchBuilds reports a build when its status changes.
-func watchBuilds(mgr ctrl.Manager, c *tunnel.Client) error {
+func watchBuilds(mgr ctrl.Manager, c *tunnel.Client, scans bool) error {
+	if scans {
+		if err := watchScans(mgr, c); err != nil {
+			return err
+		}
+	}
 	changed := predicate.Funcs{
 		CreateFunc:  func(event.CreateEvent) bool { return true },
 		DeleteFunc:  func(event.DeleteEvent) bool { return false },

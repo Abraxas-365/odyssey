@@ -143,18 +143,25 @@ func TestCancelIsTheRequestersOnly(t *testing.T) {
 func TestCancelRun(t *testing.T) {
 	ctx := context.Background()
 	s, _, rec := setup()
-	if err := s.CancelRun(ctx, org, "none"); err != nil {
+	if err := s.CancelRun(ctx, org, "none", "authorize"); err != nil {
 		t.Fatalf("nothing to cancel: %v", err)
 	}
 	r, _ := s.Open(ctx, org, approval.Open{Action: "deploy", Project: pid, Environment: eid, Summary: "Publicar", Run: "r1", RunStep: "authorize"})
-	if err := s.CancelRun(ctx, org, "r1"); err != nil {
+	// the run's other step has nothing pending: cancelling it leaves this one alone
+	if err := s.CancelRun(ctx, org, "r1", "authorize_scan"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(ctx, org, r.ID); got.Status != approval.StatusPending {
+		t.Fatalf("another step's cancel touched this request: %s", got.Status)
+	}
+	if err := s.CancelRun(ctx, org, "r1", "authorize"); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.Get(ctx, org, r.ID); got.Status != approval.StatusCancelled {
 		t.Fatalf("status %s", got.Status)
 	}
 	n := len(rec.Types())
-	if err := s.CancelRun(ctx, org, "r1"); err != nil || len(rec.Types()) != n {
+	if err := s.CancelRun(ctx, org, "r1", "authorize"); err != nil || len(rec.Types()) != n {
 		t.Fatalf("second cancel must be a no-op: %v %v", err, rec.Types())
 	}
 }
@@ -168,7 +175,7 @@ func TestCancelRunUsesUpAnApprovalThatWonTheRace(t *testing.T) {
 	if _, err := s.Approve(ctx, org, r.ID, approval.Decide{By: itViewer()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CancelRun(ctx, org, "r2"); err != nil {
+	if err := s.CancelRun(ctx, org, "r2", "authorize"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Get(ctx, org, r.ID)
@@ -176,7 +183,7 @@ func TestCancelRunUsesUpAnApprovalThatWonTheRace(t *testing.T) {
 		t.Fatalf("want approved and used up, got %s consumed=%v", got.Status, got.ConsumedAt)
 	}
 	n := len(rec.Types())
-	if err := s.CancelRun(ctx, org, "r2"); err != nil || len(rec.Types()) != n {
+	if err := s.CancelRun(ctx, org, "r2", "authorize"); err != nil || len(rec.Types()) != n {
 		t.Fatalf("again must be a no-op: %v %v", err, rec.Types())
 	}
 }

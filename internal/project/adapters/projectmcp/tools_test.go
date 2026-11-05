@@ -176,6 +176,44 @@ func TestListAppsFiltersPagesAndStaysInTheOrganization(t *testing.T) {
 	}
 }
 
+// needs_attention comes from one batch call for the page; without the batch
+// (or when it fails) the field is absent, never a wrong false.
+func TestListAppsFlagsNeedsAttentionInOneBatch(t *testing.T) {
+	f := newFixture(t)
+	a := f.create(t, f.org, "Cotizador", "cotizador")
+	b := f.create(t, f.org, "Visitas", "visitas")
+	calls := 0
+	var failing bool
+	opts := projectmcp.Options{NeedingAttention: func(_ context.Context, org identity.OrganizationID, apps []project.ID) (map[project.ID]bool, error) {
+		calls++
+		if failing {
+			return nil, context.DeadlineExceeded
+		}
+		if org != f.org || len(apps) != 2 {
+			t.Errorf("asked %v for %v", org, apps)
+		}
+		return map[project.ID]bool{a: true, b: false}, nil
+	}}
+	cs := f.connect(t, opts, permission.ProjectsRead)
+
+	var out projectmcp.ListAppsOut
+	call(t, cs, "list_apps", nil, &out)
+	if calls != 1 || out.Items[0].NeedsAttention == nil || !*out.Items[0].NeedsAttention || out.Items[1].NeedsAttention == nil || *out.Items[1].NeedsAttention {
+		t.Fatalf("calls %d: %+v", calls, out.Items)
+	}
+	failing = true
+	var failed projectmcp.ListAppsOut
+	call(t, cs, "list_apps", nil, &failed)
+	if len(failed.Items) != 2 || failed.Items[0].NeedsAttention != nil {
+		t.Fatalf("a failed judgement must leave the flag out: %+v", failed.Items)
+	}
+	var bare projectmcp.ListAppsOut
+	call(t, f.connect(t, projectmcp.Options{}, permission.ProjectsRead), "list_apps", nil, &bare)
+	if bare.Items[0].NeedsAttention != nil {
+		t.Fatalf("no judge wired: %+v", bare.Items[0])
+	}
+}
+
 func TestListAppsRejectsBadInput(t *testing.T) {
 	cs := newFixture(t).connect(t, projectmcp.Options{}, permission.ProjectsRead)
 	res := call(t, cs, "list_apps", map[string]any{"status": "deleted"}, nil)

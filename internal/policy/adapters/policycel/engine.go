@@ -58,6 +58,7 @@ type (
 	}
 	scanVars struct {
 		Known    bool  `cel:"known"`
+		Checked  bool  `cel:"checked"`
 		Critical int64 `cel:"critical"`
 		High     int64 `cel:"high"`
 	}
@@ -190,6 +191,7 @@ func activation(in policy.Input) map[string]any {
 		"access":   accessVars{Mode: in.Access.Mode},
 		"actor":    actorVars{ID: in.Actor.ID, Permissions: perms},
 		"resource": resourceVars{Kind: in.Resource.Kind},
-		"scan":     scanVars{Known: in.Scan.Known, Critical: int64(in.Scan.Critical), High: int64(in.Scan.High)},
+		// a known scan has been checked, whatever a dry-run input says
+		"scan": scanVars{Known: in.Scan.Known, Checked: in.Scan.Checked || in.Scan.Known, Critical: int64(in.Scan.Critical), High: int64(in.Scan.High)},
 	}
 }

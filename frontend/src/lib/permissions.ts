@@ -15,6 +15,7 @@ export const permissions = {
   projectsTier: 'odyssey:projects:tier',
   policyManage: 'odyssey:policy:manage',
   approvalsDecide: 'odyssey:approvals:decide',
+  inventoryRead: 'odyssey:inventory:read',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]

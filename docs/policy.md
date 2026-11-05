@@ -1,4 +1,4 @@
-# Reglas de TI — policy (cuts 3a and 3b)
+# Reglas de TI — policy (cuts 3a, 3b and 3c)
 
 IT decides what may happen to the organization's apps **before** it happens.
 Two inputs: the app's **tier** and IT's **rules**, written in CEL. The `policy`
@@ -8,7 +8,8 @@ that question through a port it owns; none of them imports `policy`.
 
 Phase 3a is the verdict and the refusal. Phase 3b (`docs/approvals.md`) turns
 "needs approval" into a request that someone from IT decides (`202` instead of
-`409`); 3c feeds the vulnerability scan; the seam for it is marked below.
+`409`); 3c (`docs/scan.md`) feeds the vulnerability scan at the deployment's
+`authorize_scan` step.
 
 ## Tiers
 
@@ -48,16 +49,48 @@ A bad rule never gets stored.
 
 ### Built-in rules
 
-Every organization has four. They can be switched off, **not edited or
+Every organization has five. They can be switched off (and on), **not edited or
 deleted** (422 `POLICY_BUILTIN`): to change one, switch it off and write
-another. Each has a stable key (`builtin`), unique per organization.
+another. Each has a stable key (`builtin`), unique per organization. Four are
+born **on**; `production_requires_scan` is born **off** (see below).
 
-| key | name | when | effect |
-|---|---|---|---|
-| `production_deploy_approval` | Publicar en producción requiere aprobación de TI | `action == 'deploy' && project.tier == 'production'` | approval |
-| `public_access_approval` | Hacer pública una app requiere aprobación de TI | `action == 'set_access' && access.mode == 'public'` | approval |
-| `production_critical_vulnerabilities` | Producción no publica con vulnerabilidades críticas | `action == 'deploy' && project.tier == 'production' && scan.known && scan.critical > 0` | deny |
-| `sandbox_not_public` | Sandbox no puede ser pública | `action == 'set_access' && project.tier == 'sandbox' && access.mode == 'public'` | deny |
+| key | name | when | effect | born |
+|---|---|---|---|---|
+| `production_deploy_approval` | Publicar en producción requiere aprobación de TI | `action == 'deploy' && project.tier == 'production'` | approval | on |
+| `public_access_approval` | Hacer pública una app requiere aprobación de TI | `action == 'set_access' && access.mode == 'public'` | approval | on |
+| `production_critical_vulnerabilities` | Producción no publica con vulnerabilidades críticas | `action == 'deploy' && project.tier == 'production' && scan.known && scan.critical > 0` | deny | on |
+| `sandbox_not_public` | Sandbox no puede ser pública | `action == 'set_access' && project.tier == 'sandbox' && access.mode == 'public'` | deny | on |
+| `production_requires_scan` | Producción exige revisión de vulnerabilidades | `action == 'deploy' && project.tier == 'production' && scan.checked && !scan.known` | approval | **off** |
+
+**`production_critical_vulnerabilities` alone can be bypassed, and
+`production_requires_scan` is what closes it.** Whoever builds the image
+controls what is in the build context: a Dockerfile (or the files it copies)
+can make the scan fail on purpose (an unreadable layer, a huge or malformed
+filesystem, anything that makes Trivy give up or time out). A scan that fails
+is `scan.known == false`, and `scan.known && scan.critical > 0` does not match
+it, so the image goes live **unreviewed**. We cannot fix that in the scanner
+(a failed scan is indistinguishable from a deliberately broken one), so it is a
+policy decision, and the safe production setup is: **enable
+`production_requires_scan`**. Then a production deployment whose scan failed,
+never came or cannot be done (cluster without the capability) is held for IT's
+approval at `authorize_scan` instead of going live; with it on, the image is
+either reviewed by the scanner or by a person. It is off by default because an
+organization that has not decided how it handles unscannable images would have
+every production deploy of a cluster without the scanner wait for approval the
+day it is upgraded (`docs/scan.md`).
+
+The rule only judges at **`authorize_scan`** (after the build), never at
+`authorize` (before it): `scan.checked` is `false` at the first and `true` at
+the second (see "The input"), so enabling it does not ask for a second approval
+of every production deployment before it even builds. `deploy_image` and
+config-only deployments are not scanned and are not judged at `authorize_scan`,
+so this rule does not apply to them either (an image published as it was has
+no build to scan; govern it with `production_deploy_approval`).
+
+An organization that existed before a built-in was added gets it on its next
+read, in its default state: an existing organization receives
+`production_requires_scan` **disabled**; nothing changes for it until IT
+switches it on.
 
 **Seeding is lazy and idempotent.** There is no migration that knows the
 organizations (they live in IAMKit), so the first list/evaluate of an
@@ -82,19 +115,44 @@ fails for a missing field.
 | `access` | `mode` (`team` · `organization` · `public`; only for `set_access`) |
 | `actor` | `id`, `permissions` (list) — those of the **authenticated principal** (deferred work: see "Who asks, when the work is deferred") |
 | `resource` | `kind` (`postgres` · `redis` · `files`, for connect/delete) |
-| `scan` | `known`, `critical`, `high` |
+| `scan` | `known`, `checked`, `critical`, `high` |
 
 `actor.permissions` is what the caller's token holds: for REST the token's
 claims; for MCP the **connection's** permissions (the ones the user consented
 to for that assistant, not everything the user could do). So
 `!('odyssey:access:public' in actor.permissions)` means what it says on both.
 
-`scan.known` is `false` until a scan exists. Deploy is judged by the workflow's
-`authorize` step, **before the build**, so `scan.known` is still always `false`
-and `production_critical_vulnerabilities` cannot match yet. Rules about scans
-should say `scan.known && …` (an unknown scan is not a clean one). 3c adds a
-second step, `authorize_scan`, after the build with the real numbers (the hook
-is marked in `releasesvc/workflows.go`).
+`scan.known` is `true` only when the image's vulnerability scan exists and was
+done (`critical`/`high` mean something only then). `scan.checked` says the scan
+has been *looked at*, whatever came of it. Deploy is judged twice (the
+workflow's steps, same verdicts and the same approval machinery):
+
+1. `authorize`, **before the build**: `scan.checked` and `scan.known` are
+   `false` (nothing exists yet), so a scan rule cannot match here.
+2. `authorize_scan` (3c), **right after the build**, with the real numbers of
+   the build's scan (`docs/scan.md`) and `scan.checked == true`. It polls up to
+   10 minutes (`release.ScanWait`) for the scan; if it does not arrive, could
+   not be done or the cluster does not scan, the deployment goes on judged with
+   `scan.checked == true` and `scan.known == false`.
+
+| situation | `checked` | `known` |
+|---|---|---|
+| first judgment (`authorize`) | false | false |
+| after the build, scan done | true | true |
+| after the build, scan failed / timed out / cluster without scanner | true | false |
+
+`known` implies `checked`. That is the difference a rule that **requires** a
+scan needs: `!scan.known` alone would also match the first judgment (and ask
+for approval before the build); `scan.checked && !scan.known` matches only "we
+looked and there is nothing usable". A dry run (`POST /policy/evaluate`) takes
+the same `scan.checked`; `scan: {known: true}` counts as checked.
+
+An image published as it was (`deploy_image`) and a config-only deployment are
+never scanned: only step 1 judges them. Rules about the numbers should say
+`scan.known && …` (an unknown scan is not a clean one: see the warning on
+`production_critical_vulnerabilities` above). An approval that step 1
+already asked is not asked again at step 2; only rules that did not ask before
+do.
 
 ## Evaluation
 
@@ -176,11 +234,19 @@ On purpose; for most of it TI can still add a rule:
   enabling an AI that is already on, answers as before without asking the
   rules: a rule that matches the target value does not refuse a request that
   changes nothing.
-- **Scan-based rules are inactive.** The built-in
-  `production_critical_vulnerabilities` and any `scan.*` rule **cannot match
-  until the scan exists (cut 3c)**: today the deploy is judged at its start
-  with `scan.known == false`. Do not count on them to stop a vulnerable image;
-  they are listed so TI sees what is coming.
+- **Scan-based rules judge the build's scan.** The built-in
+  `production_critical_vulnerabilities` denies a production deploy whose scan
+  found critical vulnerabilities, at `authorize_scan` (after the build). It
+  cannot stop what was never scanned: `deploy_image`, a cluster without the
+  `odicea.scan` capability, a scan that failed or timed out all read as
+  `scan.known == false`, which that rule does not match (an unscanned image
+  is allowed, and shown as "sin escaneo" in the inventory and the app page).
+  **That includes a scan that failed on purpose**: a builder controls the image
+  and can make the scan fail, so this rule alone is bypassable. To require a
+  scan, enable the built-in `production_requires_scan` (off by default; see
+  "Built-in rules"), or write your own `scan.checked && !scan.known` rule —
+  not plain `!scan.known`, which also matches the first judgment, before the
+  build.
 
 ## Who asks, when the work is deferred
 

@@ -359,8 +359,11 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 		}
 	}
 	for _, run := range cancelRuns {
-		if err := s.approvals.CancelRun(ctx, p.Organization, run); err != nil {
-			return release.Deployment{}, nil, err
+		// the run holds at most one request at a time: whichever gate it waits at
+		for _, step := range []string{release.StepAuthorize, release.StepAuthorizeScan} {
+			if err := s.approvals.CancelRun(ctx, p.Organization, run, step); err != nil {
+				return release.Deployment{}, nil, err
+			}
 		}
 	}
 	run, err := s.engine.Start(ctx, workflow.Start{Workflow: release.WorkflowDeploy, Organization: p.Organization,

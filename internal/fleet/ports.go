@@ -37,6 +37,10 @@ type Queries interface {
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Cluster], error)
 	// Egress is the cluster's egress policy and how its agent has taken it.
 	Egress(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (EgressStatus, error)
+	// Placements is, for each environment (at most MaxPlacements) that runs
+	// on a cluster, which one: one query for the inventory. An environment
+	// not placed yet is absent. It changes nothing.
+	Placements(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) (map[project.EnvironmentID]ClusterID, error)
 }
 
 // Dispatch is what other domains use to run apps (release, through its
@@ -111,6 +115,10 @@ type Builds interface {
 	// ForgetBuildLogs drops the stored lines once the log is archived
 	// elsewhere; lines sent later are not stored.
 	ForgetBuildLogs(ctx context.Context, organization identity.OrganizationID, build BuildID) error
+	// BuildScan is where the scan of the build's image is: Pending until the
+	// agent reports it, Unsupported when the build's cluster does not list
+	// CapabilityScan (or the build is unknown), Done with the outcome.
+	BuildScan(ctx context.Context, organization identity.OrganizationID, build BuildID) (BuildScan, error)
 }
 
 // Agents is what the gateway does on behalf of connected agents,
@@ -169,6 +177,11 @@ type Agents interface {
 	// ReportBuilds stores build statuses, like Report: only builds desired
 	// on the agent's own cluster are taken, and a final phase never changes.
 	ReportBuilds(ctx context.Context, agent AgentRef, session Session, statuses []BuildStatus) error
+	// ReportScans stores the outcomes of image scans, like ReportBuilds: only
+	// builds desired on the agent's own cluster are taken, and only when the
+	// scanned digest is the one the build reported (an agent cannot attach a
+	// scan to an image it did not build).
+	ReportScans(ctx context.Context, agent AgentRef, session Session, scans []ScanStatus) error
 	// LogBuild stores lines of a build of the agent's own cluster, dropping
 	// the ones already stored and the ones beyond MaxBuildLogBytes.
 	LogBuild(ctx context.Context, agent AgentRef, session Session, log BuildLog) error
@@ -263,6 +276,8 @@ type Repository interface {
 	// FindPlacement is the cluster an environment runs on (NotFound before
 	// its first app).
 	FindPlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (ClusterID, error)
+	// ListPlacementsOf is FindPlacement for several environments at once.
+	ListPlacementsOf(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) (map[project.EnvironmentID]ClusterID, error)
 	// Place pins an environment to a cluster; a concurrent first placement
 	// wins and Place returns the cluster that won.
 	Place(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, cluster ClusterID) (ClusterID, error)
@@ -295,6 +310,13 @@ type Repository interface {
 	// ObserveBuilds stores statuses of builds desired on this cluster while
 	// session is its tunnel (false otherwise); a final phase never changes.
 	ObserveBuilds(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, statuses []BuildStatus) (bool, error)
+	// ObserveScans stores scans of builds desired on this cluster while
+	// session is its tunnel (false otherwise), keeping a scan only when its
+	// digest is the one the build's succeeded status reported. A newer report
+	// of the same build replaces the stored one (a rescan).
+	ObserveScans(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, scans []ScanStatus) (bool, error)
+	// FindBuildScan is the stored scan (NotFound before one).
+	FindBuildScan(ctx context.Context, organization identity.OrganizationID, build BuildID) (ScanStatus, error)
 	// ObserveBuildLog stores new lines of a build desired on this cluster
 	// while session is its tunnel (false otherwise), up to maxBytes per build
 	// (a line costs at least minLine).

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -13,6 +14,19 @@ import (
 // UseAIStatus wires the ai domain's port (the ai module is built after this
 // one, since it needs release.AI).
 func (s *Service) UseAIStatus(a release.AIStatus) { s.aiStatus = a }
+
+// Serving reads release's own data for many environments in one query: the
+// batch read of the inventory. It does not check that the environments exist
+// (the caller got them from the project domain).
+func (s *Service) Serving(ctx context.Context, organization identity.OrganizationID, envs []project.EnvironmentID) ([]release.Serving, error) {
+	if len(envs) == 0 {
+		return []release.Serving{}, nil
+	}
+	if len(envs) > release.MaxServing {
+		return nil, errx.Validation("too many environments in one read")
+	}
+	return s.repo.ListServing(ctx, organization, envs)
+}
 
 var errNoResources = errors.New("the resource domain is not wired")
 

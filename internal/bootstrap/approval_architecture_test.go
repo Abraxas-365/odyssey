@@ -130,8 +130,9 @@ func TestApprovalRulesCatchViolations(t *testing.T) {
 // services open it before theirs and never inside one (a refusal elsewhere in
 // the same transaction would roll the request back): the Approvals port's
 // Hold (`<x>.approvals.Hold`) is not called inside a function literal handed
-// to `.Do(...)`. The one exception is the deployment workflow's authorize step
-// (release/releasesvc/approval.go): the verdict is already in, and the request
+// to `.Do(...)`. The one exception is the deployment workflow's gate steps
+// (release/releasesvc/approval.go, holdDeployment: authorize and
+// authorize_scan share it): the verdict is already in, and the request
 // must be atomic with the deployment's waiting_approval status.
 func TestApprovalsAreNotHeldInsideATransaction(t *testing.T) {
 	report(t, holdInTxViolations(sources(t, false)))

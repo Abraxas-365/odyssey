@@ -95,6 +95,11 @@ type Queries interface {
 	// access, identity, resources, secrets, AI and egress, with the closed
 	// list of Attention. It changes nothing.
 	Uses(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Uses, error)
+	// Serving is, for each of the environments (at most MaxServing), what is
+	// online and how its latest deployment ended: one query for the inventory
+	// and the attention list. An environment that never deployed is absent.
+	// It changes nothing.
+	Serving(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) ([]Serving, error)
 }
 
 // AccessLookup finds an environment by its id alone, for the access sign-in
@@ -250,6 +255,8 @@ type Repository interface {
 
 	// FindState is the environment's release state (zero before its first deployment).
 	FindState(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (EnvironmentState, error)
+	// ListServing is Serving for several environments, in one query.
+	ListServing(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) ([]Serving, error)
 	// FindStateByEnvironment is FindState without the organization: the
 	// access sign-in knows only the environment id the gate sent. NotFound
 	// when the environment has no state. Only releasesvc calls it

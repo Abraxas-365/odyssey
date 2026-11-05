@@ -46,13 +46,15 @@ describe('policy rules mapping', () => {
   })
 
   it('builds the dry-run input from the example action', () => {
-    expect(scenarioInput(defaultScenario)).toEqual({ action: 'deploy', project: { tier: 'production' }, access: { mode: '' }, scan: { known: false, critical: 0 } })
+    expect(scenarioInput(defaultScenario)).toEqual({ action: 'deploy', project: { tier: 'production' }, access: { mode: '' }, scan: { known: false, checked: false, critical: 0 } })
     expect(scenarioInput({ ...defaultScenario, action: 'set_access', tier: 'sandbox', mode: 'public' })).toMatchObject({ action: 'set_access', project: { tier: 'sandbox' }, access: { mode: 'public' } })
     // a count means nothing before the scan exists, and never goes negative
-    expect(scenarioInput({ ...defaultScenario, critical: 4 }).scan).toEqual({ known: false, critical: 0 })
-    expect(scenarioInput({ ...defaultScenario, scanKnown: true, critical: 4 }).scan).toEqual({ known: true, critical: 4 })
-    expect(scenarioInput({ ...defaultScenario, scanKnown: true, critical: -3 }).scan?.critical).toBe(0)
-    expect(scenarioInput({ ...defaultScenario, scanKnown: true, critical: Number.NaN }).scan?.critical).toBe(0)
+    expect(scenarioInput({ ...defaultScenario, critical: 4 }).scan).toEqual({ known: false, checked: false, critical: 0 })
+    expect(scenarioInput({ ...defaultScenario, scan: 'done', critical: 4 }).scan).toEqual({ known: true, checked: true, critical: 4 })
+    expect(scenarioInput({ ...defaultScenario, scan: 'done', critical: -3 }).scan?.critical).toBe(0)
+    expect(scenarioInput({ ...defaultScenario, scan: 'done', critical: Number.NaN }).scan?.critical).toBe(0)
+    // a scan that failed was looked at: what production_requires_scan reads
+    expect(scenarioInput({ ...defaultScenario, scan: 'failed', critical: 4 }).scan).toEqual({ known: false, checked: true, critical: 0 })
   })
 
   it('says the decision as a sentence', () => {
@@ -99,6 +101,6 @@ describe('policy rules mapping', () => {
 
   it('lists what a condition can read', () => {
     const names = expressionVariables.map(v => v.name)
-    for (const n of ['action', 'project.tier', 'env.name', 'access.mode', 'actor.permissions', 'resource.kind', 'scan.known', 'scan.critical']) expect(names).toContain(n)
+    for (const n of ['action', 'project.tier', 'env.name', 'access.mode', 'actor.permissions', 'resource.kind', 'scan.known', 'scan.critical', 'scan.checked']) expect(names).toContain(n)
   })
 })

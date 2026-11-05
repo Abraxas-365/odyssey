@@ -8,6 +8,7 @@
       "deploy_image",
       "enable_ai",
       "get_app",
+      "get_attention",
       "get_build_logs",
       "get_deployment",
       "get_request",
@@ -25,6 +26,7 @@
     ],
     "Lector": [
       "get_app",
+      "get_attention",
       "get_build_logs",
       "get_deployment",
       "get_request",
@@ -42,6 +44,7 @@
       "deploy_image",
       "enable_ai",
       "get_app",
+      "get_attention",
       "get_build_logs",
       "get_deployment",
       "get_request",
@@ -1308,6 +1311,103 @@
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
+        "title": "Lo que necesita atención"
+      },
+      "description": "Lista lo que necesita atención ahora: las apps del usuario con algo por hacer (un secreto por cargar, un recurso que falló…), sus solicitudes a TI que esperan, fueron rechazadas o no se pudieron hacer y, si el usuario es de TI, también lo que TI vigila (aprobaciones por decidir, apps con vulnerabilidades críticas, publicaciones fallidas, clústeres sin respuesta). Cada elemento trae una frase en español y el enlace de la consola donde se resuelve. Una lista vacía sin 'unavailable' es 'todo en orden'; si 'unavailable' trae fuentes, esa parte no se pudo revisar ahora y la lista está incompleta. Lists what needs attention now: the user's apps with something to do (a secret to upload, a resource that failed…), their requests to IT that are waiting, were rejected or could not run and, for IT users, what IT watches over (approvals to decide, apps with critical vulnerabilities, failed publications, clusters that do not answer). Each item has a plain-Spanish sentence and the console link that solves it. An empty list without 'unavailable' means all is in order; sources in 'unavailable' could not be read now, so the list is incomplete.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_attention",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "all_in_order": {
+            "description": "true si no hay nada y todas las fuentes se pudieron revisar",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "app_id": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "console_url": {
+                  "description": "enlace de la consola donde se resuelve",
+                  "type": "string"
+                },
+                "kind": {
+                  "description": "app_attention, request_pending, request_rejected, request_failed (tuyo) o approval_pending, app_vulnerable, cluster_disconnected, cluster_policy, deployment_failed (de TI)",
+                  "type": "string"
+                },
+                "request_id": {
+                  "description": "para get_request",
+                  "type": "string"
+                },
+                "scope": {
+                  "description": "mine (lo tuyo) o it (lo que TI vigila)",
+                  "type": "string"
+                },
+                "sentence": {
+                  "description": "qué pasa, en español",
+                  "type": "string"
+                },
+                "severity": {
+                  "description": "critical, warning o info",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "scope",
+                "severity",
+                "sentence",
+                "console_url"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "truncated": {
+            "description": "hay más elementos de los que caben; resuélvelos y vuelve a pedir",
+            "type": "boolean"
+          },
+          "unavailable": {
+            "description": "fuentes que no se pudieron revisar ahora (approvals, apps, clusters, requests): la lista está incompleta",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "all_in_order",
+          "unavailable",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "title": "Lo que necesita atención"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
         "title": "Logs del build"
       },
       "description": "Muestra el log del build de una publicación hecha desde código (carpeta o GitHub): por defecto las últimas 200 líneas, para no llenar el contexto. Úsala cuando get_deployment diga que el build falló. Con after (el next de la respuesta anterior) sigue leyendo desde ahí. Shows the build log of a publication made from source (folder or GitHub): the last 200 lines by default, to spare context. Use it when get_deployment says the build failed. With after (the previous answer's next) it keeps reading from there. app is the slug (see list_apps) or the id; without deployment_id it is the same publication get_deployment shows.",
@@ -1664,7 +1764,7 @@
         "readOnlyHint": true,
         "title": "Listar apps"
       },
-      "description": "Lista las apps de la organización con su slug, nombre, estado y enlace a la consola. Úsala para encontrar el slug de una app antes de pedir su estado o sus versiones; por defecto solo las activas (status=archived para las archivadas). Lists the organization's apps with slug, name, status and console link. Use it to find an app's slug before asking for its state or versions; active apps only by default (status=archived for archived ones). Paginated: pass next_offset as offset to read more.",
+      "description": "Lista las apps de la organización con su slug, nombre, estado y enlace a la consola. Úsala para encontrar el slug de una app antes de pedir su estado o sus versiones; por defecto solo las activas (status=archived para las archivadas). needs_attention marca las apps cuya última publicación falló o que tienen vulnerabilidades críticas en línea (solo con lo que ya se sabe de todas las apps: para el detalle de una usa get_app, para lo que te toca a ti get_attention). Como get_attention, solo se marca lo que te corresponde ver: con permiso de inventario (TI) todas las apps; sin él, solo las apps que creaste (en las demás el campo no aparece, que no significa que estén bien). Lists the organization's apps with slug, name, status and console link. Use it to find an app's slug before asking for its state or versions; active apps only by default (status=archived for archived ones). needs_attention flags the apps whose last publication failed or that have critical vulnerabilities online (only what is known for every app at once: use get_app for one app's detail, get_attention for what is yours to do). Like get_attention it flags only what you may see: with the inventory permission (IT) every app; without it, only the apps you created (for the others the field is absent, which does not mean they are fine). Paginated: pass next_offset as offset to read more.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1710,6 +1810,13 @@
                 },
                 "name": {
                   "type": "string"
+                },
+                "needs_attention": {
+                  "description": "true si la última publicación falló o hay vulnerabilidades críticas en línea; ausente si no se pudo revisar o si la app no es tuya y no tienes permiso de inventario",
+                  "type": [
+                    "null",
+                    "boolean"
+                  ]
                 },
                 "slug": {
                   "description": "nombre corto de la app: lo que pasas como app a las demás herramientas",

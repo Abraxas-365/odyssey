@@ -4,6 +4,7 @@ package projectsvc
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -164,4 +165,27 @@ func (s *Service) List(ctx context.Context, organization identity.OrganizationID
 		filter.Status = []project.Status{project.StatusActive}
 	}
 	return s.repo.List(ctx, organization, filter, page.Normalize())
+}
+
+// FindMany and EnvironmentsOf are the batch reads of the inventory and the
+// attention list: one query for any number of apps, never more than
+// MaxBatch ids (the caller pages).
+func (s *Service) FindMany(ctx context.Context, organization identity.OrganizationID, ids []project.ID) ([]project.Project, error) {
+	if len(ids) == 0 {
+		return []project.Project{}, nil
+	}
+	if len(ids) > project.MaxBatch {
+		return nil, errx.Validation("too many projects in one read")
+	}
+	return s.repo.FindMany(ctx, organization, ids)
+}
+
+func (s *Service) EnvironmentsOf(ctx context.Context, organization identity.OrganizationID, ids []project.ID) ([]project.Environment, error) {
+	if len(ids) == 0 {
+		return []project.Environment{}, nil
+	}
+	if len(ids) > project.MaxBatch {
+		return nil, errx.Validation("too many projects in one read")
+	}
+	return s.repo.ListEnvironmentsOf(ctx, organization, ids)
 }

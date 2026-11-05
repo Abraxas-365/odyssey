@@ -16,6 +16,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/pgerr"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // Schema is the Postgres schema (and migration owner) of this repository.
@@ -220,7 +221,7 @@ func (r *Repository) LockEvictable(ctx context.Context, organization identity.Or
 // ---- builds ----
 
 const buildColumns = `id, organization_id, project_id, environment_id, source_id, status, image, error_code, error_message,
-	error_detail, run_id, requested_by, logs_key, logs_index, created_at, updated_at, started_at, finished_at`
+	error_detail, run_id, requested_by, logs_key, logs_index, scan, created_at, updated_at, started_at, finished_at`
 
 type buildRow struct {
 	build.Build
@@ -228,6 +229,7 @@ type buildRow struct {
 	ErrorMessage *string `db:"error_message"`
 	ErrorDetail  string  `db:"error_detail"`
 	RawLogsIndex []byte  `db:"logs_index"`
+	RawScan      []byte  `db:"scan"`
 }
 
 func (b buildRow) build() (build.Build, error) {
@@ -240,6 +242,13 @@ func (b buildRow) build() (build.Build, error) {
 	}
 	if err := json.Unmarshal(b.RawLogsIndex, &out.LogsIndex); err != nil {
 		return build.Build{}, errx.Wrap(err, "decode build log index", errx.TypeInternal)
+	}
+	if b.RawScan != nil {
+		var s build.Scan
+		if err := json.Unmarshal(b.RawScan, &s); err != nil {
+			return build.Build{}, errx.Wrap(err, "decode build scan", errx.TypeInternal)
+		}
+		out.Scan = &s
 	}
 	return out, nil
 }
@@ -254,6 +263,30 @@ func (r *Repository) CreateBuild(ctx context.Context, b build.Build) error {
 
 func (r *Repository) FindBuild(ctx context.Context, organization identity.OrganizationID, id build.ID) (build.Build, error) {
 	return r.findBuild(ctx, "", organization, id)
+}
+
+func (r *Repository) ListScans(ctx context.Context, organization identity.OrganizationID, ids []build.ID) ([]build.BuildScan, error) {
+	strs := make([]string, len(ids))
+	for i, id := range ids {
+		strs[i] = id.String()
+	}
+	var rows []struct {
+		ID      build.ID `db:"id"`
+		RawScan []byte   `db:"scan"`
+	}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT id, scan FROM build.builds
+		WHERE organization_id = $1 AND id = ANY($2::uuid[]) AND scan IS NOT NULL ORDER BY id`, organization, pq.Array(strs))
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list build scans", messages)
+	}
+	out := make([]build.BuildScan, len(rows))
+	for i, row := range rows {
+		out[i].Build = row.ID
+		if err := json.Unmarshal(row.RawScan, &out[i].Scan); err != nil {
+			return nil, errx.Wrap(err, "decode build scan", errx.TypeInternal)
+		}
+	}
+	return out, nil
 }
 
 func (r *Repository) FindBuildForUpdate(ctx context.Context, organization identity.OrganizationID, id build.ID) (build.Build, error) {
@@ -302,6 +335,38 @@ func (r *Repository) SetLogs(ctx context.Context, organization identity.Organiza
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE build.builds SET logs_key = $3, logs_index = $4, updated_at = now()
 		WHERE organization_id = $1 AND id = $2 AND finished_at IS NOT NULL`, organization, id, key, raw)
 	return affected(res, err, "set build logs", "build not found or unfinished")
+}
+
+// SetScan records the scan of a succeeded build once: the first one wins
+// (false when there already is one), so a replayed step or a second report
+// never changes what a deployment already judged.
+func (r *Repository) SetScan(ctx context.Context, organization identity.OrganizationID, id build.ID, scan build.Scan) (bool, error) {
+	raw, err := json.Marshal(scan)
+	if err != nil {
+		return false, errx.Wrap(err, "encode build scan", errx.TypeInternal)
+	}
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE build.builds SET scan = $3, updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND status = 'succeeded' AND scan IS NULL`, organization, id, raw)
+	if err != nil {
+		return false, pgerr.MapWith(err, "set build scan", messages)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, errx.Wrap(err, "set build scan", errx.TypeInternal)
+	}
+	if n == 1 {
+		return true, nil
+	}
+	// nothing changed: already scanned, or no such succeeded build
+	var exists bool
+	if err := txn.Q(ctx, r.db).GetContext(ctx, &exists, `SELECT EXISTS (SELECT 1 FROM build.builds
+		WHERE organization_id = $1 AND id = $2 AND status = 'succeeded')`, organization, id); err != nil {
+		return false, pgerr.MapWith(err, "set build scan", messages)
+	}
+	if !exists {
+		return false, errx.NotFound("build not found or did not succeed")
+	}
+	return false, nil
 }
 
 func affected(res sql.Result, err error, op, notFound string) error {

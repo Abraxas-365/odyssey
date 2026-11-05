@@ -12,6 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 )
@@ -84,13 +85,13 @@ func (s *Service) authorizeStep(ctx context.Context, st *workflow.State) (any, e
 	}
 	switch verdict.Effect {
 	case gate.Deny:
-		if err := s.withdraw(ctx, org, st); err != nil {
+		if err := s.withdraw(ctx, org, st, release.StepAuthorize); err != nil {
 			return nil, err
 		}
 		return nil, workflow.Fail(refused(verdict))
 	case gate.Approval:
 	default:
-		if err := s.withdraw(ctx, org, st); err != nil {
+		if err := s.withdraw(ctx, org, st, release.StepAuthorize); err != nil {
 			return nil, err
 		}
 		return gate.Decision{Status: gate.DecisionAllowed}, nil
@@ -102,7 +103,21 @@ func (s *Service) authorizeStep(ctx context.Context, st *workflow.State) (any, e
 	if d.Reason == release.ReasonRollback {
 		summary = "Volver a una versión anterior de " + where(p, e)
 	}
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
+	if err := s.holdDeployment(ctx, st, p, e, d, action, verdict, release.StepAuthorize, summary); err != nil {
+		return nil, err
+	}
+	return nil, workflow.WaitFor(gate.SignalFor(release.StepAuthorize), approvalWait)
+}
+
+// holdDeployment opens the request of a deployment's gate step, atomic with
+// the deployment's waiting_approval status (the step it was at stays: the
+// console's progress; only the status says it waits). The one place a Hold
+// runs inside a transaction (TestApprovalsAreNotHeldInsideATransaction): the
+// verdict is already in.
+func (s *Service) holdDeployment(ctx context.Context, st *workflow.State, p project.Project, e project.Environment,
+	d release.Deployment, action string, verdict gate.Verdict, step, summary string) error {
+	org := d.Organization
+	return s.tx.Do(ctx, func(ctx context.Context) error {
 		cur, err := s.repo.FindDeploymentForUpdate(ctx, org, d.ID)
 		if err != nil {
 			return err
@@ -111,29 +126,24 @@ func (s *Service) authorizeStep(ctx context.Context, st *workflow.State) (any, e
 			return workflow.Fail(errSuperseded)
 		}
 		if _, err := s.approvals.Hold(ctx, org, gate.Hold{Action: action, Project: p.ID.String(), Environment: e.ID.String(),
-			Summary: summary, Verdict: verdict, Run: st.Run.ID.String(), RunStep: release.StepAuthorize,
+			Summary: summary, Verdict: verdict, Run: st.Run.ID.String(), RunStep: step,
 			Payload: release.DeploymentApproval{Op: release.OpDeployment, Deployment: d.ID, Reason: d.Reason}}); err != nil {
 			return err
 		}
-		// the step it was at stays (the console's progress); only the status says it waits
 		return s.repo.SetProgress(ctx, org, d.ID, release.StatusWaitingApproval, cur.Step)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return nil, workflow.WaitFor(gate.SignalApproval, approvalWait)
 }
 
-// withdraw cancels the request this run may have opened earlier: the step ran
-// before (a crash or retry between opening the request and parking), and the
-// rules have since changed to allow or deny the deployment, so nobody should
-// be asked to decide it. A request already decided, and a run that never
-// asked, are left alone (CancelRun is a no-op for them).
-func (s *Service) withdraw(ctx context.Context, org identity.OrganizationID, st *workflow.State) error {
+// withdraw cancels the request this run may have opened earlier at step: the
+// step ran before (a crash or retry between opening the request and parking),
+// and the rules have since changed to allow or deny the deployment, so nobody
+// should be asked to decide it. A request already decided, and a run that
+// never asked, are left alone (CancelRun is a no-op for them).
+func (s *Service) withdraw(ctx context.Context, org identity.OrganizationID, st *workflow.State, step string) error {
 	if s.approvals == nil {
 		return nil
 	}
-	return s.approvals.CancelRun(ctx, org, st.Run.ID.String())
+	return s.approvals.CancelRun(ctx, org, st.Run.ID.String(), step)
 }
 
 // refused is the failure of a deployment IT's rules deny: plain words (no
@@ -152,21 +162,37 @@ func refused(v gate.Verdict) error {
 // to the status it had), or cancels the deployment (rejected, expired or
 // taken back).
 func (s *Service) approvalStep(ctx context.Context, st *workflow.State) (any, error) {
+	return nil, s.act(ctx, st, release.StepAuthorize)
+}
+
+// approvalScanStep is approvalStep for the decision authorize_scan asked.
+func (s *Service) approvalScanStep(ctx context.Context, st *workflow.State) (any, error) {
+	return nil, s.act(ctx, st, release.StepAuthorizeScan)
+}
+
+// act reads what the gate step saved (its own decision, or the signal's) and
+// carries on, resumes or cancels accordingly.
+func (s *Service) act(ctx context.Context, st *workflow.State, gateStep string) error {
 	var dec gate.Decision
-	if err := st.Output(release.StepAuthorize, &dec); err != nil {
-		return nil, nil // a run from before this step existed: nothing was asked
+	if err := st.Output(gateStep, &dec); err != nil {
+		return nil // a run from before this step existed: nothing was asked
 	}
 	switch dec.Status {
 	case "", gate.DecisionAllowed:
-		return nil, nil
+		return nil
 	case gate.DecisionApproved:
-		return nil, s.resume(ctx, st, dec)
+		return s.resume(ctx, st, dec, gateStep)
 	}
-	return nil, s.cancelHeld(ctx, st, dec)
+	return s.cancelHeld(ctx, st, dec)
 }
 
-// resume uses up the approval and puts the deployment back where it was.
-func (s *Service) resume(ctx context.Context, st *workflow.State, dec gate.Decision) error {
+// resume uses up the approval and puts the deployment back where it was. What
+// "where it was" is depends on the gate: authorize is before the build
+// (pending, or building when a build exists but its release is not recorded);
+// authorize_scan is the end of the build for the console (the release exists,
+// apply has not started), so it goes back to building, as authorizeScanStep
+// left it, and not to pending, which would say it is queued for nothing.
+func (s *Service) resume(ctx context.Context, st *workflow.State, dec gate.Decision, gateStep string) error {
 	j, err := s.load(ctx, st)
 	if err != nil {
 		return err
@@ -187,7 +213,7 @@ func (s *Service) resume(ctx context.Context, st *workflow.State, dec gate.Decis
 			return err
 		}
 		status := release.StatusPending
-		if cur.Build != nil && cur.Release == nil {
+		if cur.Build != nil && (cur.Release == nil || gateStep == release.StepAuthorizeScan) {
 			status = release.StatusBuilding
 		}
 		if cur.Status != release.StatusWaitingApproval {

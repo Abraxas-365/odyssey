@@ -105,6 +105,8 @@ type Client struct {
 	buildOps      map[string]buildOp              // what to do with a build, until done
 	refusedBuilds map[string]*fleetv1.BuildStatus // builds refused (reported failed) until cancelled
 	buildsChanged map[string]bool                 // build statuses to report
+	scansChanged  map[string]bool                 // builds whose scan may have ended
+	scansSent     map[string]*fleetv1.ScanStatus  // the scan last sent per build (this tunnel)
 }
 
 func New(o Options) *Client {
@@ -139,6 +141,7 @@ func New(o Options) *Client {
 		resources: map[key]*fleetv1.Resource{}, rejectedResources: map[key]*fleetv1.ResourceStatus{}, resourcesChanged: map[key]bool{},
 		buildQueue: newBuildQueue(), buildOps: map[string]buildOp{},
 		refusedBuilds: map[string]*fleetv1.BuildStatus{}, buildsChanged: map[string]bool{},
+		scansChanged: map[string]bool{}, scansSent: map[string]*fleetv1.ScanStatus{},
 	}
 }
 
@@ -505,6 +508,9 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 	if err := c.reportBuilds(ctx, builds, true); err != nil {
 		return err
 	}
+	if err := c.reportScans(ctx, send, true); err != nil {
+		return err
+	}
 	c.o.Log.Info("tunnel up", "gateway", id.Gateway, "cluster", id.Cluster)
 
 	errc := make(chan error, 2)
@@ -645,6 +651,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 			if err := c.reportBuilds(ctx, builds, true); err != nil {
 				return err
 			}
+			if err := c.reportScans(ctx, send, true); err != nil {
+				return err
+			}
 		case <-c.wake:
 			// let a burst of changes (a rollout) settle into one report
 			select {
@@ -659,6 +668,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 				return err
 			}
 			if err := c.reportBuilds(ctx, builds, false); err != nil {
+				return err
+			}
+			if err := c.reportScans(ctx, send, false); err != nil {
 				return err
 			}
 		}
