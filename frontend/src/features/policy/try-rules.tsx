@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Callout, ErrorNotice } from '@/components/odyssey'
 import { useEvaluatePolicy } from '@/lib/policy'
-import type { PolicyAction, PolicyEvaluation, ProjectTier } from '@/lib/types'
-import { accessModeOptions, actionOptions, decisionText, defaultScenario, effectInfo, scanOptions, scenarioInput, tierOptions, type Candidate, type Scenario, type ScanScenario } from './rules'
+import type { PolicyAction, PolicyEvaluation, ProjectTier, ResourceKind } from '@/lib/types'
+import { accessModeOptions, actionOptions, decisionText, defaultScenario, effectInfo, onResource, resourceKindOptions, scanOptions, scenarioInput, tierOptions, type Candidate, type Scenario, type ScanScenario } from './rules'
 
 const labelOf = (opts: { value: string; label?: string; title?: string }[]) => Object.fromEntries(opts.map(o => [o.value, o.label ?? o.title ?? o.value]))
 
@@ -27,6 +27,7 @@ export function TryRules({ outcome, onResult, candidate, disabled }: { outcome?:
   const actions = labelOf(actionOptions)
   const tiers = labelOf(tierOptions)
   const modes = labelOf(accessModeOptions)
+  const kinds = labelOf(resourceKindOptions)
   const scans = labelOf(scanOptions)
 
   return (
@@ -53,6 +54,15 @@ export function TryRules({ outcome, onResult, candidate, disabled }: { outcome?:
             <Select value={scenario.mode} items={modes} onValueChange={v => set('mode', v ?? 'team')}>
               <SelectTrigger className="w-full" aria-label="Quién podrá abrirla"><SelectValue /></SelectTrigger>
               <SelectContent>{accessModeOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+            </Select>
+          </Field>
+        )}
+        {onResource(scenario.action) && (
+          <Field>
+            <FieldLabel>Qué se conecta o borra</FieldLabel>
+            <Select value={scenario.kind} items={kinds} onValueChange={v => set('kind', (v ?? 'postgres') as ResourceKind)}>
+              <SelectTrigger className="w-full" aria-label="Qué se conecta o borra"><SelectValue /></SelectTrigger>
+              <SelectContent>{resourceKindOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
         )}

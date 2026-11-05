@@ -1,4 +1,4 @@
-import type { PolicyAction, PolicyDraft, PolicyEffect, PolicyEvaluation, PolicyInput, PolicyRule, ProjectTier } from '@/lib/types'
+import type { PolicyAction, PolicyDraft, PolicyEffect, PolicyEvaluation, PolicyInput, PolicyRule, ProjectTier, ResourceKind } from '@/lib/types'
 import type { Tone } from '@/components/odyssey'
 
 /** IT's rules in plain words (UX v3 §11): effects, tiers and actions are never shown by their ids. */
@@ -37,6 +37,16 @@ export const accessModeOptions: { value: string; label: string }[] = [
   { value: 'organization', label: 'Toda la empresa' },
   { value: 'public', label: 'Cualquiera con el enlace' },
 ]
+
+/** What `resource.kind` can be, for the actions on a database, cache or files. */
+export const resourceKindOptions: { value: ResourceKind; label: string }[] = [
+  { value: 'postgres', label: 'Base de datos' },
+  { value: 'redis', label: 'Caché' },
+  { value: 'files', label: 'Archivos' },
+]
+
+/** The actions whose input carries `resource.kind`. */
+export const onResource = (a: PolicyAction) => a === 'connect_resource' || a === 'delete_resource'
 
 export const actionLabel = (a: PolicyAction) => actionOptions.find(o => o.value === a)?.label ?? a
 
@@ -78,11 +88,12 @@ export interface Scenario {
   action: PolicyAction
   tier: ProjectTier
   mode: string
+  kind: ResourceKind
   scan: ScanScenario
   critical: number
 }
 
-export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', scan: 'none', critical: 0 }
+export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', kind: 'postgres', scan: 'none', critical: 0 }
 
 export const scanOptions: { value: ScanScenario; label: string }[] = [
   { value: 'none', label: 'Todavía no se analiza (antes de construir)' },
@@ -95,6 +106,7 @@ export function scenarioInput(s: Scenario, candidate?: Candidate): PolicyInput {
     action: s.action,
     project: { tier: s.tier },
     access: { mode: s.action === 'set_access' ? s.mode : '' },
+    resource: { kind: onResource(s.action) ? s.kind : '' },
     scan: {
       known: s.scan === 'done',
       checked: s.scan !== 'none',

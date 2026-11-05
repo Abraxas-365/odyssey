@@ -46,8 +46,12 @@ describe('policy rules mapping', () => {
   })
 
   it('builds the dry-run input from the example action', () => {
-    expect(scenarioInput(defaultScenario)).toEqual({ action: 'deploy', project: { tier: 'production' }, access: { mode: '' }, scan: { known: false, checked: false, critical: 0 } })
+    expect(scenarioInput(defaultScenario)).toEqual({ action: 'deploy', project: { tier: 'production' }, access: { mode: '' }, resource: { kind: '' }, scan: { known: false, checked: false, critical: 0 } })
     expect(scenarioInput({ ...defaultScenario, action: 'set_access', tier: 'sandbox', mode: 'public' })).toMatchObject({ action: 'set_access', project: { tier: 'sandbox' }, access: { mode: 'public' } })
+    // resource.kind is what a rule on databases, caches or files reads (it was never sent)
+    expect(scenarioInput({ ...defaultScenario, action: 'connect_resource', kind: 'redis' }).resource).toEqual({ kind: 'redis' })
+    expect(scenarioInput({ ...defaultScenario, action: 'delete_resource', kind: 'files' }).resource).toEqual({ kind: 'files' })
+    expect(scenarioInput({ ...defaultScenario, action: 'enable_ai', kind: 'redis' }).resource).toEqual({ kind: '' })
     // a count means nothing before the scan exists, and never goes negative
     expect(scenarioInput({ ...defaultScenario, critical: 4 }).scan).toEqual({ known: false, checked: false, critical: 0 })
     expect(scenarioInput({ ...defaultScenario, scan: 'done', critical: 4 }).scan).toEqual({ known: true, checked: true, critical: 4 })
