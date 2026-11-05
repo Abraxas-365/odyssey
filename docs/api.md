@@ -212,8 +212,35 @@ environment serves. The console calls both "versión".
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, resources[{name, kind, prefix}], ai:{enabled, key_version, key_id?, base_url?}, secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/uses` | projects:read | 200 `{access:{mode, pending, failed}, identity:{verifiable}, resources[{name, kind, prefix, status, detail?, variables}], secrets:{total, missing[], external, unavailable}\|null, variables, ai:{available, enabled, status}\|null, egress:{mode, state, enforced}\|null, unavailable[], attention[{kind, who, message}]}` — «Lo que usa esta app» (below) |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
 | `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null}` (`{set, unset}`) |
+
+**Lo que usa esta app (`…/uses`).** One read model of what the app depends on
+and what still stands in its way, assembled by release from its own settings
+and from ports (resources, the AI, the cluster's egress policy); it stores
+nothing. `attention` is the **closed** list of kinds, each with a `who` that
+says who can act (`owner`: the people of the app; `it`: only IT; `wait`: in
+progress, nothing to do) and a plain Spanish `message`:
+`secret_missing` (owner: a secret has no value, or must be loaded again
+because the cluster's key changed), `secrets_unavailable` (it: the cluster
+has no key to receive private data, or the company's vault could not be
+read), `resource_not_ready` (wait: being prepared or erased),
+`resource_failed` (it), `ai_error` (it: a key could not be revoked, or the AI
+is on but no longer available), `ai_pending` (wait: enabling, renewing or
+disabling), `config_pending` (wait: the app online has not received the
+latest settings yet), `config_failed` (owner: the config deployment failed
+and nothing retries it; saving the change again does) and
+`egress_not_applied` (it when the cluster cannot or failed to apply a
+`restricted` policy; wait while its agent has not answered yet).
+
+Each source degrades on its own: when the secrets, the AI or the egress cannot
+be read, that section is `null` and its name is in `unavailable` (resources
+come with status `unknown`); the call still answers 200 and an unknown section
+raises no attention. Only release's own data (settings, state) can fail it.
+The assistants get the same shape as `uses` in `get_app` (which never fails
+because of it), whose `needs_attention` is true when the last publication
+failed **or** any attention has a `who` other than `wait`.
 
 #### Resources (databases, caches, files; `docs/resources.md`)
 

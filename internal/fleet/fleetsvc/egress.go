@@ -7,6 +7,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/text"
 	"unicode/utf8"
 )
@@ -63,6 +64,33 @@ func (s *Service) Egress(ctx context.Context, organization identity.Organization
 	}
 	e.Supported = c.Agent.Capabilities.CanEnforceEgress()
 	return e.Status(), nil
+}
+
+// EgressTarget answers fleet.Dispatch.EgressTarget without placing anything
+// (like SecretTarget): the environment's cluster, else the organization's
+// default; nothing when there is none or it was revoked.
+func (s *Service) EgressTarget(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (fleet.EgressTarget, error) {
+	var c fleet.Cluster
+	id, err := s.repo.FindPlacement(ctx, organization, environment)
+	switch {
+	case errx.IsType(err, errx.TypeNotFound):
+		if c, err = s.repo.FindDefaultCluster(ctx, organization); errx.IsType(err, errx.TypeNotFound) {
+			return fleet.EgressTarget{}, nil
+		}
+	case err == nil:
+		c, err = s.repo.FindCluster(ctx, organization, id)
+	}
+	if err != nil {
+		return fleet.EgressTarget{}, err
+	}
+	if c.Status == fleet.StatusRevoked {
+		return fleet.EgressTarget{}, nil
+	}
+	st, err := s.Egress(ctx, organization, c.ID)
+	if err != nil {
+		return fleet.EgressTarget{}, err
+	}
+	return fleet.EgressTarget{Cluster: c.ID, Status: st}, nil
 }
 
 func (s *Service) DesiredPolicy(ctx context.Context, agent fleet.AgentRef) (fleet.Policy, error) {

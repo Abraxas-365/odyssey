@@ -38,6 +38,12 @@ type Queries interface {
 	List(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Listing, error)
 	// Get is one resource with its state (NotFound when it is not the environment's).
 	Get(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, name string) (View, error)
+	// Named are the resources of the environment with those names and how
+	// the cluster sees each (the caller already placed the environment): one
+	// store read and one Observed per name, no Kinds, no connections.
+	// Names that are not the environment's resources are left out. Views
+	// carry no connection (Connected is false).
+	Named(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, names []string) ([]View, error)
 	// Find is the stored resource of the environment (what release asks).
 	Find(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (Resource, error)
 }

@@ -3,6 +3,7 @@ import { Lock } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Callout, ErrorNotice, OptionCards, Panel, PanelBody, PanelFooter, PanelHeader } from '@/components/odyssey'
+import { anchors } from './uses'
 import { useAuth } from '@/lib/auth'
 import { permissions } from '@/lib/permissions'
 import { useSetAccess, useSettings } from '@/lib/releases'
@@ -26,7 +27,7 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
   const applying = notice === 'applying'
 
   return (
-    <Panel>
+    <Panel id={anchors.access} tabIndex={-1} className="scroll-mt-20 outline-none">
       <PanelHeader icon={Lock} title="Quién puede abrirla" description={inForce ? `Ahora: ${accessLabel(inForce).toLowerCase()}.` : undefined} />
       <PanelBody>
         <ErrorNotice error={settings.error} onRetry={() => settings.refetch()} />

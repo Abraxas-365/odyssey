@@ -3,6 +3,7 @@ package releasemcp_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -47,6 +48,8 @@ type releases struct {
 	onFind          func(n int)          // runs at the start of the nth FindDeployment
 	settings        *release.Settings    // nil: the defaults
 	appliedSettings *int64               // the revision the cluster was last told
+	uses            *release.Uses        // nil: nothing to attend to
+	usesErr         error                // Uses fails (release's own data)
 }
 
 func (r *releases) place(org identity.OrganizationID, env project.EnvironmentID) error {
@@ -113,6 +116,25 @@ func (r *releases) Secrets(_ context.Context, org identity.OrganizationID, _ pro
 		return release.Secrets{}, err
 	}
 	return release.Secrets{Items: []release.SecretView{}}, nil
+}
+
+func (r *releases) Uses(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Uses, error) {
+	if err := r.place(org, env); err != nil {
+		return release.Uses{}, err
+	}
+	if r.usesErr != nil {
+		return release.Uses{}, r.usesErr
+	}
+	if r.uses != nil {
+		return *r.uses, nil
+	}
+	s := release.DefaultSettings(org, env)
+	if r.settings != nil {
+		s = *r.settings
+	}
+	return release.NewUses(release.UsesInput{Settings: s, Serving: r.release != nil, Active: r.active != nil, Applied: r.appliedSettings,
+		Secrets: release.Secrets{Items: []release.SecretView{}, Cluster: release.ClusterSecrets{Key: &release.ClusterKey{KeyID: "k"}}}, AI: release.AIState{Status: "off"},
+		Egress: release.ClusterEgress{Available: true, Mode: "internet", State: release.EgressApplied, Enforced: true}}), nil
 }
 
 func (r *releases) FindRelease(context.Context, identity.OrganizationID, project.ID, release.ID) (release.Release, error) {
@@ -388,5 +410,65 @@ func TestPlatformStartedVersionsHaveNoUser(t *testing.T) {
 	out, _ := call[releasemcp.ListVersionsOut](t, f.connect(t, f.org, reader...), "list_versions", map[string]any{"app": "cotizador"})
 	if v := out.Items[0]; v.CreatedBy != "" || v.Reason != "auto_rollback" {
 		t.Fatalf("auto rollback: %+v", v)
+	}
+}
+
+// get_app carries what the app uses, and needs_attention is the last
+// publication failing OR something pending in uses.attention.
+func TestGetAppUsesAndNeedsAttention(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, reader...)
+	f.releases.deployments = f.releases.deployments[1:] // the failed publication is gone: only v2 (ready) and v1
+	out, _ := call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"})
+	if out.NeedsAttention || len(out.Uses.Attention) != 0 || out.Uses.Access.Mode != "team" || !out.Uses.Identity.Verifiable ||
+		out.Uses.Resources == nil || out.Uses.Secrets.Missing == nil || out.Uses.Egress.Mode != "internet" {
+		t.Fatalf("quiet app: %+v", out)
+	}
+
+	in := release.DefaultSettings(f.org, f.env)
+	in.Secrets = []release.SecretRef{{Name: "STRIPE_API_KEY", Source: release.SecretManaged}}
+	u := release.NewUses(release.UsesInput{Settings: in, Secrets: release.Secrets{Items: []release.SecretView{
+		{SecretRef: in.Secrets[0], State: release.SecretStateMissing}}, Cluster: release.ClusterSecrets{Key: &release.ClusterKey{KeyID: "k"}}}, AI: release.AIState{Status: "off"}})
+	f.releases.uses = &u
+	out, _ = call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"})
+	if !out.NeedsAttention || len(out.Uses.Attention) != 1 || out.Uses.Attention[0].Kind != "secret_missing" || out.Uses.Attention[0].Who != "owner" ||
+		len(out.Uses.Secrets.Missing) != 1 || out.Uses.Secrets.Missing[0] != "STRIPE_API_KEY" || out.State != "online" {
+		t.Fatalf("secret missing: %+v", out)
+	}
+
+	// something in progress (who wait) is not a reason to attend
+	in.Secrets = nil
+	in.AI.Enabled = true
+	u = release.NewUses(release.UsesInput{Settings: in, Secrets: release.Secrets{Items: []release.SecretView{}, Cluster: release.ClusterSecrets{Key: &release.ClusterKey{KeyID: "k"}}},
+		AI: release.AIState{Available: true, Status: "enabling"}})
+	f.releases.uses = &u
+	out, _ = call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"})
+	if out.NeedsAttention || len(out.Uses.Attention) != 1 || out.Uses.Attention[0].Who != "wait" {
+		t.Fatalf("waiting: %+v", out)
+	}
+}
+
+// A section that could not be read comes back null and named in
+// uses.unavailable; get_app itself still answers, and it answers even when the
+// whole read model fails.
+func TestGetAppDegradesWhenUsesDoes(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, reader...)
+	f.releases.deployments = f.releases.deployments[1:]
+	in := release.DefaultSettings(f.org, f.env)
+	u := release.NewUses(release.UsesInput{Settings: in, AI: release.AIState{Status: "off"}, Unavailable: []release.UsesSection{release.SectionSecrets, release.SectionEgress}})
+	f.releases.uses = &u
+	out, res := call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"})
+	if res.IsError || out.Uses.Secrets != nil || out.Uses.Egress != nil || out.Uses.AI == nil || len(out.Uses.Unavailable) != 2 ||
+		out.Uses.Unavailable[0] != "secrets" || out.Uses.Unavailable[1] != "egress" || out.NeedsAttention || out.State != "online" {
+		t.Fatalf("partial uses: %+v %+v", out, res)
+	}
+
+	f.releases.uses = nil
+	f.releases.usesErr = errors.New("database down")
+	out, res = call[releasemcp.GetAppOut](t, cs, "get_app", map[string]any{"app": "cotizador"})
+	if res.IsError || out.Slug != "cotizador" || out.State != "online" || out.Uses.Secrets != nil || out.Uses.AI != nil || out.Uses.Egress != nil ||
+		len(out.Uses.Unavailable) != 4 || out.Uses.Attention == nil || out.Uses.Resources == nil {
+		t.Fatalf("no uses at all: %+v %+v", out, res)
 	}
 }

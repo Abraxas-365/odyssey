@@ -111,3 +111,7 @@ func Migrations() fs.FS { return releasepg.Migrations() }
 // UseResources wires the resource domain's port (the resource module is built
 // after this one, since it needs Usage).
 func (m Module) UseResources(r release.Resources) { m.svc.UseResources(r) }
+
+// UseAIStatus wires the ai domain's port (the ai module is built after this
+// one, since it needs release.AI).
+func (m Module) UseAIStatus(a release.AIStatus) { m.svc.UseAIStatus(a) }

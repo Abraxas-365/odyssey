@@ -119,3 +119,12 @@ func (c *Cluster) Status(ctx context.Context, t release.Target, name string) (re
 	}
 	return out, nil
 }
+
+// Egress is the policy of the environment's cluster (fleet.EgressTarget).
+func (c *Cluster) Egress(ctx context.Context, t release.Target) (release.ClusterEgress, error) {
+	e, err := c.fleet.EgressTarget(ctx, t.Organization, t.Environment)
+	if err != nil || e.Cluster.IsZero() {
+		return release.ClusterEgress{}, err
+	}
+	return release.ClusterEgress{Available: true, Mode: string(e.Status.Mode), State: release.ClusterEgressState(e.Status.State), Enforced: e.Status.Enforced}, nil
+}

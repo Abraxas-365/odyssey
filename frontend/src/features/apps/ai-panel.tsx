@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button'
 import { ErrorNotice, TechnicalDetails } from '@/components/odyssey'
 import { useAI, useDisableAI, useEnableAI, useRotateAI } from '@/lib/ai'
 import { aiActions, aiState, aiUnavailable, aiVariablesText } from './ai'
+import { anchors } from './uses'
 
 /**
- * The AI row of "Lo que usa": the app gets its own key for the company's AI
+ * The AI row of "Datos e IA": the app gets its own key for the company's AI
  * models and reads it from environment variables. The key is never shown.
  * Turning it on, renewing the key and turning it off are one change at a time;
  * the console asks again while one is running.
@@ -28,7 +29,7 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
   const why = aiUnavailable(a)
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border px-4 py-3" aria-label="IA de la app" role="group">
+    <div id={anchors.ai} tabIndex={-1} className="flex scroll-mt-20 flex-col gap-2 rounded-lg border px-4 py-3 outline-none" aria-label="IA de la app" role="group">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <Sparkles className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0 flex-1">

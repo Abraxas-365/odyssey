@@ -8,6 +8,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
 )
 
 func TestSetEgress(t *testing.T) {
@@ -115,5 +116,38 @@ func TestAckWarningsAreCleanedAndShownWhileApplied(t *testing.T) {
 	// a new generation is pending: the old warnings are not shown for it
 	if st, _ = e.svc.SetEgress(ctx, e.org, agent.Cluster, fleet.SetEgress{Mode: fleet.EgressRestricted, Allow: []string{"10.0.0.0/8", "198.51.100.0/24"}, ChangedBy: e.user}); st.State != fleet.EgressPending || len(st.Warnings) != 0 || st.Warnings == nil {
 		t.Errorf("pending %+v", st)
+	}
+}
+
+// An environment's egress target is its cluster's policy (the placement, else
+// the default); with no cluster, or a revoked one, there is none.
+func TestEgressTarget(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	env := project.NewEnvironmentID()
+
+	if tg, err := e.svc.EgressTarget(ctx, e.org, env); err != nil || !tg.Cluster.IsZero() {
+		t.Fatalf("no cluster: %+v %v", tg, err)
+	}
+	agent := e.enrolled(t, "lima")
+	tg, err := e.svc.EgressTarget(ctx, e.org, env)
+	if err != nil || tg.Cluster != agent.Cluster || tg.Status.Mode != fleet.EgressInternet || tg.Status.State != fleet.EgressUnsupported || tg.Status.Enforced {
+		t.Fatalf("default cluster: %+v %v", tg, err)
+	}
+	if _, err := e.svc.SetEgress(ctx, e.org, agent.Cluster, fleet.SetEgress{Mode: fleet.EgressRestricted, Allow: []string{"203.0.113.0/24"}, ChangedBy: e.user}); err != nil {
+		t.Fatal(err)
+	}
+	if tg, err = e.svc.EgressTarget(ctx, e.org, env); err != nil || tg.Status.Mode != fleet.EgressRestricted || tg.Status.Generation != 1 {
+		t.Fatalf("restricted: %+v %v", tg, err)
+	}
+	// another organization sees none of it
+	if tg, err = e.svc.EgressTarget(ctx, identity.NewOrganizationID(), env); err != nil || !tg.Cluster.IsZero() {
+		t.Fatalf("other tenant: %+v %v", tg, err)
+	}
+	if err := e.svc.Revoke(ctx, e.org, agent.Cluster, fleet.Revoke{RevokedBy: e.user}); err != nil {
+		t.Fatal(err)
+	}
+	if tg, err = e.svc.EgressTarget(ctx, e.org, env); err != nil || !tg.Cluster.IsZero() {
+		t.Fatalf("revoked: %+v %v", tg, err)
 	}
 }

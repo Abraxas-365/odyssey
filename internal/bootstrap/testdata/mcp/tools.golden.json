@@ -639,7 +639,7 @@
         "readOnlyHint": true,
         "title": "Estado de una app"
       },
-      "description": "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. app is the slug (see list_apps) or the id.",
+      "description": "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. También dice lo que la app usa (acceso, identidad, bases de datos, secretos, IA, salida a internet) en `uses`, y lo que le falta en `uses.attention`. Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. It also reports what the app uses (access, identity, databases, secrets, AI, internet egress) in `uses`, and what is missing in `uses.attention`. app is the slug (see list_apps) or the id.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -981,7 +981,7 @@
             "type": "string"
           },
           "needs_attention": {
-            "description": "true si la última publicación falló: mira last_deployment.error",
+            "description": "true si la última publicación falló (mira last_deployment.error) o si algo en uses.attention necesita a una persona (who owner o it; lo que está en curso, who wait, no cuenta); también true si no se pudo leer nada de uses",
             "type": "boolean"
           },
           "repository": {
@@ -1028,6 +1028,246 @@
           "url": {
             "description": "dirección pública de la app; vacía hasta que se publica",
             "type": "string"
+          },
+          "uses": {
+            "additionalProperties": false,
+            "description": "lo que usa la app (acceso, identidad, bases de datos, secretos, IA, salida a internet) y lo que le falta: no hace falta llamar a otras tools para saberlo",
+            "properties": {
+              "access": {
+                "additionalProperties": false,
+                "description": "quién puede abrir la app (mode: team, organization o public) y si el cambio todavía se está aplicando (pending)",
+                "properties": {
+                  "failed": {
+                    "description": "true si el cambio no se pudo aplicar y nada lo está reintentando: guardar el cambio otra vez lo reintenta",
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "description": "team, organization o public",
+                    "type": "string"
+                  },
+                  "pending": {
+                    "description": "true mientras el cambio se aplica a la app en línea",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "pending",
+                  "failed"
+                ],
+                "type": "object"
+              },
+              "ai": {
+                "additionalProperties": false,
+                "description": "uso de la IA: available (se puede activar aquí), enabled (la app la usa) y status (off, enabling, enabled, rotating, disabling o revoke_failed); null si no se pudo leer (mira unavailable)",
+                "properties": {
+                  "available": {
+                    "description": "la IA se puede activar en esta app",
+                    "type": "boolean"
+                  },
+                  "enabled": {
+                    "description": "la app usa la IA",
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "description": "off, enabling, enabled, rotating, disabling o revoke_failed (no se pudo retirar una llave anterior)",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "available",
+                  "enabled",
+                  "status"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "attention": {
+                "description": "lo que falta, bloquea o está en curso; vacío si no hay nada. Mira who de cada uno: owner (la gente de la app puede resolverlo), it (solo TI) o wait (en curso, no hay nada que hacer)",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "description": "secret_missing, secrets_unavailable, resource_not_ready, resource_failed, ai_error, ai_pending, config_pending, config_failed o egress_not_applied",
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "qué pasa, en palabras simples",
+                      "type": "string"
+                    },
+                    "who": {
+                      "description": "owner (la gente de la app puede resolverlo: cargar un secreto, guardar de nuevo un cambio), it (solo TI puede: el clúster, la IA, un recurso que falló) o wait (en curso: no hay nada que hacer, solo esperar)",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "who",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "egress": {
+                "additionalProperties": false,
+                "description": "salida a internet que permite el clúster: mode es internet o restricted; enforced es true cuando el clúster confirmó que la aplicó; null si no se pudo leer (mira unavailable)",
+                "properties": {
+                  "enforced": {
+                    "description": "true cuando el clúster confirmó que la aplicó",
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "description": "internet (sin límite) o restricted (solo lo permitido); vacío si la app no tiene clúster",
+                    "type": "string"
+                  },
+                  "state": {
+                    "description": "applied, pending, failed o unsupported: cómo recibió el clúster la política",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "enforced"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "identity": {
+                "additionalProperties": false,
+                "description": "verifiable es true cuando la app recibe la cabecera firmada X-Odicea-Assertion con la identidad de quien la abre (modos team y organization)",
+                "properties": {
+                  "verifiable": {
+                    "description": "true si la app recibe X-Odicea-Assertion",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "verifiable"
+                ],
+                "type": "object"
+              },
+              "resources": {
+                "description": "bases de datos, cachés y archivos conectados a la app",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "description": "lo que dijo el clúster, por ejemplo por qué falló",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "postgres (base de datos), redis (caché) o files (archivos)",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "nombre del recurso",
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "description": "prefijo de sus variables, si lo tiene",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "ready (lista), preparing (preparándose), failed (falló), deleting (eliminándose) o unknown (no se pudo consultar ahora)",
+                      "type": "string"
+                    },
+                    "variables": {
+                      "description": "nombres de las variables de entorno con las que la app lee el recurso",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "kind",
+                    "status",
+                    "variables"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "secrets": {
+                "additionalProperties": false,
+                "description": "secretos de la app: total, nombres que faltan por cargar (missing), cuántos vienen de la bóveda de la empresa (external) y cuántos no pueden llegar a la app por ahora (unavailable); null si no se pudo leer (mira unavailable)",
+                "properties": {
+                  "external": {
+                    "description": "cuántos se leen de la bóveda de la empresa",
+                    "type": "integer"
+                  },
+                  "missing": {
+                    "description": "nombres de los secretos que la app aún no recibe: nadie cargó el valor o hay que volver a cargarlo (la consola, o request_secret, lo resuelve)",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "total": {
+                    "description": "secretos de la app",
+                    "type": "integer"
+                  },
+                  "unavailable": {
+                    "description": "cuántos no pueden llegar a la app por ahora aunque la gente haga algo: el clúster no recibe secretos o la bóveda no se pudo leer; es cosa de TI",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "total",
+                  "missing",
+                  "external",
+                  "unavailable"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "unavailable": {
+                "description": "secciones que no se pudieron leer ahora (resources, secrets, ai o egress); su contenido es desconocido, no que esté bien: vuelve a llamar get_app en un momento",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "variables": {
+                "description": "cuántas variables de entorno normales (no secretas) define la app",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "access",
+              "identity",
+              "resources",
+              "secrets",
+              "variables",
+              "ai",
+              "egress",
+              "unavailable",
+              "attention"
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -1038,7 +1278,8 @@
           "status",
           "console_url",
           "state",
-          "needs_attention"
+          "needs_attention",
+          "uses"
         ],
         "type": "object"
       },

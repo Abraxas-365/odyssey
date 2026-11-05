@@ -261,6 +261,22 @@ func TestResources(t *testing.T) {
 	}](t, checked(t, app, http.MethodGet, base+"/settings", token, nil)); len(s.Resources) != 1 || s.Resources[0].Name != "db" {
 		t.Fatalf("settings %+v", s)
 	}
+	// "Lo que usa esta app" shows the connected resource through its port, and
+	// follows the agent's report: failed → resource_failed with the cluster's reason.
+	usesOf := func() release.Uses {
+		t.Helper()
+		return httpxtest.JSON[release.Uses](t, checked(t, app, http.MethodGet, base+"/uses", reader, nil))
+	}
+	if u := usesOf(); len(u.Resources) != 1 || u.Resources[0].Name != "db" || u.Resources[0].Status != release.ResourceReady ||
+		len(u.Resources[0].Variables) == 0 || len(u.Attention) != 0 {
+		t.Fatalf("uses with a ready resource %+v", u)
+	}
+	reportAs(2, "db", fleet.ResourceFailed, "disco lleno")
+	if u := usesOf(); len(u.Attention) != 1 || u.Attention[0].Kind != release.AttentionResourceFailed ||
+		u.Resources[0].Status != release.ResourceFailed || u.Resources[0].Detail != "disco lleno" {
+		t.Fatalf("uses with a failed resource %+v", u)
+	}
+	reportAs(2, "db", fleet.ResourceReady, "")
 	// Connecting again changes nothing.
 	res = checked(t, app, http.MethodPut, rbase+"/db/connection", token, nil)
 	httpxtest.Want(t, res, http.StatusAccepted)

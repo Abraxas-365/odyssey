@@ -17,20 +17,6 @@ type AccessOut struct {
 	Pending bool `json:"pending" jsonschema:"true mientras el cambio se aplica a la app en línea"`
 }
 
-// accessOf reads the mode in force and whether the serving app still has to
-// receive it (a config deployment is on its way).
-func accessOf(s release.Settings, cur release.Current) *AccessOut {
-	pending := false
-	if cur.Release != nil {
-		applied := int64(-1) // the cluster was never told a mode
-		if cur.AppliedSettingsRevision != nil {
-			applied = *cur.AppliedSettingsRevision
-		}
-		pending = s.Revision > applied
-	}
-	return &AccessOut{Mode: string(s.Access.Mode), Pending: pending}
-}
-
 // SetAccessIn is set_access's input.
 type SetAccessIn struct {
 	App  string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`

@@ -190,8 +190,12 @@ restricted by name.
   only for them (policy `odicea-ai`, below), in either mode and whether the
   gateway is public, internal or the local `host.k3d.internal`. TI lists
   nothing. Details: `docs/ai.md`.
-- **Release "Lo que usa esta app" (cut 2e)** will read `Cluster.Egress(target)`
-  (mode and whether it is enforced) to show "Salida a internet" per app.
+- **Release "Lo que usa esta app" (cut 2e)** reads `Cluster.Egress(target)`
+  (mode and whether it is enforced) and shows "Salida a internet" per app
+  (`GET …/uses`, `get_app` → `uses.egress`). A `restricted` policy the agent
+  has not confirmed is the attention `egress_not_applied` (who `wait` until
+  the cluster says it cannot or failed to apply it, then `it`); `internet` never
+  is (nothing to apply). An environment with no cluster has an empty mode.
 
 ## Checking a new cluster
 

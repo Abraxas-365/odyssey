@@ -291,6 +291,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments/{environment}/uses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * What the app uses and what is missing
+         * @description "Lo que usa esta app": who can open it, whether it can tell who is
+         *     visiting, its databases/caches/files with their state, its secrets
+         *     (how many, which are still to load), the AI and the internet egress its
+         *     cluster allows, and `attention`: the closed list of things that block
+         *     the app or are in progress, in plain Spanish, each with `who` can act.
+         *     `attention` is empty when nothing is pending. The same data comes in
+         *     the assistants' `get_app`.
+         *
+         *     Each source fails on its own: when the secrets, the AI or the egress
+         *     cannot be read now, that section is `null` and its name is in
+         *     `unavailable` (the resources then come with the status `unknown`); the
+         *     rest is still answered with 200. An unavailable section is unknown,
+         *     not fine, and raises no attention.
+         */
+        get: operations["getEnvironmentUses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments/{environment}/access": {
         parameters: {
             query?: never;
@@ -1461,7 +1496,7 @@ export interface components {
             commit: string;
             /** @description The first line of the commit message. */
             title: string;
-            /** @description The author's login */
+            /** @description The author's login, or name when it has none. */
             author: string;
         };
         DeploymentStep: {
@@ -1587,6 +1622,79 @@ export interface components {
          * @enum {string}
          */
         ResourceKind: "postgres" | "redis" | "files";
+        EnvironmentUses: {
+            access: {
+                /** @enum {string} */
+                mode: "team" | "organization" | "public";
+                /** @description The mode (or another setting) is stored but the app online has not received it yet; a config deployment is on its way or failed. */
+                pending: boolean;
+                /** @description The settings were not applied and nothing is retrying; saving the change again retries (`config_failed` attention, who `owner`). */
+                failed: boolean;
+            };
+            identity: {
+                /** @description The app receives the signed `X-Odicea-Assertion` header (modes `team` and `organization`). */
+                verifiable: boolean;
+            };
+            resources: {
+                name: components["schemas"]["ResourceName"];
+                kind: components["schemas"]["ResourceKind"];
+                prefix: string;
+                /**
+                 * @description `unknown`: the resource domain could not be asked now (see `unavailable`).
+                 * @enum {string}
+                 */
+                status: "ready" | "preparing" | "failed" | "deleting" | "unknown";
+                /** @description What the cluster said (why it failed). */
+                detail?: string;
+                /** @description The environment variables the app reads it by. */
+                variables: string[];
+            }[];
+            /** @description `null` when it could not be read now (listed in `unavailable`). */
+            secrets: {
+                total: number;
+                /** @description Names the app does not receive yet (no value loaded, or it must be loaded again because the cluster's key changed). */
+                missing: string[];
+                /** @description How many are read from the company's vault. */
+                external: number;
+                /** @description How many cannot reach the app for now whatever people do (the cluster cannot receive private data, or the vault could not be read); it is for IT. */
+                unavailable: number;
+            } | null;
+            /** @description Plain (non-secret) variables of the app. */
+            variables: number;
+            /** @description `null` when it could not be read now (listed in `unavailable`). */
+            ai: {
+                available: boolean;
+                enabled: boolean;
+                /** @enum {string} */
+                status: "off" | "enabling" | "enabled" | "rotating" | "disabling" | "revoke_failed";
+            } | null;
+            /** @description `null` when it could not be read now (listed in `unavailable`). */
+            egress: {
+                /** @description `internet` or `restricted`; empty when the app has no cluster. */
+                mode: string;
+                /** @description `applied`, `pending`, `failed` or `unsupported`; empty when the app has no cluster. */
+                state: string;
+                enforced: boolean;
+            } | null;
+            /** @description Sections that could not be read now. Their content is unknown (not fine) and raises no attention; ask again in a moment. */
+            unavailable: ("resources" | "secrets" | "ai" | "egress")[];
+            /**
+             * @description What blocks the app or is in progress, a closed list. `who` says who
+             *     can act: `owner` (the people of the app: load a secret, save a
+             *     change again), `it` (only IT: the cluster, the AI, a failed
+             *     resource; the console says "Pide a TI que lo revise" because IT is
+             *     not notified yet) or `wait` (in progress, nothing to do). An app
+             *     needs people when any item has a `who` other than `wait`.
+             */
+            attention: {
+                /** @enum {string} */
+                kind: "secret_missing" | "secrets_unavailable" | "resource_not_ready" | "resource_failed" | "ai_error" | "ai_pending" | "config_pending" | "config_failed" | "egress_not_applied";
+                /** @enum {string} */
+                who: "owner" | "it" | "wait";
+                /** @description What is going on, in plain Spanish. */
+                message: string;
+            }[];
+        };
         /** @description A resource the app is connected to (in a settings revision). */
         ResourceUse: {
             name: components["schemas"]["ResourceName"];
@@ -1624,7 +1732,7 @@ export interface components {
              * @enum {string}
              */
             phase: "provisioning" | "ready" | "failed" | "deleted";
-            /** @description Why it failed */
+            /** @description Why it failed, when it did. */
             message: string;
             /** @description Whether the app receives the resource's variables. */
             connected: boolean;
@@ -1636,7 +1744,7 @@ export interface components {
         AI: {
             /** @description Whether the AI can be turned on here (the gateway is connected and the cluster can run it). */
             available: boolean;
-            /** @description Why it is not available */
+            /** @description Why it is not available, when it is not. */
             message?: string;
             /** @description Whether the app's settings carry the AI. */
             enabled: boolean;
@@ -1980,7 +2088,7 @@ export interface components {
             client: string;
             /** @example project/00000000-0000-4000-8000-000000000000 */
             subject: string;
-            /** @description Plain Spanish */
+            /** @description Plain Spanish, for people. */
             summary: string;
             /** @description The event's versioned payload (golden contracts per type). */
             payload: Record<string, never>;
@@ -2031,7 +2139,7 @@ export interface components {
                 kty: "OKP";
                 /** @enum {string} */
                 crv: "Ed25519";
-                /** @description The public key */
+                /** @description The public key, base64url. */
                 x: string;
                 kid: string;
                 /** @enum {string} */
@@ -2053,7 +2161,7 @@ export interface components {
             slug: string;
         };
         GitHubInstallURL: {
-            /** @description Where to send the browser */
+            /** @description Where to send the browser, with a signed state. */
             url: string;
         };
         /** @description An installation of Odyssey's GitHub App on a GitHub account, linked to the organization. */
@@ -2760,6 +2868,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnvironmentSettings"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getEnvironmentUses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The uses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentUses"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -4177,7 +4313,7 @@ export interface operations {
                         /** Format: uuid */
                         deployment_id: string;
                         status: components["schemas"]["DeploymentStatus"];
-                        /** @description What to do next */
+                        /** @description What to do next, worded for an agent. */
                         next_step: string;
                     };
                 };

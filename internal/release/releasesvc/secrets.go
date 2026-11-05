@@ -291,11 +291,17 @@ func (s *Service) Secrets(ctx context.Context, organization identity.Organizatio
 	if err != nil {
 		return release.Secrets{}, err
 	}
-	requests, err := s.repo.ListSecretRequests(ctx, organization, env)
+	return s.viewSecrets(ctx, p, e, settings)
+}
+
+// viewSecrets judges the secrets of settings (already read) against the
+// environment's cluster.
+func (s *Service) viewSecrets(ctx context.Context, p project.Project, e project.Environment, settings release.Settings) (release.Secrets, error) {
+	requests, err := s.repo.ListSecretRequests(ctx, p.Organization, e.ID)
 	if err != nil {
 		return release.Secrets{}, err
 	}
-	versions, err := s.repo.ListSecretVersions(ctx, organization, env)
+	versions, err := s.repo.ListSecretVersions(ctx, p.Organization, e.ID)
 	if err != nil {
 		return release.Secrets{}, err
 	}

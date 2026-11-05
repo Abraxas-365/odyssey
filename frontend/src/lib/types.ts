@@ -40,6 +40,11 @@ export type AccessChange = Schemas['AccessChange']
 /** Variables and secrets (cut 2a): a change is a settings revision; a secret is only ever a reference. */
 export type SettingsChange = Schemas['SettingsChange']
 
+/** "Lo que usa esta app" (cut 2e): what the app depends on, and the closed list of what needs attention. */
+export type EnvironmentUses = Schemas['EnvironmentUses']
+export type UsesAttention = EnvironmentUses['attention'][number]
+export type UsesAttentionKind = UsesAttention['kind']
+
 /** Databases, caches and files of an environment (docs/api.md §11, docs/resources.md). */
 export type Resource = Schemas['Resource']
 export type ResourceKind = Schemas['ResourceKind']

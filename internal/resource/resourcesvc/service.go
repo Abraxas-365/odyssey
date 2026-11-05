@@ -9,6 +9,7 @@ package resourcesvc
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -326,6 +327,25 @@ func (s *Service) Get(ctx context.Context, org identity.OrganizationID, id proje
 		return resource.View{}, err
 	}
 	return s.viewOf(ctx, p, r)
+}
+
+func (s *Service) Named(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID, names []string) ([]resource.View, error) {
+	rows, err := s.repo.List(ctx, org, env)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]resource.View, 0, len(names))
+	for _, r := range rows {
+		if !slices.Contains(names, r.Name) {
+			continue
+		}
+		v, err := s.view(ctx, r, nil)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 func (s *Service) Find(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID, name string) (resource.Resource, error) {

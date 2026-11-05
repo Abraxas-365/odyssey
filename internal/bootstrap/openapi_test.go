@@ -34,6 +34,7 @@ import (
 	validator "github.com/pb33f/libopenapi-validator"
 	vconfig "github.com/pb33f/libopenapi-validator/config"
 	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type operation struct {
@@ -179,6 +180,33 @@ func TestRoutesMatchTheOpenAPISpec(t *testing.T) {
 	for _, k := range phantom {
 		t.Errorf("api/openapi.yaml documents %s but no route serves it", k)
 	}
+}
+
+// TestSpecHasNoStrayKeys: a comma inside an unquoted flow-mapping value
+// ({ description: a, b }) ends the scalar and leaves "b" as a key with no
+// value. Every such null is a typo (the spec never uses null values).
+func TestSpecHasNoStrayKeys(t *testing.T) {
+	var doc any
+	if err := yaml.Unmarshal(api.OpenAPI, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(v any, at string)
+	walk = func(v any, at string) {
+		switch v := v.(type) {
+		case map[string]any:
+			for k, x := range v {
+				if x == nil {
+					t.Errorf("api/openapi.yaml: %s/%q has no value (quote the description before it)", at, k)
+				}
+				walk(x, at+"/"+k)
+			}
+		case []any:
+			for _, x := range v {
+				walk(x, at)
+			}
+		}
+	}
+	walk(doc, "")
 }
 
 func TestOperationPermissionsMatchTheRoutes(t *testing.T) {

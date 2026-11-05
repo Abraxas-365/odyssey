@@ -48,6 +48,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projectmcp"
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releaseai"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasemcp"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releaseresource"
 	"github.com/Abraxas-365/odyssey/internal/release/releasemodule"
@@ -409,6 +410,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	releases.UseResources(releaseresource.New(resources.Queries))
 	ais := aimodule.New(aimodule.Deps{DB: db, Events: events, Projects: projects.Queries, Engine: engine, Release: releases.AI,
 		Config: opts.AI, Provider: opts.AIProvider, Options: opts.AIService})
+	// the ai module needs release.AI, so release learns of it afterwards
+	releases.UseAIStatus(releaseai.New(ais.Queries))
 	p := &Platform{
 		DB:        db,
 		Bus:       bus,

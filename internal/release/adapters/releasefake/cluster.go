@@ -69,6 +69,8 @@ type Cluster struct {
 	// failures, by environment/name, as fleet's secret_failures
 	failures map[string]release.SecretFailure
 	revoked  bool
+	// egress is what SetEgress made the cluster report (nil: the default)
+	egress *release.ClusterEgress
 }
 
 func New(opts Options) *Cluster {
@@ -132,6 +134,9 @@ func (c *Cluster) CanProtect(context.Context, release.Target) (bool, error) {
 func (c *Cluster) Secrets(_ context.Context, t release.Target) (release.ClusterSecrets, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.down != nil {
+		return release.ClusterSecrets{}, c.down
+	}
 	if c.revoked {
 		return release.ClusterSecrets{Stores: []string{}, Revoked: true}, nil
 	}
@@ -299,3 +304,27 @@ func DefaultBehavior(d release.DesiredApp) Outcome {
 
 // ErrDown is a convenient error for SetDown.
 var ErrDown = errx.External("cluster unreachable")
+
+// SetEgress sets the egress policy the cluster reports (default: internet,
+// applied), as the fleet would after TI changed it.
+func (c *Cluster) SetEgress(e release.ClusterEgress) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.egress = &e
+}
+
+// Egress reports the policy set with SetEgress; the open internet when none
+// was. A revoked cluster has no policy.
+func (c *Cluster) Egress(context.Context, release.Target) (release.ClusterEgress, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case c.down != nil:
+		return release.ClusterEgress{}, c.down
+	case c.revoked:
+		return release.ClusterEgress{}, nil
+	case c.egress != nil:
+		return *c.egress, nil
+	}
+	return release.ClusterEgress{Available: true, Mode: "internet", State: release.EgressApplied, Enforced: true}, nil
+}

@@ -4,6 +4,20 @@
 
 `get_deployment` (app, y `deployment_id` si lo tienes). Lee `status`, `step`, `failure` y `next_step`. `get_app` muestra también la versión que sigue en línea.
 
+Antes de buscar en el código, mira **`get_app`**: si `needs_attention` es `true`, `uses.attention` dice en palabras simples qué le falta o qué la bloquea. Cada elemento trae `who`: **`owner`** (la gente de la app lo puede resolver), **`it`** (solo TI) o **`wait`** (en curso: no hay nada que hacer, espera). `needs_attention` solo cuenta `owner` e `it`, o una publicación que falló. Si una sección de `uses` viene `null` y su nombre está en `uses.unavailable`, no se pudo leer ahora: no significa que esté bien ni que esté mal; vuelve a llamar `get_app` en un momento. Cada `kind` tiene su salida:
+
+| `kind` | `who` | Qué pasa | Qué hacer |
+|---|---|---|---|
+| `secret_missing` | owner | Un secreto no tiene valor (o hay que cargarlo de nuevo porque cambió la llave del clúster); `uses.secrets.missing` dice cuáles | Nunca pidas el valor por el chat: `request_secret` y que una persona lo cargue en la consola |
+| `secrets_unavailable` | it | El clúster todavía no puede recibir datos privados, o la bóveda de la empresa no se pudo leer (`uses.secrets.unavailable` cuenta cuántos) | No pidas cargar secretos de nuevo: no servirá. Es de TI; avísales |
+| `resource_not_ready` | wait | Una base de datos, caché o archivos aún se prepara o se elimina | Espera y vuelve a mirar `get_app`; no republiques en bucle |
+| `resource_failed` | it | Un recurso falló (`uses.resources[].detail` trae la razón) | No lo recrees a ciegas: pide ayuda a TI con el nombre del recurso |
+| `ai_error` | it | No se pudo retirar una llave de IA anterior, o la app usa la IA y ya no está disponible (el gateway no está conectado) | Es de TI/plataforma; avísalo, no cambies el código |
+| `ai_pending` | wait | La IA se está activando, renovando o desactivando | Espera y vuelve a mirar `get_app` |
+| `config_pending` | wait | Los últimos cambios de configuración (acceso, variables…) aún no llegan a la app en línea | Espera unos segundos; si sigue, mira `get_deployment` de la publicación de configuración |
+| `config_failed` | owner | La publicación de configuración falló y nadie la reintenta | Mira `get_deployment` de esa publicación; guardar el cambio otra vez (por ejemplo `set_access`) la reintenta |
+| `egress_not_applied` | it o wait | El clúster limita la salida a internet pero no la aplicó: `wait` si su agente aún no respondió; `it` si no puede o falló | Si es `it`, es de TI: si la app necesita llamar a un servicio externo, pídeles que lo permitan |
+
 Una publicación pasa por: **build** (construir la carpeta) → **apply** (enviarla al servidor) → **wait_ready** (esperar a que responda) → **promote** (dejarla en línea). El `step` dice dónde se quedó. Si falla después de llegar al servidor y había otra versión sirviendo, Odicea restaura la anterior sola: dilo al usuario.
 
 ## 2. Según el código de error

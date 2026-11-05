@@ -34,7 +34,7 @@ Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él
 | Quiero… | Herramienta |
 |---|---|
 | Saber con qué cuenta y permisos estoy | `whoami` |
-| Ver las apps y su estado | `list_apps`, `get_app` |
+| Ver las apps y su estado, y lo que usan y les falta | `list_apps`, `get_app` (`uses` y `needs_attention`) |
 | Crear una app vacía | `create_app` |
 | Publicar la carpeta del usuario | `deploy_folder` (+ ejecutar el comando que devuelve) |
 | Publicar un repositorio de GitHub | `list_repositories`, `connect_repository`, `publish_now` |

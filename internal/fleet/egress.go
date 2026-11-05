@@ -217,3 +217,12 @@ type PolicyAck struct {
 
 // MaxPolicyWarnings bounds the warnings an ack stores.
 const MaxPolicyWarnings = 10
+
+// EgressTarget is the egress policy of the cluster an environment runs on
+// (or would first run on: the organization's default), for the app's view.
+type EgressTarget struct {
+	// Cluster is zero when the organization has no cluster for it, or its
+	// cluster was revoked: no policy applies.
+	Cluster ClusterID
+	Status  EgressStatus
+}

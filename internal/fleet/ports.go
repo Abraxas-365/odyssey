@@ -59,6 +59,11 @@ type Dispatch interface {
 	// organization's default) offers for secrets. It changes nothing; a zero
 	// Cluster when there is none or it was revoked.
 	SecretTarget(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (SecretTarget, error)
+	// EgressTarget is the egress policy of the cluster the environment runs
+	// on (or, unplaced, the organization's default) and how its agent took
+	// it. It changes nothing; a zero Cluster when there is none or it was
+	// revoked.
+	EgressTarget(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (EgressTarget, error)
 	// DeliverSecret stores a sealed managed value for the environment's
 	// cluster and has it sent (replacing an older version still waiting). It
 	// joins the caller's transaction. The value must be sealed to that

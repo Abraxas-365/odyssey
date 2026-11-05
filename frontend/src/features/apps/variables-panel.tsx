@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Callout, ChipGroup, ErrorNotice, Panel, PanelBody, PanelFooter, PanelHeader } from '@/components/odyssey'
+import { anchors } from './uses'
 import { useAuth } from '@/lib/auth'
 import { formatRelative } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
@@ -160,7 +161,7 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
   }, [linked, data, canWrite, keyAvailable, params, setParams])
 
   return (
-    <Panel ref={panel}>
+    <Panel ref={panel} id={anchors.secrets} tabIndex={-1} className="scroll-mt-20 outline-none">
       <PanelHeader icon={KeyRound} title="Secretos" description="Contraseñas, llaves y tokens. Se cifran en tu navegador: ni Odicea puede leerlos." />
       <PanelBody>
         <ErrorNotice error={settings.error} onRetry={() => settings.refetch()} />

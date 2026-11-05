@@ -33,6 +33,7 @@ import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, Versi
 import { AccessPanel } from '@/features/apps/access-panel'
 import { ResourcesPanel } from '@/features/apps/resources-panel'
 import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
+import { UsesCard } from '@/features/apps/uses-card'
 import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
 
 /** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
@@ -165,6 +166,8 @@ function Overview({ project: p }: { project: Project }) {
           </PanelBody>
         </Panel>
       </div>
+
+      {canRead && production && <UsesCard project={p.id} env={production.id} technical={technical} />}
 
       <CodePanel project={p} archived={archived} />
 

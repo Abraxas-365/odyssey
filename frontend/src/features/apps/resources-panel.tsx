@@ -13,12 +13,13 @@ import { permissions } from '@/lib/permissions'
 import { useConnectResource, useCreateResource, useDeleteResource, useDisconnectResource, useResizeResource, useResources } from '@/lib/resources'
 import type { Resource, ResourceKind } from '@/lib/types'
 import { AIRow } from './ai-panel'
+import { anchors } from './uses'
 import { atLimit, deleteBlock, deleteConfirmed, DEFAULT_GI, failureOf, isActive, kindText, MAX_GI, MAX_NAME, MAX_PREFIX, MIN_GI, nameProblem, prefixProblem, sizeLabel, sizeProblem, stateOf, suggestName } from './resources'
 
 const applied = (deployment: unknown) => (deployment ? 'Aplicando el cambio a la app…' : 'Guardado. La app lo recibe con la próxima publicación.')
 
 /**
- * "Lo que usa": the databases, caches and files of the app. Creating one
+ * "Datos e IA": the databases, caches and files of the app. Creating one
  * connects it by default (the app then reads its variables); a resource the
  * app is connected to cannot be erased until it is disconnected.
  */
@@ -42,8 +43,8 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
   }
 
   return (
-    <Panel>
-      <PanelHeader icon={Database} title="Lo que usa" description="Bases de datos, cachés, archivos e IA de la app. La app los recibe como variables de entorno." />
+    <Panel id={anchors.data} tabIndex={-1} className="scroll-mt-20 outline-none">
+      <PanelHeader icon={Database} title="Datos e IA" description="Bases de datos, cachés, archivos e IA de la app. La app los recibe como variables de entorno." />
       <PanelBody>
         <ErrorNotice error={list.error} onRetry={() => list.refetch()} />
         {list.data && items.length === 0 && (

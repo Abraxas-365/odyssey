@@ -32,7 +32,9 @@ func TestSkillNamesRealTools(t *testing.T) {
 		real = append(real, tool.Name)
 	}
 	// parameters and results the skill may name
-	params := []string{"deployment_id", "wait_seconds", "health_path", "next_step", "node_modules", "console_url"}
+	params := []string{"deployment_id", "wait_seconds", "health_path", "next_step", "node_modules", "console_url",
+		// get_app's needs_attention and the closed list of uses.attention kinds
+		"needs_attention", "secret_missing", "secrets_unavailable", "resource_not_ready", "resource_failed", "ai_error", "ai_pending", "config_pending", "config_failed", "egress_not_applied"}
 	mentioned := map[string]bool{}
 	err := fs.WalkDir(skills.FS, "odicea", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

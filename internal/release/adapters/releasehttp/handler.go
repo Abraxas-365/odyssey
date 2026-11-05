@@ -43,6 +43,7 @@ func (h *Handler) Register(r fiber.Router) {
 	env.Get("/deployments/:deployment", httpx.RequirePermissions(permission.DeploymentsRead), h.find)
 	env.Post("/deployments/:deployment/rollback", httpx.RequirePermissions(permission.DeploymentsRollback), h.rollback)
 	env.Get("/settings", httpx.RequirePermissions(permission.ProjectsRead), h.settings)
+	env.Get("/uses", httpx.RequirePermissions(permission.ProjectsRead), h.uses)
 	env.Put("/access", httpx.RequirePermissions(permission.ProjectsWrite), h.setAccess)
 	env.Patch("/env", httpx.RequirePermissions(permission.ProjectsWrite), h.setEnv)
 	env.Put("/secrets/:name", httpx.RequirePermissions(permission.ProjectsWrite), h.putSecret)
@@ -359,6 +360,24 @@ func (h *Handler) settings(c *fiber.Ctx) error {
 	return c.JSON(settingsView{Settings: out, Secrets: secrets.Items, SecretKey: secrets.Cluster.Key,
 		ExternalSecrets: secrets.Cluster.External, SecretStores: secrets.Cluster.Stores, SecretsClusterRevoked: secrets.Cluster.Revoked,
 		AccessLoginAvailable: h.opts.AccessLoginAvailable, AccessProtectionAvailable: can})
+}
+
+// uses answers "lo que usa esta app": what the app depends on and what needs
+// attention (projects:read).
+func (h *Handler) uses(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	at, err := parsePlace(c)
+	if err != nil {
+		return err
+	}
+	out, err := h.queries.Uses(c.UserContext(), org, at.project, at.environment)
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
 }
 
 // settingsChanged answers a settings change with 202 (the config deployment,

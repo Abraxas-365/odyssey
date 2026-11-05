@@ -44,11 +44,13 @@ type Service struct {
 	// resources is the resource domain (nil until the module wires it: no
 	// resource can then be connected).
 	resources release.Resources
-	engine    workflow.Engine
-	tx        txn.Runner
-	events    event.Publisher
-	opts      Options
-	now       func() time.Time // the clock (tests set it)
+	// aiStatus is the ai domain (nil until wired: the AI reads as off).
+	aiStatus release.AIStatus
+	engine   workflow.Engine
+	tx       txn.Runner
+	events   event.Publisher
+	opts     Options
+	now      func() time.Time // the clock (tests set it)
 }
 
 func New(repo release.Repository, projects project.Queries, cluster release.Cluster, builder release.Builder, engine workflow.Engine,

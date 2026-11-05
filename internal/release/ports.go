@@ -90,6 +90,10 @@ type Queries interface {
 	// Secrets are the environment's secret variables and open requests, with
 	// their state against its cluster, and what the cluster offers.
 	Secrets(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Secrets, error)
+	// Uses is what the app depends on and what still needs a person (2e):
+	// access, identity, resources, secrets, AI and egress, with the closed
+	// list of Attention. It changes nothing.
+	Uses(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Uses, error)
 }
 
 // AccessLookup finds an environment by its id alone, for the access sign-in
@@ -124,6 +128,10 @@ type Cluster interface {
 	// cluster. It joins the caller's transaction; a value sealed to another
 	// key than the cluster's is refused (Business, CodeSecretKeyChanged).
 	DeliverSecret(ctx context.Context, target Target, delivery SecretDelivery) error
+	// Egress is the egress policy of the environment's cluster and how its
+	// agent took it (Available false when it has no cluster). It changes
+	// nothing.
+	Egress(ctx context.Context, target Target) (ClusterEgress, error)
 }
 
 // Builder turns uploaded sources into images: the build domain, through
@@ -154,6 +162,20 @@ type Builder interface {
 type Resources interface {
 	// Find is the resource of the environment (NotFound when there is none).
 	Find(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (ResourceInfo, error)
+	// Statuses are the resources of the environment with those names (the
+	// ones the app is connected to; the caller already placed the
+	// environment) and how the cluster sees each: the Uses read model asks
+	// for nothing else.
+	Statuses(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, names []string) ([]ResourceState, error)
+}
+
+// AIStatus is what release asks the ai domain (its releaseai adapter) to
+// describe the app's AI in Uses. release never imports the ai domain
+// (architecture test).
+type AIStatus interface {
+	// AIState says whether the AI can be turned on for the environment and
+	// where it stands.
+	AIState(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (AIState, error)
 }
 
 // Usage is what the resource domain asks release (its resourcerelease

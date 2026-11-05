@@ -439,6 +439,41 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/environments/{environment}/uses:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [deployments]
+      operationId: getEnvironmentUses
+      summary: What the app uses and what is missing
+      description: |
+        "Lo que usa esta app": who can open it, whether it can tell who is
+        visiting, its databases/caches/files with their state, its secrets
+        (how many, which are still to load), the AI and the internet egress its
+        cluster allows, and `attention`: the closed list of things that block
+        the app or are in progress, in plain Spanish, each with `who` can act.
+        `attention` is empty when nothing is pending. The same data comes in
+        the assistants' `get_app`.
+
+        Each source fails on its own: when the secrets, the AI or the egress
+        cannot be read now, that section is `null` and its name is in
+        `unavailable` (the resources then come with the status `unknown`); the
+        rest is still answered with 200. An unavailable section is unknown,
+        not fine, and raises no attention.
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The uses.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentUses" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/projects/{id}/environments/{environment}/access:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -1802,7 +1837,7 @@ paths:
                 properties:
                   deployment_id: { type: string, format: uuid }
                   status: { $ref: "#/components/schemas/DeploymentStatus" }
-                  next_step: { type: string, description: What to do next, worded for an agent. }
+                  next_step: { type: string, description: "What to do next, worded for an agent." }
         "400": { $ref: "#/components/responses/Validation" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -2440,7 +2475,7 @@ components:
         branch: { type: string }
         commit: { type: string, description: The full SHA (40 or 64 hex characters). }
         title: { type: string, description: The first line of the commit message. }
-        author: { type: string, description: The author's login, or name when it has none. }
+        author: { type: string, description: "The author's login, or name when it has none." }
 
     DeploymentStep:
       type: object
@@ -2619,6 +2654,97 @@ components:
       type: string
       enum: [postgres, redis, files]
       description: "`postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`)."
+    EnvironmentUses:
+      type: object
+      additionalProperties: false
+      required: [access, identity, resources, secrets, variables, ai, egress, unavailable, attention]
+      properties:
+        access:
+          type: object
+          additionalProperties: false
+          required: [mode, pending, failed]
+          properties:
+            mode: { type: string, enum: [team, organization, public] }
+            pending: { type: boolean, description: "The mode (or another setting) is stored but the app online has not received it yet; a config deployment is on its way or failed." }
+            failed: { type: boolean, description: "The settings were not applied and nothing is retrying; saving the change again retries (`config_failed` attention, who `owner`)." }
+        identity:
+          type: object
+          additionalProperties: false
+          required: [verifiable]
+          properties:
+            verifiable: { type: boolean, description: "The app receives the signed `X-Odicea-Assertion` header (modes `team` and `organization`)." }
+        resources:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, kind, prefix, status, variables]
+            properties:
+              name: { $ref: "#/components/schemas/ResourceName" }
+              kind: { $ref: "#/components/schemas/ResourceKind" }
+              prefix: { type: string }
+              status:
+                type: string
+                enum: [ready, preparing, failed, deleting, unknown]
+                description: "`unknown`: the resource domain could not be asked now (see `unavailable`)."
+              detail: { type: string, description: What the cluster said (why it failed). }
+              variables: { type: array, items: { type: string }, description: The environment variables the app reads it by. }
+        secrets:
+          type: [object, "null"]
+          additionalProperties: false
+          description: "`null` when it could not be read now (listed in `unavailable`)."
+          required: [total, missing, external, unavailable]
+          properties:
+            total: { type: integer }
+            missing: { type: array, items: { type: string }, description: "Names the app does not receive yet (no value loaded, or it must be loaded again because the cluster's key changed)." }
+            external: { type: integer, description: How many are read from the company's vault. }
+            unavailable: { type: integer, description: "How many cannot reach the app for now whatever people do (the cluster cannot receive private data, or the vault could not be read); it is for IT." }
+        variables: { type: integer, description: Plain (non-secret) variables of the app. }
+        ai:
+          type: [object, "null"]
+          additionalProperties: false
+          description: "`null` when it could not be read now (listed in `unavailable`)."
+          required: [available, enabled, status]
+          properties:
+            available: { type: boolean }
+            enabled: { type: boolean }
+            status: { type: string, enum: [off, enabling, enabled, rotating, disabling, revoke_failed] }
+        egress:
+          type: [object, "null"]
+          additionalProperties: false
+          description: "`null` when it could not be read now (listed in `unavailable`)."
+          required: [mode, state, enforced]
+          properties:
+            mode: { type: string, description: "`internet` or `restricted`; empty when the app has no cluster." }
+            state: { type: string, description: "`applied`, `pending`, `failed` or `unsupported`; empty when the app has no cluster." }
+            enforced: { type: boolean }
+        unavailable:
+          type: array
+          description: Sections that could not be read now. Their content is unknown (not fine) and raises no attention; ask again in a moment.
+          items:
+            type: string
+            enum: [resources, secrets, ai, egress]
+        attention:
+          type: array
+          description: |
+            What blocks the app or is in progress, a closed list. `who` says who
+            can act: `owner` (the people of the app: load a secret, save a
+            change again), `it` (only IT: the cluster, the AI, a failed
+            resource; the console says "Pide a TI que lo revise" because IT is
+            not notified yet) or `wait` (in progress, nothing to do). An app
+            needs people when any item has a `who` other than `wait`.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, who, message]
+            properties:
+              kind:
+                type: string
+                enum: [secret_missing, secrets_unavailable, resource_not_ready, resource_failed, ai_error, ai_pending, config_pending, config_failed, egress_not_applied]
+              who:
+                type: string
+                enum: [owner, it, wait]
+              message: { type: string, description: "What is going on, in plain Spanish." }
     ResourceUse:
       type: object
       additionalProperties: false
@@ -2651,7 +2777,7 @@ components:
           type: string
           enum: [provisioning, ready, failed, deleted]
           description: What the cluster reports (`provisioning` also while it has reported nothing yet).
-        message: { type: string, description: Why it failed, when it did. }
+        message: { type: string, description: "Why it failed, when it did." }
         connected: { type: boolean, description: Whether the app receives the resource's variables. }
         prefix: { type: string, description: The connection's prefix ("" for none). }
         variables:
@@ -2663,7 +2789,7 @@ components:
       required: [available, enabled, status, base_url, variables, enabled_by, enabled_at]
       properties:
         available: { type: boolean, description: Whether the AI can be turned on here (the gateway is connected and the cluster can run it). }
-        message: { type: string, description: Why it is not available, when it is not. }
+        message: { type: string, description: "Why it is not available, when it is not." }
         enabled: { type: boolean, description: Whether the app's settings carry the AI. }
         status:
           type: string
@@ -3067,7 +3193,7 @@ components:
         actor_id: { type: string, description: 'The user who caused it; "" for the system.' }
         client: { type: string, description: 'Channel: "web", "mcp:<client>", "cli", "" for the system.' }
         subject: { type: string, examples: ["project/00000000-0000-4000-8000-000000000000"] }
-        summary: { type: string, description: Plain Spanish, for people. }
+        summary: { type: string, description: "Plain Spanish, for people." }
         payload: { type: object, description: The event's versioned payload (golden contracts per type). }
         correlation_id: { type: string }
         causation_id: { type: [string, "null"], format: uuid }
@@ -3128,7 +3254,7 @@ components:
             properties:
               kty: { type: string, enum: [OKP] }
               crv: { type: string, enum: [Ed25519] }
-              x: { type: string, description: The public key, base64url. }
+              x: { type: string, description: "The public key, base64url." }
               kid: { type: string }
               use: { type: string, enum: [sig] }
               alg: { type: string, enum: [EdDSA] }
@@ -3156,7 +3282,7 @@ components:
       additionalProperties: false
       required: [url]
       properties:
-        url: { type: string, description: Where to send the browser, with a signed state. }
+        url: { type: string, description: "Where to send the browser, with a signed state." }
 
     GitHubInstallation:
       type: object

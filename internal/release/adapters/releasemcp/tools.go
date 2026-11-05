@@ -7,6 +7,7 @@ package releasemcp
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -59,8 +60,10 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 			Title: "Estado de una app",
 			Description: "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), " +
 				"la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. " +
+				"También dice lo que la app usa (acceso, identidad, bases de datos, secretos, IA, salida a internet) en `uses`, y lo que le falta en `uses.attention`. " +
 				"Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), " +
 				"the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. " +
+				"It also reports what the app uses (access, identity, databases, secrets, AI, internet egress) in `uses`, and what is missing in `uses.attention`. " +
 				"app is the slug (see list_apps) or the id.",
 			Toolset:     "apps",
 			Permissions: []string{permission.ProjectsRead, permission.DeploymentsRead},
@@ -308,13 +311,16 @@ type GetAppOut struct {
 	// State is what a user sees: online, publishing, failed or not_published.
 	State string `json:"state" jsonschema:"online (hay una versión en línea), publishing (se está publicando una versión), failed (nunca estuvo en línea y la última publicación falló) o not_published (aún sin publicar)"`
 	URL   string `json:"url,omitempty" jsonschema:"dirección pública de la app; vacía hasta que se publica"`
-	// NeedsAttention is true when the latest publication failed.
-	NeedsAttention bool     `json:"needs_attention" jsonschema:"true si la última publicación falló: mira last_deployment.error"`
+	// NeedsAttention is true when the latest publication failed or something
+	// in Uses.Attention needs a person (who is not wait).
+	NeedsAttention bool     `json:"needs_attention" jsonschema:"true si la última publicación falló (mira last_deployment.error) o si algo en uses.attention necesita a una persona (who owner o it; lo que está en curso, who wait, no cuenta); también true si no se pudo leer nada de uses"`
 	Current        *Version `json:"current,omitempty" jsonschema:"la versión que está en línea"`
 	// Access is who can open the app: the settings in force.
 	Access         *AccessOut `json:"access,omitempty" jsonschema:"quién puede abrir la app: mode es team (solo el equipo), organization (toda la empresa) o public (cualquiera con el enlace); pending es true mientras se aplica un cambio"`
 	Active         *Version   `json:"active,omitempty" jsonschema:"la publicación en curso, si hay"`
 	LastDeployment *Version   `json:"last_deployment,omitempty" jsonschema:"la publicación más reciente, termine como termine"`
+	// Uses is what the app depends on and what is missing.
+	Uses UsesOut `json:"uses" jsonschema:"lo que usa la app (acceso, identidad, bases de datos, secretos, IA, salida a internet) y lo que le falta: no hace falta llamar a otras tools para saberlo"`
 	// Repository is the GitHub repository the app publishes from, if connected.
 	Repository *ConnectedRepo `json:"repository,omitempty" jsonschema:"repo de GitHub conectado: cada push a su rama publica la app"`
 }
@@ -332,12 +338,22 @@ func (t tools) getApp(ctx context.Context, caller mcpx.Principal, in GetAppIn) (
 	if err != nil {
 		return GetAppOut{}, err
 	}
-	settings, err := t.queries.Settings(ctx, caller.Organization, p.ID, env.ID)
-	if err != nil {
-		return GetAppOut{}, err
-	}
-	out := GetAppOut{Access: accessOf(settings, cur), ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description, Status: string(p.Status),
+	out := GetAppOut{ID: p.ID.String(), Slug: p.Slug, Name: p.Name, Description: p.Description, Status: string(p.Status),
 		ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String(), State: "not_published"}
+	// Uses reads the settings once (access comes from it too). It never fails
+	// get_app: its sources degrade on their own, and if even the read model
+	// cannot be made the app is shown with every section unknown.
+	uses, err := t.queries.Uses(ctx, caller.Organization, p.ID, env.ID)
+	if err != nil {
+		slog.Warn("get_app: uses unavailable", "app", p.ID, "error", err)
+		out.Uses = usesUnavailable()
+		// nothing could be read: say so rather than "all is fine"
+		out.NeedsAttention = true
+	} else {
+		out.Uses = usesOf(uses)
+		out.Access = &AccessOut{Mode: string(uses.Access.Mode), Pending: uses.Access.Pending}
+		out.NeedsAttention = uses.NeedsPeople()
+	}
 	if cur.Deployment != nil {
 		v := version(*cur.Deployment, cur.Deployment)
 		out.Current, out.State, out.URL = &v, "online", cur.URL
