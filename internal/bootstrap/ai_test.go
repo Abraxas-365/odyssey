@@ -17,10 +17,12 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/pgtest"
+	"github.com/Abraxas-365/odyssey/internal/policy"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -160,6 +162,22 @@ func TestAI(t *testing.T) {
 	}
 	httpxtest.Want(t, do(http.MethodPatch, h.base+"/env", h.token, map[string]any{"unset": []string{"OPENAI_API_KEY"}}), http.StatusAccepted)
 
+	// enable: IT's rules judge it first, and nothing is made while they refuse
+	itUser := identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
+	noAI, err := h.platform.Policy.Commands.Create(context.Background(), h.target.Organization, policy.Create{CreatedBy: itUser, Draft: policy.Draft{
+		Name: "Sin IA por ahora", Expression: "action == 'enable_ai'", Effect: policy.EffectDeny}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = do(http.MethodPut, url, h.token, nil)
+	httpxtest.Want(t, res, http.StatusForbidden)
+	if c := codeOf(t, res); c != gate.CodeDenied || len(gw.Live()) != 0 || view(h.token).Status != ai.StateOff {
+		t.Fatalf("a denied enable: code %q, keys %v, %+v", c, gw.Live(), view(h.token))
+	}
+	if err := h.platform.Policy.Commands.Delete(context.Background(), h.target.Organization, noAI.ID, policy.Delete{DeletedBy: itUser}); err != nil {
+		t.Fatal(err)
+	}
+
 	// enable
 	res = do(http.MethodPut, url, h.token, nil)
 	httpxtest.Want(t, res, http.StatusAccepted)
@@ -171,6 +189,17 @@ func TestAI(t *testing.T) {
 	v := view(h.token)
 	if !v.Enabled || v.EnabledBy == nil || v.EnabledAt == nil {
 		t.Fatalf("enabled view %+v", v)
+	}
+	// Asking again for what is already on is not an action to judge: a rule
+	// that denies enabling the AI does not refuse the no-op.
+	noAI, err = h.platform.Policy.Commands.Create(context.Background(), h.target.Organization, policy.Create{CreatedBy: itUser, Draft: policy.Draft{
+		Name: "Sin IA, de nuevo", Expression: "action == 'enable_ai'", Effect: policy.EffectDeny}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpxtest.Want(t, do(http.MethodPut, url, h.token, nil), http.StatusAccepted)
+	if err := h.platform.Policy.Commands.Delete(context.Background(), h.target.Organization, noAI.ID, policy.Delete{DeletedBy: itUser}); err != nil {
+		t.Fatal(err)
 	}
 	live := gw.Live()
 	if len(live) != 1 {

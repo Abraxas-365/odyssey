@@ -81,6 +81,11 @@ type ConnectResource struct {
 	Name        string          `json:"name"`
 	Prefix      string          `json:"prefix"`
 	RequestedBy identity.UserID `json:"-"`
+	// Judged says the caller already asked IT's rules about connecting this
+	// kind (Usage.AuthorizeConnect), so ConnectResource does not ask again.
+	// Only the resource domain's Create sets it: it must judge before it
+	// provisions anything.
+	Judged bool `json:"-"`
 }
 
 func (in ConnectResource) Validate() error {

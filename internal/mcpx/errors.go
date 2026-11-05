@@ -8,6 +8,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 )
 
 // nextStepKey is the errx detail a tool sets with NextStep.
@@ -44,6 +45,17 @@ var defaultSteps = map[errx.Type]string{
 	errx.TypeExternal:      "Un servicio del que depende Odicea no respondió: reintenta en unos segundos.",
 }
 
+// codeSteps are the next_step of the refusals every governed tool can answer
+// (IT's rules, internal/gate): worded once here so no tool forgets them, and
+// before defaultSteps (POLICY_DENIED is a 403, which would otherwise read as
+// a missing permission). A tool's own NextStep still wins.
+var codeSteps = map[string]string{
+	gate.CodeDenied: "Una regla de TI no permite esto: muéstrale el mensaje al usuario tal cual y no reintentes ni busques otra vía; " +
+		"si cree que es un error, que lo hable con TI.",
+	gate.CodeApprovalRequired: "Esto necesita aprobación de TI: muéstrale el mensaje al usuario tal cual y no reintentes; " +
+		"que TI lo autorice o cambie la regla (todavía no se puede pedir la aprobación desde el asistente).",
+}
+
 // toolErrorOf maps err (an *errx.Error from the domain, or anything else:
 // an internal failure, whose cause is logged and never shown) to the
 // result error of a call.
@@ -64,6 +76,8 @@ func toolErrorOf(ctx context.Context, err error, log *slog.Logger) error {
 		out.Field = f
 	}
 	if s, ok := e.Details[nextStepKey].(string); ok && s != "" {
+		out.NextStep = s
+	} else if s, ok := codeSteps[e.Code]; ok {
 		out.NextStep = s
 	} else {
 		out.NextStep = defaultSteps[e.Type]

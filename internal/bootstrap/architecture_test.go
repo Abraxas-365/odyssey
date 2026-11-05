@@ -34,6 +34,10 @@ var foundation = map[string]bool{
 	"migrate": true, "pgtest": true, "workflow": true, "telemetry": true,
 	"mcpx":      true,
 	"assistant": true,
+	// actor (who acts, on the context) and gate (the words the governed
+	// domains and the policy adapters share) import no domain.
+	"actor": true,
+	"gate":  true,
 }
 
 // iamkitSDK may be imported only by adapters, httpx (authentication) and the

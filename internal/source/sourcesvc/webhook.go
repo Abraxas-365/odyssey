@@ -92,7 +92,7 @@ func (s *Service) receivePush(ctx context.Context, payload []byte) error {
 	})
 	slices.SortFunc(conns, func(a, b source.Connection) int { return strings.Compare(a.Project.String(), b.Project.String()) })
 	for _, c := range conns {
-		if err := s.queueMoved(ctx, c, ev.Head, source.TriggerWebhook); err != nil {
+		if err := s.queueMoved(ctx, c, ev.Head, source.TriggerWebhook, ev.Sender); err != nil {
 			return err
 		}
 	}
@@ -103,7 +103,7 @@ func (s *Service) receivePush(ctx context.Context, payload []byte) error {
 // is still the same one and has not seen that commit (a webhook and the poll,
 // or two deliveries, report the same commit; it is published once), and its
 // project is not archived. Publishes push_received.
-func (s *Service) queueMoved(ctx context.Context, c source.Connection, head source.Commit, trigger source.Trigger) error {
+func (s *Service) queueMoved(ctx context.Context, c source.Connection, head source.Commit, trigger source.Trigger, sender string) error {
 	locked, err := s.repo.LockConnection(ctx, c.Organization, c.Project)
 	if errx.IsType(err, errx.TypeNotFound) {
 		return nil // disconnected meanwhile
@@ -121,7 +121,7 @@ func (s *Service) queueMoved(ctx context.Context, c source.Connection, head sour
 	if err != nil || p.Archived() {
 		return err
 	}
-	push, err := s.queue(ctx, locked, head, trigger, identity.UserID{})
+	push, err := s.queue(ctx, locked, head, trigger, identity.UserID{}, github(sender))
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,7 @@ func (s *Service) reconcile(ctx context.Context, c source.Connection, now time.T
 			case p.Archived():
 				observed = c.ETag // look at it again once the app is back
 			default:
-				push, err := s.queue(ctx, locked, head, source.TriggerReconcile, identity.UserID{})
+				push, err := s.queue(ctx, locked, head, source.TriggerReconcile, identity.UserID{}, github(""))
 				if err != nil {
 					return err
 				}

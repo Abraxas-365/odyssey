@@ -104,6 +104,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/tier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change an app's tier (IT)
+         * @description How much the app matters: `sandbox`, `internal` (the default) or
+         *     `production`. IT's rules (`/api/v1/policy/rules`) ask for it. Anyone
+         *     with `odyssey:projects:write` creates an app; only `odyssey:projects:tier`
+         *     moves it. The tier it already has writes nothing. Event
+         *     `project.tier_changed`. Archived apps refuse it (`PROJECT_ARCHIVED`).
+         */
+        put: operations["setProjectTier"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments": {
         parameters: {
             query?: never;
@@ -884,6 +910,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/policy/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List IT's rules
+         * @description The organization's rulebook: the built-in rules first, then IT's own by
+         *     age. The first read of an organization creates its four built-in rules
+         *     (docs/policy.md).
+         */
+        get: operations["listPolicyRules"];
+        put?: never;
+        /**
+         * Create a rule
+         * @description `expression` is CEL over the action's input (docs/policy.md) and must
+         *     compile to a bool: otherwise 422 `POLICY_INVALID` with the compiler's
+         *     message. At most 100 rules (`POLICY_TOO_MANY`). Event `policy.rule_created`.
+         */
+        post: operations["createPolicyRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a rule
+         * @description The whole rule. A built-in rule only takes its `enabled` switch (the
+         *     rest as it is): anything else is 422 `POLICY_BUILTIN`. An unchanged
+         *     rule writes nothing. Event `policy.rule_updated`.
+         */
+        put: operations["replacePolicyRule"];
+        post?: never;
+        /**
+         * Delete a rule
+         * @description A built-in rule cannot be deleted (422 `POLICY_BUILTIN`): switch it off. Event `policy.rule_deleted`.
+         */
+        delete: operations["deletePolicyRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try the rules on an action (dry run)
+         * @description What IT's rules would say about an action, and what each rule said.
+         *     It decides nothing and writes nothing. `deny` beats `approval` beats
+         *     `allow`; no rule matching is `allow`; a rule that cannot be evaluated
+         *     counts at its own strength (a deny denies, an approval asks for
+         *     approval, an allow is ignored; `error` says why). An optional `rule`
+         *     is an unsaved candidate tried among the saved ones.
+         */
+        post: operations["evaluatePolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/github": {
         parameters: {
             query?: never;
@@ -1375,6 +1482,11 @@ export interface components {
         };
         /** @enum {string} */
         ProjectStatus: "active" | "archived";
+        /**
+         * @description How much the app matters; IT's rules ask for it. New apps are `internal`.
+         * @enum {string}
+         */
+        ProjectTier: "sandbox" | "internal" | "production";
         Project: {
             /** Format: uuid */
             id: string;
@@ -1385,6 +1497,7 @@ export interface components {
             slug: string;
             description: string;
             status: components["schemas"]["ProjectStatus"];
+            tier: components["schemas"]["ProjectTier"];
             /** Format: uuid */
             created_by: string;
             /** Format: uuid */
@@ -2148,6 +2261,113 @@ export interface components {
                 alg: "EdDSA";
             }[];
         };
+        /**
+         * @description What a rule does when it matches. `deny` beats `approval` beats `allow`.
+         * @enum {string}
+         */
+        PolicyEffect: "allow" | "deny" | "approval";
+        PolicyRule: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description The rule as a sentence anyone can read. */
+            description: string;
+            /** @description CEL over the action's input (docs/policy.md). */
+            expression: string;
+            effect: components["schemas"]["PolicyEffect"];
+            /** @description The permission whose holders decide an approval. */
+            approvers: string;
+            enabled: boolean;
+            /** @description The key of a rule that comes with the product (null for IT's own). */
+            builtin: string | null;
+            version: number;
+            /** @description The user who wrote it; empty for a built-in rule. */
+            created_by: string;
+            /** @description The user who last changed it; empty until someone does, for a built-in rule. */
+            updated_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PolicyRuleDraft: {
+            name: string;
+            description?: string;
+            expression: string;
+            effect: components["schemas"]["PolicyEffect"];
+            /** @description A permission name; default `odyssey:approvals:decide`. */
+            approvers?: string;
+            /** @description On unless said otherwise. */
+            enabled?: boolean;
+        };
+        /** @enum {string} */
+        PolicyAction: "deploy" | "set_access" | "connect_resource" | "delete_resource" | "set_secret" | "enable_ai" | "rollback";
+        /** @description What an action looks like to the rules. What is left out is zero (empty text, false, 0). */
+        PolicyInput: {
+            action: components["schemas"]["PolicyAction"];
+            project?: {
+                tier?: components["schemas"]["ProjectTier"];
+                slug?: string;
+            };
+            env?: {
+                name?: string;
+            };
+            access?: {
+                /** @description The mode being set: team, organization or public. */
+                mode?: string;
+            };
+            actor?: {
+                id?: string;
+                permissions?: string[];
+            };
+            resource?: {
+                kind?: string;
+            };
+            scan?: {
+                /** @description Whether a vulnerability scan exists (false until the scan runs). */
+                known?: boolean;
+                critical?: number;
+                high?: number;
+            };
+            /**
+             * @description Only for the dry run (`evaluatePolicy`): an UNSAVED rule to try
+             *     among the saved ones, as if it were enabled. Nothing is stored.
+             *     422 `POLICY_INVALID` when its expression does not compile.
+             */
+            rule?: {
+                /** @description Defaults to "Regla de prueba". */
+                name?: string;
+                expression: string;
+                effect: components["schemas"]["PolicyEffect"];
+                /** @description A permission name (default `odyssey:approvals:decide`). */
+                approvers?: string;
+                /**
+                 * Format: uuid
+                 * @description The saved rule this one stands in for (it is left out of the dry run), when editing.
+                 */
+                replaces?: string;
+            };
+        };
+        PolicyRuleRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        PolicyEvaluation: {
+            effect: components["schemas"]["PolicyEffect"];
+            /** @description The matching rules of the winning effect. */
+            rules: components["schemas"]["PolicyRuleRef"][];
+            /** @description The permissions that can approve (only for `approval`). */
+            approvers: string[];
+            results: {
+                rule: components["schemas"]["PolicyRuleRef"];
+                effect: components["schemas"]["PolicyEffect"];
+                enabled: boolean;
+                matched: boolean;
+                /** @description Why the rule could not be evaluated (a deny rule then denies, an approval rule asks for approval, an allow rule is ignored). */
+                error?: string;
+            }[];
+        };
         AuditVerification: {
             valid: boolean;
             entries: number;
@@ -2625,6 +2845,42 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    setProjectTier: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    tier: components["schemas"]["ProjectTier"];
+                };
+            };
+        };
+        responses: {
+            /** @description The project after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
     listEnvironments: {
         parameters: {
             query?: {
@@ -2783,6 +3039,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
@@ -2845,6 +3102,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };
@@ -2938,6 +3196,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };
@@ -3872,6 +4131,153 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listPolicyRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every rule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["PolicyRule"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createPolicyRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyRuleDraft"];
+            };
+        };
+        responses: {
+            /** @description The rule created. `Location` is its URL. */
+            201: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRule"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    replacePolicyRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyRuleDraft"];
+            };
+        };
+        responses: {
+            /** @description The rule after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRule"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deletePolicyRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    evaluatePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyInput"];
+            };
+        };
+        responses: {
+            /** @description The decision and every rule's part in it. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyEvaluation"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };
     };

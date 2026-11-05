@@ -45,7 +45,7 @@ var _ project.Repository = (*Repository)(nil)
 // messages are the client-facing texts for constraint violations.
 var messages = pgerr.Messages{Unique: "a project with this slug already exists"}
 
-const columns = `id, organization_id, name, slug, description, status, created_by, updated_by, created_at, updated_at, archived_at`
+const columns = `id, organization_id, name, slug, description, status, tier, created_by, updated_by, created_at, updated_at, archived_at`
 
 func notFound() error { return errx.NotFound("project not found") }
 
@@ -162,6 +162,15 @@ func (r *Repository) Archive(ctx context.Context, organization identity.Organiza
 		 WHERE organization_id = $1 AND id = $2 AND status <> $3`,
 		organization, id, project.StatusArchived, input.ArchivedBy)
 	return affected(res, err, "archive project")
+}
+
+// SetTier stores the tier (NotFound when the project is not this
+// organization's).
+func (r *Repository) SetTier(ctx context.Context, organization identity.OrganizationID, id project.ID, input project.SetTier) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
+		`UPDATE project.projects SET tier = $3, updated_at = now(), updated_by = $4 WHERE organization_id = $1 AND id = $2`,
+		organization, id, input.Tier, input.UpdatedBy)
+	return affected(res, err, "set project tier")
 }
 
 const environmentColumns = `id, organization_id, project_id, slug, kind, created_at`

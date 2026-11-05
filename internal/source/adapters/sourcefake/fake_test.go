@@ -145,7 +145,7 @@ func TestWebhooks(t *testing.T) {
 	}
 	ev, err := f.PushEvent(body)
 	want := source.PushEvent{Installation: 7, RepositoryID: 42, Repository: "acme/web", Branch: "main",
-		Head: source.Commit{SHA: sha, Title: "ship it", Author: "ana"}}
+		Head: source.Commit{SHA: sha, Title: "ship it", Author: "ana"}, Sender: "ana"}
 	if err != nil || ev != want {
 		t.Fatalf("push = %+v %v", ev, err)
 	}

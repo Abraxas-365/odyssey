@@ -97,6 +97,10 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 - Si falla con «La IA no está habilitada en esta organización» o «El clúster … todavía no puede», es de TI; díselo al usuario y no uses otra llave. Si falla por una variable ya definida (`VARIABLE_TAKEN`), quítala con `set_env` (`unset`) y repite.
 - Activar la IA es seguro de repetir. Desactivarla o renovar la llave lo hace una persona en la consola.
 
+## Reglas de TI (cuando algo «no se permite» o «necesita aprobación»)
+
+TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `create_database`, `enable_ai`) falla con `POLICY_DENIED` o `APPROVAL_REQUIRED`, sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta).
+
 ## Cómo hablar con el usuario
 
 - Corto y concreto: qué hiciste, qué pasó, qué sigue. Sin jerga (di «versión», no «deployment»; «publicar», no «desplegar»).

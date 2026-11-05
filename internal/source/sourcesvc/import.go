@@ -1,11 +1,15 @@
 package sourcesvc
 
 import (
+	"context"
 	"errors"
 	"io"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
+	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/source"
 	"github.com/Abraxas-365/odyssey/internal/source/tarball"
@@ -31,6 +35,27 @@ func repack(r io.Reader, w io.Writer, root string, limits srcarchive.Limits) (ta
 	return sum, err
 }
 
+// requester is the actor a push carries into its workflow: the caller of the
+// request that queued it (the user and the permissions of their token, now),
+// which the worker could not know later.
+func requester(ctx context.Context, by identity.UserID) actor.Actor {
+	a := actor.From(ctx)
+	if a.User != by {
+		return actor.Actor{User: by} // no token on the context: the user, with no permissions
+	}
+	return a
+}
+
+// github is the system actor of a push nobody asked for (a webhook, the
+// poll): "github:<login of the sender>", with no permissions, so IT's rules
+// see an actor that holds none.
+func github(sender string) actor.Actor {
+	if sender == "" {
+		return actor.Actor{System: "github"}
+	}
+	return actor.Actor{System: "github:" + sender}
+}
+
 // release builds the deployment request of an imported source with the
 // connection's configuration. Its requested_via says who asked: GitHub when
 // nobody did (a webhook or the poll), otherwise the client that queued the
@@ -54,12 +79,17 @@ func retryable(err error) error {
 }
 
 // refused reports a definitive answer: retrying would get the same one.
-// Conflicts are not: Postgres reports deadlocks and serialization failures
-// as Conflict, and a persistent one still ends when the attempts run out.
+// A refusal by IT's rules is one (the deploy step fails the push with the
+// rule's name as its detail). Other Conflicts are not: Postgres reports
+// deadlocks and serialization failures as Conflict, and a persistent one
+// still ends when the attempts run out.
 func refused(err error) bool {
 	var e *errx.Error
 	if !errors.As(err, &e) {
 		return false
+	}
+	if gate.Refusal(e) { // IT's rules answered: POLICY_DENIED, and APPROVAL_REQUIRED (a Conflict) too
+		return true
 	}
 	if e.Code == build.CodeSourceQuota { // older sources expire meanwhile
 		return false

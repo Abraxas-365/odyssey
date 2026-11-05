@@ -96,6 +96,9 @@ type Observed struct {
 type Connection struct {
 	Name   string `json:"name"`
 	Prefix string `json:"prefix"`
+	// Judged: IT's rules were already asked (Usage.AuthorizeConnect), so
+	// connecting does not ask again. Never on the wire.
+	Judged bool `json:"-"`
 }
 
 // Applied is what connecting or disconnecting did in release: the settings

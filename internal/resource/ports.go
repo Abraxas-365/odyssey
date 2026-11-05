@@ -3,6 +3,7 @@ package resource
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
@@ -84,6 +85,14 @@ type Cluster interface {
 	Kinds(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resourcekind.Kind, error)
 }
 
+// Policy is what resource asks IT's rules (the policyresource adapter;
+// resource never imports policy): may this resource be deleted? Connecting
+// is judged where it is applied, in release (release.Policy).
+type Policy interface {
+	// Check decides the request for the organization, as the actor on ctx.
+	Check(ctx context.Context, organization identity.OrganizationID, request gate.Request) (gate.Verdict, error)
+}
+
 // Usage is how the environment's app uses resources (the resourcerelease
 // adapter): release stores the connections in the settings it deploys.
 type Usage interface {
@@ -93,6 +102,10 @@ type Usage interface {
 	// defines is taken); Disconnect removes the connection.
 	Connect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, c Connection, by identity.UserID) (Applied, error)
 	Disconnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, name string, by identity.UserID) (Applied, error)
+	// AuthorizeConnect asks IT's rules whether a resource of the kind may be
+	// connected, writing nothing. Create asks it before it provisions
+	// anything and then connects with Connection.Judged.
+	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, kind resourcekind.Kind) error
 	// WithConnectionsLocked runs fn holding the lock connecting takes, with
 	// the connections at that moment: a deletion that checks "not in use"
 	// inside fn cannot race a connection.

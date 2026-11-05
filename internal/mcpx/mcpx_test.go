@@ -12,6 +12,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -41,6 +42,10 @@ func tools(t *testing.T) *mcpx.Registry {
 				return echoOut{}, errors.New("db password leaked in a driver error")
 			case "default":
 				return echoOut{}, errx.NotFound("app not found")
+			case "denied":
+				return echoOut{}, gate.Verdict{Effect: gate.Deny, Rules: []gate.Rule{{ID: "r1", Name: "Sandbox no puede ser pública"}}}.Err()
+			case "approval":
+				return echoOut{}, gate.Verdict{Effect: gate.Approval, Rules: []gate.Rule{{ID: "r2", Name: "Publicar en producción"}}, Approvers: []string{"odyssey:approvals:decide"}}.Err()
 			}
 			return echoOut{}, mcpx.NextStep(errx.Conflict("slug taken").WithDetail("field", "name"), "Usa get_app.")
 		})
@@ -179,6 +184,23 @@ func TestErrorsTellTheAgentWhatToDo(t *testing.T) {
 	got = toolError(t, call(t, cs, "fail", "internal"))
 	if got["code"] != "INTERNAL" || strings.Contains(got["message"], "password") || got["message"] != errx.GenericMessage {
 		t.Fatalf("internal leaks: %v", got)
+	}
+}
+
+// IT's refusals reach the agent with their Spanish message intact and a
+// next_step that says "show it and stop", not the generic "ask for the
+// permission" a 403 would get.
+func TestPolicyRefusalsTellTheAgentToStop(t *testing.T) {
+	cs := connect(t, tools(t), principal("p:read"))
+	got := toolError(t, call(t, cs, "fail", "denied"))
+	if got["code"] != gate.CodeDenied || got["message"] != "La regla de TI «Sandbox no puede ser pública» no permite esto." ||
+		!strings.Contains(got["next_step"], "no reintentes") || strings.Contains(got["next_step"], "permiso") {
+		t.Fatalf("denied: %v", got)
+	}
+	got = toolError(t, call(t, cs, "fail", "approval"))
+	if got["code"] != gate.CodeApprovalRequired || !strings.Contains(got["message"], "necesita aprobación de TI") ||
+		!strings.Contains(got["next_step"], "aprobación de TI") {
+		t.Fatalf("approval: %v", got)
 	}
 }
 

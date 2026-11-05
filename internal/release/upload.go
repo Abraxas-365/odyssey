@@ -85,9 +85,13 @@ type UploadTicket struct {
 	// the deployment the upload starts is attributed to it.
 	Client      string          `json:"client" db:"client"`
 	RequestedBy identity.UserID `json:"requested_by" db:"requested_by"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
-	ExpiresAt   time.Time       `json:"expires_at" db:"expires_at"`
-	UsedAt      *time.Time      `json:"used_at" db:"used_at"`
+	// Permissions are those of the token that asked, at that time (a
+	// snapshot): the redeeming request carries no token, and IT's rules judge
+	// the deployment as the person who asked, with these.
+	Permissions []string   `json:"-" db:"-"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at" db:"expires_at"`
+	UsedAt      *time.Time `json:"used_at" db:"used_at"`
 	// Deployment is what the upload started (nil before, or when it was
 	// refused).
 	Deployment *DeploymentID `json:"deployment_id" db:"deployment_id"`

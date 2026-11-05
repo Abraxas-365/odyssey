@@ -370,6 +370,9 @@ function Approvals() {
         <RuleRow checked={rules.expire} onCheckedChange={v => setRules(r => ({ ...r, expire: v }))}>Las aprobaciones de datos vencen a los <b>6 meses</b></RuleRow>
         <RuleRow checked={rules.review} onCheckedChange={v => setRules(r => ({ ...r, review: v }))}>Compartir con <b>toda la empresa</b> necesita la aprobación de TI</RuleRow>
         <RuleRow checked={rules.public} locked>Las apps <b>públicas</b> necesitan además la aprobación de Seguridad</RuleRow>
+        <RuleRow checked={rules.review} onCheckedChange={v => setRules(r => ({ ...r, review: v }))} trailing={<><Badge variant="outline">Incorporada</Badge><Badge variant="warning">Pide aprobación</Badge></>}>
+          <b>Publicar en producción requiere aprobación de TI</b>
+        </RuleRow>
       </Panel>
       <Panel>
         <PanelHeader title="Compartir “Visitas a clientes”" />

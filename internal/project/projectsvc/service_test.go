@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -93,5 +94,54 @@ func TestAFailedPublishFailsTheWrite(t *testing.T) {
 	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{Err: boom})
 	if _, err := svc.Create(context.Background(), identity.NewOrganizationID(), project.Create{Name: "Portal", CreatedBy: user}); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSetTier(t *testing.T) {
+	events := &eventtest.Recorder{}
+	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, events)
+	ctx := context.Background()
+	org := identity.NewOrganizationID()
+	id, err := svc.Create(ctx, org, project.Create{Name: "Portal", CreatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := svc.Find(ctx, org, id); p.Tier != project.TierInternal {
+		t.Fatalf("default tier %q", p.Tier)
+	}
+	if err := svc.SetTier(ctx, org, id, project.SetTier{Tier: "gold", UpdatedBy: user}); err == nil {
+		t.Fatal("unknown tier accepted")
+	}
+	if err := svc.SetTier(ctx, identity.NewOrganizationID(), id, project.SetTier{Tier: project.TierSandbox, UpdatedBy: user}); err == nil {
+		t.Fatal("another organization moved the app")
+	}
+	if err := svc.SetTier(ctx, org, id, project.SetTier{Tier: project.TierInternal, UpdatedBy: user}); err != nil { // no-op
+		t.Fatal(err)
+	}
+	if err := svc.SetTier(ctx, org, id, project.SetTier{Tier: project.TierProduction, UpdatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := svc.Find(ctx, org, id); p.Tier != project.TierProduction {
+		t.Fatalf("tier %q", p.Tier)
+	}
+	changed := 0
+	for _, e := range events.Events() {
+		if e.Type != project.EventTierChanged {
+			continue
+		}
+		changed++
+		got, _ := event.Decode[project.TierChanged](e)
+		if got.From != project.TierInternal || got.To != project.TierProduction || got.Project != id {
+			t.Fatalf("payload %+v", got)
+		}
+	}
+	if changed != 1 {
+		t.Fatalf("%d tier_changed events, want 1 (a no-op publishes nothing)", changed)
+	}
+	if err := svc.Archive(ctx, org, id, project.Archive{ArchivedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetTier(ctx, org, id, project.SetTier{Tier: project.TierSandbox, UpdatedBy: user}); !errx.IsType(err, errx.TypeBusiness) {
+		t.Fatalf("archived app moved: %v", err)
 	}
 }

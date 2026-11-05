@@ -9,13 +9,17 @@ package releasesvc
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
@@ -46,11 +50,14 @@ type Service struct {
 	resources release.Resources
 	// aiStatus is the ai domain (nil until wired: the AI reads as off).
 	aiStatus release.AIStatus
-	engine   workflow.Engine
-	tx       txn.Runner
-	events   event.Publisher
-	opts     Options
-	now      func() time.Time // the clock (tests set it)
+	// policy is IT's rules (the policyrelease adapter); nil refuses every
+	// governed action (see authorize).
+	policy release.Policy
+	engine workflow.Engine
+	tx     txn.Runner
+	events event.Publisher
+	opts   Options
+	now    func() time.Time // the clock (tests set it)
 }
 
 func New(repo release.Repository, projects project.Queries, cluster release.Cluster, builder release.Builder, engine workflow.Engine,
@@ -116,6 +123,9 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
+	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeploy}); err != nil {
+		return release.Deployment{}, err
+	}
 	r := release.Release{ID: release.NewID(), Organization: organization, Project: id, Image: input.Image,
 		Config: input.Config, CreatedBy: input.RequestedBy}
 	var d release.Deployment
@@ -159,6 +169,10 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
+	// Judged before the folder is stored: a refused deploy uploads nothing.
+	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeploy}); err != nil {
+		return release.Deployment{}, err
+	}
 	src, err := s.builder.Upload(ctx, organization, id, build.Upload{Name: input.Name, UploadedBy: input.RequestedBy}, archive)
 	if err != nil {
 		return release.Deployment{}, err
@@ -187,6 +201,9 @@ func (s *Service) DeployUploaded(ctx context.Context, organization identity.Orga
 		return release.Deployment{}, err
 	}
 	if err := archived(p); err != nil {
+		return release.Deployment{}, err
+	}
+	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeploy}); err != nil {
 		return release.Deployment{}, err
 	}
 	src, err := s.builder.Source(ctx, organization, input.Source)
@@ -242,6 +259,10 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 		return release.Deployment{}, err
 	}
 	if err := archived(p); err != nil {
+		return release.Deployment{}, err
+	}
+	// A rollback puts an older version online: IT's rules judge it like a deploy.
+	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionRollback}); err != nil {
 		return release.Deployment{}, err
 	}
 	old, err := s.deployment(ctx, organization, id, env, target)
@@ -486,14 +507,54 @@ func (s *Service) SetAccess(ctx context.Context, organization identity.Organizat
 	if err := archived(p); err != nil {
 		return release.AccessChange{}, err
 	}
+	// IT's rules judge only a CHANGE, and before the transaction (a refusal,
+	// or in 3b the approval request it stores, must not live in a transaction
+	// that rolls back on that same refusal). The mode already in force is not
+	// judged: asking again is the retry of a config deployment, and a rule
+	// about "public" must not block someone who changes nothing. The mode is
+	// read here and re-read under the lock. If it moved away from the target
+	// in between (read as a no-op, so nothing was judged, and now it would
+	// change), the transaction gives up and the change is judged before
+	// trying again: no path applies a mode nobody judged.
+	judged := false
+	for attempt := 0; ; attempt++ {
+		current, err := s.repo.FindSettings(ctx, organization, e.ID)
+		if err != nil {
+			return release.AccessChange{}, err
+		}
+		if !judged && current.Access.Mode != input.Mode {
+			if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionSetAccess, AccessMode: string(input.Mode)}); err != nil {
+				return release.AccessChange{}, err
+			}
+			judged = true
+		}
+		out, err := s.applyAccess(ctx, p, e, input, judged)
+		if errors.Is(err, errUnjudged) && attempt < 2 {
+			continue
+		}
+		if errors.Is(err, errUnjudged) {
+			return release.AccessChange{}, errx.Conflict("El acceso de esta app cambió mientras lo guardabas. Inténtalo de nuevo.")
+		}
+		return out, err
+	}
+}
+
+// errUnjudged: under the lock the mode would change, but the change was not
+// judged by IT's rules (it read as a no-op before the transaction).
+var errUnjudged = errors.New("access change not judged")
+
+func (s *Service) applyAccess(ctx context.Context, p project.Project, e project.Environment, input release.SetAccess, judged bool) (release.AccessChange, error) {
 	var out release.AccessChange
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		state, prev, err := s.lockSettings(ctx, p, e)
 		if err != nil {
 			return err
 		}
 		var next *release.Settings
 		if prev.Access.Mode != input.Mode {
+			if !judged {
+				return errUnjudged
+			}
 			n := prev.WithAccess(input.Mode, input.RequestedBy)
 			next = &n
 		}
@@ -501,7 +562,7 @@ func (s *Service) SetAccess(ctx context.Context, organization identity.Organizat
 		if out, started, err = s.changeSettings(ctx, state, p, e, prev, next, input.RequestedBy); err != nil || next == nil {
 			return err
 		}
-		return s.events.Publish(ctx, release.NewAccessChanged(organization, input.RequestedBy, id.String(), prev, out.Settings, started, names(p, e)))
+		return s.events.Publish(ctx, release.NewAccessChanged(p.Organization, input.RequestedBy, p.ID.String(), prev, out.Settings, started, names(p, e)))
 	})
 	return out, err
 }
@@ -553,6 +614,15 @@ func (s *Service) changeSettings(ctx context.Context, state release.EnvironmentS
 
 // ---- upload tickets ----
 
+// askedWith is the permissions the ticket's requester holds on ctx right now
+// (none when the context carries someone else, or no one).
+func askedWith(ctx context.Context, by identity.UserID) []string {
+	if a := actor.From(ctx); a.User == by {
+		return slices.Clone(a.Permissions)
+	}
+	return nil
+}
+
 // ticketRetention is how long an expired ticket is kept (so the person who
 // used it late still hears "expired", not "unknown"); the next ticket its
 // organization issues sweeps older ones.
@@ -576,7 +646,7 @@ func (s *Service) IssueUpload(ctx context.Context, organization identity.Organiz
 	now := time.Now().UTC()
 	t := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: organization, Project: id, Environment: e.ID,
 		TokenHash: hash, Name: input.Name, Config: input.Config, Client: event.MetaFrom(ctx).Client,
-		RequestedBy: input.RequestedBy, CreatedAt: now, ExpiresAt: now.Add(release.UploadTicketTTL)}
+		RequestedBy: input.RequestedBy, Permissions: askedWith(ctx, input.RequestedBy), CreatedAt: now, ExpiresAt: now.Add(release.UploadTicketTTL)}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.DeleteUploadTickets(ctx, organization, now.Add(-ticketRetention)); err != nil {
 			return err
@@ -633,8 +703,11 @@ func (s *Service) RedeemUpload(ctx context.Context, token string, archive io.Rea
 		return release.Deployment{}, err
 	}
 	// The deployment is attributed to the client the ticket was issued to,
-	// in the same chain as this request.
+	// in the same chain as this request, and judged by IT's rules as the
+	// person who asked for the ticket (this request carries no token: the
+	// ticket is the credential), with the permissions they held then.
 	ctx = event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: t.Client})
+	ctx = actor.With(ctx, actor.Actor{User: t.RequestedBy, Permissions: t.Permissions})
 	d, err := s.DeploySource(ctx, t.Organization, t.Project, t.Environment,
 		release.DeploySource{Name: t.Name, Config: t.Config, RequestedBy: t.RequestedBy}, archive)
 	if err != nil {

@@ -10,6 +10,7 @@ import { ConsoleLayout } from '@/pages/console-layout'
 import { GitHubSettingsPage } from '@/pages/github-settings'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
+import { PolicyRulesPage } from '@/pages/policy-rules'
 
 // The showcase is dev/reference only: keep it out of the main bundle.
 const DesignSystemPage = lazy(() => import('@/pages/design-system').then(m => ({ default: m.DesignSystemPage })))
@@ -26,6 +27,7 @@ export function App() {
           <Route path="apps/:id" element={<AppOverviewPage />} />
           <Route path="infraestructura/clusteres" element={<ClustersPage />} />
           <Route path="configuracion/github" element={<GitHubSettingsPage />} />
+          <Route path="configuracion/reglas" element={<PolicyRulesPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

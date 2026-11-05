@@ -81,7 +81,7 @@ func (m *Repo) Create(_ context.Context, org identity.OrganizationID, id project
 	}
 	now := time.Now()
 	m.rows[id] = project.Project{ID: id, Organization: org, Name: text.Clean(in.Name), Slug: in.Slug,
-		Description: text.Clean(in.Description), Status: project.StatusActive, CreatedBy: in.CreatedBy,
+		Description: text.Clean(in.Description), Status: project.StatusActive, Tier: project.DefaultTier, CreatedBy: in.CreatedBy,
 		UpdatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now}
 	return nil
 }
@@ -157,6 +157,18 @@ func (m *Repo) Update(ctx context.Context, org identity.OrganizationID, id proje
 		p.Description = text.Clean(*in.Description)
 	}
 	p.UpdatedBy, p.UpdatedAt = in.UpdatedBy, time.Now()
+	m.mu.Lock()
+	m.rows[id] = p
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Repo) SetTier(ctx context.Context, org identity.OrganizationID, id project.ID, in project.SetTier) error {
+	p, err := m.Find(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	p.Tier, p.UpdatedBy, p.UpdatedAt = in.Tier, in.UpdatedBy, time.Now()
 	m.mu.Lock()
 	m.rows[id] = p
 	m.mu.Unlock()

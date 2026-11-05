@@ -669,7 +669,7 @@ func TestPushEvent(t *testing.T) {
 	e := setup(t, false)
 	ev, err := e.p.PushEvent(fixture(t, "push.json"))
 	want := source.PushEvent{Installation: 7001, RepositoryID: repoID, Repository: "acme/web", Branch: "main",
-		Head: source.Commit{SHA: sha, Title: "Fix the checkout total", Author: "anaperez"}}
+		Head: source.Commit{SHA: sha, Title: "Fix the checkout total", Author: "anaperez"}, Sender: "anaperez"}
 	if err != nil || ev != want {
 		t.Fatalf("push = %+v, %v", ev, err)
 	}

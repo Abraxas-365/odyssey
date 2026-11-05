@@ -527,15 +527,17 @@ func (r *Repository) ListSecretVersions(ctx context.Context, organization identi
 // ---- upload tickets ----
 
 const ticketColumns = `id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by,
-	created_at, expires_at, used_at, deployment_id`
+	permissions, created_at, expires_at, used_at, deployment_id`
 
 type ticketRow struct {
 	release.UploadTicket
-	RawConfig []byte `db:"config"`
+	RawConfig   []byte         `db:"config"`
+	Permissions pq.StringArray `db:"permissions"`
 }
 
 func (t ticketRow) ticket() (release.UploadTicket, error) {
 	out := t.UploadTicket
+	out.Permissions = []string(t.Permissions)
 	if err := json.Unmarshal(t.RawConfig, &out.Config); err != nil {
 		return release.UploadTicket{}, errx.Wrap(err, "decode upload ticket config", errx.TypeInternal)
 	}
@@ -552,10 +554,13 @@ func (r *Repository) CreateUploadTicket(ctx context.Context, t release.UploadTic
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now()
 	}
+	if t.Permissions == nil { // a nil array would be NULL
+		t.Permissions = []string{}
+	}
 	_, err = txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.upload_tickets
-		(id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		t.ID, t.Organization, t.Project, t.Environment, t.TokenHash, t.Name, cfg, t.Client, t.RequestedBy, t.CreatedAt, t.ExpiresAt)
+		(id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by, permissions, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		t.ID, t.Organization, t.Project, t.Environment, t.TokenHash, t.Name, cfg, t.Client, t.RequestedBy, pq.Array(t.Permissions), t.CreatedAt, t.ExpiresAt)
 	return pgerr.MapWith(err, "create upload ticket", pgerr.Messages{Unique: "this upload ticket already exists"})
 }
 

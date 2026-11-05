@@ -184,3 +184,35 @@ func TestEnvironments(t *testing.T) {
 		t.Fatalf("cross-tenant list %+v %v", envs, err)
 	}
 }
+
+func TestSetTier(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: projectpg.Schema, Files: projectpg.Migrations()})
+	repo := projectpg.New(db)
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	user := identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
+	id := project.NewID()
+	if err := repo.Create(ctx, org, id, project.Create{Name: "Portal", Slug: "portal", CreatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.Find(ctx, org, id); got.Tier != project.DefaultTier {
+		t.Fatalf("new project's tier %q, want %q", got.Tier, project.DefaultTier)
+	}
+	if err := repo.SetTier(ctx, org, id, project.SetTier{Tier: project.TierSandbox, UpdatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.Find(ctx, org, id); got.Tier != project.TierSandbox {
+		t.Fatalf("tier %q after SetTier", got.Tier)
+	}
+	// another tenant cannot move it, and nothing changed
+	if err := repo.SetTier(ctx, other, id, project.SetTier{Tier: project.TierProduction, UpdatedBy: user}); errType(err) != errx.TypeNotFound {
+		t.Fatalf("cross-tenant SetTier: %v", err)
+	}
+	if got, _ := repo.Find(ctx, org, id); got.Tier != project.TierSandbox {
+		t.Fatalf("tier %q changed by another tenant", got.Tier)
+	}
+	// the table refuses an unknown tier
+	if err := repo.SetTier(ctx, org, id, project.SetTier{Tier: "gold", UpdatedBy: user}); err == nil {
+		t.Fatal("unknown tier stored")
+	}
+}

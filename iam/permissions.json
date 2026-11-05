@@ -12,10 +12,13 @@
     { "name": "odyssey:audit:read", "label": "Ver el historial de actividad de la organización" },
     { "name": "odyssey:access:public", "label": "Dejar que cualquiera con el enlace abra una app, sin iniciar sesión" },
     { "name": "odyssey:secrets:external", "label": "Conectar secretos de una app con el almacén de secretos de la empresa" },
-    { "name": "odyssey:resources:delete", "label": "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)" }
+    { "name": "odyssey:resources:delete", "label": "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)" },
+    { "name": "odyssey:projects:tier", "label": "Cambiar el nivel de una app (sandbox, interna o producción)" },
+    { "name": "odyssey:policy:manage", "label": "Ver y editar las reglas de TI de la organización" },
+    { "name": "odyssey:approvals:decide", "label": "Aprobar o rechazar acciones que las reglas de TI dejan pendientes" }
   ],
   "roles": [
-    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external", "odyssey:resources:delete"] },
+    { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external", "odyssey:resources:delete", "odyssey:projects:tier", "odyssey:policy:manage", "odyssey:approvals:decide"] },
     { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:resources:delete"] },
     { "name": "Lector", "permissions": ["odyssey:projects:read", "odyssey:deployments:read"] }
   ]

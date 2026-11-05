@@ -96,6 +96,9 @@ const messages: Record<string, string> = {
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (messages[error.code]) return messages[error.code]
+    // IT's rules (docs/policy.md) write their own sentence naming the rule; the
+    // approval one is a CONFLICT, which would otherwise read as "changed at the same time".
+    if (error.code === 'APPROVAL_REQUIRED') return error.message
     switch (error.type) {
       case 'NOT_FOUND': return 'No encontramos lo que buscas. Puede que se haya borrado o que no tengas acceso.'
       case 'CONFLICT':

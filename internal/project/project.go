@@ -24,6 +24,41 @@ func (s Status) Valid() bool { return s == StatusActive || s == StatusArchived }
 // StatusMessage is the 400 text for a value outside the set.
 const StatusMessage = "status must be active or archived"
 
+// Tier is how much an app matters to the company; IT's rules (internal/policy)
+// ask for it ("a sandbox app may be public, a production one needs approval").
+// Anyone with projects:write creates an app, only IT (projects:tier) moves it.
+type Tier string
+
+const (
+	TierSandbox    Tier = "sandbox"
+	TierInternal   Tier = "internal"
+	TierProduction Tier = "production"
+
+	// DefaultTier is every new app's tier.
+	DefaultTier = TierInternal
+)
+
+func (t Tier) Valid() bool { return t == TierSandbox || t == TierInternal || t == TierProduction }
+
+// TierMessage is the 400 text for a value outside the set.
+const TierMessage = "tier must be sandbox, internal or production"
+
+// SetTier is IT's change of an app's tier.
+type SetTier struct {
+	Tier      Tier            `json:"tier"`
+	UpdatedBy identity.UserID `json:"-"` // taken from the token, never the body
+}
+
+func (s SetTier) Validate() error {
+	if !s.Tier.Valid() {
+		return errx.InvalidField("tier", TierMessage)
+	}
+	if s.UpdatedBy.IsZero() {
+		return errx.Validation("editor is required")
+	}
+	return nil
+}
+
 // CodeArchived is the error code of a change refused because the project is archived.
 const CodeArchived = "PROJECT_ARCHIVED"
 
@@ -48,6 +83,7 @@ type Project struct {
 	Slug         string                  `json:"slug" db:"slug"`
 	Description  string                  `json:"description" db:"description"`
 	Status       Status                  `json:"status" db:"status"`
+	Tier         Tier                    `json:"tier" db:"tier"`
 	CreatedBy    identity.UserID         `json:"created_by" db:"created_by"`
 	UpdatedBy    identity.UserID         `json:"updated_by" db:"updated_by"`
 	CreatedAt    time.Time               `json:"created_at" db:"created_at"`

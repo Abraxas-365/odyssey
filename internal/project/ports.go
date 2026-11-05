@@ -16,6 +16,9 @@ type Commands interface {
 	Create(ctx context.Context, organization identity.OrganizationID, input Create) (ID, error)
 	Update(ctx context.Context, organization identity.OrganizationID, project ID, input Update) error
 	Archive(ctx context.Context, organization identity.OrganizationID, project ID, input Archive) error
+	// SetTier is IT's change of the app's tier (permission projects:tier).
+	// The same tier again is a no-op.
+	SetTier(ctx context.Context, organization identity.OrganizationID, project ID, input SetTier) error
 }
 
 // Queries are the read operations, implemented by projectsvc.Service.
@@ -53,6 +56,7 @@ type Repository interface {
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Project], error)
 	Update(ctx context.Context, organization identity.OrganizationID, project ID, input Update) error
 	Archive(ctx context.Context, organization identity.OrganizationID, project ID, input Archive) error
+	SetTier(ctx context.Context, organization identity.OrganizationID, project ID, input SetTier) error
 	CreateEnvironment(ctx context.Context, environment Environment) error
 	FindEnvironment(ctx context.Context, organization identity.OrganizationID, project ID, environment EnvironmentID) (Environment, error)
 	FindEnvironmentBySlug(ctx context.Context, organization identity.OrganizationID, project ID, slug string) (Environment, error)

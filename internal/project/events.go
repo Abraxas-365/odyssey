@@ -9,9 +9,10 @@ import (
 // Event types: the project's public contract. Payloads carry facts and IDs;
 // add fields freely, rename or remove one only in a new version.
 const (
-	EventCreated  = "project.created"
-	EventUpdated  = "project.updated"
-	EventArchived = "project.archived"
+	EventCreated     = "project.created"
+	EventUpdated     = "project.updated"
+	EventArchived    = "project.archived"
+	EventTierChanged = "project.tier_changed"
 
 	EventEnvironmentCreated = "environment.created"
 )
@@ -49,6 +50,21 @@ type Archived struct {
 	Project ID     `json:"project_id"`
 	Name    string `json:"name"`
 	Slug    string `json:"slug"`
+}
+
+// TierChanged v1.
+type TierChanged struct {
+	Project ID     `json:"project_id"`
+	Name    string `json:"name"`
+	Slug    string `json:"slug"`
+	From    Tier   `json:"from"`
+	To      Tier   `json:"to"`
+}
+
+func NewTierChanged(org identity.OrganizationID, actor identity.UserID, p Project, to Tier) event.Event {
+	return event.New(EventTierChanged, 1, org, actor, event.Subject(SubjectKind, p.ID),
+		"Cambió el nivel de la app "+p.Name+" a "+string(to),
+		TierChanged{Project: p.ID, Name: p.Name, Slug: p.Slug, From: p.Tier, To: to})
 }
 
 func NewCreated(org identity.OrganizationID, actor identity.UserID, id ID, name, slug string) event.Event {

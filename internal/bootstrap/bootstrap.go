@@ -44,6 +44,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/permission"
+	"github.com/Abraxas-365/odyssey/internal/policy/policymodule"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/project/adapters/projectmcp"
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
@@ -264,6 +265,7 @@ func Migrations() []migrate.Set {
 		{Owner: fleetmodule.Schema, Files: fleetmodule.Migrations()},
 		{Owner: resourcemodule.Schema, Files: resourcemodule.Migrations()},
 		{Owner: aimodule.Schema, Files: aimodule.Migrations()},
+		{Owner: policymodule.Schema, Files: policymodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
 	}
@@ -299,6 +301,7 @@ type Platform struct {
 	Resources resourcemodule.Module
 	AI        aimodule.Module
 	Audit     auditmodule.Module
+	Policy    policymodule.Module
 }
 
 // Options are the process-specific parts of a Platform.
@@ -371,6 +374,9 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	registry := workflow.NewRegistry()
 	engine := &workflow.Deferred{}
 	projects := projectmodule.New(projectmodule.Deps{DB: db, Events: events})
+	// policy is built first: release, resource and ai each get their own
+	// Policy port from it (adapters in policy/adapters), and none imports it.
+	policies := policymodule.New(policymodule.Deps{DB: db, Events: events})
 	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
 		CertificateTTL: opts.CertificateTTL})
 	if opts.Blobs == nil {
@@ -387,7 +393,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	}
 	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
 		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch,
-		BuildCommands: builds.Commands, BuildQueries: builds.Queries, Options: opts.Release,
+		BuildCommands: builds.Commands, BuildQueries: builds.Queries, Options: opts.Release, Policy: policies.Release,
 		AccessLoginAvailable: opts.Access.Enabled() || opts.AccessLogin != nil})
 	if err != nil {
 		return nil, err
@@ -404,12 +410,12 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		return nil, err
 	}
 	resources := resourcemodule.New(resourcemodule.Deps{DB: db, Events: events, Projects: projects.Queries, Fleet: fleets.Resources,
-		ReleaseCommands: releases.Commands, ReleaseQueries: releases.Queries, ReleaseUsage: releases.Usage})
+		ReleaseCommands: releases.Commands, ReleaseQueries: releases.Queries, ReleaseUsage: releases.Usage, Policy: policies.Resource})
 	// release is built first (resources need its Usage), so it learns of
 	// resources afterwards.
 	releases.UseResources(releaseresource.New(resources.Queries))
 	ais := aimodule.New(aimodule.Deps{DB: db, Events: events, Projects: projects.Queries, Engine: engine, Release: releases.AI,
-		Config: opts.AI, Provider: opts.AIProvider, Options: opts.AIService})
+		Config: opts.AI, Provider: opts.AIProvider, Policy: policies.AI, Options: opts.AIService})
 	// the ai module needs release.AI, so release learns of it afterwards
 	releases.UseAIStatus(releaseai.New(ais.Queries))
 	p := &Platform{
@@ -417,6 +423,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Bus:       bus,
 		Events:    events,
 		Projects:  projects,
+		Policy:    policies,
 		Releases:  releases,
 		Access:    accesses,
 		Builds:    builds,
@@ -568,6 +575,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.Resources.HTTP,
 		p.AI.HTTP,
 		p.Audit.HTTP,
+		p.Policy.HTTP,
 		assistantRoutes,
 	)
 }

@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/pgtest"
@@ -259,6 +261,7 @@ type deployCall struct {
 	Env     project.EnvironmentID
 	Input   release.DeployUploaded
 	Result  release.Deployment
+	Actor   actor.Actor // the actor on the context of the call
 }
 
 type deployer struct {
@@ -267,14 +270,14 @@ type deployer struct {
 	err   error
 }
 
-func (d *deployer) DeployUploaded(_ context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, in release.DeployUploaded) (release.Deployment, error) {
+func (d *deployer) DeployUploaded(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, in release.DeployUploaded) (release.Deployment, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.err != nil {
 		return release.Deployment{}, d.err
 	}
 	dep := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: id, Environment: env}
-	d.calls = append(d.calls, deployCall{org, id, env, in, dep})
+	d.calls = append(d.calls, deployCall{org, id, env, in, dep, actor.From(ctx)})
 	return dep, nil
 }
 
@@ -1452,6 +1455,123 @@ func TestImportProviderFailures(t *testing.T) {
 		}
 		if got := e.find(t, push); got.Status != source.StatusDeployed {
 			t.Fatalf("push = %s", got.Status)
+		}
+	})
+}
+
+// ---- the actor of a deferred deploy, and IT's refusals ----
+
+func TestDeployJudgedAsWhoAsked(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a manual publish carries the requester and the permissions of their token", func(t *testing.T) {
+		e := setup(t)
+		id, _ := e.connect(t, e.link(t, installExt, "code-1"), source.Connect{})
+		asked := actor.With(ctx, actor.Actor{User: e.user, Permissions: []string{"deploy", "policy.manage"}})
+		p, err := e.svc.Publish(asked, e.org, id, source.Publish{RequestedBy: e.user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.step(t, p, source.StepImport); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.step(t, p, source.StepDeploy); err != nil {
+			t.Fatal(err)
+		}
+		calls := e.deployer.all()
+		if len(calls) != 1 {
+			t.Fatalf("deploys = %d", len(calls))
+		}
+		want := actor.Actor{User: e.user, Permissions: []string{"deploy", "policy.manage"}}
+		if !reflect.DeepEqual(calls[0].Actor, want) {
+			t.Fatalf("actor = %+v, want %+v", calls[0].Actor, want)
+		}
+	})
+
+	t.Run("a requester with no token on the context holds no permission", func(t *testing.T) {
+		e := setup(t)
+		id, _ := e.connect(t, e.link(t, installExt, "code-1"), source.Connect{})
+		// someone else's token is not the requester's
+		other := actor.With(ctx, actor.Actor{User: identity.MustParseUserID(uuid.NewString()), Permissions: []string{"policy.manage"}})
+		p, err := e.svc.Publish(other, e.org, id, source.Publish{RequestedBy: e.user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.step(t, p, source.StepImport); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.step(t, p, source.StepDeploy); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.deployer.all()[0].Actor; got.User != e.user || len(got.Permissions) != 0 {
+			t.Fatalf("actor = %+v", got)
+		}
+	})
+
+	t.Run("a webhook push is the system actor of its sender, with no permissions", func(t *testing.T) {
+		e := setup(t)
+		id, _ := e.connect(t, e.link(t, installExt, "code-1"), source.Connect{})
+		if err := e.deliver("d-1", "push", e.pushBody("main", sha2)); err != nil {
+			t.Fatal(err)
+		}
+		p := e.pushes(t, id)[0]
+		if p.Trigger != source.TriggerWebhook {
+			t.Fatalf("push = %+v", p)
+		}
+		e.provider.SetFiles(repoWeb, sha2, map[string]string{"package.json": `{"name":"web"}`, "index.js": "x\n"})
+		if err := e.step(t, p, source.StepImport); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.step(t, p, source.StepDeploy); err != nil {
+			t.Fatal(err)
+		}
+		got := e.deployer.all()[0].Actor
+		if got.System != "github:ana" || !got.User.IsZero() || len(got.Permissions) != 0 || got.ID() != "github:ana" {
+			t.Fatalf("actor = %+v", got)
+		}
+	})
+}
+
+func TestDeployRefusedByITIsDefinitive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  *errx.Error
+	}{
+		{"denied", errx.Forbidden("La regla de TI «Sin viernes» no permite esto.").WithCode(gate.CodeDenied)},
+		{"needs approval", errx.Conflict("Esta acción necesita aprobación de TI (regla «Sin viernes»).").WithCode(gate.CodeApprovalRequired)},
+	} {
+		t.Run(tc.name+": no retries, the rule is in the failure", func(t *testing.T) {
+			e := setup(t)
+			id, _ := e.connect(t, e.link(t, installExt, "code-1"), source.Connect{})
+			push := e.onlyPush(t, id)
+			if err := e.step(t, push, source.StepImport); err != nil {
+				t.Fatal(err)
+			}
+			e.deployer.err = tc.err
+			cause := e.failedWith(t, push, source.StepDeploy) // workflow.Fail on the first attempt, not a retry
+			if len(e.builder.gone()) != 1 {
+				t.Error("the source was not discarded")
+			}
+			e.onFailure(t, push, cause)
+			got := e.find(t, push)
+			if got.Status != source.StatusFailed || got.Error == nil || got.Error.Code != source.CodeDeployRefused ||
+				!strings.Contains(got.Error.Detail, "Sin viernes") {
+				t.Fatalf("push = %+v / %+v", got, got.Error)
+			}
+		})
+	}
+
+	t.Run("another conflict is still retried", func(t *testing.T) {
+		e := setup(t)
+		id, _ := e.connect(t, e.link(t, installExt, "code-1"), source.Connect{})
+		push := e.onlyPush(t, id)
+		if err := e.step(t, push, source.StepImport); err != nil {
+			t.Fatal(err)
+		}
+		e.deployer.err = errx.Conflict("serialization failure")
+		err := e.step(t, push, source.StepDeploy)
+		if _, ok := workflow.AsControl(err); err == nil || ok {
+			t.Fatalf("want a retryable error, got %v", err)
 		}
 	})
 }

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -294,7 +295,7 @@ func (s *Service) Connect(ctx context.Context, organization identity.Organizatio
 		if err != nil {
 			return err
 		}
-		push, err := s.queue(ctx, locked, head, source.TriggerManual, input.ConnectedBy)
+		push, err := s.queue(ctx, locked, head, source.TriggerManual, input.ConnectedBy, requester(ctx, input.ConnectedBy))
 		if err != nil {
 			return err
 		}
@@ -362,7 +363,7 @@ func (s *Service) Publish(ctx context.Context, organization identity.Organizatio
 		if locked.ID != c.ID || locked.RepositoryID != c.RepositoryID || locked.Branch != c.Branch {
 			return errx.Conflict("the repository connection changed meanwhile; try again")
 		}
-		if push, err = s.queue(ctx, locked, head, source.TriggerManual, input.RequestedBy); err != nil {
+		if push, err = s.queue(ctx, locked, head, source.TriggerManual, input.RequestedBy, requester(ctx, input.RequestedBy)); err != nil {
 			return err
 		}
 		return s.events.Publish(ctx, source.NewPushReceived(push))
@@ -374,7 +375,7 @@ func (s *Service) Publish(ctx context.Context, organization identity.Organizatio
 // the last commit), drops the older pushes still waiting (only the newest
 // commit matters) and starts its import, in the caller's transaction. The
 // caller publishes NewPushReceived.
-func (s *Service) queue(ctx context.Context, c source.Connection, head source.Commit, trigger source.Trigger, by identity.UserID) (source.Push, error) {
+func (s *Service) queue(ctx context.Context, c source.Connection, head source.Commit, trigger source.Trigger, by identity.UserID, who actor.Actor) (source.Push, error) {
 	push := source.Push{ID: source.NewPushID(), Organization: c.Organization, Project: c.Project, Connection: c.ID,
 		Git: build.GitRef{Provider: build.ProviderGitHub, Repository: c.Repository, Branch: c.Branch, Commit: head.SHA,
 			Title: head.Title, Author: head.Author}.Normalize(),
@@ -393,7 +394,7 @@ func (s *Service) queue(ctx context.Context, c source.Connection, head source.Co
 	}
 	// The skipped pushes' runs end on their own: their steps find them finished.
 	if _, err := s.engine.Start(ctx, workflow.Start{Workflow: source.WorkflowImport, Organization: c.Organization,
-		Actor: by, Subject: event.Subject(source.PushSubjectKind, push.ID), Input: source.ImportInput{Push: push.ID},
+		Actor: by, Subject: event.Subject(source.PushSubjectKind, push.ID), Input: source.ImportInput{Push: push.ID, Actor: who},
 		IdempotencyKey: push.ID.String()}); err != nil {
 		return source.Push{}, err
 	}
@@ -615,6 +616,10 @@ func (s *Service) deploy(ctx context.Context, st *workflow.State) (any, error) {
 		return nil, workflow.Fail(err)
 	}
 	var push source.Push
+	var in source.ImportInput
+	if err := st.Input(&in); err != nil {
+		return nil, workflow.Fail(err)
+	}
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		var (
 			conn source.Connection
@@ -627,7 +632,7 @@ func (s *Service) deploy(ctx context.Context, st *workflow.State) (any, error) {
 		if err != nil {
 			return err
 		}
-		d, err := s.deployer.DeployUploaded(ctx, push.Organization, push.Project, env.ID,
+		d, err := s.deployer.DeployUploaded(actor.With(ctx, in.Actor), push.Organization, push.Project, env.ID,
 			s.release(out.Source, conn, push))
 		if err != nil {
 			return err

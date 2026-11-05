@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
@@ -94,6 +95,15 @@ type Provider interface {
 	RevokeKey(ctx context.Context, id string) error
 	// ListKeys returns the live (not revoked) keys whose name starts with prefix.
 	ListKeys(ctx context.Context, prefix string) ([]KeyInfo, error)
+}
+
+// Policy is what ai asks IT's rules (the policyai adapter; ai never imports
+// policy): may the AI be turned on for this app? It is judged when the person
+// asks (aisvc.Enable), not in the workflow that applies it, so the actor is
+// the one who asked.
+type Policy interface {
+	// Check decides the request for the organization, as the actor on ctx.
+	Check(ctx context.Context, organization identity.OrganizationID, request gate.Request) (gate.Verdict, error)
 }
 
 // Release is how ai reaches the release domain (the airelease adapter):

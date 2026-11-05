@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
@@ -178,6 +179,16 @@ type AIStatus interface {
 	AIState(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (AIState, error)
 }
 
+// Policy is what release asks IT's rules (the policy domain, through the
+// policyrelease adapter; release never imports policy): may this action
+// happen? release enforces it where each action starts (Deploy*, Rollback,
+// SetAccess, ConnectResource: releasesvc.authorize, the one seam 3b replaces
+// with "ask for approval and answer 202").
+type Policy interface {
+	// Check decides the request for the organization, as the actor on ctx.
+	Check(ctx context.Context, organization identity.OrganizationID, request gate.Request) (gate.Verdict, error)
+}
+
 // Usage is what the resource domain asks release (its resourcerelease
 // adapter), implemented by releasesvc.Service.
 type Usage interface {
@@ -188,6 +199,11 @@ type Usage interface {
 	// it waits and finds the resource deleting.
 	WithResourceUseLocked(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID,
 		fn func(ctx context.Context, connected []ResourceUse) error) error
+	// AuthorizeConnect asks IT's rules whether a resource of the kind may be
+	// connected to the environment's app, as the actor on ctx, and changes
+	// nothing. Creating a resource that connects asks it before provisioning
+	// anything; ConnectResource (Judged) then does not ask again.
+	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, kind string) error
 }
 
 // Repository is the persistence contract; only the service depends on it.

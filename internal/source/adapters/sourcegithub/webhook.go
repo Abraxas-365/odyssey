@@ -48,6 +48,7 @@ func (p *Provider) PushEvent(payload []byte) (source.PushEvent, error) {
 		RepositoryID: ev.Repo.GetID(),
 		Repository:   ev.Repo.GetFullName(),
 		Deleted:      ev.GetDeleted(),
+		Sender:       ev.GetSender().GetLogin(),
 	}
 	if branch, ok := strings.CutPrefix(ev.GetRef(), headsPrefix); ok {
 		out.Branch = branch

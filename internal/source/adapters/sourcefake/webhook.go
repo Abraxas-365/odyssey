@@ -39,6 +39,9 @@ type (
 		Name     string `json:"name,omitempty"`
 		Username string `json:"username,omitempty"`
 	}
+	sender struct {
+		Login string `json:"login,omitempty"`
+	}
 	headCommit struct {
 		ID      string `json:"id"`
 		Message string `json:"message"`
@@ -55,6 +58,7 @@ type (
 		Repository   *repoRef         `json:"repository"`
 		Installation *installationRef `json:"installation"`
 		HeadCommit   *headCommit      `json:"head_commit"`
+		Sender       sender           `json:"sender"`
 	}
 	installationPayload struct {
 		Action              string           `json:"action"`
@@ -71,6 +75,7 @@ func PushPayload(inst, repoID int64, fullName, branch string, c source.Commit) [
 		Repository:   &repoRef{ID: repoID, FullName: fullName},
 		Installation: &installationRef{ID: inst},
 		HeadCommit:   &headCommit{ID: c.SHA, Message: c.Title, Author: author{Name: c.Author, Username: c.Author}},
+		Sender:       sender{Login: c.Author},
 	})
 	return body
 }
@@ -105,6 +110,7 @@ func (f *Fake) PushEvent(payload []byte) (source.PushEvent, error) {
 		RepositoryID: p.Repository.ID,
 		Repository:   p.Repository.FullName,
 		Deleted:      p.Deleted,
+		Sender:       p.Sender.Login,
 	}
 	if branch, ok := strings.CutPrefix(p.Ref, "refs/heads/"); ok {
 		out.Branch = branch

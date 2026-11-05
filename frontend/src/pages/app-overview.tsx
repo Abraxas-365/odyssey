@@ -34,6 +34,7 @@ import { AccessPanel } from '@/features/apps/access-panel'
 import { ResourcesPanel } from '@/features/apps/resources-panel'
 import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
 import { UsesCard } from '@/features/apps/uses-card'
+import { TierField } from '@/features/apps/tier-field'
 import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
 
 /** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
@@ -158,6 +159,7 @@ function Overview({ project: p }: { project: Project }) {
               items={[
                 [<Term help="El nombre corto que se usa en la dirección de la app. No cambia.">Dirección</Term>, <span className="font-mono">{p.slug}</span>],
                 ['Creada', formatDateTime(p.created_at)],
+                [<Term help="Qué tan importante es la app. Las reglas de TI se apoyan en él: por ejemplo, publicar en producción pide aprobación. Solo TI lo cambia.">Nivel</Term>, <TierField project={p} canChange={can(permissions.projectsTier)} />],
                 ['Último cambio', formatRelative(p.updated_at)],
                 ...(technical ? ([['ID', <span className="font-mono text-xs break-all">{p.id}</span>], ['Organización', <span className="font-mono text-xs break-all">{p.organization_id}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
                 ...(technical && live?.release ? ([['Imagen', <span className="font-mono text-xs break-all">{live.release.image}</span>], ['Puerto', live.release.config.port], ['Ruta de salud', <span className="font-mono text-xs">{live.release.config.health_path}</span>]] as [React.ReactNode, React.ReactNode][]) : []),

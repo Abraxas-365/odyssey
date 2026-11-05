@@ -36,7 +36,9 @@ type Deps struct {
 	Config config.AI
 	// Provider replaces the configured gateway (tests pass a fake).
 	Provider ai.Provider
-	Options  aisvc.Options
+	// Policy is IT's rules for turning the AI on (the policyai adapter).
+	Policy  ai.Policy
+	Options aisvc.Options
 }
 
 type Module struct {
@@ -56,7 +58,7 @@ func New(deps Deps) Module {
 		opts.BaseURL = deps.Config.AppURL
 	}
 	svc := aisvc.New(aipg.New(deps.DB), provider, airelease.New(deps.Release), deps.Projects, deps.Engine,
-		txn.Postgres{DB: deps.DB}, deps.Events, opts)
+		txn.Postgres{DB: deps.DB}, deps.Events, deps.Policy, opts)
 	return Module{Commands: svc, Queries: svc, HTTP: aihttp.New(svc, svc), workflows: svc}
 }
 

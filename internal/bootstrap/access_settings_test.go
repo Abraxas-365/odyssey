@@ -16,6 +16,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/pgtest"
+	"github.com/Abraxas-365/odyssey/internal/policy"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -57,6 +58,8 @@ func TestWhoCanOpenTheApp(t *testing.T) {
 
 	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
+	// What this test proves is the permission for public, not IT's rules.
+	switchOff(t, platform, org, policy.BuiltinPublicAccess)
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead,
 		permission.DeploymentsCreate, permission.AuditRead)
 	admin := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead,
@@ -243,6 +246,7 @@ func TestAProtectedModeRefusedAtApplyRestoresNothing(t *testing.T) {
 	}()
 	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	org := identity.NewOrganizationID()
+	switchOff(t, platform, org, policy.BuiltinPublicAccess) // this test is about the cluster, not IT's rules
 	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate, permission.AccessPublic)
 
 	res := checked(t, app, http.MethodPost, "/api/v1/projects", token, map[string]any{"name": "Portal"})

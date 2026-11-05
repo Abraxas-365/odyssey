@@ -17,6 +17,8 @@ export type Project = Schemas['Project']
 export type ProjectStatus = Schemas['ProjectStatus']
 export type ProjectCreate = Schemas['ProjectCreate']
 export type ProjectPatch = Schemas['ProjectPatch']
+/** How much the app matters (IT's rules ask for it); only projects:tier changes it. */
+export type ProjectTier = Schemas['ProjectTier']
 export type ProjectList = Schemas['ProjectList']
 
 /** Query of GET /projects (the console filters one status at a time). */
@@ -97,3 +99,11 @@ export type ConnectRepository = Schemas['ConnectRepository']
 export type GitHubPush = Schemas['GitHubPush']
 export type PushStatus = Schemas['PushStatus']
 export type GitRef = Schemas['GitRef']
+
+/** IT's rules (cut 3a, docs/policy.md): what a rule does, and the dry-run's question and answer. */
+export type PolicyRule = Schemas['PolicyRule']
+export type PolicyDraft = Schemas['PolicyRuleDraft']
+export type PolicyEffect = Schemas['PolicyEffect']
+export type PolicyAction = Schemas['PolicyAction']
+export type PolicyInput = Schemas['PolicyInput']
+export type PolicyEvaluation = Schemas['PolicyEvaluation']

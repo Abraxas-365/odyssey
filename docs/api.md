@@ -55,7 +55,13 @@ One `errx.Type` per status. Nothing else decides a status.
 | 500 | `INTERNAL` | anything unexpected (generic message) |
 | 502 / 503 | `EXTERNAL` | dependency down |
 
-Domain codes in use: `PROJECT_ARCHIVED` (422).
+Domain codes in use: `PROJECT_ARCHIVED` (422). IT's rules (`docs/policy.md`)
+add `POLICY_DENIED` (403 `AUTHORIZATION`: a rule forbids the action),
+`APPROVAL_REQUIRED` (409 `CONFLICT`: a rule asks for IT's approval),
+`POLICY_INVALID` (422: the expression does not compile) and `POLICY_BUILTIN`
+(422: a built-in rule can only be switched off). The two refusals carry
+`details.rules` (rule ids) and, for approval, `details.approvers`; clients
+branch on `code`, not on the status alone.
 
 ## 3. Error body
 
@@ -165,17 +171,23 @@ releases and resources. Projects are archived, never deleted.
 | `GET` | `/api/v1/projects/:id` | read | 200 project |
 | `PATCH` | `/api/v1/projects/:id` | write | 200 project |
 | `POST` | `/api/v1/projects/:id/archive` | write | 200 project (idempotent) |
+| `PUT` | `/api/v1/projects/:id/tier` | `odyssey:projects:tier` | 200 project (idempotent) |
 
 The project resource:
 
 ```json
 {"id":"…","organization_id":"…","name":"Portal de Ventas","slug":"portal-de-ventas",
- "description":"","status":"active","created_by":"…","updated_by":"…",
+ "description":"","status":"active","tier":"internal","created_by":"…","updated_by":"…",
  "created_at":"2026-10-26T12:00:00Z","updated_at":"2026-10-26T12:00:00Z","archived_at":null}
 ```
 
 Rules:
 
+- **Tier** (`sandbox` | `internal` | `production`, default `internal`) is what
+  IT's rules ask about (`docs/policy.md`). `PUT …/tier` takes `{tier}`, is
+  gated by `odyssey:projects:tier` (the TI role), is not a create or patch
+  field, publishes `project.tier_changed`, and refuses an archived app with
+  422 `PROJECT_ARCHIVED`. Setting the tier it already has changes nothing.
 - **Create** takes `{name, slug?, description?}`.
   - `slug` is a DNS label: 3–40 characters of `[a-z0-9-]`, starting with a
     letter, not ending with `-`, no `--`. It becomes part of hostnames.
@@ -556,7 +568,50 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
   LB with client IP preservation): otherwise every agent shares one IP and
   one per-IP budget.
 
-### Audit (`odyssey:audit:read`)
+### IT's rules (`odyssey:policy:manage`; `docs/policy.md`)
+
+The organization's rules, in CEL, checked before an action happens. The first
+list or evaluate of an organization creates its four built-in rules.
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/policy/rules` | `policy:manage` | 200 `{items}` (built-in first, then by creation) |
+| `POST` | `/api/v1/policy/rules` | `policy:manage` | 201 + `Location`, rule |
+| `PUT` | `/api/v1/policy/rules/:id` | `policy:manage` | 200 rule (replaces it) |
+| `DELETE` | `/api/v1/policy/rules/:id` | `policy:manage` | 204 |
+| `POST` | `/api/v1/policy/evaluate` | `policy:manage` | 200 decision + results (dry run) |
+
+```json
+{"id":"…","name":"Publicar en producción requiere aprobación de TI","description":"…",
+ "expression":"action == 'deploy' && project.tier == 'production'","effect":"approval",
+ "approvers":"odyssey:approvals:decide","enabled":true,"builtin":"production_deploy_approval",
+ "version":1,"created_by":"","updated_by":"","created_at":"…","updated_at":"…"}
+```
+
+- **Body** (`POST`/`PUT`): `{name, description?, expression, effect, approvers?, enabled?}`.
+  `effect` is `deny` | `approval` | `allow`; `approvers` is a permission name
+  (default `odyssey:approvals:decide`); `enabled` defaults to `true`. `PUT`
+  replaces the whole rule and bumps `version`; the same body again changes nothing.
+- **Validation**: the expression is compiled and type-checked on save: 422
+  `POLICY_INVALID` (`details.field` `expression`) when it does not compile,
+  reads an unknown field or does not give `bool`.
+- **Built-in rules** (`builtin` is their key, `null` for IT's own) can be
+  switched off (`PUT` with `enabled:false` and the rest unchanged) but not
+  edited or deleted: 422 `POLICY_BUILTIN`.
+- **Evaluate** takes a `PolicyInput` (`action` plus whatever the rules read:
+  `project`, `env`, `access`, `actor`, `resource`, `scan`; the rest is zero)
+  and answers `{effect, rules[{id,name}], approvers[], results[{rule, effect,
+  enabled, matched, error?}]}`. Nothing is recorded or stopped.
+  A rule that cannot be evaluated counts at its own strength (a `deny` denies,
+  an `approval` asks for approval, an `allow` is ignored) and says why in `error`.
+  The body may also carry **`rule`** `{name?, expression, effect, approvers?,
+  replaces?}`: an unsaved candidate evaluated among the saved rules as if it were
+  enabled (`replaces` = id of the saved rule it stands in for). It is not stored;
+  a non-compiling one is 422 `POLICY_INVALID`.
+- **Enforcement** is not an endpoint: the governed actions (`deploy`,
+  `rollback`, `set_access`, `connect_resource`, `delete_resource`,
+  `enable_ai`) fail with 403 `POLICY_DENIED` / 409 `APPROVAL_REQUIRED` (§2).
+- Events: `policy.rule_created`, `policy.rule_updated`, `policy.rule_deleted`.
 
 The organization's activity trail: one entry per domain event, written by the
 `audit` subscriber, append-only and hash-chained per organization (each

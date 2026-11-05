@@ -16,6 +16,40 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/txn"
 )
 
+func TestSetTierRoute(t *testing.T) {
+	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
+	app := httpxtest.App()
+	projecthttp.New(svc, svc).Register(app.Group("/api/v1"))
+	org := identity.NewOrganizationID()
+	builder := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite)
+	it := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsTier)
+	other := httpxtest.Token(identity.NewOrganizationID(), permission.ProjectsRead, permission.ProjectsTier)
+
+	res := httpxtest.Do(t, app, http.MethodPost, "/api/v1/projects", builder, map[string]any{"name": "Portal"})
+	httpxtest.Want(t, res, http.StatusCreated)
+	created := httpxtest.JSON[project.Project](t, res)
+	if created.Tier != project.TierInternal {
+		t.Fatalf("new app's tier %q", created.Tier)
+	}
+	path := "/api/v1/projects/" + created.ID.String() + "/tier"
+
+	// only projects:tier moves it (a builder with projects:write cannot)
+	httpxtest.Want(t, httpxtest.Do(t, app, http.MethodPut, path, builder, map[string]any{"tier": "sandbox"}), http.StatusForbidden)
+	res = httpxtest.Do(t, app, http.MethodPut, path, it, map[string]any{"tier": "sandbox"})
+	httpxtest.Want(t, res, http.StatusOK)
+	if got := httpxtest.JSON[project.Project](t, res); got.Tier != project.TierSandbox {
+		t.Fatalf("tier %q", got.Tier)
+	}
+	res = httpxtest.Do(t, app, http.MethodPut, path, it, map[string]any{"tier": "gold"})
+	httpxtest.Want(t, res, http.StatusBadRequest)
+	if httpxtest.ErrorField(res) != "tier" {
+		t.Fatalf("field %q", httpxtest.ErrorField(res))
+	}
+	httpxtest.Want(t, httpxtest.Do(t, app, http.MethodPut, path, it, `{"tier":"sandbox","by":"me"}`), http.StatusBadRequest)
+	// the organization comes from the token: another tenant finds nothing
+	httpxtest.Want(t, httpxtest.Do(t, app, http.MethodPut, path, other, map[string]any{"tier": "production"}), http.StatusNotFound)
+}
+
 func TestProjectRoutes(t *testing.T) {
 	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
 	app := httpxtest.App()

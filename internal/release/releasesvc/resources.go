@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -23,6 +24,22 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 	p, e, err := s.placeWritable(ctx, organization, id, env)
 	if err != nil {
 		return release.SettingsChange{}, err
+	}
+	// IT's rules judge BEFORE the transaction: a refusal (or, in 3b, the
+	// approval request it stores) must never live in a transaction that rolls
+	// back on that same refusal. The resource's kind is read here; the
+	// transaction reads the resource again under the lock. A caller that
+	// already judged (Judged: resourcesvc.Create asks AuthorizeConnect before
+	// it provisions anything) is not judged twice; a tier change in the
+	// milliseconds between its check and this connection is ignored on purpose.
+	if !input.Judged {
+		info, err := s.resources.Find(ctx, organization, e.ID, input.Name)
+		if err != nil {
+			return release.SettingsChange{}, err
+		}
+		if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(info.Kind)}); err != nil {
+			return release.SettingsChange{}, err
+		}
 	}
 	var out release.SettingsChange
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
@@ -58,6 +75,16 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 			release.ResourceConnected, use, started, names(p, e)))
 	})
 	return out, err
+}
+
+// AuthorizeConnect is IT's rules' answer to connecting a resource of the kind
+// (nil: allowed). It writes nothing; see release.Usage.
+func (s *Service) AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, kind string) error {
+	p, e, err := s.placeWritable(ctx, organization, id, env)
+	if err != nil {
+		return err
+	}
+	return s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: kind})
 }
 
 // DisconnectResource removes the connection; the resource keeps existing.

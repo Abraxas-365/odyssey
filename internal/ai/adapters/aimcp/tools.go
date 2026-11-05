@@ -9,6 +9,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/ai"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/permission"
@@ -112,7 +113,7 @@ func (t tools) enable(ctx context.Context, caller mcpx.Principal, in EnableAIIn)
 	v, err := t.commands.Enable(ctx, caller.Organization, p.ID, env.ID, ai.Enable{RequestedBy: caller.User})
 	if err != nil {
 		var ee *errx.Error
-		if errors.As(err, &ee) && !errx.IsType(err, errx.TypeNotFound) && !errx.IsType(err, errx.TypeValidation) {
+		if errors.As(err, &ee) && !errx.IsType(err, errx.TypeNotFound) && !errx.IsType(err, errx.TypeValidation) && !gate.Refusal(ee) {
 			return EnableAIOut{}, mcpx.NextStep(ee, "Muestra el mensaje al usuario tal cual; si habla de un nombre de variable, quítalo con set_env (unset) y vuelve a intentar.")
 		}
 		return EnableAIOut{}, err

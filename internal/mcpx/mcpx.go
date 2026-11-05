@@ -13,6 +13,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 )
 
@@ -91,8 +92,10 @@ func (p Principal) Can(permissions ...string) bool {
 type principalKey struct{}
 
 // WithPrincipal puts the authenticated caller on ctx (httpx.MCPAuth does it
-// for every request).
+// for every request), and as the acting user (internal/actor) for IT's rules:
+// what the agent may do is the consented scopes, not the user's full set.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	ctx = actor.With(ctx, actor.Actor{User: p.User, Permissions: p.Permissions})
 	return context.WithValue(ctx, principalKey{}, p)
 }
 

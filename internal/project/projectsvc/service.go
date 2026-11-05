@@ -80,6 +80,30 @@ func (s *Service) Update(ctx context.Context, organization identity.Organization
 	})
 }
 
+// SetTier moves the app to another tier (IT's call; the projects:tier
+// permission gates the route). The tier it already has is a no-op.
+func (s *Service) SetTier(ctx context.Context, organization identity.OrganizationID, id project.ID, input project.SetTier) error {
+	if err := input.Validate(); err != nil {
+		return err
+	}
+	return s.tx.Do(ctx, func(ctx context.Context) error {
+		current, err := s.repo.FindForUpdate(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		if current.Archived() {
+			return project.ArchivedError()
+		}
+		if current.Tier == input.Tier {
+			return nil
+		}
+		if err := s.repo.SetTier(ctx, organization, id, input); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, project.NewTierChanged(organization, input.UpdatedBy, current, input.Tier))
+	})
+}
+
 // Archive retires the project. Archiving an archived project is a no-op.
 func (s *Service) Archive(ctx context.Context, organization identity.OrganizationID, id project.ID, input project.Archive) error {
 	if err := input.Validate(); err != nil {

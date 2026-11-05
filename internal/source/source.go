@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -346,6 +347,8 @@ type PushEvent struct {
 	Head   Commit
 	// Deleted: the branch was deleted (nothing to publish).
 	Deleted bool
+	// Sender is the GitHub login that pushed ("" when the payload names none).
+	Sender string
 }
 
 // InstallationEvent is what an installation webhook says.
@@ -386,6 +389,12 @@ const WorkflowImport = "source.import"
 // ImportInput is the source.import workflow's input.
 type ImportInput struct {
 	Push PushID `json:"push_id"`
+	// Actor is who asked for the push, as it was at request time: the deploy
+	// step runs in a worker, with no request, and IT's rules judge it as this
+	// actor (a snapshot of the permissions then). A push nobody asked for (a
+	// webhook, the poll) carries a system actor, "github:<sender>", with no
+	// permissions.
+	Actor actor.Actor `json:"actor"`
 }
 
 // Steps of source.import.

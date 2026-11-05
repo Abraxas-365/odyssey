@@ -11,6 +11,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/resource"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 type Usage struct {
@@ -51,11 +52,15 @@ func (u *Usage) Connections(ctx context.Context, org identity.OrganizationID, id
 }
 
 func (u *Usage) Connect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, c resource.Connection, by identity.UserID) (resource.Applied, error) {
-	out, err := u.commands.ConnectResource(ctx, org, id, env, release.ConnectResource{Name: c.Name, Prefix: c.Prefix, RequestedBy: by})
+	out, err := u.commands.ConnectResource(ctx, org, id, env, release.ConnectResource{Name: c.Name, Prefix: c.Prefix, RequestedBy: by, Judged: c.Judged})
 	if err != nil {
 		return resource.Applied{}, err
 	}
 	return applied(out), nil
+}
+
+func (u *Usage) AuthorizeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, kind resourcekind.Kind) error {
+	return u.usage.AuthorizeConnect(ctx, org, id, env, string(kind))
 }
 
 func (u *Usage) Disconnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, by identity.UserID) (resource.Applied, error) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
 	"github.com/Abraxas-365/iamkit/sdk/authclient/fiberauth"
+	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -169,10 +170,16 @@ func User(c *fiber.Ctx) (identity.UserID, error) {
 // X-Request-ID and names the OAuth client used (console, an MCP agent).
 func Provenance(c *fiber.Ctx) error {
 	meta := event.Meta{CorrelationID: ensureRequestID(c)}
+	ctx := c.UserContext()
 	if claims := fiberauth.Claims(c); claims != nil {
 		meta.Client = claims.OAuthClientID
+		// who acts, for IT's rules (internal/actor): the token's permissions.
+		// A token without a valid user subject carries no actor.
+		if user, err := identity.ParseUserID(claims.Subject); err == nil {
+			ctx = actor.With(ctx, actor.Actor{User: user, Permissions: claims.Permissions})
+		}
 	}
-	c.SetUserContext(event.WithMeta(c.UserContext(), meta))
+	c.SetUserContext(event.WithMeta(ctx, meta))
 	return c.Next()
 }
 

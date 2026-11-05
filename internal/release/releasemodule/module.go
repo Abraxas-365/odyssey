@@ -45,6 +45,9 @@ type Deps struct {
 	BuildCommands build.Commands
 	BuildQueries  build.Queries
 	Options       releasesvc.Options
+	// Policy is IT's rules (the policyrelease adapter): without it every
+	// governed action is refused.
+	Policy release.Policy
 	// AccessLoginAvailable: the API serves the access sign-in (/access/*),
 	// which the settings report so the console can warn when it does not.
 	AccessLoginAvailable bool
@@ -75,6 +78,7 @@ func New(deps Deps) (Module, error) {
 	svc := releasesvc.New(releasepg.New(deps.DB), deps.Projects, cluster,
 		releasebuild.New(deps.BuildCommands, deps.BuildQueries), deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Options)
+	svc.UsePolicy(deps.Policy)
 	return Module{Commands: svc, Queries: svc, Access: svc, Usage: svc, AI: svc, svc: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
 }
 

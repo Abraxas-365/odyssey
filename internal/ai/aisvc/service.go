@@ -16,6 +16,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/ai"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/txn"
@@ -45,12 +46,14 @@ type Service struct {
 	tx       txn.Runner
 	events   event.Publisher
 	opts     Options
+	// policy is IT's rules (the policyai adapter); nil refuses turning the AI on.
+	policy ai.Policy
 }
 
 // New builds the service. A nil provider means the organization has no AI:
 // everything but reading answers AI_UNAVAILABLE.
 func New(repo ai.Repository, provider ai.Provider, rel ai.Release, projects project.Queries, engine workflow.Engine,
-	tx txn.Runner, events event.Publisher, opts Options) *Service {
+	tx txn.Runner, events event.Publisher, policy ai.Policy, opts Options) *Service {
 	opts.BaseURL = strings.TrimRight(opts.BaseURL, "/")
 	if opts.PollEvery <= 0 {
 		opts.PollEvery = 2 * time.Second
@@ -61,7 +64,23 @@ func New(repo ai.Repository, provider ai.Provider, rel ai.Release, projects proj
 	if opts.SettleTimeout <= 0 {
 		opts.SettleTimeout = 30 * time.Minute
 	}
-	return &Service{repo: repo, provider: provider, release: rel, projects: projects, engine: engine, tx: tx, events: events, opts: opts}
+	return &Service{repo: repo, provider: provider, release: rel, projects: projects, engine: engine, tx: tx, events: events, policy: policy, opts: opts}
+}
+
+// authorize is the one seam where ai asks IT's rules before turning the AI
+// on: nil lets it go on, deny is 403 POLICY_DENIED, approval 409
+// APPROVAL_REQUIRED. Phase 3b replaces the approval branch here with "create
+// the approval request and answer 202".
+func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request) error {
+	if s.policy == nil {
+		return errx.Internal("IT's rules are not wired")
+	}
+	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
+	verdict, err := s.policy.Check(ctx, p.Organization, request)
+	if err != nil {
+		return err
+	}
+	return verdict.Err()
 }
 
 var (
@@ -136,6 +155,22 @@ func (s *Service) Enable(ctx context.Context, org identity.OrganizationID, id pr
 	}
 	if s.provider == nil {
 		return ai.View{}, ai.ErrUnavailable()
+	}
+	// IT's rules judge only a CHANGE, and before the transaction (a refusal,
+	// or in 3b the approval request it stores, must not live in a transaction
+	// that rolls back on that same refusal). The AI already on (or on its way)
+	// is a no-op and is not judged. The keys are read here and re-read under
+	// the lock: if the AI turned on in between, the transaction finds it on
+	// and changes nothing, so no second judgment is needed.
+	current, err := s.repo.List(ctx, org, e.ID)
+	if err != nil {
+		return ai.View{}, err
+	}
+	if has := statusesOf(current); has[ai.StatusActive] || has[ai.StatusCreating] {
+		return s.view(ctx, org, id, e.ID, current)
+	}
+	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionEnableAI}); err != nil {
+		return ai.View{}, err
 	}
 	var keys []ai.Key
 	err = s.tx.Do(ctx, func(ctx context.Context) error {

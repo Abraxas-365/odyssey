@@ -367,7 +367,7 @@ func TestUploadTickets(t *testing.T) {
 		token, hash := release.NewUploadToken()
 		tk := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: org, Project: project.NewID(), Environment: project.NewEnvironmentID(),
 			TokenHash: hash, Name: "visitas", Config: release.Config{Port: 3000, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}},
-			Client: "mcp:claude", RequestedBy: user, CreatedAt: now, ExpiresAt: now.Add(ttl)}
+			Client: "mcp:claude", RequestedBy: user, Permissions: []string{"odyssey:deployments:create", "odyssey:projects:tier"}, CreatedAt: now, ExpiresAt: now.Add(ttl)}
 		if err := repo.CreateUploadTicket(ctx, tk); err != nil {
 			t.Fatal(err)
 		}
@@ -390,7 +390,8 @@ func TestUploadTickets(t *testing.T) {
 
 	found, err := repo.FindUploadTicketByHash(ctx, tk.TokenHash)
 	if err != nil || found.ID != tk.ID || found.UsedAt != nil || found.Deployment != nil || found.Config.Env["TZ"] != "America/Lima" ||
-		found.Config.Port != 3000 || found.Client != "mcp:claude" || found.RequestedBy != user || found.Name != "visitas" || !found.ExpiresAt.Equal(tk.ExpiresAt) {
+		found.Config.Port != 3000 || found.Client != "mcp:claude" || found.RequestedBy != user || found.Name != "visitas" || !found.ExpiresAt.Equal(tk.ExpiresAt) ||
+		len(found.Permissions) != 2 || found.Permissions[1] != "odyssey:projects:tier" {
 		t.Fatalf("find %+v %v", found, err)
 	}
 	if _, err := repo.FindUploadTicketByHash(ctx, release.HashUploadToken("odu_unknown")); !errx.IsType(err, errx.TypeNotFound) {

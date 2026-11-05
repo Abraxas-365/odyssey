@@ -35,6 +35,8 @@ tags:
     description: The organization's Kubernetes clusters, where apps run (TI's Infraestructura → Clústeres).
   - name: audit
     description: The organization's tamper-evident activity trail.
+  - name: policy
+    description: IT's rules (CEL) that allow, block or ask approval for actions on apps.
   - name: github
     description: Connecting apps to their GitHub repositories.
   - name: access
@@ -196,6 +198,45 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/tier:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [projects]
+      operationId: setProjectTier
+      summary: Change an app's tier (IT)
+      description: |
+        How much the app matters: `sandbox`, `internal` (the default) or
+        `production`. IT's rules (`/api/v1/policy/rules`) ask for it. Anyone
+        with `odyssey:projects:write` creates an app; only `odyssey:projects:tier`
+        moves it. The tier it already has writes nothing. Event
+        `project.tier_changed`. Archived apps refuse it (`PROJECT_ARCHIVED`).
+      x-permissions: [odyssey:projects:tier]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tier]
+              properties:
+                tier: { $ref: "#/components/schemas/ProjectTier" }
+      responses:
+        "200":
+          description: The project after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/projects/{id}/environments:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -354,6 +395,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/Validation" }
         "415": { $ref: "#/components/responses/Validation" }
         "422": { $ref: "#/components/responses/Business" }
@@ -407,6 +449,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
@@ -515,6 +558,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
@@ -1404,6 +1448,139 @@ paths:
               schema: { $ref: "#/components/schemas/AuditVerification" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/policy/rules:
+    get:
+      tags: [policy]
+      operationId: listPolicyRules
+      summary: List IT's rules
+      description: |
+        The organization's rulebook: the built-in rules first, then IT's own by
+        age. The first read of an organization creates its four built-in rules
+        (docs/policy.md).
+      x-permissions: [odyssey:policy:manage]
+      responses:
+        "200":
+          description: Every rule.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PolicyRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      tags: [policy]
+      operationId: createPolicyRule
+      summary: Create a rule
+      description: |
+        `expression` is CEL over the action's input (docs/policy.md) and must
+        compile to a bool: otherwise 422 `POLICY_INVALID` with the compiler's
+        message. At most 100 rules (`POLICY_TOO_MANY`). Event `policy.rule_created`.
+      x-permissions: [odyssey:policy:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyRuleDraft" }
+      responses:
+        "201":
+          description: The rule created. `Location` is its URL.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyRule" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/policy/rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [policy]
+      operationId: replacePolicyRule
+      summary: Replace a rule
+      description: |
+        The whole rule. A built-in rule only takes its `enabled` switch (the
+        rest as it is): anything else is 422 `POLICY_BUILTIN`. An unchanged
+        rule writes nothing. Event `policy.rule_updated`.
+      x-permissions: [odyssey:policy:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyRuleDraft" }
+      responses:
+        "200":
+          description: The rule after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyRule" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+    delete:
+      tags: [policy]
+      operationId: deletePolicyRule
+      summary: Delete a rule
+      description: "A built-in rule cannot be deleted (422 `POLICY_BUILTIN`): switch it off. Event `policy.rule_deleted`."
+      x-permissions: [odyssey:policy:manage]
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/policy/evaluate:
+    post:
+      tags: [policy]
+      operationId: evaluatePolicy
+      summary: Try the rules on an action (dry run)
+      description: |
+        What IT's rules would say about an action, and what each rule said.
+        It decides nothing and writes nothing. `deny` beats `approval` beats
+        `allow`; no rule matching is `allow`; a rule that cannot be evaluated
+        counts at its own strength (a deny denies, an approval asks for
+        approval, an allow is ignored; `error` says why). An optional `rule`
+        is an unsaved candidate tried among the saved ones.
+      x-permissions: [odyssey:policy:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyInput" }
+      responses:
+        "200":
+          description: The decision and every rule's part in it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyEvaluation" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
   /api/v1/github:
@@ -2323,10 +2500,15 @@ components:
       type: string
       enum: [active, archived]
 
+    ProjectTier:
+      type: string
+      enum: [sandbox, internal, production]
+      description: How much the app matters; IT's rules ask for it. New apps are `internal`.
+
     Project:
       type: object
       additionalProperties: false
-      required: [id, organization_id, name, slug, description, status, created_by, updated_by, created_at, updated_at, archived_at]
+      required: [id, organization_id, name, slug, description, status, tier, created_by, updated_by, created_at, updated_at, archived_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -2337,6 +2519,7 @@ components:
           pattern: "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
         description: { type: string, maxLength: 2000 }
         status: { $ref: "#/components/schemas/ProjectStatus" }
+        tier: { $ref: "#/components/schemas/ProjectTier" }
         created_by: { type: string, format: uuid }
         updated_by: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
@@ -3258,6 +3441,142 @@ components:
               kid: { type: string }
               use: { type: string, enum: [sig] }
               alg: { type: string, enum: [EdDSA] }
+    PolicyEffect:
+      type: string
+      enum: [allow, deny, approval]
+      description: What a rule does when it matches. `deny` beats `approval` beats `allow`.
+
+    PolicyRule:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, expression, effect, approvers, enabled, builtin, version, created_by, updated_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, description: The rule as a sentence anyone can read. }
+        expression: { type: string, description: CEL over the action's input (docs/policy.md). }
+        effect: { $ref: "#/components/schemas/PolicyEffect" }
+        approvers: { type: string, description: The permission whose holders decide an approval. }
+        enabled: { type: boolean }
+        builtin: { type: [string, "null"], description: The key of a rule that comes with the product (null for IT's own). }
+        version: { type: integer }
+        created_by: { type: string, pattern: "^([0-9a-f-]{36})?$", description: "The user who wrote it; empty for a built-in rule." }
+        updated_by: { type: string, pattern: "^([0-9a-f-]{36})?$", description: "The user who last changed it; empty until someone does, for a built-in rule." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PolicyRuleDraft:
+      type: object
+      additionalProperties: false
+      required: [name, expression, effect]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        expression: { type: string, minLength: 1, maxLength: 2000 }
+        effect: { $ref: "#/components/schemas/PolicyEffect" }
+        approvers: { type: string, description: A permission name; default `odyssey:approvals:decide`. }
+        enabled: { type: boolean, description: On unless said otherwise. }
+
+    PolicyAction:
+      type: string
+      enum: [deploy, set_access, connect_resource, delete_resource, set_secret, enable_ai, rollback]
+
+    PolicyInput:
+      type: object
+      additionalProperties: false
+      required: [action]
+      description: What an action looks like to the rules. What is left out is zero (empty text, false, 0).
+      properties:
+        action: { $ref: "#/components/schemas/PolicyAction" }
+        project:
+          type: object
+          additionalProperties: false
+          properties:
+            tier: { $ref: "#/components/schemas/ProjectTier" }
+            slug: { type: string }
+        env:
+          type: object
+          additionalProperties: false
+          properties:
+            name: { type: string }
+        access:
+          type: object
+          additionalProperties: false
+          properties:
+            mode: { type: string, description: "The mode being set: team, organization or public." }
+        actor:
+          type: object
+          additionalProperties: false
+          properties:
+            id: { type: string }
+            permissions:
+              type: array
+              items: { type: string }
+        resource:
+          type: object
+          additionalProperties: false
+          properties:
+            kind: { type: string }
+        scan:
+          type: object
+          additionalProperties: false
+          properties:
+            known: { type: boolean, description: Whether a vulnerability scan exists (false until the scan runs). }
+            critical: { type: integer, minimum: 0 }
+            high: { type: integer, minimum: 0 }
+        rule:
+          type: object
+          additionalProperties: false
+          required: [expression, effect]
+          description: |
+            Only for the dry run (`evaluatePolicy`): an UNSAVED rule to try
+            among the saved ones, as if it were enabled. Nothing is stored.
+            422 `POLICY_INVALID` when its expression does not compile.
+          properties:
+            name: { type: string, description: 'Defaults to "Regla de prueba".' }
+            expression: { type: string, maxLength: 2000 }
+            effect: { $ref: "#/components/schemas/PolicyEffect" }
+            approvers: { type: string, description: A permission name (default `odyssey:approvals:decide`). }
+            replaces:
+              type: string
+              format: uuid
+              description: The saved rule this one stands in for (it is left out of the dry run), when editing.
+
+    PolicyRuleRef:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
+    PolicyEvaluation:
+      type: object
+      additionalProperties: false
+      required: [effect, rules, approvers, results]
+      properties:
+        effect: { $ref: "#/components/schemas/PolicyEffect" }
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/PolicyRuleRef" }
+          description: The matching rules of the winning effect.
+        approvers:
+          type: array
+          items: { type: string }
+          description: The permissions that can approve (only for `approval`).
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [rule, effect, enabled, matched]
+            properties:
+              rule: { $ref: "#/components/schemas/PolicyRuleRef" }
+              effect: { $ref: "#/components/schemas/PolicyEffect" }
+              enabled: { type: boolean }
+              matched: { type: boolean }
+              error: { type: string, description: "Why the rule could not be evaluated (a deny rule then denies, an approval rule asks for approval, an allow rule is ignored)." }
+
     AuditVerification:
       type: object
       additionalProperties: false

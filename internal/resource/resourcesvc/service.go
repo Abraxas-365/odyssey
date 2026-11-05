@@ -14,6 +14,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/resource"
@@ -27,17 +28,35 @@ type Service struct {
 	projects project.Queries
 	tx       txn.Runner
 	events   event.Publisher
+	// policy is IT's rules (the policyresource adapter); nil refuses deleting.
+	policy resource.Policy
 }
 
 func New(repo resource.Repository, cluster resource.Cluster, usage resource.Usage, projects project.Queries,
-	tx txn.Runner, events event.Publisher) *Service {
-	return &Service{repo: repo, cluster: cluster, usage: usage, projects: projects, tx: tx, events: events}
+	tx txn.Runner, events event.Publisher, policy resource.Policy) *Service {
+	return &Service{repo: repo, cluster: cluster, usage: usage, projects: projects, tx: tx, events: events, policy: policy}
 }
 
 var (
 	_ resource.Commands = (*Service)(nil)
 	_ resource.Queries  = (*Service)(nil)
 )
+
+// authorize is the one seam where resource asks IT's rules before deleting
+// (connecting is judged by release, where it is applied): nil lets it go on,
+// deny is 403 POLICY_DENIED, approval 409 APPROVAL_REQUIRED. Phase 3b replaces
+// the approval branch here with "create the approval request and answer 202".
+func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request) error {
+	if s.policy == nil {
+		return errx.Internal("IT's rules are not wired")
+	}
+	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
+	verdict, err := s.policy.Check(ctx, p.Organization, request)
+	if err != nil {
+		return err
+	}
+	return verdict.Err()
+}
 
 // place resolves the project and environment of a request.
 func (s *Service) place(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID) (project.Project, project.Environment, error) {
@@ -94,6 +113,16 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 	}
 	r := resource.Resource{ID: resource.NewID(), Organization: org, Project: id, Environment: e.ID, Name: input.Name, Kind: input.Kind,
 		StorageGi: input.StorageGi, Generation: 1, Status: resource.StatusActive, CreatedBy: input.RequestedBy}
+	// A create that connects is judged BEFORE anything is provisioned: the
+	// cluster object Apply creates is not undone by a rollback, so a refusal
+	// found after it would leave an orphan. The connection is then made
+	// Judged (not asked again). A tier changed in the milliseconds between
+	// this check and the connection is ignored on purpose.
+	if input.Connect != nil {
+		if err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, input.Kind); err != nil {
+			return resource.Result{}, err
+		}
+	}
 	var applied resource.Applied
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.LockEnvironment(ctx, org, e.ID); err != nil {
@@ -120,7 +149,7 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 		if input.Connect == nil {
 			return nil
 		}
-		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Connection{Name: r.Name, Prefix: input.Connect.Prefix}, input.RequestedBy)
+		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Connection{Name: r.Name, Prefix: input.Connect.Prefix, Judged: true}, input.RequestedBy)
 		return err
 	})
 	if err != nil {
@@ -186,6 +215,15 @@ func (s *Service) Delete(ctx context.Context, org identity.OrganizationID, id pr
 	if err != nil {
 		return resource.View{}, err
 	}
+	// Judged before anything is locked or marked. The kind is read for the
+	// rule's `resource.kind`; an unknown resource is NotFound as ever.
+	found, err := s.repo.Find(ctx, org, e.ID, name)
+	if err != nil {
+		return resource.View{}, err
+	}
+	if err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeleteResource, ResourceKind: string(found.Kind)}); err != nil {
+		return resource.View{}, err
+	}
 	var r resource.Resource
 	var connected []resource.Connection
 	// Connecting a resource takes the same settings lock: a connection made
@@ -229,6 +267,18 @@ func (s *Service) Connect(ctx context.Context, org identity.OrganizationID, id p
 	if err != nil {
 		return resource.Result{}, err
 	}
+	// IT's rules judge before the transaction (a refusal must not live in a
+	// transaction it rolls back); the kind is read here, the transaction
+	// re-reads the resource under its lock for the deleting check.
+	found, err := s.repo.Find(ctx, org, e.ID, input.Name)
+	if err != nil {
+		return resource.Result{}, err
+	}
+	if found.Status != resource.StatusDeleting {
+		if err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, found.Kind); err != nil {
+			return resource.Result{}, err
+		}
+	}
 	var applied resource.Applied
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		r, err := s.repo.Find(ctx, org, e.ID, input.Name)
@@ -238,7 +288,7 @@ func (s *Service) Connect(ctx context.Context, org identity.OrganizationID, id p
 		if r.Status == resource.StatusDeleting {
 			return resource.ErrDeleting(input.Name)
 		}
-		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Connection{Name: input.Name, Prefix: input.Prefix}, input.RequestedBy)
+		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Connection{Name: input.Name, Prefix: input.Prefix, Judged: true}, input.RequestedBy)
 		return err
 	})
 	if err != nil {

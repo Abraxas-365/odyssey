@@ -31,6 +31,8 @@ type Deps struct {
 	ReleaseCommands release.Commands
 	ReleaseQueries  release.Queries
 	ReleaseUsage    release.Usage
+	// Policy is IT's rules for deleting (the policyresource adapter).
+	Policy resource.Policy
 }
 
 type Module struct {
@@ -42,7 +44,7 @@ type Module struct {
 func New(deps Deps) Module {
 	svc := resourcesvc.New(resourcepg.New(deps.DB), resourcefleet.New(deps.Fleet),
 		resourcerelease.New(deps.ReleaseCommands, deps.ReleaseQueries, deps.ReleaseUsage),
-		deps.Projects, txn.Postgres{DB: deps.DB}, deps.Events)
+		deps.Projects, txn.Postgres{DB: deps.DB}, deps.Events, deps.Policy)
 	return Module{Commands: svc, Queries: svc, HTTP: resourcehttp.New(svc, svc)}
 }
 

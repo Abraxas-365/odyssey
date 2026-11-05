@@ -22,6 +22,9 @@ const (
 	AccessPublic        = "odyssey:access:public"        // Dejar que cualquiera con el enlace abra una app, sin iniciar sesión
 	SecretsExternal     = "odyssey:secrets:external"     // Conectar secretos de una app con el almacén de secretos de la empresa
 	ResourcesDelete     = "odyssey:resources:delete"     // Eliminar bases de datos, cachés y archivos de una app (borra sus datos)
+	ProjectsTier        = "odyssey:projects:tier"        // Cambiar el nivel de una app (sandbox, interna o producción)
+	PolicyManage        = "odyssey:policy:manage"        // Ver y editar las reglas de TI de la organización
+	ApprovalsDecide     = "odyssey:approvals:decide"     // Aprobar o rechazar acciones que las reglas de TI dejan pendientes
 )
 
 // All is the whole catalog, in manifest order.
@@ -38,6 +41,9 @@ var All = []string{
 	AccessPublic,
 	SecretsExternal,
 	ResourcesDelete,
+	ProjectsTier,
+	PolicyManage,
+	ApprovalsDecide,
 }
 
 // Labels describe each permission for role editors.
@@ -54,6 +60,9 @@ var Labels = map[string]string{
 	AccessPublic:        "Dejar que cualquiera con el enlace abra una app, sin iniciar sesión",
 	SecretsExternal:     "Conectar secretos de una app con el almacén de secretos de la empresa",
 	ResourcesDelete:     "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)",
+	ProjectsTier:        "Cambiar el nivel de una app (sandbox, interna o producción)",
+	PolicyManage:        "Ver y editar las reglas de TI de la organización",
+	ApprovalsDecide:     "Aprobar o rechazar acciones que las reglas de TI dejan pendientes",
 }
 
 // Names maps each constant's Go name to its permission (used by the
@@ -71,11 +80,14 @@ var Names = map[string]string{
 	"AccessPublic":        AccessPublic,
 	"SecretsExternal":     SecretsExternal,
 	"ResourcesDelete":     ResourcesDelete,
+	"ProjectsTier":        ProjectsTier,
+	"PolicyManage":        PolicyManage,
+	"ApprovalsDecide":     ApprovalsDecide,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic, SecretsExternal, ResourcesDelete}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic, SecretsExternal, ResourcesDelete, ProjectsTier, PolicyManage, ApprovalsDecide}},
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ResourcesDelete}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }

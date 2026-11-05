@@ -14,10 +14,12 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/fleet/adapters/fleetca"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/pgtest"
+	"github.com/Abraxas-365/odyssey/internal/policy"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -239,6 +241,33 @@ func TestResources(t *testing.T) {
 		t.Fatalf("desired after resize %+v", d)
 	}
 
+	// IT's rules judge connecting before anything is stored: a rule IT wrote
+	// for databases refuses it (nothing changes), and the app is untouched.
+	itUser := identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
+	noDB, err := platform.Policy.Commands.Create(ctx, org, policy.Create{CreatedBy: itUser, Draft: policy.Draft{
+		Name: "Sin bases de datos conectadas", Expression: "action == 'connect_resource' && resource.kind == 'postgres'", Effect: policy.EffectDeny}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errCode(checked(t, app, http.MethodPut, rbase+"/db/connection", token, nil), http.StatusForbidden, gate.CodeDenied)
+	if v := httpxtest.JSON[resource.View](t, checked(t, app, http.MethodGet, rbase+"/db", token, nil)); v.Connected {
+		t.Fatalf("a refused connect connected it: %+v", v)
+	}
+	// ... and so does a create that connects: it is judged BEFORE anything is
+	// provisioned, so no row and no cluster object are left behind.
+	before := len(list().Items)
+	errCode(checked(t, app, http.MethodPost, rbase, token, map[string]any{"name": "judged", "kind": "postgres", "connect": map[string]any{}}),
+		http.StatusForbidden, gate.CodeDenied)
+	if n := len(list().Items); n != before {
+		t.Fatalf("a refused create-with-connect stored a resource: %d → %d", before, n)
+	}
+	if _, ok, _ := platform.Fleet.Agents.DesiredResource(ctx, agent, env.ID, "judged"); ok {
+		t.Fatal("a refused create-with-connect reached the cluster")
+	}
+	if err := platform.Policy.Commands.Delete(ctx, org, noDB.ID, policy.Delete{DeletedBy: itUser}); err != nil {
+		t.Fatal(err)
+	}
+
 	// Connect: a settings revision and a config deployment carrying the resource.
 	res = checked(t, app, http.MethodPut, rbase+"/db/connection", token, nil)
 	httpxtest.Want(t, res, http.StatusAccepted)
@@ -316,6 +345,15 @@ func TestResources(t *testing.T) {
 	// Delete: refused while the app uses it, and only with the permission.
 	httpxtest.Want(t, checked(t, app, http.MethodDelete, rbase+"/db", token, nil), http.StatusForbidden)
 	httpxtest.Want(t, checked(t, app, http.MethodDelete, rbase+"/db", reader, nil), http.StatusForbidden)
+	noDelete, err := platform.Policy.Commands.Create(ctx, org, policy.Create{CreatedBy: itUser, Draft: policy.Draft{
+		Name: "Los datos no se borran", Expression: "action == 'delete_resource'", Effect: policy.EffectDeny}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errCode(checked(t, app, http.MethodDelete, rbase+"/db", deleter, nil), http.StatusForbidden, gate.CodeDenied) // before the in-use guard
+	if err := platform.Policy.Commands.Delete(ctx, org, noDelete.ID, policy.Delete{DeletedBy: itUser}); err != nil {
+		t.Fatal(err)
+	}
 	errCode(checked(t, app, http.MethodDelete, rbase+"/db", deleter, nil), http.StatusConflict, resource.CodeInUse)
 	if v := httpxtest.JSON[resource.View](t, checked(t, app, http.MethodGet, rbase+"/db", token, nil)); v.Status != resource.StatusActive {
 		t.Fatalf("a refused delete changed it: %+v", v)

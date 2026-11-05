@@ -62,12 +62,13 @@ export function OptionCards<T extends string>({ value, onChange, options, label,
  * Policy as a sentence with a switch (UX v3 §11): "Las aprobaciones de datos
  * vencen a los <b>6 meses</b>". `locked` rules are mandatory.
  */
-export function RuleRow({ children, checked, onCheckedChange, locked, className }: { children: ReactNode; checked: boolean; onCheckedChange?: (v: boolean) => void; locked?: boolean; className?: string }) {
+export function RuleRow({ children, checked, onCheckedChange, locked, disabled, trailing, className }: { children: ReactNode; checked: boolean; onCheckedChange?: (v: boolean) => void; locked?: boolean; disabled?: boolean; trailing?: ReactNode; className?: string }) {
   return (
-    <label className={cn('flex items-center gap-3 border-t px-5 py-3 text-[13px] [&_b]:font-semibold [&_b]:text-foreground', !locked && 'cursor-pointer', className)}>
+    <label className={cn('flex items-center gap-3 border-t px-5 py-3 text-[13px] [&_b]:font-semibold [&_b]:text-foreground', !locked && !disabled && 'cursor-pointer', className)}>
       <span className="flex-1">{children}</span>
+      {trailing}
       {locked && <Lock className="size-3.5 text-muted-foreground" aria-label="Obligatoria" />}
-      <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={locked} />
+      <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={locked || disabled} />
     </label>
   )
 }

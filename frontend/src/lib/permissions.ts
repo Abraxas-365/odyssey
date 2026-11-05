@@ -12,6 +12,9 @@ export const permissions = {
   accessPublic: 'odyssey:access:public',
   secretsExternal: 'odyssey:secrets:external',
   resourcesDelete: 'odyssey:resources:delete',
+  projectsTier: 'odyssey:projects:tier',
+  policyManage: 'odyssey:policy:manage',
+  approvalsDecide: 'odyssey:approvals:decide',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]
