@@ -446,11 +446,12 @@ type spec struct {
 	Access     string              `json:"access,omitempty"`
 	Secrets    []fleet.AppSecret   `json:"secrets,omitempty"`
 	Resources  []fleet.ResourceRef `json:"resources,omitempty"`
+	AI         *fleet.AIRef        `json:"ai,omitempty"`
 }
 
 func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
 	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels,
-		Access: a.Access, Secrets: a.Secrets, Resources: a.Resources})
+		Access: a.Access, Secrets: a.Secrets, Resources: a.Resources, AI: a.AI})
 	if err != nil {
 		return false, errx.Wrap(err, "encode app", errx.TypeInternal)
 	}
@@ -489,7 +490,7 @@ func (r appRow) app() (fleet.App, error) {
 	if a.Secrets == nil {
 		a.Secrets = []fleet.AppSecret{}
 	}
-	a.Resources = s.Resources
+	a.Resources, a.AI = s.Resources, s.AI
 	if a.Resources == nil {
 		a.Resources = []fleet.ResourceRef{}
 	}
@@ -554,6 +555,8 @@ func encodeSignal(s fleet.Signal) string {
 		return s.Organization.String() + " " + s.Cluster.String() + " revoked"
 	case s.Reenrolled:
 		return s.Organization.String() + " " + s.Cluster.String() + " reenrolled"
+	case s.Policy:
+		return s.Organization.String() + " " + s.Cluster.String() + " policy"
 	case !s.Build.IsZero():
 		return s.Organization.String() + " " + s.Cluster.String() + " build " + s.Build.String()
 	case !s.Secret.IsZero():
@@ -583,6 +586,8 @@ func decodeSignal(raw string) (fleet.Signal, bool) {
 		s.Revoked = true
 	case f[2] == "reenrolled" && len(f) == 3:
 		s.Reenrolled = true
+	case f[2] == "policy" && len(f) == 3:
+		s.Policy = true
 	case f[2] == "app" && len(f) == 5:
 		if s.Environment, err = project.ParseEnvironmentID(f[3]); err != nil {
 			return fleet.Signal{}, false

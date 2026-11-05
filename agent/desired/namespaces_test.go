@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
+	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,3 +133,85 @@ func TestBindAllCoversOnlyTheAgentsNamespaces(t *testing.T) {
 		}
 	}
 }
+
+type fakeFence struct {
+	got []string
+	err error
+}
+
+func (f *fakeFence) Fence(_ context.Context, ns string) error {
+	f.got = append(f.got, ns)
+	return f.err
+}
+
+// A new namespace is fenced (egress policy) once the agent may write in it,
+// before anything runs there; a fence that fails fails Ensure (retried).
+func TestEnsureFencesTheNamespace(t *testing.T) {
+	ctx := context.Background()
+	_, c := newSyncer(t, interceptor.Funcs{})
+	f := &fakeFence{}
+	n := namespaces(c, func(context.Context, string) (bool, error) { return true, nil })
+	n.Fence = f
+	if err := n.Ensure(ctx, org, proj, env); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.got) != 1 || f.got[0] != Namespace(env) {
+		t.Fatalf("fenced %v", f.got)
+	}
+	f.err = errors.New("no policy")
+	if err := n.Ensure(ctx, org, proj, env); err == nil || !strings.Contains(err.Error(), "no policy") {
+		t.Fatalf("a failed fence must fail Ensure: %v", err)
+	}
+}
+
+// An app that starts or stops using AI re-fences its namespace (odicea-ai
+// opens or closes the gateway before the pod starts); one that never used AI
+// does not, and a failed fence fails Apply so it is retried, also when the
+// retry finds nothing to write.
+func TestApplyFencesTheNamespaceWhenAIChanges(t *testing.T) {
+	ctx := context.Background()
+	s, c := newSyncer(t, interceptor.Funcs{})
+	// Ensure fences before the app exists (and so before its gateway is
+	// known); only a fence after the write can open it: this one sees whether
+	// the app is already in the cluster when it runs.
+	var seen []bool
+	var fail error
+	f := fencerFunc(func(ctx context.Context, ns string) error {
+		var a v1alpha1.OdysseyApp
+		err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "portal"}, &a)
+		seen = append(seen, err == nil && a.Spec.AI != nil)
+		return fail
+	})
+	s.Namespaces = &Namespaces{Client: s.Client, Fence: f}
+	count := func(f func()) int { seen = nil; f(); return len(seen) }
+	apply := func(a *fleetv1.App) error { return s.Apply(ctx, a) }
+
+	if n := count(func() { _ = apply(app(1)) }); n != 1 {
+		t.Fatalf("an app without AI is fenced when its namespace is ensured, once: %d", n)
+	}
+	withAI := app(2)
+	withAI.Ai = &fleetv1.AI{BaseUrl: "http://gw:3000", KeySecret: "K"}
+	if n := count(func() { _ = apply(withAI) }); n != 2 || !seen[1] {
+		t.Fatalf("an app that got AI re-fences once its spec is written: %v", seen)
+	}
+	fail = errors.New("no resolve")
+	if err := s.Apply(ctx, withAI); err == nil {
+		t.Fatal("a failed fence must fail Apply")
+	}
+	fail = nil
+	// the retry finds nothing to write and still fences
+	if n := count(func() { _ = apply(withAI) }); n != 2 || !seen[1] {
+		t.Fatalf("the retry did not fence again: %v", seen)
+	}
+	// dropping AI re-fences too (odicea-ai closes)
+	if n := count(func() { _ = apply(app(3)) }); n != 2 {
+		t.Errorf("an app that dropped AI did not re-fence: %d", n)
+	}
+	if n := count(func() { _ = apply(app(3)) }); n != 1 {
+		t.Errorf("an unchanged app without AI fenced again: %d", n)
+	}
+}
+
+type fencerFunc func(ctx context.Context, namespace string) error
+
+func (f fencerFunc) Fence(ctx context.Context, namespace string) error { return f(ctx, namespace) }

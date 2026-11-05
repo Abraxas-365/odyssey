@@ -6,6 +6,7 @@
       "create_database",
       "deploy_folder",
       "deploy_image",
+      "enable_ai",
       "get_app",
       "get_build_logs",
       "get_deployment",
@@ -35,6 +36,7 @@
       "create_database",
       "deploy_folder",
       "deploy_image",
+      "enable_ai",
       "get_app",
       "get_build_logs",
       "get_deployment",
@@ -214,7 +216,7 @@
         "readOnlyHint": false,
         "title": "Crear una base de datos"
       },
-      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una publicación de configuración que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a configuration deployment that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several.",
+      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una versión nueva de la app que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -253,7 +255,7 @@
             "type": "string"
           },
           "config_deployment_id": {
-            "description": "la publicación de configuración que conecta la base, si empezó una",
+            "description": "la versión nueva que conecta la base, si empezó una",
             "type": [
               "null",
               "string"
@@ -556,6 +558,79 @@
         "type": "object"
       },
       "title": "Publicar una imagen"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Dar IA a una app"
+      },
+      "description": "Le da a una app acceso a los modelos de IA de la organización (chat, completions, mensajes): crea una llave propia de la app, se la entrega al clúster sin que pase por nadie y la app la recibe como variables de entorno, en una versión nueva de la app que empieza sola. El código de la app usa las librerías oficiales de OpenAI o Anthropic sin cambiar nada más: leen OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY y ANTHROPIC_BASE_URL solos. La llave nunca se muestra. Si ya estaba activa no cambia nada. Gives an app access to the organization's AI models: it makes a key just for the app, hands it to the cluster sealed, and the app receives it as environment variables, in a new version of the app that starts by itself. App code uses the official OpenAI or Anthropic libraries unchanged: they read OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL by themselves. The key is never shown. Already on: nothing changes. app is the slug (see list_apps) or the id; environment defaults to production.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "environment": {
+            "description": "entorno de la app; production por defecto",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "enable_ai",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "base_url": {
+            "description": "dirección de la IA que recibe la app",
+            "type": "string"
+          },
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "status": {
+            "description": "enabling (la llave se está preparando), enabled (lista) o off",
+            "type": "string"
+          },
+          "variables": {
+            "description": "nombres de las variables que la app lee (la llave nunca se muestra)",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "app",
+          "status",
+          "base_url",
+          "variables",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Dar IA a una app"
     },
     {
       "annotations": {

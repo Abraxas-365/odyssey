@@ -82,11 +82,13 @@ agent/source/             :8099 source server for build pods (per-build token) r
 agent/access/             the sign-in gate (`odyssey-agent access`, its own Deployment `odyssey-access` behind Traefik forwardAuth): cookie + ticket (EdDSA JWT via JWKS) verification; imports only pkg/ and the stdlib/jwt/client-go. Contract: docs/access.md
 agent/secretstore/        managed secrets: opens a sealed value (pkg/secretbox) into `<app>-secrets` if its version is newer. Contract: docs/secrets.md
 agent/desired/            desired app (proto) → namespace + OdysseyApp; status/capabilities → proto
+agent/egress/             cluster egress policy (2d): Policy (from the proto), the per-namespace NetworkPolicies (`odicea-apps` fences app pods, `odicea-resources` the databases/caches by label, `odicea-default` every other pod, `odicea-ai` opens the AI gateway to apps with AI) and the Enforcer (keeps the policy in ConfigMap `odyssey-cluster-policy`, lists the nodes to keep them closed, resolves the AI gateways, fences every environment namespace, resyncs, reports its state). Contract: docs/egress.md
 agent/tunnel/             enrolment, mTLS tunnel to the gateway (pinned CA), renewal, reports; builds.go: build queue, final status after its log
 deploy/k3d/              local cluster extras: registry/ (zot in ns odyssey-registry, Service ClusterIP 10.43.200.200), registries.yaml (k3s mirror so the node pulls the registry by its in-cluster name), agent/ (overlay of agent/install: ODYSSEY_REGISTRY + `builds-registry` NetworkPolicy)
-agent/install/            kustomize: crd/ + rbac/role.yaml (generated), rbac.yaml (+ odyssey-agent-environment: secrets and the write/delete verbs of volumes, CNPG clusters, deployments and services; bound only per environment namespace, never cluster-wide), policy.yaml (VAP confining that binding), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), access.yaml (the gate: Deployment replicas 1, Service, Role, NetworkPolicy), deployment
+agent/install/            kustomize: crd/ + rbac/role.yaml (generated), rbac.yaml (+ odyssey-agent-environment: secrets, NetworkPolicies and the write/delete verbs of volumes, CNPG clusters, deployments and services; bound only per environment namespace, never cluster-wide), policy.yaml (VAP confining that binding), namespace, builds.yaml (odyssey-builds ns, source Service, NetworkPolicy), access.yaml (the gate: Deployment replicas 1, Service, Role, NetworkPolicy), deployment
 internal/bootstrap/       composition root (gateway.go: the gateway), migrations list, ARCHITECTURE TESTS
 internal/fleet/           clusters, tokens, desired apps; fleetca (CA), fleetpg, fleetgrpc (gateway), fleethttp
+internal/ai/              AI for apps (2d-ai): an app's own key at the AI gateway (freerouter), made and revoked by the `ai.enable|rotate|disable` workflows (`aisvc`), sealed to the cluster as managed secret `ODICEA_AI_KEY`; the agent sets OPENAI_*/ANTHROPIC_* from it. Adapters: aipg (`ai.keys`), aifreerouter (HTTP client), aifake, airelease (↔ `release.AI`, settings carry `AI`), aihttp, aimcp (`enable_ai`). Contract: docs/ai.md
 internal/server/          Fiber app: middleware, /health, /api/config, /api/v1; assistant.go: GET /api/v1/assistant + public GET /skills/odicea.tar.gz
 internal/assistant/       foundation: the assistants (claude_code, codex, vscode, antigravity) — install/skill commands for the console, and Preset (OAuth client → assistant key) for `requested_via`
 skills/                   the `odicea` skill (SKILL.md + references/, go:embed) → deterministic tar.gz served at /skills/odicea.tar.gz; its tool names are checked against the MCP tools
@@ -102,6 +104,7 @@ iam/permissions.json      the IAMKit permission manifest (source of internal/per
 api/openapi.yaml          HTTP contract, exact shapes (OpenAPI 3.1, hand-written, test-enforced)
 docs/api.md               HTTP contract rules; code cites its sections (§N)
 docs/secrets.md           variables y secretos, data plane: cluster key, delivery, OdysseyApp.spec.secrets, gating
+docs/egress.md            salida a internet por clúster (2d): modos, allow list, NetworkPolicies, qué debe saber TI
 scripts/                  IAMKit provisioning, token, smoke
 frontend/                 web console (Vite + React + shadcn base-nova + Tailwind v4); see frontend/README.md
 ```
@@ -153,6 +156,7 @@ Copy this module's shape for every new domain (`source`, `build`, `release`, `fl
 | `agent/` and `cmd/odyssey-agent` never import `internal/`; the control plane never imports `agent/` nor `k8s.io/*`/`sigs.k8s.io/*` (the planes talk only through `proto/`, which imports neither); `pkg/` (code both planes run, e.g. `srcarchive`) imports neither plane nor Kubernetes; `agent/builder` (a build pod's program) imports only `pkg/` — no Kubernetes, gRPC or protobuf — and is the only importer of Railpack; `agent/access` (the sign-in gate) meets the control plane only through the ticket contract (docs/access.md): it imports only `pkg/`, no proto/gRPC, no controller-runtime and no other `agent/` package; `pkg/odiceaauth` (imported by the apps Odicea runs) takes only the standard library (its tests may add only the package itself); in `internal/`, `proto/` and protobuf only in adapters, gRPC only in adapters and bootstrap (adapter and bootstrap tests may start an agent) | `TestPlanesStayApart` |
 | What an environment serves changes only in the deploy workflow's `promote` step (`releasesvc.promote` → `Repository.Promote`, the only SQL writing `current_release_id`) | `TestOnlyThePromoteStepMovesTheCurrentRelease` |
 | Deleting a resource and connecting one serialise on the settings lock: `resourcesvc` `Delete` → `WithConnectionsLocked` → `resourcerelease` → `releasesvc.WithResourceUseLocked`, and it, `ConnectResource` and `DisconnectResource` call `lockSettings` | `TestResourceUseIsSerialised` |
+| An app's AI key exists in clear only inside `aisvc.createKey` (no other `aisvc` function reads a provider key's `Secret`); the AI gateway (`CreateKey`/`RevokeKey`/`ListKeys`) is never called from `Enable`/`Rotate`/`Disable`/`Get`/`view`, only from workflow steps; `Enable`, `Rotate`, `Disable` and the `apply` step take `LockEnvironment` | `TestAIKeyStaysInCreateKey`, `TestAIGatewayIsOnlyCalledFromWorkflowSteps`, `TestAIChangesAreSerialised` |
 | An upload ticket is spent in one place: `ConsumeUploadTicket` / `FindUploadTicketByHash` (by token hash, cross-org) are called only by `release/releasesvc`; `Commands.RedeemUpload` only by the public route in `releasehttp` (tests aside), never by an MCP tool | `TestUploadTicketsAreSpentInOnePlace` |
 | Every route is in `api/openapi.yaml` and vice versa; `x-permissions` = what the route enforces; responses match the schemas | `TestRoutesMatchTheOpenAPISpec`, `TestOperationPermissionsMatchTheRoutes`, `checked(...)` in `TestServerRoundTrip` |
 | `go-github` and `golang-jwt` only in `source/adapters/sourcegithub` (and `golang-jwt` also in `access/adapters/accessjwt`); unauthenticated routes only via `RegisterPublic` of `sourcehttp` (`GET /github/setup`, `POST /webhooks/github`), `releasehttp` (`PUT /uploads/:ticket`), `accesshttp` (`GET /.well-known/odicea-access-keys`, `GET /access/authorize`, `GET /access/callback`) and `server` itself (`GET /skills/odicea.tar.gz`), each one declared per adapter, mounted only by `server`; `release` never imports `source`, and `source` names `release.Commands` only in `sourcerelease`/`sourcemodule` (its `Deployer` port); the cross-org lookups webhooks/poll need (`FindInstallationByExternal`, `ListConnectionsByRepository`, `ListConnectionsToReconcile`) are called only by `sourcesvc`, which re-checks the installation's organization | `TestGitHubStaysInItsAdapter`, `TestPublicRoutesAreDeclared`, `TestReleaseDoesNotKnowSources`, `TestCrossOrgQueriesStayChecked` |
@@ -202,6 +206,23 @@ Other rules:
   `IMAGE_PULL_FAILED`, `APP_CRASHED`, `HEALTH_CHECK_FAILED`, `APPLY_FAILED` in
   `release.Unready`. A CRD change is additive within `v1alpha1`; run
   `make gen` and re-apply `agent/install/crd`.
+- **Egress** (`fleet.Egress` per cluster, docs/egress.md): `PUT/GET
+  /api/v1/clusters/{id}/egress`; mode `internet` (default) or `restricted` plus
+  an `allow` list of CIDRs (`0.0.0.0/0` refused: it would reopen the private
+  ranges). Each change bumps a generation and publishes
+  `cluster.egress_changed`; the gateway pushes `ClusterPolicy` (first thing after
+  `Hello`, and on the `<org> <cluster> policy` feed signal) and the agent
+  answers `PolicyAck`, an observation (`ObservePolicy`, no event). The agent
+  (`agent/egress`) lists `odicea.egress` and fences every environment namespace
+  with the `odicea-apps`, `odicea-resources`, `odicea-default` (and, for apps
+  with AI, `odicea-ai`) NetworkPolicies, before the
+  namespace's first pod; no policy received = `internet`. Writing
+  NetworkPolicies is in the `odyssey-agent-environment` role only (never
+  cluster-wide); apps must keep reaching `odyssey-access:8099`. The CNI must
+  enforce NetworkPolicy. The `internet` rule excepts the reserved ranges and
+  every node's address; `PolicyAck.warnings` flags allow entries that include a
+  node (shown in the egress view). Pods of resources carry `odyssey.dev/resource`
+  (CNPG: `spec.inheritedMetadata`), pods of apps with AI `odyssey.dev/ai`.
 - **Assistants & skill**: `skills/odicea/` must name only real MCP tools
   (`TestSkillNamesRealTools`) and its `SKILL.md` frontmatter is `name` +
   one-line `description`; the archive is deterministic (its hash is the

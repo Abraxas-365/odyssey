@@ -105,6 +105,9 @@ message AgentMessage {
     // resource_report says how the environments' resources are (2b): a full
     // one (every resource the cluster holds) right after Hello, then changes.
     ResourceReport resource_report = 6;
+    // policy_ack answers a ControlMessage.cluster_policy (and is sent again
+    // right after Hello for the generation the agent keeps).
+    PolicyAck policy_ack = 7;
   }
 }
 
@@ -125,7 +128,48 @@ message ControlMessage {
     // database, a cache, a files volume). Applying it twice, or a generation
     // older than the one the cluster has, changes nothing.
     Resource resource = 5;
+    // cluster_policy is what TI set for the whole cluster (2d): sent right
+    // after Hello and on every change. The agent keeps it (ConfigMap
+    // odyssey-cluster-policy) so it holds across restarts and lost streams,
+    // and answers with a policy_ack. A generation older than the one it
+    // keeps changes nothing.
+    ClusterPolicy cluster_policy = 6;
   }
+}
+
+// ClusterPolicy is the cluster-wide rules TI sets from the console (2d).
+message ClusterPolicy {
+  // generation grows with every change.
+  int64 generation = 1;
+  EgressPolicy egress = 2;
+}
+
+// EgressPolicy is where the apps of the cluster may connect to (2d). Every
+// app may always reach: DNS, its own environment's resources (same
+// namespace), the sign-in gate's keys (odyssey-access:8099) and, when it
+// uses AI, the AI gateway (App.ai.base_url's host, resolved by the agent).
+message EgressPolicy {
+  // mode is "internet" (public internet: every address but private,
+  // loopback, CGNAT and link-local ranges, so no cloud metadata and nothing
+  // internal unless listed in allow) or "restricted" (only allow). Empty
+  // means "internet": the default before TI sets one.
+  string mode = 1;
+  // allow are CIDRs (IPv4 or IPv6) the apps may also reach, internal ones
+  // included (e.g. "10.20.0.0/16" for a corporate database).
+  repeated string allow = 2;
+}
+
+// PolicyAck says whether the agent enforces a ClusterPolicy generation.
+message PolicyAck {
+  int64 generation = 1;
+  // error is empty when it is enforced; else why not (the previous one
+  // stays in force).
+  string error = 2;
+  // warnings are what TI should review although the policy is enforced (an
+  // allow entry that includes a node of the cluster, 2d). The agent also
+  // sends an ack with the current state when it changes (a node joined, a
+  // namespace could not be written), not only in answer to a policy.
+  repeated string warnings = 3;
 }
 
 // Secret is a managed secret's value on its way to the cluster.
@@ -170,6 +214,10 @@ message Capabilities {
   // sign-in gate (access mode team/organization): the gate is installed and
   // configured AND the cluster has traefik.io. An agent that does not list it
   // (every agent older than 1e too) must not be sent a protected app.
+  // "odicea.ai" (2d): the agent wires App.ai into the app. An agent without
+  // it must not be sent an app with ai. "odicea.egress" (2d): the agent
+  // enforces ClusterPolicy.egress with NetworkPolicies (the cluster's
+  // network plugin must enforce them: TI's part).
   repeated string apis = 2;
   repeated string ingress_classes = 3;
   repeated string storage_classes = 4;
@@ -290,6 +338,23 @@ message App {
   // wires their connection (kept in the cluster, never sent) into the app's
   // environment and does not start a revision until they are ready.
   repeated ResourceRef resources = 14;
+  // ai connects the app to the organization's AI gateway (2d). Unset: the
+  // app has no AI.
+  AI ai = 15;
+}
+
+// AI is how an app reaches the AI gateway (freerouter): its key is a
+// managed secret of the app (listed in App.secrets, delivered sealed like
+// any other), never sent here.
+message AI {
+  // base_url is the gateway as apps reach it, without "/v1"
+  // (e.g. "https://ai.example.com"). The agent sets OPENAI_BASE_URL =
+  // base_url + "/v1" and ANTHROPIC_BASE_URL = base_url.
+  string base_url = 1;
+  // key_secret names the SecretRef in App.secrets that holds the key
+  // ("ODICEA_AI_KEY"): the agent sets OPENAI_API_KEY and ANTHROPIC_API_KEY
+  // from it.
+  string key_secret = 2;
 }
 
 // SecretRef is one secret variable of an app.

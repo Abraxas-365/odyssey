@@ -56,8 +56,12 @@ func appToProto(a fleet.App) *fleetv1.App {
 	for _, r := range a.Resources {
 		resources = append(resources, &fleetv1.ResourceRef{Name: r.Name, Kind: string(r.Kind), Prefix: r.Prefix})
 	}
+	var ai *fleetv1.AI
+	if a.AI != nil {
+		ai = &fleetv1.AI{BaseUrl: a.AI.BaseURL, KeySecret: a.AI.KeySecret}
+	}
 	return &fleetv1.App{
-		Resources:      resources,
+		Resources: resources, Ai: ai,
 		OrganizationId: a.Organization.String(), ProjectId: a.Project.String(), EnvironmentId: a.Environment.String(),
 		Name: a.Name, Revision: a.Revision, Image: a.Image, Port: int32(a.Port), HealthPath: a.HealthPath,
 		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels, Access: &fleetv1.Access{Mode: a.Access}, Secrets: secrets,
@@ -69,6 +73,17 @@ func secretToProto(d fleet.SecretDelivery) *fleetv1.ControlMessage {
 		DeliveryId: d.ID.String(), OrganizationId: d.Organization.String(), ProjectId: d.Project.String(),
 		EnvironmentId: d.Environment.String(), App: d.App, Name: d.Name, Version: d.Version, KeyId: d.KeyID, Sealed: d.Sealed,
 	}}}
+}
+
+func policyToProto(p fleet.Policy) *fleetv1.ControlMessage {
+	return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_ClusterPolicy{ClusterPolicy: &fleetv1.ClusterPolicy{
+		Generation: p.Generation,
+		Egress:     &fleetv1.EgressPolicy{Mode: string(p.Egress.Mode), Allow: p.Egress.Allow},
+	}}}
+}
+
+func policyAckFromProto(a *fleetv1.PolicyAck) fleet.PolicyAck {
+	return fleet.PolicyAck{Generation: a.GetGeneration(), Error: a.GetError(), Warnings: a.GetWarnings()}
 }
 
 func secretAckFromProto(a *fleetv1.SecretAck) (fleet.SecretAck, error) {

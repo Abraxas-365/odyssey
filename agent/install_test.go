@@ -221,6 +221,7 @@ func TestAgentCannotEraseDataClusterWide(t *testing.T) {
 		{"apps", "deployments", []string{"delete", "deletecollection"}},
 		{"", "services", []string{"delete", "deletecollection"}},
 		{"postgresql.cnpg.io", "clusters", []string{"create", "update", "patch", "delete", "deletecollection"}},
+		{"networking.k8s.io", "networkpolicies", []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"}},
 	}
 	for _, f := range forbidden {
 		got := verbsOn(clusterWide, f.group, f.resource)
@@ -259,6 +260,7 @@ func TestAgentCannotEraseDataClusterWide(t *testing.T) {
 		{"", "services", []string{"delete"}},
 		{"apps", "deployments", []string{"delete"}},
 		{"postgresql.cnpg.io", "clusters", []string{"create", "delete", "update"}},
+		{"networking.k8s.io", "networkpolicies", []string{"create", "delete", "get", "update"}},
 	}
 	granted := 0
 	for _, e := range exact {
@@ -271,5 +273,76 @@ func TestAgentCannotEraseDataClusterWide(t *testing.T) {
 	}
 	if granted != len(exact) {
 		t.Errorf("%s grants on %d resources, want %d: %v", desired.EnvironmentRole, granted, len(exact), env.Rules)
+	}
+}
+
+// TestEgressPermissionsAreTheLeastTheEnforcerNeeds: the enforcer reads and
+// writes NetworkPolicies by name through the API (no cache), so it gets
+// get/create/update/delete in environment namespaces only (the environment
+// role: no patch, no list, no watch, nothing cluster-wide); it lists the nodes
+// (their addresses stay closed in the internet mode) and nothing more on them;
+// and its ConfigMap is one name: get/update only on odyssey-cluster-policy.
+func TestEgressPermissionsAreTheLeastTheEnforcerNeeds(t *testing.T) {
+	var clusterWide []rbacv1.PolicyRule
+	var policyRole *rbacv1.Role
+	roles := map[string]rbacv1.ClusterRole{}
+	var bound []string
+	for _, m := range manifests(t) {
+		switch m["kind"] {
+		case "ClusterRole":
+			r := decode[rbacv1.ClusterRole](t, m)
+			roles[r.Name] = r
+		case "ClusterRoleBinding":
+			bound = append(bound, decode[rbacv1.ClusterRoleBinding](t, m).RoleRef.Name)
+		case "Role":
+			if r := decode[rbacv1.Role](t, m); r.Name == "odyssey-agent-policy" {
+				policyRole = &r
+			}
+		}
+	}
+	for _, name := range bound {
+		clusterWide = append(clusterWide, roles[name].Rules...)
+	}
+	if got := verbsOn(clusterWide, "networking.k8s.io", "networkpolicies"); len(got) != 0 {
+		t.Errorf("a cluster-wide role grants %v on networkpolicies: the enforcer never lists or watches them", got)
+	}
+	if got := verbsOn(clusterWide, "", "nodes"); !slices.Equal(got, []string{"list"}) {
+		t.Errorf("nodes: %v, want only list", got)
+	}
+	if got := verbsOn(clusterWide, "", "configmaps"); len(got) != 0 {
+		t.Errorf("a cluster-wide role grants %v on configmaps", got)
+	}
+	if policyRole == nil {
+		t.Fatal("no Role odyssey-agent-policy for the policy ConfigMap")
+	}
+	if policyRole.Namespace != "odyssey-system" {
+		t.Errorf("the policy role is in %q", policyRole.Namespace)
+	}
+	for _, rule := range policyRole.Rules {
+		switch {
+		case slices.Contains(rule.Verbs, "create"):
+			if len(rule.ResourceNames) != 0 || len(rule.Verbs) != 1 {
+				t.Errorf("create is the only verb that cannot name the ConfigMap: %+v", rule)
+			}
+		default:
+			if !slices.Equal(rule.ResourceNames, []string{"odyssey-cluster-policy"}) || !slices.Equal(rule.Verbs, []string{"get", "update"}) {
+				t.Errorf("the ConfigMap rule is not get/update on its one name: %+v", rule)
+			}
+		}
+	}
+	// The agent's own Role in odyssey-system no longer grants configmaps on every name.
+	for _, m := range manifests(t) {
+		if m["kind"] != "Role" {
+			continue
+		}
+		r := decode[rbacv1.Role](t, m)
+		if r.Name == "odyssey-agent-policy" {
+			continue
+		}
+		for _, rule := range r.Rules {
+			if slices.Contains(rule.Resources, "configmaps") && len(rule.ResourceNames) == 0 && slices.Contains(rule.Verbs, "get") {
+				t.Errorf("Role %s grants get on every ConfigMap: %+v", r.Name, rule)
+			}
+		}
 	}
 }

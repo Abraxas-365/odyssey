@@ -420,6 +420,25 @@ func TestClustersOverHTTP(t *testing.T) {
 	}
 	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/clusters?status=nope", read, nil), http.StatusBadRequest)
 
+	// egress: the default, a change (pending: the test agent enforces nothing), the refusals
+	res = checked(t, app, http.MethodGet, "/api/v1/clusters/"+id+"/egress", read, nil)
+	if eg := httpxtest.JSON[fleet.EgressStatus](t, res); eg.Mode != fleet.EgressInternet || len(eg.Allow) != 0 || eg.Generation != 0 {
+		t.Fatalf("default egress %+v", eg)
+	}
+	res = checked(t, app, http.MethodPut, "/api/v1/clusters/"+id+"/egress", manage, map[string]any{"mode": "restricted", "allow": []string{"203.0.113.7/24"}})
+	httpxtest.Want(t, res, http.StatusOK)
+	if eg := httpxtest.JSON[fleet.EgressStatus](t, res); eg.Mode != fleet.EgressRestricted || len(eg.Allow) != 1 || eg.Allow[0] != "203.0.113.0/24" || eg.Generation != 1 || eg.Enforced {
+		t.Fatalf("set egress %+v", eg)
+	}
+	httpxtest.Want(t, checked(t, app, http.MethodPut, "/api/v1/clusters/"+id+"/egress", read, map[string]any{"mode": "internet"}), http.StatusForbidden)
+	res = checked(t, app, http.MethodPut, "/api/v1/clusters/"+id+"/egress", manage, map[string]any{"allow": []string{"0.0.0.0/0"}})
+	if httpxtest.Want(t, res, http.StatusBadRequest); httpxtest.ErrorField(res) != "allow" {
+		t.Fatalf("open allow list: %s", res.Body)
+	}
+	httpxtest.Want(t, checked(t, app, http.MethodPut, "/api/v1/clusters/"+id+"/egress", manage, map[string]any{"mode": "open"}), http.StatusBadRequest)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/clusters/"+id+"/egress", httpxtest.Token(identity.NewOrganizationID(), permission.ClustersRead), nil), http.StatusNotFound)
+	httpxtest.Want(t, checked(t, app, http.MethodPut, "/api/v1/clusters/"+id+"/egress", httpxtest.Token(identity.NewOrganizationID(), permission.ClustersManage), map[string]any{}), http.StatusNotFound)
+	httpxtest.Want(t, checked(t, app, http.MethodPut, "/api/v1/clusters/"+id+"/egress", manage, map[string]any{}), http.StatusOK) // back to the default
 	// an app runs there; the dialog's count, then an explicit move on revoke
 	environment := project.NewEnvironmentID()
 	if err := h.platform.Fleet.Dispatch.Apply(context.Background(), fleet.App{Organization: org, Project: project.NewID(),

@@ -67,6 +67,7 @@ func (r *Reconciler) postgres(ctx context.Context, o *v1alpha1.OdysseyResource) 
 	if cur != nil {
 		size, _, _ := unstructured.NestedString(cur.Object, "spec", "storage", "size")
 		have, perr := resource.ParseQuantity(size)
+		changed := false
 		// Only grows. A size the live object does not state is left alone.
 		if perr == nil && want.Cmp(have) > 0 {
 			ok, err := r.canGrow(ctx, nil)
@@ -79,6 +80,26 @@ func (r *Reconciler) postgres(ctx context.Context, o *v1alpha1.OdysseyResource) 
 			if err := unstructured.SetNestedField(cur.Object, o.Spec.Storage, "spec", "storage", "size"); err != nil {
 				return observation{}, err
 			}
+			changed = true
+		}
+		// A database made before its pods carried the resource label gets it
+		// now (the egress fence selects resource pods by it): CloudNativePG
+		// puts it on the running pods without restarting them.
+		have2, _, _ := unstructured.NestedStringMap(cur.Object, "spec", "inheritedMetadata", "labels")
+		if have2[LabelResource] != o.Name {
+			merged := map[string]any{}
+			for k, v := range have2 {
+				merged[k] = v
+			}
+			for k, v := range inheritedLabels(o) {
+				merged[k] = v
+			}
+			if err := unstructured.SetNestedField(cur.Object, merged, "spec", "inheritedMetadata", "labels"); err != nil {
+				return observation{}, err
+			}
+			changed = true
+		}
+		if changed {
 			cur.SetLabels(mergeLabels(cur.GetLabels(), labels(o)))
 			if err := r.Client.Update(ctx, cur); err != nil {
 				return observation{}, err
@@ -91,8 +112,12 @@ func (r *Reconciler) postgres(ctx context.Context, o *v1alpha1.OdysseyResource) 
 		c.SetLabels(labels(o))
 		c.Object["spec"] = map[string]any{
 			"instances": int64(1),
-			"storage":   map[string]any{"size": o.Spec.Storage},
-			"bootstrap": map[string]any{"initdb": map[string]any{"database": databaseName, "owner": databaseName}},
+			// The pods carry the resource label too (the cluster's labels
+			// above stay on the Cluster object only): the egress fence
+			// selects resource pods by it (agent/egress odicea-resources).
+			"inheritedMetadata": map[string]any{"labels": inheritedLabels(o)},
+			"storage":           map[string]any{"size": o.Spec.Storage},
+			"bootstrap":         map[string]any{"initdb": map[string]any{"database": databaseName, "owner": databaseName}},
 		}
 		if err := controllerutil.SetControllerReference(o, c, r.Client.Scheme()); err != nil {
 			return observation{}, err
@@ -145,4 +170,13 @@ func clusterState(c *unstructured.Unstructured) observation {
 		msg = fmt.Sprintf("setting up the database: %s", phase)
 	}
 	return provisioning(msg)
+}
+
+// inheritedLabels are the labels CloudNativePG puts on every pod, PVC and
+// Service it makes for the Cluster (spec.inheritedMetadata): only the
+// resource's name. Not the managed-by mark: that one would put CloudNativePG's
+// pods in the agent's cache, and teardown tells what is its own by ownership,
+// not by label.
+func inheritedLabels(o *v1alpha1.OdysseyResource) map[string]any {
+	return map[string]any{LabelResource: o.Name}
 }

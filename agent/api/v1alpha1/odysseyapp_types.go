@@ -55,6 +55,24 @@ type OdysseyAppSpec struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=10
 	Resources []ResourceRefSpec `json:"resources,omitempty"`
+	// AI wires the app to the organization's AI gateway: the agent sets
+	// OPENAI_BASE_URL/ANTHROPIC_BASE_URL and reads OPENAI_API_KEY/
+	// ANTHROPIC_API_KEY from the managed secret named by KeySecret (these four
+	// win over the same names in env, secrets and resources). Absent: no AI.
+	// +optional
+	AI *AISpec `json:"ai,omitempty"`
+}
+
+// AISpec is how an app reaches the AI gateway.
+type AISpec struct {
+	// BaseURL is the gateway without "/v1": ANTHROPIC_BASE_URL is it as it is,
+	// OPENAI_BASE_URL adds /v1.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2000
+	BaseURL string `json:"baseURL"`
+	// KeySecret is the managed secret (one of spec.secrets) that holds the key.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]{0,127}$`
+	KeySecret string `json:"keySecret"`
 }
 
 // SecretSource is where a secret's value comes from.

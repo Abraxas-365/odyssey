@@ -24,4 +24,6 @@ type Signal struct {
 	// Reenrolled: the cluster enrolled again with a new key; tunnels of the
 	// old key end (the new agent reconnects with its own).
 	Reenrolled bool
+	// Policy: the cluster's egress policy changed.
+	Policy bool
 }

@@ -22,18 +22,14 @@ Odicea publica apps internas de la empresa en su propia infraestructura. Tú pre
 
 Hoy Odicea **no provee** a las apps:
 
-- **Llaves o cuentas de IA** (OpenAI, Anthropic, Gemini…): Odicea no las entrega.
+- **Llaves o cuentas de servicios de terceros** (pagos, correo, mapas, SMS…): Odicea no las entrega; si hacen falta, siguen la regla 2 (se piden con `request_secret`).
 
-Si la app necesita alguna de ellas:
+Lo que **sí** ofrece: **bases de datos** (ver «Bases de datos») y **IA** (ver «IA en la app»). Si la app necesita IA, **no uses una llave de OpenAI, Anthropic o Gemini propia ni de un servicio externo**: llama a `enable_ai`.
 
-1. **No la crees en un servicio externo** ni pongas datos de prueba que parezcan reales.
-2. Dile al usuario, en una frase: *«Esta app necesita una llave de IA y Odicea todavía no la ofrece. Pídele a TI que conecte una que ya exista en la empresa.»* Si ya existe, la llave es un secreto: pídela con `request_secret` (nunca por el chat).
-3. Sigue con lo que sí se puede: deja la app lista, leyendo esa configuración de variables de entorno (sin valores por defecto secretos), y publícala solo si el usuario quiere verla funcionar parcialmente.
-
-Las **bases de datos sí** las ofrece Odicea (ver «Bases de datos»). Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él **se pierde al reiniciar o publicar**.
+Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él **se pierde al reiniciar o publicar**.
 <!-- ODICEA:LIMITES-ACTUALES fin -->
 
-## Qué puedes hacer (las 18 herramientas)
+## Qué puedes hacer (las 19 herramientas)
 
 | Quiero… | Herramienta |
 |---|---|
@@ -51,6 +47,7 @@ Las **bases de datos sí** las ofrece Odicea (ver «Bases de datos»). Para guar
 | Pedir un secreto (una persona lo carga en la consola) | `request_secret` |
 | Crear una base de datos (o caché, o volumen de archivos) y conectarla | `create_database` |
 | Ver las bases de datos de la app y si ya están listas | `list_resources` |
+| Darle IA a la app (llave propia, variables listas para las librerías de OpenAI y Anthropic) | `enable_ai` |
 
 Solo ves las herramientas que tu rol permite (por ejemplo, un Lector solo lee). Si una falla por permisos, llama a `whoami` y explica qué permiso falta.
 
@@ -87,11 +84,18 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 
 ## Bases de datos
 
-- Si la app necesita guardar datos, llama a `create_database` con la app (y `kind`: `postgres` por defecto, `redis` para caché, `files` para archivos; `name` por defecto `db`). Crea el recurso **y lo conecta**: la app recibe sus variables (`DATABASE_URL`, `PGHOST`, …; `REDIS_URL`; `FILES_DIR`) en una publicación de configuración que empieza sola (sigue con `get_deployment`). Los valores y contraseñas **nunca** se muestran: haz que la app lea esos nombres de variables de entorno.
+- Si la app necesita guardar datos, llama a `create_database` con la app (y `kind`: `postgres` por defecto, `redis` para caché, `files` para archivos; `name` por defecto `db`). Crea el recurso **y lo conecta**: la app recibe sus variables (`DATABASE_URL`, `PGHOST`, …; `REDIS_URL`; `FILES_DIR`) en una versión nueva de la app que empieza sola (sigue con `get_deployment`). Los valores y contraseñas **nunca** se muestran: haz que la app lea esos nombres de variables de entorno.
 - La base tarda un momento en prepararse: `list_resources` dice `preparing`, `ready` o `failed` (con el motivo). No la publiques como lista hasta que diga `ready`.
 - Para tener varias bases (por ejemplo una de analítica) usa `prefix` en MAYÚSCULAS (`ANALYTICS` → `ANALYTICS_DATABASE_URL`).
 - Si falla con «El clúster no puede crear bases de datos todavía», es de TI (el clúster no las ofrece); díselo al usuario. Eliminar una base borra sus datos: eso lo hace una persona desde la consola, no tú.
 - Los datos viven en el clúster de la app; si TI mueve la app a otro clúster, la base se prepara vacía allí.
+
+## IA en la app
+
+- Si la app usa un modelo de lenguaje (chat, resúmenes, clasificación, embeddings…), llama a `enable_ai` con la app. Odicea crea una llave **propia de esa app**, se la entrega al clúster cifrada y la app la recibe como variables de entorno en una versión nueva de la app que empieza sola (sigue con `get_deployment`). La llave **nunca** se muestra ni la necesitas tú ni el usuario.
+- El código usa la librería oficial de OpenAI o la de Anthropic **sin configurar nada**: leen solos `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY` y `ANTHROPIC_BASE_URL`. **No definas esos nombres** (ni con `set_env`, ni en `env`, ni como secreto): con la IA activa están reservados y el cambio falla con `VARIABLE_TAKEN`. Cómo escribir el código, con ejemplos: [references/ia.md](references/ia.md).
+- Si falla con «La IA no está habilitada en esta organización» o «El clúster … todavía no puede», es de TI; díselo al usuario y no uses otra llave. Si falla por una variable ya definida (`VARIABLE_TAKEN`), quítala con `set_env` (`unset`) y repite.
+- Activar la IA es seguro de repetir. Desactivarla o renovar la llave lo hace una persona en la consola.
 
 ## Cómo hablar con el usuario
 

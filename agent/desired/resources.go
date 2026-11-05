@@ -265,3 +265,11 @@ func resourceStatusOf(o *v1alpha1.OdysseyResource) *fleetv1.ResourceStatus {
 		Phase: string(st.Phase), Message: clip(st.Message, maxMessage),
 	}
 }
+
+// aiOf maps the proto's AI to the CRD's (nil: the app has none).
+func aiOf(a *fleetv1.AI) *v1alpha1.AISpec {
+	if a == nil || a.GetBaseUrl() == "" {
+		return nil
+	}
+	return &v1alpha1.AISpec{BaseURL: a.GetBaseUrl(), KeySecret: a.GetKeySecret()}
+}

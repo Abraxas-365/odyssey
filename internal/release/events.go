@@ -22,6 +22,7 @@ const (
 	EventEnvChanged          = "env.changed"
 	EventSecretChanged       = "secret.changed"
 	EventResourcesChanged    = "resources.changed"
+	EventAIChanged           = "ai_settings.changed"
 )
 
 // Subject kinds ("release/<id>", "deployment/<id>").

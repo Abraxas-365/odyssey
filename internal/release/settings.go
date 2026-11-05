@@ -76,7 +76,9 @@ type Settings struct {
 	// Resources are the databases, caches and volumes connected to the app
 	// (2b), sorted by name: references only. The variables they define are
 	// not in Env nor Secrets (see resources.go).
-	Resources []ResourceUse   `json:"resources"`
+	Resources []ResourceUse `json:"resources"`
+	// AI is the app's use of the organization's AI gateway (2d-ai; see ai.go).
+	AI        AISettings      `json:"ai"`
 	CreatedBy identity.UserID `json:"-"`
 	CreatedAt time.Time       `json:"-"`
 }

@@ -56,6 +56,8 @@ type Module struct {
 	HTTP     *releasehttp.Handler
 	// Access finds an environment by id alone, for the access sign-in.
 	Access release.AccessLookup
+	// AI is what the ai domain asks release (airelease adapter).
+	AI release.AI
 	// Usage is what the resource domain asks release (resourcerelease adapter).
 	Usage     release.Usage
 	svc       *releasesvc.Service
@@ -73,7 +75,7 @@ func New(deps Deps) (Module, error) {
 	svc := releasesvc.New(releasepg.New(deps.DB), deps.Projects, cluster,
 		releasebuild.New(deps.BuildCommands, deps.BuildQueries), deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Options)
-	return Module{Commands: svc, Queries: svc, Access: svc, Usage: svc, svc: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
+	return Module{Commands: svc, Queries: svc, Access: svc, Usage: svc, AI: svc, svc: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
 }
 
 // clusterOf picks the Cluster adapter.

@@ -41,7 +41,7 @@ func (s *Service) SecretTarget(ctx context.Context, organization identity.Organi
 	if stores == nil {
 		stores = []string{}
 	}
-	return fleet.SecretTarget{Cluster: c.ID, Key: caps.SecretKey, External: caps.ExternalSecrets(), Stores: stores, Failures: failures}, nil
+	return fleet.SecretTarget{Cluster: c.ID, Key: caps.SecretKey, External: caps.ExternalSecrets(), Stores: stores, Failures: failures, AI: caps.CanUseAI()}, nil
 }
 
 // DeliverSecret places the environment (like Apply), checks the value was

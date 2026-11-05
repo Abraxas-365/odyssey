@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRightLeft, Plus, RefreshCw, Server, Unplug } from 'lucide-react'
+import { ArrowRightLeft, Globe, Plus, RefreshCw, Server, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
 import type { Cluster } from '@/lib/types'
 import { ConnectClusterDialog, type Issued } from '@/features/clusters/connect-cluster-dialog'
+import { EgressCard } from '@/features/clusters/egress-card'
 
 /** One word per state (plan 1a-a3 §Consola), on the app status palette. */
 const states: Record<ClusterState, { label: string; dot: AppStatusKind }> = {
@@ -45,6 +46,7 @@ export function ClustersPage() {
   const [revoking, setRevoking] = useState<Cluster>()
   const [moving, setMoving] = useState<Cluster>()
   const [moveTo, setMoveTo] = useState('')
+  const [egressFor, setEgressFor] = useState<string>()
   const issue = useIssueToken()
   const revoke = useRevokeCluster()
   const move = useMoveClusterApps()
@@ -89,6 +91,8 @@ export function ClustersPage() {
                 onReconnect={canManage && c.status !== 'revoked' ? () => reconnect(c) : undefined}
                 onRevoke={canManage && c.status !== 'revoked' ? () => { setMoveTo(''); setRevoking(c) } : undefined}
                 onMove={canManage && c.status === 'revoked' && c.apps > 0 ? () => { setMoveTo(''); setMoving(c) } : undefined}
+                onEgress={canManage && c.status === 'active' ? () => setEgressFor(egressFor === c.id ? undefined : c.id) : undefined}
+                egressOpen={egressFor === c.id}
                 busy={issue.isPending && issue.variables === c.id}
               />
             ))}
@@ -200,8 +204,8 @@ function AppsChoice({ cluster, targets, value, onChange, revoking }: {
   )
 }
 
-function ClusterRow({ cluster: c, onReconnect, onRevoke, onMove, busy }: {
-  cluster: Cluster; onReconnect?: () => void; onRevoke?: () => void; onMove?: () => void; busy?: boolean
+function ClusterRow({ cluster: c, onReconnect, onRevoke, onMove, onEgress, egressOpen, busy }: {
+  cluster: Cluster; onReconnect?: () => void; onRevoke?: () => void; onMove?: () => void; onEgress?: () => void; egressOpen?: boolean; busy?: boolean
 }) {
   const { technical } = usePreferences()
   const state = clusterState(c)
@@ -225,8 +229,14 @@ function ClusterRow({ cluster: c, onReconnect, onRevoke, onMove, busy }: {
             {technical && caps.kubernetes_version && ` · Kubernetes ${caps.kubernetes_version}`}
           </p>
         </div>
-        {(onReconnect || onRevoke || onMove) && (
+        {(onReconnect || onRevoke || onMove || onEgress) && (
           <div className="ml-auto flex items-center gap-2">
+            {onEgress && (
+              <Button variant="outline" size="sm" aria-expanded={egressOpen} onClick={onEgress}>
+                <Globe />
+                Salida a internet
+              </Button>
+            )}
             {onMove && (
               <Button variant="outline" size="sm" onClick={onMove}>
                 <ArrowRightLeft />
@@ -243,6 +253,11 @@ function ClusterRow({ cluster: c, onReconnect, onRevoke, onMove, busy }: {
           </div>
         )}
       </div>
+      {egressOpen && onEgress && (
+        <div className="border-t bg-muted/30">
+          <EgressCard cluster={c} />
+        </div>
+      )}
       {technical && c.enrolled_at && (
         <div className="border-t">
           <TechnicalDetails title="Detalles técnicos">

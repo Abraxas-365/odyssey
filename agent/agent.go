@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Abraxas-365/odyssey/agent/access"
@@ -19,6 +20,7 @@ import (
 	buildctl "github.com/Abraxas-365/odyssey/agent/controllers/build"
 	"github.com/Abraxas-365/odyssey/agent/controllers/resource"
 	"github.com/Abraxas-365/odyssey/agent/desired"
+	"github.com/Abraxas-365/odyssey/agent/egress"
 	"github.com/Abraxas-365/odyssey/agent/secretstore"
 	"github.com/Abraxas-365/odyssey/agent/tunnel"
 	appsv1 "k8s.io/api/apps/v1"
@@ -67,6 +69,9 @@ type Options struct {
 	// resource data there and only there. Empty (an agent run outside the
 	// cluster): nothing is bound and its own credentials decide.
 	ServiceAccount client.ObjectKey
+	// Egress places the cluster's shared pieces the egress policy refers to
+	// (ingress controller, DNS, CloudNativePG operator); zero is k3s's.
+	Egress egress.Config
 }
 
 // AccessOptions configure protected apps (access mode team/organization).
@@ -124,6 +129,18 @@ func (e ensureAccessKey) Start(ctx context.Context) error {
 		case <-time.After(10 * time.Second):
 		}
 	}
+}
+
+// parseLabel reads "key=value" ("" is no label: the default applies).
+func parseLabel(s string) (map[string]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	k, v, ok := strings.Cut(s, "=")
+	if !ok || k == "" {
+		return nil, fmt.Errorf("%q is not key=value", s)
+	}
+	return map[string]string{k: v}, nil
 }
 
 // bindEnvironment binds desired.EnvironmentRole in every environment namespace
@@ -207,11 +224,24 @@ func Run(args []string) error {
 		o.ServiceAccount = client.ObjectKey{Namespace: env("POD_NAMESPACE", "odyssey-system"), Name: sa}
 	}
 	fs.StringVar(&o.Access.VerifyURL, "access-verify-url", env("ODYSSEY_ACCESS_VERIFY_URL", "http://odyssey-access.odyssey-system.svc:8098/verify"), "the gate's /verify URL as Traefik reaches it")
+	fs.StringVar(&o.Egress.IngressNamespace, "ingress-namespace", os.Getenv("ODYSSEY_INGRESS_NAMESPACE"), "namespace of the ingress controller's pods, the only ones that reach an app from outside its namespace (default kube-system)")
+	ingressLabel := fs.String("ingress-pod-label", os.Getenv("ODYSSEY_INGRESS_POD_LABEL"), "label (key=value) of the ingress controller's pods (default app.kubernetes.io/name=traefik)")
+	fs.StringVar(&o.Egress.DNSNamespace, "dns-namespace", os.Getenv("ODYSSEY_DNS_NAMESPACE"), "namespace of the cluster's DNS pods (default kube-system)")
+	dnsLabel := fs.String("dns-pod-label", os.Getenv("ODYSSEY_DNS_POD_LABEL"), "label (key=value) of the cluster's DNS pods (default k8s-app=kube-dns)")
+	fs.StringVar(&o.Egress.OperatorNamespace, "operator-namespace", os.Getenv("ODYSSEY_OPERATOR_NAMESPACE"), "namespace of the CloudNativePG operator, which may reach the databases (default cnpg-system)")
 	zopts := zap.Options{}
 	zopts.BindFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	var lerr error
+	if o.Egress.IngressPodLabels, lerr = parseLabel(*ingressLabel); lerr != nil {
+		return fmt.Errorf("--ingress-pod-label: %w", lerr)
+	}
+	if o.Egress.DNSPodLabels, lerr = parseLabel(*dnsLabel); lerr != nil {
+		return fmt.Errorf("--dns-pod-label: %w", lerr)
+	}
+	o.Egress.SystemNamespace = env("POD_NAMESPACE", "odyssey-system")
 	o.App.ReadyDeadline = int32(deadline.Seconds())
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zopts)))
 
@@ -338,6 +368,20 @@ func addTunnel(cfg *rest.Config, mgr ctrl.Manager, o Options) error {
 		t.Store = &tunnel.SecretStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: o.Secret.Namespace, Name: o.Secret.Name}
 	}
 	namespaces := &desired.Namespaces{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Agent: o.ServiceAccount}
+	// The egress policy: namespaces are fenced when made and whenever the
+	// control plane changes the policy. Out of the cluster (no service
+	// account) the agent runs on its own credentials and fences too.
+	enforcer := &egress.Enforcer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Config: o.Egress,
+		OnError: func(err error) {
+			ctrl.Log.WithName("egress").Error(err, "cannot fence every environment namespace; retrying")
+		}}
+	namespaces.Fence = enforcer
+	if t.Policy == nil {
+		t.Policy = enforcer
+	}
+	if err := mgr.Add(enforcer); err != nil {
+		return err
+	}
 	syncer := &desired.Syncer{Client: mgr.GetClient(), API: mgr.GetAPIReader(), Discovery: dc, AccessGate: o.Access.Ready(), Namespaces: namespaces}
 	t.Desired = syncer
 	if t.Resources == nil {

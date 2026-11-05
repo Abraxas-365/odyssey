@@ -284,6 +284,10 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		if err := c.Agent.Capabilities.CheckResources(app.Resources); err != nil {
 			return err
 		}
+		// One that cannot wire the AI would leave the app without a key.
+		if err := c.Agent.Capabilities.CheckAI(app.AI); err != nil {
+			return err
+		}
 		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)
 		if err != nil || !changed {

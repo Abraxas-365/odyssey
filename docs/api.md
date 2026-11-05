@@ -211,7 +211,7 @@ environment serves. The console calls both "versión".
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
-| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, resources[{name, kind, prefix}], secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, resources[{name, kind, prefix}], ai:{enabled, key_version, key_id?, base_url?}, secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
 | `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null}` (`{set, unset}`) |
 
@@ -416,7 +416,44 @@ agent says otherwise).
   that tells TI to connect one; a revoked cluster fails the same way (until
   TI moves its apps: see Clusters).
 
-### Clusters (`odyssey:clusters:read` / `odyssey:clusters:manage`)
+### AI (apps use the organization's AI gateway; `docs/ai.md`)
+
+Under `/api/v1/projects/:id/environments/:environment/ai`. Reading needs
+`odyssey:projects:read`, every change `odyssey:projects:write`. The key is
+never in any response.
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `…/ai` | projects:read | 200 `{available, message?, enabled, status (off\|enabling\|enabled\|rotating\|disabling\|revoke_failed), base_url, variables[], enabled_by\|null, enabled_at\|null, warning?, revoke_error?}` |
+| `PUT` | `…/ai` | projects:write | **202** the same view (`enabling`); already on: nothing changes |
+| `POST` | `…/ai/rotate` | projects:write | **202** the view (`rotating`): a new key, the old one revoked once the app runs with the new |
+| `DELETE` | `…/ai` | projects:write | **202** the view (`disabling`; `off` already: nothing; `revoke_failed`: retries the revocation) |
+
+- **Availability.** `available: false` (with a plain `message`) when the
+  organization has no AI connected (`ODYSSEY_FREEROUTER_URL`) or the
+  environment's cluster does not list the capability `odicea.ai`. Turning it on
+  is then 422 `AI_UNAVAILABLE` (422 `SECRETS_UNAVAILABLE` for a cluster with no
+  secret key); nothing is made.
+- **Variables.** While on, the app gets `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`. They are reserved: 409
+  `VARIABLE_TAKEN` on enabling when the app defines one, and on `PATCH …/env`,
+  secrets, secret requests and resource connections while the AI is on.
+- **Changes** are settings revisions (`GET …/settings` has `ai:{enabled,
+  key_version, key_id?, base_url?}`) applied by a `config` deployment when a
+  release is online. 409 `AI_BUSY` while another change still runs; 409
+  `AI_NOT_ENABLED` rotating with the AI off.
+- **A revocation that fails is visible and recoverable.** Disabling removes the
+  AI from the settings at once. If a key cannot be revoked at the gateway
+  (unreachable, not connected, retries exhausted) its status is `revoke_failed`
+  and the view carries `warning` ("No se pudo revocar la llave en el gateway de
+  IA; TI debe revisarlo.") and `revoke_error` (why, for IT; never a key). The
+  console offers "Reintentar" (a new `DELETE`); a sweep (`ai.revoke_sweep`,
+  every 5 minutes) retries on its own; turning the AI on again is allowed meanwhile
+  (the new key is independent) and the warning stays until the old key is
+  revoked.
+- **Events:** `ai.enabled|rotated|disabled|revoke_failed`.
+
+
 
 The organization's Kubernetes clusters (console: Infraestructura →
 Clústeres). The platform never holds cluster credentials: each cluster's
@@ -430,6 +467,23 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
 | `POST` | `/api/v1/clusters/:id/enrollment-token` | manage | 200 enrollment token |
 | `POST` | `/api/v1/clusters/:id/revoke` | manage | 200 cluster (`revoked`) |
 | `POST` | `/api/v1/clusters/:id/move` | manage | 200 `{environment_ids, apps}` |
+| `GET` | `/api/v1/clusters/:id/egress` | read | 200 egress policy and its state |
+| `PUT` | `/api/v1/clusters/:id/egress` | manage | 200 egress policy and its state |
+
+- **Egress** (`docs/egress.md`): what the cluster's apps may reach. `PUT`
+  `{mode, allow}` replaces it: `mode` is `internet` (default; public addresses
+  but not the private ranges, cloud metadata, the cluster's nodes or the Kubernetes API) or
+  `restricted` (only `allow`); `allow` are CIDRs or single addresses (at most
+  100), open in either mode, stored canonical, sorted and unique. 400 for an
+  unknown mode (`mode`), a bad address, or `0.0.0.0/0` / `::/0` (`allow`).
+  The response adds `generation`, `acknowledged_generation`, `error`,
+  `acknowledged_at`, `warnings` (what TI should review although it is applied:
+  an `allow` entry that includes a node of the cluster; only while `state` is
+  `applied`),
+  `supported`, `state` (`applied` | `pending` | `failed` |
+  `unsupported`) and `enforced` (`state` is `applied`). Repeating the same
+  setting changes nothing and records nothing. A revoked cluster refuses with
+  422 `CLUSTER_REVOKED`. Event `cluster.egress_changed`.
 
 - **Statuses**: `pending` (registered, waiting for its agent) → `active`
   (enrolled) → `revoked` (for good: its certificate stops working at once and
@@ -460,7 +514,7 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
   token answers 422 `FLEET_DISABLED`.
 - **Events**: `cluster.created`, `cluster.token_issued`, `cluster.enrolled`,
   `cluster.certificate_renewed`, `cluster.connected`, `cluster.revoked`,
-  `cluster.apps_moved`, `cluster.app_applied` (subject `cluster/<id>`).
+  `cluster.apps_moved`, `cluster.app_applied`, `cluster.egress_changed` (subject `cluster/<id>`).
   Heartbeats and app status reports are observations: they update the
   cluster but record no event; neither does an agent recovering a
   certificate whose answer it lost (gRPC `Recover`: same key, nothing new is

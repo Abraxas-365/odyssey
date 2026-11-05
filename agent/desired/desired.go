@@ -229,7 +229,7 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	spec := v1alpha1.OdysseyAppSpec{
 		Revision: a.GetRevision(), Image: a.GetImage(), Port: a.GetPort(), HealthPath: a.GetHealthPath(),
 		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(), Access: access, Secrets: secretsOf(a.GetSecrets()),
-		Resources: resourcesOf(a.GetResources()),
+		Resources: resourcesOf(a.GetResources()), AI: aiOf(a.GetAi()),
 	}
 	ns := Namespace(a.GetEnvironmentId())
 	var cur v1alpha1.OdysseyApp
@@ -241,19 +241,28 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 		if apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("apply %s: created concurrently, retrying", a.GetName())
 		}
+		if err == nil {
+			return s.fenceAI(ctx, ns, spec.AI != nil)
+		}
 	case err != nil:
 		return permanent(fmt.Errorf("read %s: %w", a.GetName(), err))
 	case cur.Spec.Revision > a.GetRevision():
 		return nil // a newer revision already got here
 	case cur.Spec.Revision == a.GetRevision() && equality.Semantic.DeepEqual(cur.Spec, spec):
-		return nil // the same revision with the same spec
+		// Nothing to write. A fence that failed last time (the namespace's
+		// AI policy) is tried again: the retry of a failed Apply lands here.
+		return s.fenceAI(ctx, ns, spec.AI != nil)
 	default:
 		// A higher revision, or the same one whose spec differs (the control
 		// plane re-sent it, e.g. with another access mode): the desired
 		// state wins. The status is not reset: the agent re-observes it
 		// against the new spec on the next pass.
+		hadAI := cur.Spec.AI != nil
 		cur.Spec, cur.Labels = spec, labels
-		err = s.Client.Update(ctx, &cur) // resourceVersion guards against a concurrent writer
+		if err = s.Client.Update(ctx, &cur); err != nil { // resourceVersion guards against a concurrent writer
+			return permanent(err)
+		}
+		return s.fenceAI(ctx, ns, hadAI || spec.AI != nil)
 	}
 	return permanent(err)
 }
@@ -318,6 +327,14 @@ type Namespaces struct {
 	// one of the verbs the role grants). A new binding takes a moment to
 	// apply; Ensure waits for it.
 	CanUseRole func(ctx context.Context, namespace string) (bool, error)
+	// Fence writes the egress NetworkPolicies of a namespace once it is
+	// bound (agent/egress.Enforcer; nil: none).
+	Fence Fencer
+}
+
+// Fencer fences a namespace with the cluster's egress policy.
+type Fencer interface {
+	Fence(ctx context.Context, namespace string) error
 }
 
 // bindWait bounds how long Ensure waits for a new binding to apply.
@@ -351,7 +368,14 @@ func (n *Namespaces) Ensure(ctx context.Context, organization, project, environm
 	default:
 		return fmt.Errorf("namespace %s: %w", ns.Name, err)
 	}
-	return n.bind(ctx, ns.Name, true)
+	if err := n.bind(ctx, ns.Name, true); err != nil {
+		return err
+	}
+	if n.Fence != nil {
+		// Before the first pod: the namespace never runs unfenced.
+		return n.Fence.Fence(ctx, ns.Name)
+	}
+	return nil
 }
 
 // BindAll binds EnvironmentRole in every namespace the agent created (an
@@ -507,11 +531,18 @@ var knownAPIs = []string{
 // the ingress's API group exists (traefik.io today).
 const CapabilityAccess = "odicea.access"
 
+// CapabilityAI is always reported: wiring an app to the AI gateway is the
+// agent's own work (variables and a reference to the key in <app>-secrets),
+// it needs nothing from the cluster. Same string as fleet.CapabilityAI; an
+// agent older than the AI does not list it, and the control plane then refuses
+// to turn the AI on for that cluster.
+const CapabilityAI = "odicea.ai"
+
 // Capabilities describes the cluster: its Kubernetes version, which known
 // platform APIs it has, and its ingress and storage classes. Whatever
 // cannot be read is left empty (the agent still connects).
 func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
-	out := &fleetv1.Capabilities{Apis: []string{}, IngressClasses: []string{}, StorageClasses: []string{}}
+	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI}, IngressClasses: []string{}, StorageClasses: []string{}}
 	if s.Discovery != nil {
 		if v, err := s.Discovery.ServerVersion(); err == nil {
 			out.KubernetesVersion = v.GitVersion
@@ -579,4 +610,15 @@ func (s *Syncer) secretStores(ctx context.Context, reader client.Reader) []strin
 	}
 	slices.Sort(out)
 	return out
+}
+
+// fenceAI rewrites the namespace's policies after an app that uses (or used)
+// AI changed, so that odicea-ai opens (or closes) its gateway: the pods of an
+// app with AI reach the gateway from their first start, whatever the cluster's
+// egress mode. An error makes the caller retry the apply.
+func (s *Syncer) fenceAI(ctx context.Context, namespace string, ai bool) error {
+	if !ai || s.Namespaces == nil || s.Namespaces.Fence == nil {
+		return nil
+	}
+	return s.Namespaces.Fence.Fence(ctx, namespace)
 }

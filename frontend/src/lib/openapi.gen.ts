@@ -458,6 +458,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments/{environment}/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The app's AI
+         * @description Whether the app can use the organization's AI and how it stands. While it
+         *     is on the app receives `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
+         *     `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` (never shown here with
+         *     values). `available` is false when the organization has no AI connected
+         *     or the environment's cluster cannot run it (`message` says why).
+         */
+        get: operations["getEnvironmentAI"];
+        /**
+         * Turn the AI on for the app
+         * @description Makes a key at the AI gateway, hands it sealed to the environment's
+         *     cluster as the managed secret `ODICEA_AI_KEY` and wires the app's
+         *     variables in a configuration deployment. It runs in the worker: 202 with
+         *     `status` `enabling`. Already on (or on its way) changes nothing. 422
+         *     `AI_UNAVAILABLE` when the organization has no AI or the cluster cannot
+         *     run it (a cluster without a secret key answers 422
+         *     `SECRETS_UNAVAILABLE`); 409 `VARIABLE_TAKEN` when the app defines a
+         *     variable the AI sets. Keys still waiting to be revoked (turning off, or
+         *     `revoke_failed`) do not block it: the new key is independent. 409 `AI_BUSY`
+         *     is only for a rotation in progress.
+         *     Event `ai.enabled`.
+         */
+        put: operations["enableEnvironmentAI"];
+        post?: never;
+        /**
+         * Turn the AI off for the app
+         * @description The app stops receiving the variables (a configuration deployment) and the
+         *     keys are revoked at the gateway once the app runs without them. 202 with
+         *     `status` `disabling`; already off answers 202 with `off`. Archiving an app
+         *     does not revoke its key; restoring it keeps the AI. Event `ai.disabled`.
+         *     If the gateway cannot be reached (or is not connected) the keys end as
+         *     `revoke_failed` with a `warning` and `revoke_error` instead of staying in
+         *     `disabling`; the app is already without the AI. Calling `DELETE` again
+         *     retries the revocation, and a sweep retries every five minutes. Event
+         *     `ai.revoke_failed`.
+         */
+        delete: operations["disableEnvironmentAI"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/ai/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Renew the app's AI key
+         * @description Makes a new key (the next version of `ODICEA_AI_KEY`), delivers it and
+         *     revokes the old one once the app runs with the new one. 202 with
+         *     `status` `rotating`. 409 `AI_NOT_ENABLED` when the AI is off; 409
+         *     `AI_BUSY` while another change runs. Event `ai.rotated`.
+         */
+        post: operations["rotateEnvironmentAI"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments/{environment}/secrets/{name}": {
         parameters: {
             query?: never;
@@ -701,6 +780,32 @@ export interface paths {
          * @description Pins every environment of the revoked cluster to `to` (an active cluster of the organization), whose agent deploys their apps from scratch; what the old cluster reported is dropped. Moving an empty cluster changes nothing. `CLUSTER_NOT_REVOKED` (422) for a cluster still running them, `INVALID_MOVE_TARGET` (422) for a `to` that is not another active cluster.
          */
         post: operations["moveClusterApps"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{id}/egress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * What the apps of a cluster may reach
+         * @description The cluster's egress policy and whether its agent enforces it (docs/egress.md). `state` is `applied` (the agent confirmed this generation), `pending` (it has not answered yet: offline, or just changed), `failed` (it answered with `error`) or `unsupported` (its agent does not list `odicea.egress`).
+         */
+        get: operations["getClusterEgress"];
+        /**
+         * Set what the apps of a cluster may reach
+         * @description Replaces the policy (idempotent: the same body twice changes nothing and records nothing). `allow` are CIDRs or single addresses, stored canonical and sorted; up to 100; `0.0.0.0/0` and `::/0` are refused (that is the `internet` mode, which keeps private ranges closed). It is sent to the agent at once (or when it connects) and the answer shows in `state`. `CLUSTER_REVOKED` (422) for a revoked cluster.
+         */
+        put: operations["setClusterEgress"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1422,9 +1527,17 @@ export interface components {
          * @enum {string}
          */
         AccessMode: "team" | "organization" | "public";
+        /** @description Whether the app uses the AI gateway in this settings revision, and the version of its key the cluster must hold (never the key). */
+        SettingsAI: {
+            enabled: boolean;
+            key_version: number;
+            key_id?: string;
+            base_url?: string;
+        };
         EnvironmentSettings: {
             /** @description 0: the defaults; every change adds one. */
             revision: number;
+            ai: components["schemas"]["SettingsAI"];
             access: {
                 mode: components["schemas"]["AccessMode"];
             };
@@ -1452,6 +1565,7 @@ export interface components {
         /** @description One revision of an environment's configuration (only references to secrets, never a value). */
         SettingsRevision: {
             revision: number;
+            ai: components["schemas"]["SettingsAI"];
             access: {
                 mode: components["schemas"]["AccessMode"];
             };
@@ -1518,6 +1632,31 @@ export interface components {
             prefix: string;
             /** @description The variable names the app reads the resource by (never their values). */
             variables: string[];
+        };
+        AI: {
+            /** @description Whether the AI can be turned on here (the gateway is connected and the cluster can run it). */
+            available: boolean;
+            /** @description Why it is not available */
+            message?: string;
+            /** @description Whether the app's settings carry the AI. */
+            enabled: boolean;
+            /**
+             * @description `revoke_failed`: the app no longer has the AI but a key could not be revoked at the gateway (see `warning`); a new `DELETE` retries it and a sweep retries it on its own.
+             * @enum {string}
+             */
+            status: "off" | "enabling" | "enabled" | "rotating" | "disabling" | "revoke_failed";
+            /** @description The gateway as apps reach it (without `/v1`). */
+            base_url: string;
+            /** @description The variable names the app reads the AI by (never their values). */
+            variables: string[];
+            /** Format: uuid */
+            enabled_by: string | null;
+            /** Format: date-time */
+            enabled_at: string | null;
+            /** @description Set while a key could not be revoked at the gateway: "No se pudo revocar la llave en el gateway de IA; TI debe revisarlo." It stays until the revocation succeeds (also when the app has the AI on again with a new key). */
+            warning?: string;
+            /** @description Why the revocation failed (for IT; never a key). */
+            revoke_error?: string;
         };
         /** @description A resource plus what a connection change stored. */
         ResourceChange: components["schemas"]["Resource"] & {
@@ -1768,6 +1907,35 @@ export interface components {
              * @description The active cluster the apps go to.
              */
             to: string;
+        };
+        ClusterEgressSet: {
+            /**
+             * @description `internet` (default): the public internet plus `allow`. `restricted`: only `allow` (and what apps always reach: DNS, their own resources, the sign-in gate).
+             * @enum {string}
+             */
+            mode?: "internet" | "restricted";
+            allow?: string[];
+        };
+        ClusterEgress: {
+            /** @enum {string} */
+            mode: "internet" | "restricted";
+            allow: string[];
+            /** @description Grows with every change; 0 is the default nobody changed. */
+            generation: number;
+            /** @description The last generation the agent answered for. */
+            acknowledged_generation: number | null;
+            /** @description What the agent said when it could not apply the acknowledged generation. */
+            error: string;
+            /** Format: date-time */
+            acknowledged_at: string | null;
+            /** @description What TI should review although the policy is applied, in Spanish (an `allow` entry that includes a node of the cluster; so the apps can reach its kubelet, its ports and, on a control-plane node, the Kubernetes API). Empty unless `state` is `applied`. */
+            warnings: string[];
+            /** @description Its agent lists `odicea.egress`. */
+            supported: boolean;
+            /** @enum {string} */
+            state: "applied" | "pending" | "failed" | "unsupported";
+            /** @description `state` is `applied`. */
+            enforced: boolean;
         };
         ClusterMoved: {
             environment_ids: string[];
@@ -2923,6 +3091,123 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    getEnvironmentAI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The AI of the environment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AI"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    enableEnvironmentAI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted; poll the GET for `status`. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AI"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    disableEnvironmentAI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AI"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    rotateEnvironmentAI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AI"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
     putEnvironmentSecret: {
         parameters: {
             query?: never;
@@ -3320,6 +3605,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClusterMoved"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getClusterEgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The policy and its state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterEgress"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    setClusterEgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterEgressSet"];
+            };
+        };
+        responses: {
+            /** @description The new policy, usually `pending` until the agent answers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterEgress"];
                 };
             };
             400: components["responses"]["Validation"];

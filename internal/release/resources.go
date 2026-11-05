@@ -117,7 +117,7 @@ func (s Settings) WithResource(u ResourceUse, actor identity.UserID, open []Secr
 	}
 	others := s
 	others.Resources = slices.DeleteFunc(slices.Clone(s.Resources), func(r ResourceUse) bool { return r.Name == u.Name })
-	taken := others.resourceVariables()
+	taken := others.reserved()
 	for _, v := range u.Variables() {
 		switch {
 		case taken[v] != "":

@@ -171,7 +171,7 @@ func (s *Server) signal(sig fleet.Signal) {
 		t.close(fleet.Superseded())
 		return
 	}
-	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build, secret: sig.Secret, resource: sig.Resource}, false)
+	t.kick(key{environment: sig.Environment, name: sig.Name, build: sig.Build, secret: sig.Secret, resource: sig.Resource, policy: sig.Policy}, false)
 }
 
 func (s *Server) each(fn func(*tunnel)) {
@@ -235,6 +235,8 @@ type key struct {
 	secret      fleet.SecretDeliveryID
 	// resource: environment and name are a desired resource, not an app.
 	resource bool
+	// policy: the cluster's egress policy changed.
+	policy bool
 }
 
 type tunnel struct {
@@ -462,6 +464,10 @@ func (s *Server) receive(stream fleetv1.Fleet_ConnectServer, t *tunnel, log *slo
 					err = s.agents.AckSecret(ctx, t.agent, t.session, ack)
 				}
 			}
+		case m.GetPolicyAck() != nil:
+			if err = limit.Wait(ctx); err == nil {
+				err = s.agents.AckPolicy(ctx, t.agent, t.session, policyAckFromProto(m.GetPolicyAck()))
+			}
 		default:
 			continue // unknown or repeated Hello: ignored (newer agents may send more)
 		}
@@ -484,7 +490,13 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 	var resources []fleet.DesiredResource
 	var builds []fleet.DesiredBuild
 	var secrets []fleet.SecretDelivery
+	var policy *fleet.Policy
 	if all {
+		p, err := s.agents.DesiredPolicy(ctx, t.agent)
+		if err != nil {
+			return err
+		}
+		policy = &p
 		desired, err := s.agents.Desired(ctx, t.agent)
 		if err != nil {
 			return err
@@ -501,6 +513,14 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 		}
 	} else {
 		for k := range pending {
+			if k.policy {
+				p, err := s.agents.DesiredPolicy(ctx, t.agent)
+				if err != nil {
+					return err
+				}
+				policy = &p
+				continue
+			}
 			if !k.secret.IsZero() {
 				d, ok, err := s.agents.DesiredSecret(ctx, t.agent, k.secret)
 				if err != nil {
@@ -538,6 +558,12 @@ func (s *Server) push(ctx context.Context, stream fleetv1.Fleet_ConnectServer, t
 			if ok {
 				apps = append(apps, a)
 			}
+		}
+	}
+	// the policy goes first: namespaces of the apps below are fenced by it
+	if policy != nil {
+		if err := stream.Send(policyToProto(*policy)); err != nil {
+			return err
 		}
 	}
 	// resources go before the apps that use them: the agent waits for them anyway

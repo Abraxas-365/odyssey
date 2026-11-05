@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AGENT_INSTALL, appCount, awaitingAgent, clusterState, moveTargets, secretCommand } from './clusters'
+import { AGENT_INSTALL, appCount, awaitingAgent, cidrProblem, clusterState, internalEntries, internalProblem, moveTargets, parseAllowList, secretCommand } from './clusters'
 import type { Cluster } from './types'
 
 describe('moveTargets', () => {
@@ -46,5 +46,46 @@ describe('secretCommand', () => {
     // re-running it (a new token) updates the Secret instead of failing
     expect(cmd.match(/--dry-run=client -o yaml \| kubectl apply -f -/g)).toHaveLength(2)
     expect(AGENT_INSTALL).toBe('kubectl apply -k agent/install')
+  })
+})
+
+describe('cidrProblem', () => {
+  it('accepts addresses and networks, IPv4 and IPv6', () => {
+    for (const ok of ['203.0.113.7', '10.20.0.0/16', '192.168.1.1/32', '2001:db8::/64', '2001:db8::1', '::1', '::ffff:10.0.0.1', 'fe80::1/10']) {
+      expect(cidrProblem(ok), ok).toBeUndefined()
+    }
+  })
+  it('refuses what the server refuses, in plain words', () => {
+    for (const bad of ['example.com', '10.0.0', '10.0.0.256', '10.0.0.0/33', '10.0.0.0/x', '10.0.0.0/8/1', '1:2:3', '2001:db8::/129', ':::', '1::2::3']) {
+      expect(cidrProblem(bad), bad).toBeTruthy()
+    }
+    expect(cidrProblem('0.0.0.0/0')).toMatch(/Internet pública/)
+    expect(cidrProblem('::/0')).toMatch(/Internet pública/)
+  })
+})
+
+describe('parseAllowList', () => {
+  it('reads one entry per line, drops blanks and repeats, and names the bad ones', () => {
+    const r = parseAllowList('10.0.0.0/8\n\n 203.0.113.7 ,10.0.0.0/8\nnope\n')
+    expect(r.entries).toEqual(['10.0.0.0/8', '203.0.113.7'])
+    expect(r.problems.map(p => p.entry)).toEqual(['nope'])
+  })
+})
+
+describe('internalProblem', () => {
+  it('flags what is inside, or covers, a private or reserved range', () => {
+    for (const internal of ['10.42.0.0/16', '10.43.0.1', '192.168.65.254', '172.20.0.0/14', '100.64.1.1', '169.254.169.254', '127.0.0.1', '0.0.0.0/8',
+      '224.0.0.1', '240.0.0.0/4', '198.18.0.0/15', '10.0.0.0/7', '0.0.0.0/1', 'fd00::/8', 'fe80::1', '::1', '::ffff:10.0.0.1', 'ff02::1', '64:ff9b::1.2.3.4']) {
+      expect(internalProblem(internal), internal).toBeTruthy()
+    }
+  })
+  it('leaves public addresses alone', () => {
+    for (const pub of ['203.0.113.7', '198.51.100.0/24', '8.8.8.8', '172.32.0.1', '172.15.255.255', '100.128.0.1', '2001:db8::/64', '2606:4700::1', '::ffff:8.8.8.8']) {
+      expect(internalProblem(pub), pub).toBeUndefined()
+    }
+  })
+  it('lists the entries to confirm', () => {
+    expect(internalEntries(['203.0.113.7', '10.20.0.0/16', 'fc00::1']).map(e => e.entry)).toEqual(['10.20.0.0/16', 'fc00::1'])
+    expect(internalEntries([])).toEqual([])
   })
 })

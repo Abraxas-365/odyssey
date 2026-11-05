@@ -87,6 +87,29 @@ spec:
                 required:
                 - mode
                 type: object
+              ai:
+                description: |-
+                  AI wires the app to the organization's AI gateway: the agent sets
+                  OPENAI_BASE_URL/ANTHROPIC_BASE_URL and reads OPENAI_API_KEY/
+                  ANTHROPIC_API_KEY from the managed secret named by KeySecret (these four
+                  win over the same names in env, secrets and resources). Absent: no AI.
+                properties:
+                  baseURL:
+                    description: |-
+                      BaseURL is the gateway without "/v1": ANTHROPIC_BASE_URL is it as it is,
+                      OPENAI_BASE_URL adds /v1.
+                    maxLength: 2000
+                    minLength: 1
+                    type: string
+                  keySecret:
+                    description: KeySecret is the managed secret (one of spec.secrets)
+                      that holds the key.
+                    pattern: ^[A-Za-z_][A-Za-z0-9_]{0,127}$
+                    type: string
+                required:
+                - baseURL
+                - keySecret
+                type: object
               env:
                 additionalProperties:
                   type: string

@@ -174,6 +174,9 @@ func TestRedisObjects(t *testing.T) {
 	if err := c.Get(ctx, key, &d); err != nil {
 		t.Fatal(err)
 	}
+	if d.Spec.Template.Labels[LabelResource] != "cache" {
+		t.Errorf("the redis pod does not carry the resource label (the egress fence selects it by it): %v", d.Spec.Template.Labels)
+	}
 	pod := d.Spec.Template.Spec
 	ct := pod.Containers[0]
 	if d.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType || ct.Image != RedisImage || !strings.Contains(RedisImage, "@sha256:") {
@@ -250,6 +253,10 @@ func TestPostgresCluster(t *testing.T) {
 	inst, _, _ := unstructured.NestedInt64(cl.Object, "spec", "instances")
 	db, _, _ := unstructured.NestedString(cl.Object, "spec", "bootstrap", "initdb", "database")
 	owner, _, _ := unstructured.NestedString(cl.Object, "spec", "bootstrap", "initdb", "owner")
+	inherited, _, _ := unstructured.NestedStringMap(cl.Object, "spec", "inheritedMetadata", "labels")
+	if inherited[LabelResource] != "main" {
+		t.Errorf("the database's pods do not carry the resource label (the egress fence selects them by it): %v", inherited)
+	}
 	if size != "3Gi" || inst != 1 || db != "app" || owner != "app" || !metav1.IsControlledBy(cl, got) {
 		t.Fatalf("cluster: %v", cl.Object)
 	}
@@ -510,5 +517,29 @@ func TestDeletePostgresOnlyDeletesVolumesOwnedByItsCluster(t *testing.T) {
 		if err := c.Get(ctx, client.ObjectKeyFromObject(p), &corev1.PersistentVolumeClaim{}); err != nil {
 			t.Errorf("%s is not the Cluster's and must stay: %v", p.Name, err)
 		}
+	}
+}
+
+// a database made before its pods carried the resource label gets it at the
+// next pass (CloudNativePG labels the running pods without restarting them).
+func TestPostgresMadeBeforeTheLabelGetsIt(t *testing.T) {
+	ctx := context.Background()
+	o := res("main", v1alpha1.ResourcePostgres, 1, "3Gi")
+	r, c := newRec(t, true, o, defaultClass(true, storagev1.VolumeBindingImmediate))
+	pass(t, r, c, o)
+	cl := NewCluster()
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "main"}, cl); err != nil {
+		t.Fatal(err)
+	}
+	unstructured.RemoveNestedField(cl.Object, "spec", "inheritedMetadata")
+	if err := c.Update(ctx, cl); err != nil {
+		t.Fatal(err)
+	}
+	pass(t, r, c, o)
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "main"}, cl); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := unstructured.NestedStringMap(cl.Object, "spec", "inheritedMetadata", "labels"); got[LabelResource] != "main" || len(got) != 1 {
+		t.Errorf("labels %v", got)
 	}
 }

@@ -28,6 +28,7 @@ const (
 	EventSecretFailed       = "cluster.secret_failed"
 	EventResourceApplied    = "cluster.resource_applied"
 	EventResourceRemoved    = "cluster.resource_removed"
+	EventEgressChanged      = "cluster.egress_changed"
 )
 
 // SubjectKind prefixes the fleet's event subjects ("cluster/<id>").
@@ -73,6 +74,30 @@ type Connected struct {
 type Revoked struct {
 	Cluster ClusterID `json:"cluster_id"`
 	Name    string    `json:"name"`
+}
+
+// EgressChanged v1: TI changed what the apps of a cluster may reach.
+type EgressChanged struct {
+	Cluster    ClusterID  `json:"cluster_id"`
+	Name       string     `json:"name"`
+	Mode       EgressMode `json:"mode"`
+	Allow      []string   `json:"allow"`
+	Generation int64      `json:"generation"`
+	// PreviousMode and PreviousAllow are what it was before.
+	PreviousMode  EgressMode `json:"previous_mode"`
+	PreviousAllow []string   `json:"previous_allow"`
+}
+
+func NewEgressChanged(org identity.OrganizationID, actor identity.UserID, c Cluster, before EgressSetting, after EgressSetting) event.Event {
+	what := "Cambió la salida a internet del clúster " + c.Name
+	if after.Mode == EgressRestricted {
+		what = "Limitó la salida a internet del clúster " + c.Name + " a las direcciones permitidas"
+	} else if before.Mode == EgressRestricted {
+		what = "Abrió la salida a internet del clúster " + c.Name
+	}
+	return event.New(EventEgressChanged, 1, org, actor, event.Subject(SubjectKind, c.ID), what,
+		EgressChanged{Cluster: c.ID, Name: c.Name, Mode: after.Mode, Allow: after.Allow, Generation: after.Generation,
+			PreviousMode: before.Mode, PreviousAllow: before.Allow})
 }
 
 // AppsMoved v1: TI sent the apps of a revoked cluster to another (subject:

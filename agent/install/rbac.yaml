@@ -63,3 +63,43 @@ rules:
   - apiGroups: [postgresql.cnpg.io]
     resources: [clusters]
     verbs: [create, update, delete]
+  # The egress fence (agent/egress): odicea-apps, odicea-resources,
+  # odicea-default and odicea-ai in each environment namespace. The enforcer
+  # reads them by name straight from the API (no cache, so no list/watch and
+  # nothing cluster-wide) and never patches.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, create, update, delete]
+---
+# The one ConfigMap the agent keeps in its own namespace: the cluster policy
+# it last received (agent/egress.PolicyConfigMap). get and update only on that
+# name; create cannot be restricted by name (Kubernetes does not know it yet).
+# Kept by hand (the kubebuilder markers would grant the verbs on every
+# ConfigMap of the namespace).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: odyssey-agent-policy
+  namespace: odyssey-system
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [odyssey-cluster-policy]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: odyssey-agent-policy
+  namespace: odyssey-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: odyssey-agent-policy
+subjects:
+  - kind: ServiceAccount
+    name: odyssey-agent
+    namespace: odyssey-system

@@ -36,6 +36,9 @@ type Options struct {
 	NoAccessGate bool
 	// NoSecrets makes the cluster unable to take managed secrets (no key).
 	NoSecrets bool
+	// NoAI makes the cluster unable to wire apps to the AI (its agent lacks
+	// the odicea.ai capability): an app with AI is refused at Apply.
+	NoAI bool
 	// SecretStores are the ClusterSecretStores it offers (none: no External
 	// Secrets Operator).
 	SecretStores []string
@@ -104,6 +107,9 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 			return release.Failed(release.CodeApplyFailed, "El clúster de este entorno cambió su llave: vuelve a cargar el secreto "+s.Name+" en la consola.")
 		}
 	}
+	if d.AI != nil && c.opts.NoAI {
+		return release.Failed(release.CodeApplyFailed, "Este clúster todavía no puede conectar apps con la IA. Pide a TI que actualice su agente.")
+	}
 	k := key(t, d.Name)
 	if cur, ok := c.apps[k]; ok && cur.desired.Revision >= d.Revision {
 		return nil // idempotent; an older revision is ignored
@@ -129,7 +135,7 @@ func (c *Cluster) Secrets(_ context.Context, t release.Target) (release.ClusterS
 	if c.revoked {
 		return release.ClusterSecrets{Stores: []string{}, Revoked: true}, nil
 	}
-	out := release.ClusterSecrets{External: len(c.opts.SecretStores) > 0, Stores: append([]string{}, c.opts.SecretStores...)}
+	out := release.ClusterSecrets{External: len(c.opts.SecretStores) > 0, Stores: append([]string{}, c.opts.SecretStores...), AI: !c.opts.NoAI}
 	if !c.opts.NoSecrets {
 		out.Key = &release.ClusterKey{Cluster: FakeClusterID, KeyID: c.key.ID(), Public: c.key.Public()}
 	}

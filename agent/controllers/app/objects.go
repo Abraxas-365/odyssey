@@ -25,6 +25,9 @@ const (
 	ManagedBy      = "odyssey-agent"
 	// LabelApp selects the app's pods (the Deployment's selector).
 	LabelApp = "odyssey.dev/app"
+	// LabelAI is on the pods of an app that uses AI: the egress fence opens the
+	// AI gateway to them (agent/egress.LabelAI, policy odicea-ai).
+	LabelAI = "odyssey.dev/ai"
 	// LabelRevision is the spec revision a pod runs.
 	LabelRevision = "odyssey.dev/revision"
 )
@@ -166,6 +169,10 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 	// The agent's own labels last: the selector, the cache and the revision
 	// depend on them.
 	pod[LabelManagedBy], pod[LabelApp], pod[LabelRevision] = ManagedBy, a.Name, strconv.FormatInt(a.Spec.Revision, 10)
+	delete(pod, LabelAI) // never a person's: only spec.ai sets it
+	if a.Spec.AI != nil {
+		pod[LabelAI] = "true"
+	}
 	replicas, zero, one := a.Spec.Replicas, intstr.FromInt32(0), intstr.FromInt32(1)
 	no := false
 	deadline := cfg.ReadyDeadline
@@ -202,7 +209,7 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 				Image:           a.Spec.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: a.Spec.Port, Protocol: corev1.ProtocolTCP}},
-				Env:             withAuthEnv(env(a), a, cfg),
+				Env:             withAuthEnv(withAIEnv(env(a), a), a, cfg),
 				VolumeMounts:    mounts,
 				// Readiness only: a version is "ready" when its health check
 				// passes. Liveness (restarts) is per-app configuration, later.

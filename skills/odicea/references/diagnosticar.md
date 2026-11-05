@@ -23,7 +23,7 @@ Una publicación pasa por: **build** (construir la carpeta) → **apply** (envia
 
 ## 3. Si falla por una dependencia que Odicea no ofrece
 
-Base de datos, secretos o llaves de IA: **no los inventes ni uses un servicio externo.** Sigue «Lo que Odicea todavía no ofrece» en [SKILL.md](../SKILL.md) y pide a TI que conecte uno existente.
+Base de datos o llaves de IA: Odicea las ofrece (`create_database`, `enable_ai`); **no las inventes ni uses un servicio externo.** Si fallan, el mensaje dice si es cosa de TI. Otros secretos o llaves de terceros: sigue «Lo que Odicea todavía no ofrece» en [SKILL.md](../SKILL.md) y pide a TI que conecte uno existente.
 
 ## 4. Volver a lo que funcionaba
 

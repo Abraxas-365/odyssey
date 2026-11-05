@@ -38,10 +38,10 @@ func Tools(projects project.Queries, commands resource.Commands, queries resourc
 			Name:  "create_database",
 			Title: "Crear una base de datos",
 			Description: "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: " +
-				"la app recibirá sus variables (DATABASE_URL, …) en una publicación de configuración que empieza sola. Los datos y las contraseñas se quedan " +
+				"la app recibirá sus variables (DATABASE_URL, …) en una versión nueva de la app que empieza sola. Los datos y las contraseñas se quedan " +
 				"en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. " +
 				"Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: " +
-				"the app will receive its variables (DATABASE_URL, …) in a configuration deployment that starts by itself. Data and passwords stay " +
+				"the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay " +
 				"in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. " +
 				"app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; " +
 				"name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several.",
@@ -140,7 +140,7 @@ type CreateDatabaseOut struct {
 	App      string   `json:"app" jsonschema:"slug de la app"`
 	Resource Resource `json:"resource"`
 	// ConfigDeployment is set when a configuration deployment started.
-	ConfigDeployment *string `json:"config_deployment_id,omitempty" jsonschema:"la publicación de configuración que conecta la base, si empezó una"`
+	ConfigDeployment *string `json:"config_deployment_id,omitempty" jsonschema:"la versión nueva que conecta la base, si empezó una"`
 	ConsoleURL       string  `json:"console_url" jsonschema:"enlace a la app en la consola"`
 	NextStep         string  `json:"next_step" jsonschema:"qué hacer ahora"`
 }
@@ -167,7 +167,7 @@ func (t tools) createDatabase(ctx context.Context, caller mcpx.Principal, in Cre
 		ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String()}
 	vars := strings.Join(out.Variables, ", ")
 	if out.Deployment != nil {
-		res.NextStep = "Listo: " + name + " se está preparando y la app recibirá " + vars + " en la publicación de configuración que empezó " +
+		res.NextStep = "Listo: " + name + " se está preparando y la app recibirá " + vars + " en la versión nueva que empezó " +
 			"(config_deployment_id; get_deployment la sigue). Pásale a la app esas variables por su nombre; los valores nunca se muestran. " +
 			"list_resources dice cuándo la base está lista."
 	} else {

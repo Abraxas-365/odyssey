@@ -27,6 +27,53 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Post("/:id/enrollment-token", httpx.RequirePermissions(permission.ClustersManage), h.issueToken)
 	g.Post("/:id/revoke", httpx.RequirePermissions(permission.ClustersManage), h.revoke)
 	g.Post("/:id/move", httpx.RequirePermissions(permission.ClustersManage), h.move)
+	g.Get("/:id/egress", httpx.RequirePermissions(permission.ClustersRead), h.egress)
+	g.Put("/:id/egress", httpx.RequirePermissions(permission.ClustersManage), h.setEgress)
+}
+
+// egress answers 200 with the policy and whether the cluster enforces it.
+func (h *Handler) egress(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := fleet.ParseClusterID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	status, err := h.queries.Egress(c.UserContext(), org, id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(status)
+}
+
+// setEgress replaces the policy (idempotent: the same body twice changes
+// nothing) and answers 200 with the new state, usually "pending" until the
+// agent confirms.
+func (h *Handler) setEgress(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := fleet.ParseClusterID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	user, err := httpx.User(c)
+	if err != nil {
+		return err
+	}
+	var input fleet.SetEgress
+	if err := httpx.DecodeJSON(c, &input); err != nil {
+		return err
+	}
+	input.ChangedBy = user
+	status, err := h.commands.SetEgress(c.UserContext(), org, id, input)
+	if err != nil {
+		return err
+	}
+	return c.JSON(status)
 }
 
 func (h *Handler) list(c *fiber.Ctx) error {

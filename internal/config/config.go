@@ -38,6 +38,8 @@ type Config struct {
 	GitHub GitHub
 	// MCP is the endpoint coding agents connect to (optional).
 	MCP MCP
+	// AI is the AI gateway apps can be given keys of (optional).
+	AI AI
 	// Access is the sign-in of apps protected with an Odicea login (optional).
 	Access Access
 	// ConsoleURL is ODYSSEY_CONSOLE_URL: the console's base URL, for links
@@ -321,6 +323,9 @@ func Load() (Config, error) {
 	if cfg.Access, err = loadAccess(); err != nil {
 		return Config{}, err
 	}
+	if cfg.AI, err = loadAI(); err != nil {
+		return Config{}, err
+	}
 	cfg.ConsoleURL = cfg.GitHub.ConsoleURL
 	return cfg, nil
 }
@@ -410,6 +415,8 @@ type Worker struct {
 	Builder Builder
 	// GitHub imports pushed commits and reports deployments on them.
 	GitHub GitHub
+	// AI is the AI gateway the ai workflows make and revoke keys at.
+	AI AI
 }
 
 // Cluster kinds.
@@ -442,6 +449,9 @@ func LoadWorker() (Worker, error) {
 		return Worker{}, err
 	}
 	if cfg.GitHub, err = loadGitHub(); err != nil {
+		return Worker{}, err
+	}
+	if cfg.AI, err = loadAI(); err != nil {
 		return Worker{}, err
 	}
 	return cfg, nil
@@ -510,4 +520,42 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
+}
+
+// AI is the organization's AI gateway (freerouter, 2d-ai). Without a URL and
+// a key the capability is absent: apps cannot turn the AI on and the console
+// says so.
+type AI struct {
+	// URL is ODYSSEY_FREEROUTER_URL: freerouter's API, where the platform
+	// makes and revokes the apps' keys.
+	URL string
+	// AppURL is ODYSSEY_FREEROUTER_APP_URL: the address the apps reach the
+	// gateway by (default URL). It is what OPENAI_BASE_URL (+ /v1) and
+	// ANTHROPIC_BASE_URL are built from.
+	AppURL string
+	// Key is ODYSSEY_FREEROUTER_KEY (or the contents of its _FILE): the
+	// platform's service key at freerouter.
+	Key string
+}
+
+// Enabled: the gateway is configured.
+func (a AI) Enabled() bool { return a.URL != "" && a.Key != "" }
+
+func loadAI() (AI, error) {
+	a := AI{URL: strings.TrimRight(strings.TrimSpace(os.Getenv("ODYSSEY_FREEROUTER_URL")), "/"), Key: strings.TrimSpace(os.Getenv("ODYSSEY_FREEROUTER_KEY"))}
+	a.AppURL = strings.TrimRight(strings.TrimSpace(env("ODYSSEY_FREEROUTER_APP_URL", a.URL)), "/")
+	if file := os.Getenv("ODYSSEY_FREEROUTER_KEY_FILE"); file != "" {
+		if a.Key != "" {
+			return AI{}, errx.Validation("set ODYSSEY_FREEROUTER_KEY or its _FILE, not both")
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return AI{}, errx.Validation("ODYSSEY_FREEROUTER_KEY_FILE cannot be read")
+		}
+		a.Key = strings.TrimSpace(string(raw))
+	}
+	if (a.URL == "") != (a.Key == "") {
+		return AI{}, errx.Validation("ODYSSEY_FREEROUTER_URL and ODYSSEY_FREEROUTER_KEY go together")
+	}
+	return a, nil
 }

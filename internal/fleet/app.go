@@ -42,7 +42,10 @@ type App struct {
 	// Resources are the environment's resources the app uses (2b): the
 	// agent wires their connection into the app and waits for them.
 	Resources []ResourceRef `json:"resources" db:"-"`
-	UpdatedAt time.Time     `json:"updated_at" db:"updated_at"`
+	// AI connects the app to the organization's AI gateway (2d-ai); nil: no
+	// AI. Its key is one of Secrets.
+	AI        *AIRef    `json:"ai,omitempty" db:"-"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // MaxAppSecrets bounds an app's secret variables.
@@ -80,6 +83,11 @@ func (a App) Validate() error {
 		return errx.Validation("an app has at most 100 secrets")
 	case len(a.Resources) > MaxAppResources:
 		return errx.Validation("an app uses at most 10 resources")
+	}
+	if a.AI != nil {
+		if err := a.AI.Validate(a.Secrets); err != nil {
+			return err
+		}
 	}
 	seenRes := make(map[string]bool, len(a.Resources))
 	for _, r := range a.Resources {

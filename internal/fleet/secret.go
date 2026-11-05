@@ -109,6 +109,8 @@ type SecretTarget struct {
 	// Revoked: the environment's cluster was revoked (it offers nothing
 	// until the environment moves).
 	Revoked bool
+	// AI: the cluster's agent lists CapabilityAI.
+	AI bool
 	// Failures are the environment's secrets whose last delivery did not
 	// arrive.
 	Failures []SecretFailure

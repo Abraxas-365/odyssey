@@ -3,6 +3,7 @@ package desired
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -330,5 +331,29 @@ func TestApplyResourceOfAResourceDeletedByHand(t *testing.T) {
 	// And now it is the control plane's deletion in progress: retry, as usual.
 	if err := s.ApplyResource(ctx, res(1)); err == nil || errors.As(err, new(*Rejected)) {
 		t.Fatalf("retry later: %v", err)
+	}
+}
+
+func TestApplyMapsTheAIAndTheAgentReportsTheCapability(t *testing.T) {
+	ctx := context.Background()
+	s, c := newSyncer(t, interceptor.Funcs{})
+	a := app(1)
+	a.Ai = &fleetv1.AI{BaseUrl: "https://llm.test", KeySecret: "ODICEA_AI_KEY"}
+	if err := s.Apply(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(t, c).Spec.AI; got == nil || got.BaseURL != "https://llm.test" || got.KeySecret != "ODICEA_AI_KEY" {
+		t.Errorf("ai: %+v", got)
+	}
+	// turning it off removes it from the spec
+	b := app(2)
+	if err := s.Apply(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(t, c).Spec.AI; got != nil {
+		t.Errorf("ai after disabling: %+v", got)
+	}
+	if !slices.Contains(s.Capabilities(ctx).GetApis(), CapabilityAI) {
+		t.Errorf("capabilities do not list %s: %v", CapabilityAI, s.Capabilities(ctx).GetApis())
 	}
 }

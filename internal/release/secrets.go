@@ -275,6 +275,8 @@ type ClusterSecrets struct {
 	// Revoked: the environment's cluster was revoked; it offers nothing
 	// until IT moves the environment.
 	Revoked bool `json:"revoked"`
+	// AI: the cluster's agent lists the AI capability (odicea.ai).
+	AI bool `json:"ai"`
 	// Failures are the managed values whose last delivery did not arrive
 	// (by name; not part of the API: SecretView carries them).
 	Failures map[string]SecretFailure `json:"-"`
@@ -345,6 +347,14 @@ func (d DesiredApp) WithSettings(s Settings) DesiredApp {
 		delete(env, r.Name)
 		d.Secrets = append(d.Secrets, DesiredSecret{Name: r.Name, Source: r.Source, Version: r.Version, KeyID: r.KeyID,
 			Store: r.Store, Key: r.Key, Property: r.Property})
+	}
+	d.AI = nil
+	if s.AI.Enabled {
+		for _, v := range AIVariables {
+			delete(env, v) // the AI wins over a release's variable of its name
+		}
+		d.AI = &DesiredAI{BaseURL: s.AI.BaseURL, KeySecret: AIKeySecret}
+		d.Secrets = append(d.Secrets, DesiredSecret{Name: AIKeySecret, Source: SecretManaged, Version: s.AI.KeyVersion, KeyID: s.AI.KeyID})
 	}
 	d.Env = env
 	return d
@@ -450,12 +460,12 @@ func secretState(r SecretRef, c ClusterSecrets) SecretState {
 // secrets, the variables of connected resources and open requests together, each name once (a request whose name is
 // a secret or a variable already takes no second place).
 func (s Settings) NameCount(open []SecretRequest) int {
-	n := len(s.Env) + len(s.Secrets) + len(s.resourceVariables())
+	n := len(s.Env) + len(s.Secrets) + len(s.reserved())
 	for _, r := range open {
 		if _, plain := s.Env[r.Name]; plain {
 			continue
 		}
-		if _, taken := s.resourceVariables()[r.Name]; taken {
+		if _, taken := s.reserved()[r.Name]; taken {
 			continue
 		}
 		if _, secret := s.Secret(r.Name); !secret {
@@ -473,7 +483,7 @@ func ErrTooManyVars(field string) error {
 // CheckRequest says whether a request for name fits: an open request of that
 // name is renewed, any other takes one more place.
 func (s Settings) CheckRequest(open []SecretRequest, name string) error {
-	if res, ok := s.resourceVariables()[name]; ok {
+	if res, ok := s.reserved()[name]; ok {
 		return ErrVariableTaken(name, res)
 	}
 	if slices.ContainsFunc(open, func(r SecretRequest) bool { return r.Name == name }) {
@@ -491,7 +501,7 @@ func (s Settings) CheckRequest(open []SecretRequest, name string) error {
 func (s Settings) WithEnv(in SetEnv, open []SecretRequest) (Settings, []string, []string, error) {
 	n := s.next(in.RequestedBy)
 	var set, unset []string
-	taken := s.resourceVariables()
+	taken := s.reserved()
 	for k, v := range in.Set {
 		if res, ok := taken[k]; ok {
 			return Settings{}, nil, nil, ErrVariableTaken(k, res)
@@ -521,7 +531,7 @@ func (s Settings) WithEnv(in SetEnv, open []SecretRequest) (Settings, []string, 
 // are the open secret requests (the one of ref's name is answered by it and
 // is not counted twice).
 func (s Settings) WithSecret(ref SecretRef, actor identity.UserID, open []SecretRequest) (Settings, error) {
-	if res, ok := s.resourceVariables()[ref.Name]; ok {
+	if res, ok := s.reserved()[ref.Name]; ok {
 		return Settings{}, ErrVariableTaken(ref.Name, res)
 	}
 	n := s.next(actor)

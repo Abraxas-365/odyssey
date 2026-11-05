@@ -71,6 +71,9 @@ type Options struct {
 	// Resources applies the resources (databases, caches, files) the control
 	// plane sends and reports them; nil: this agent takes none.
 	Resources Resources
+	// Policy enforces the cluster policy (egress) the control plane sends;
+	// nil: this agent takes none (its Capabilities do not list odicea.egress).
+	Policy Policy
 	// RejectedResource is the status reported for a resource the cluster
 	// refused (IsRejected says which errors are final).
 	RejectedResource RejectedResource
@@ -488,7 +491,7 @@ func (c *Client) stream(ctx context.Context, api fleetv1.FleetClient, id Identit
 		return st.Send(m)
 	}
 	secrets := c.newSecretSession(ctx)
-	hello := &fleetv1.Hello{AgentVersion: c.o.Version, Capabilities: secrets.capabilities(c.o.Desired.Capabilities(ctx))}
+	hello := &fleetv1.Hello{AgentVersion: c.o.Version, Capabilities: c.withEgress(secrets.capabilities(c.o.Desired.Capabilities(ctx)))}
 	if err := send(&fleetv1.AgentMessage{Message: &fleetv1.AgentMessage_Hello{Hello: hello}}); err != nil {
 		return err
 	}
@@ -546,6 +549,12 @@ func (c *Client) receive(ctx context.Context, st fleetv1.Fleet_ConnectClient, se
 			return err
 		}
 		if c.receiveBuild(m) || c.receiveResource(m) {
+			continue
+		}
+		if handled, err := c.receivePolicy(ctx, m, send); handled {
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if sec := m.GetSecret(); sec != nil {
@@ -624,6 +633,9 @@ func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage
 		case <-ctx.Done():
 			return nil
 		case <-full.C:
+			if err := c.reportPolicy(send); err != nil {
+				return err
+			}
 			if err := c.reportAll(ctx, send); err != nil {
 				return err
 			}

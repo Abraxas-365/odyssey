@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth'
 import { permissions } from '@/lib/permissions'
 import { useConnectResource, useCreateResource, useDeleteResource, useDisconnectResource, useResizeResource, useResources } from '@/lib/resources'
 import type { Resource, ResourceKind } from '@/lib/types'
+import { AIRow } from './ai-panel'
 import { atLimit, deleteBlock, deleteConfirmed, DEFAULT_GI, failureOf, isActive, kindText, MAX_GI, MAX_NAME, MAX_PREFIX, MIN_GI, nameProblem, prefixProblem, sizeLabel, sizeProblem, stateOf, suggestName } from './resources'
 
 const applied = (deployment: unknown) => (deployment ? 'Aplicando el cambio a la app…' : 'Guardado. La app lo recibe con la próxima publicación.')
@@ -42,7 +43,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
 
   return (
     <Panel>
-      <PanelHeader icon={Database} title="Lo que usa" description="Bases de datos, cachés y archivos de la app. La app los recibe como variables de entorno." />
+      <PanelHeader icon={Database} title="Lo que usa" description="Bases de datos, cachés, archivos e IA de la app. La app los recibe como variables de entorno." />
       <PanelBody>
         <ErrorNotice error={list.error} onRetry={() => list.refetch()} />
         {list.data && items.length === 0 && (
@@ -104,6 +105,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
           </ul>
         )}
         <ErrorNotice error={connect.error ?? disconnect.error} />
+        <AIRow project={project} env={env} canWrite={canWrite} busy={busy} technical={technical} />
       </PanelBody>
       {canWrite && (
         <PanelFooter>

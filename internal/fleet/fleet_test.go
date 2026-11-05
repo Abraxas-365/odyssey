@@ -55,6 +55,8 @@ func TestEventContracts(t *testing.T) {
 		fleet.NewResourceApplied(org, c, fleet.DesiredResource{Project: proj, Environment: env, Name: "db", Kind: resourcekind.Postgres,
 			Generation: 2, StorageGi: 5}, false),
 		fleet.NewResourceRemoved(org, c, fleet.DesiredResource{Project: proj, Environment: env, Name: "db", Kind: resourcekind.Postgres}),
+		fleet.NewEgressChanged(org, user, c, fleet.EgressSetting{Egress: fleet.DefaultEgress(), Generation: 1},
+			fleet.EgressSetting{Egress: fleet.Egress{Mode: fleet.EgressRestricted, Allow: []string{"203.0.113.0/24"}}, Generation: 2}),
 	} {
 		eventtest.Golden(t, e)
 	}

@@ -21,6 +21,10 @@ type Commands interface {
 	Revoke(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input Revoke) error
 	// Move sends every app of a revoked cluster to an active one.
 	Move(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input Move) (Moved, error)
+	// SetEgress replaces the cluster's egress policy and has it sent to its
+	// agent (a policy identical to the stored one changes nothing and
+	// publishes nothing). Business CodeClusterRevoked for a revoked cluster.
+	SetEgress(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, input SetEgress) (EgressStatus, error)
 	// SweepSecrets drops secret deliveries no cluster took within
 	// SecretDeliveryTTL (a scheduled task: a cluster that never reconnects
 	// would otherwise keep them forever).
@@ -31,6 +35,8 @@ type Commands interface {
 type Queries interface {
 	Find(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (Cluster, error)
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Cluster], error)
+	// Egress is the cluster's egress policy and how its agent has taken it.
+	Egress(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (EgressStatus, error)
 }
 
 // Dispatch is what other domains use to run apps (release, through its
@@ -169,6 +175,12 @@ type Agents interface {
 	// its tunnel: the sealed value is deleted, stored or not (a failure is
 	// published: the person loads it again).
 	AckSecret(ctx context.Context, agent AgentRef, session Session, ack SecretAck) error
+	// DesiredPolicy is the cluster's egress policy at its current generation
+	// (the default, generation 0, until TI changes it).
+	DesiredPolicy(ctx context.Context, agent AgentRef) (Policy, error)
+	// AckPolicy stores the agent's answer to a policy while session is its
+	// tunnel (an unknown or older generation is ignored).
+	AckPolicy(ctx context.Context, agent AgentRef, session Session, ack PolicyAck) error
 }
 
 // Signals delivers the changes committed by any process (the worker applies
@@ -220,6 +232,12 @@ type Repository interface {
 	FindCertificate(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]byte, error)
 	Revoke(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, revokedBy identity.UserID) error
 	SetSession(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, info Agent) error
+	// FindEgress is the cluster's egress policy and what its agent answered
+	// (NotFound for another organization's cluster).
+	FindEgress(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) (EgressSetting, error)
+	// PutEgress stores the policy of a cluster not revoked, raises its
+	// generation (returned), and signals its gateway.
+	PutEgress(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, egress Egress) (int64, error)
 
 	// Observations: what agents and gateways see, not decisions anybody
 	// makes, so they publish no event (the architecture rule knows the
@@ -228,6 +246,10 @@ type Repository interface {
 	// ObserveHeartbeat refreshes the tunnel while it is the cluster's and
 	// its certificate (serial) is still accepted.
 	ObserveHeartbeat(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, serial string) (bool, error)
+	// ObservePolicy stores the agent's answer to a policy while session is
+	// the cluster's tunnel; an answer for a generation that was never sent,
+	// or older than the one answered, is dropped.
+	ObservePolicy(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, ack PolicyAck) (bool, error)
 	ObserveDisconnect(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session) error
 	// ObserveApps stores a report in one statement if session is still the
 	// cluster's tunnel (false otherwise).

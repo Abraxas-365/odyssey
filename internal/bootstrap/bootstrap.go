@@ -22,6 +22,10 @@ import (
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
 	"github.com/Abraxas-365/odyssey/internal/access"
 	"github.com/Abraxas-365/odyssey/internal/access/accessmodule"
+	"github.com/Abraxas-365/odyssey/internal/ai"
+	"github.com/Abraxas-365/odyssey/internal/ai/adapters/aimcp"
+	"github.com/Abraxas-365/odyssey/internal/ai/aimodule"
+	"github.com/Abraxas-365/odyssey/internal/ai/aisvc"
 	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/audit/auditmodule"
 	"github.com/Abraxas-365/odyssey/internal/blob"
@@ -117,7 +121,7 @@ func RunWorker() error {
 	}
 	defer blobs.Close()
 	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster,
-		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub})
+		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub, AI: cfg.AI})
 	if err != nil {
 		return err
 	}
@@ -258,6 +262,7 @@ func Migrations() []migrate.Set {
 		{Owner: sourcemodule.Schema, Files: sourcemodule.Migrations()},
 		{Owner: fleetmodule.Schema, Files: fleetmodule.Migrations()},
 		{Owner: resourcemodule.Schema, Files: resourcemodule.Migrations()},
+		{Owner: aimodule.Schema, Files: aimodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
 	}
@@ -291,6 +296,7 @@ type Platform struct {
 	Blobs     blob.Store
 	Fleet     fleetmodule.Module
 	Resources resourcemodule.Module
+	AI        aimodule.Module
 	Audit     auditmodule.Module
 }
 
@@ -336,6 +342,12 @@ type Options struct {
 	GitHub      config.GitHub
 	// Source tunes the import service.
 	Source sourcesvc.Options
+	// AI is the AI gateway apps get keys of (zero value: the capability is
+	// absent); tests pass AIProvider (a fake) instead, with AIService tuning
+	// the workflows.
+	AI         config.AI
+	AIProvider ai.Provider
+	AIService  aisvc.Options
 	// Access configures the sign-in of protected apps (zero value: off);
 	// AccessIssuer is the API's public base URL (PublicAPIURL), IAM the
 	// IAMKit settings it signs in with. AccessLogin replaces the IAMKit
@@ -395,6 +407,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	// release is built first (resources need its Usage), so it learns of
 	// resources afterwards.
 	releases.UseResources(releaseresource.New(resources.Queries))
+	ais := aimodule.New(aimodule.Deps{DB: db, Events: events, Projects: projects.Queries, Engine: engine, Release: releases.AI,
+		Config: opts.AI, Provider: opts.AIProvider, Options: opts.AIService})
 	p := &Platform{
 		DB:        db,
 		Bus:       bus,
@@ -407,6 +421,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Blobs:     opts.Blobs,
 		Fleet:     fleets,
 		Resources: resources,
+		AI:        ais,
 		Audit:     auditmodule.New(auditmodule.Deps{DB: db}),
 	}
 	p.Audit.Subscribe(bus)
@@ -414,6 +429,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	p.Resources.Subscribe(bus)
 	bus.Seal()
 	p.Releases.Register(registry)
+	p.AI.Register(registry)
 	p.Builds.Register(registry)
 	p.Sources.Register(registry)
 	registry.Every(workflow.Schedule{Name: "fleet.secret_sweep", Every: time.Hour, Run: func(ctx context.Context) error {
@@ -482,7 +498,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a.closers = append(a.closers, blobs.Close)
 	opts := Options{Release: releasesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID},
-		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder,
+		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder, AI: cfg.AI,
 		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub, ClusterConfig: cfg.Cluster}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
@@ -547,6 +563,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.Sources.HTTP,
 		p.Fleet.HTTP,
 		p.Resources.HTTP,
+		p.AI.HTTP,
 		p.Audit.HTTP,
 		assistantRoutes,
 	)
@@ -576,6 +593,7 @@ func MCPTools(p *Platform, cfg config.Config) []mcpx.Tool {
 			}}),
 		sourcemcp.Tools(p.Projects.Queries, p.Sources.Commands, sources, sourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
 		resourcemcp.Tools(p.Projects.Queries, p.Resources.Commands, p.Resources.Queries, resourcemcp.Options{ConsoleURL: cfg.ConsoleURL}),
+		aimcp.Tools(p.Projects.Queries, p.AI.Commands, aimcp.Options{ConsoleURL: cfg.ConsoleURL}),
 	)
 }
 

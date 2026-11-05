@@ -53,6 +53,8 @@ func TestEventContracts(t *testing.T) {
 			Source: release.SecretManaged, Version: 2, KeyID: "k3yIdK3yIdK3yId0"}, release.SecretChangeLoaded, &restore, n),
 		release.NewResourcesChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Organization: org, Revision: 6},
 			release.ResourceConnected, release.ResourceUse{Name: "db", Kind: resourcekind.Postgres, Prefix: "ANALYTICS"}, &restore, n),
+		release.NewAIChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Organization: org, Revision: 7,
+			AI: release.AISettings{Enabled: true, KeyVersion: 2, KeyID: "k3yIdK3yIdK3yId0", BaseURL: "https://llm.example.com"}}, &restore, n),
 	} {
 		eventtest.Golden(t, e)
 	}

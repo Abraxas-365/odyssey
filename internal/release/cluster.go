@@ -39,6 +39,9 @@ type DesiredApp struct {
 	// Resources are the databases, caches and volumes the app is connected
 	// to (WithSettings): the cluster wires their variables into the app.
 	Resources []DesiredResource `json:"resources"`
+	// AI, when set (WithSettings), tells the agent to wire the app to the AI
+	// gateway; its key is the managed secret AIKeySecret, listed in Secrets.
+	AI *DesiredAI `json:"ai,omitempty"`
 }
 
 // Phase is how the cluster sees an app.
