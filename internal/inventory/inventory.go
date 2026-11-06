@@ -173,6 +173,48 @@ type Page struct {
 	Unavailable []Source `json:"unavailable"`
 }
 
+// MaxStates bounds one States read (a page of apps in the console).
+const MaxStates = query.MaxLimit
+
+// AppStatus is what a visitor of an app finds now, for the console's app
+// lists. Unlike a Row's Status, an app online whose latest publication
+// failed is online (the previous version keeps answering); the failure is in
+// the app and on its people's attention list.
+type AppStatus string
+
+const (
+	AppNotDeployed     AppStatus = "not_deployed"     // nothing was ever online
+	AppWaitingApproval AppStatus = "waiting_approval" // a publication waits for TI
+	AppDeploying       AppStatus = "deploying"        // a publication is under way
+	AppOnline          AppStatus = "online"           // a version answers
+	AppFailed          AppStatus = "failed"           // nothing online and the latest publication failed
+	AppArchived        AppStatus = "archived"         // archived: the cluster removes it
+)
+
+// AppState is how one app stands, in its production environment: what the
+// console's app lists show instead of guessing.
+type AppState struct {
+	App    project.ID `json:"app_id"`
+	Status AppStatus  `json:"status"`
+	// URL is where the app answers ("" until its first deployment is live).
+	URL string `json:"url"`
+	// Since is when the version online went live (nil when none is).
+	Since *time.Time `json:"since"`
+	// Access is who can open it now (nil when nothing is online or it cannot
+	// be told): never a default the console would present as a fact.
+	Access *release.ServingAccess `json:"access"`
+	// Cluster is where it runs (nil before it is placed, or when the
+	// clusters could not be read: then Unavailable says "cluster").
+	Cluster     *ClusterRef `json:"cluster"`
+	Unavailable []string    `json:"unavailable"`
+}
+
+// States are the states of the apps asked for that the organization has,
+// in the order asked.
+type States struct {
+	Items []AppState `json:"items"`
+}
+
 // Kind is the closed list of things the attention list says.
 type Kind string
 

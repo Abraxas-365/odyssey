@@ -9,6 +9,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/approval"
 	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/inventory"
@@ -21,16 +22,17 @@ import (
 )
 
 type fakes struct {
-	projects  []project.Project
-	envs      []project.Environment
-	serving   map[project.EnvironmentID]release.Serving
-	scans     map[build.ID]build.Scan
-	clusters  []fleet.Cluster
-	egress    map[fleet.ClusterID]fleet.EgressState
-	placed    map[project.EnvironmentID]fleet.ClusterID
-	uses      map[project.EnvironmentID]release.Uses
-	usesCalls int
-	down      map[string]bool // "scans", "clusters", "approvals", "placements"
+	projects   []project.Project
+	envs       []project.Environment
+	serving    map[project.EnvironmentID]release.Serving
+	scans      map[build.ID]build.Scan
+	clusters   []fleet.Cluster
+	egress     map[fleet.ClusterID]fleet.EgressState
+	placed     map[project.EnvironmentID]fleet.ClusterID
+	uses       map[project.EnvironmentID]release.Uses
+	usesCalls  int
+	scansCalls int
+	down       map[string]bool // "scans", "clusters", "approvals", "placements"
 }
 
 var errDown = errors.New("down")
@@ -77,6 +79,7 @@ func (f *fakes) Uses(_ context.Context, _ identity.OrganizationID, _ project.ID,
 	return f.uses[env], nil
 }
 func (f *fakes) Scans(_ context.Context, _ identity.OrganizationID, ids []build.ID) ([]build.BuildScan, error) {
+	f.scansCalls++
 	if f.down["scans"] {
 		return nil, errDown
 	}
@@ -335,5 +338,99 @@ func TestAppsAboveTheCapAreTruncated(t *testing.T) {
 	}
 	if !page.Truncated {
 		t.Fatal("not marked truncated")
+	}
+}
+
+// States say what each app's page says: a publication under way or waiting
+// for TI first, then what is online (a failed attempt over a live version is
+// still online), who can open it as the cluster enforces it, and where it
+// runs; archived apps say so; unknown ids are absent, in the order asked.
+func TestStatesSayWhatTheAppPageSays(t *testing.T) {
+	org := identity.NewOrganizationID()
+	owner := userID()
+	since := now.Add(-time.Hour)
+	cluster := fleet.Cluster{ID: fleet.NewClusterID(), Name: "Lima"}
+	f := &fakes{serving: map[project.EnvironmentID]release.Serving{}, placed: map[project.EnvironmentID]fleet.ClusterID{},
+		clusters: []fleet.Cluster{cluster}, down: map[string]bool{}}
+	public := release.AccessPublic
+	built := build.NewID()
+	type seed struct {
+		serving  *release.Serving
+		archived bool
+	}
+	seeds := map[string]seed{
+		"never":    {},
+		"waiting":  {serving: &release.Serving{Last: &release.LastDeployment{Status: release.StatusWaitingApproval}}},
+		"building": {serving: &release.Serving{Image: "img", URL: "https://b", Last: &release.LastDeployment{Status: release.StatusBuilding}}},
+		"online": {serving: &release.Serving{Image: "img", URL: "https://o", Since: &since, Build: &built, Last: &release.LastDeployment{Status: release.StatusReady},
+			Access: &release.ServingAccess{Mode: release.AccessOrganization, Pending: &public}}},
+		"failed over live": {serving: &release.Serving{Image: "img", URL: "https://f", Last: &release.LastDeployment{Status: release.StatusFailed}}},
+		"failed first":     {serving: &release.Serving{URL: "", Last: &release.LastDeployment{Status: release.StatusFailed}}},
+		"archived":         {serving: &release.Serving{Image: "img", URL: "https://a"}, archived: true},
+	}
+	ids := map[string]project.ID{}
+	var asked []project.ID
+	for name, s := range seeds {
+		p := project.Project{ID: project.NewID(), Name: name, CreatedBy: owner, Status: project.StatusActive}
+		if s.archived {
+			p.Status = project.StatusArchived
+		}
+		e := project.Environment{ID: project.NewEnvironmentID(), Project: p.ID, Slug: "production", Kind: project.KindProduction}
+		f.projects, f.envs = append(f.projects, p), append(f.envs, e)
+		if s.serving != nil {
+			sv := *s.serving
+			sv.Environment, sv.Project = e.ID, p.ID
+			f.serving[e.ID] = sv
+		}
+		f.placed[e.ID] = cluster.ID
+		ids[name] = p.ID
+		asked = append(asked, p.ID)
+	}
+	unknown := project.NewID()
+	asked = append([]project.ID{unknown}, asked...)
+	got, err := newService(f).States(ctxOf(owner, permission.ProjectsRead), org, asked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != len(seeds) || got.Items[0].App != asked[1] {
+		t.Fatalf("items %+v (unknown ids absent, order kept)", got.Items)
+	}
+	if f.scansCalls != 0 {
+		t.Fatalf("what a visitor finds read the scans %d times (Inicio polls it; it needs none)", f.scansCalls)
+	}
+	by := map[project.ID]inventory.AppState{}
+	for _, s := range got.Items {
+		by[s.App] = s
+	}
+	for name, want := range map[string]inventory.AppStatus{
+		"never": inventory.AppNotDeployed, "waiting": inventory.AppWaitingApproval, "building": inventory.AppDeploying,
+		"online": inventory.AppOnline, "failed over live": inventory.AppOnline, "failed first": inventory.AppFailed, "archived": inventory.AppArchived,
+	} {
+		if s := by[ids[name]]; s.Status != want {
+			t.Errorf("%s: %s, want %s", name, s.Status, want)
+		}
+	}
+	on := by[ids["online"]]
+	if on.URL != "https://o" || on.Since == nil || on.Access == nil || on.Access.Mode != release.AccessOrganization ||
+		on.Access.Pending == nil || *on.Access.Pending != public || on.Cluster == nil || on.Cluster.Name != "Lima" {
+		t.Fatalf("online %+v", on)
+	}
+	if a := by[ids["archived"]]; a.URL != "" || a.Access != nil || a.Cluster != nil {
+		t.Fatalf("an archived app claims to answer: %+v", a)
+	}
+	if n := by[ids["never"]]; n.URL != "" || n.Access != nil {
+		t.Fatalf("never published: %+v", n)
+	}
+
+	// the clusters down: where it runs is unknown, and said
+	f.down["clusters"] = true
+	got, _ = newService(f).States(ctxOf(owner, permission.ProjectsRead), org, []project.ID{ids["online"]})
+	if s := got.Items[0]; s.Cluster != nil || len(s.Unavailable) != 1 || s.Unavailable[0] != "cluster" || s.Status != inventory.AppOnline {
+		t.Fatalf("clusters down %+v", s)
+	}
+
+	too := make([]project.ID, inventory.MaxStates+1)
+	if _, err := newService(f).States(ctxOf(owner, permission.ProjectsRead), org, too); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("over the cap: %v", err)
 	}
 }

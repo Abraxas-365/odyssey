@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, EnvironmentSettings } from '@/lib/types'
-import { accessApplying, accessLabel, accessNotice, accessOptions, accessPending, canChoose, noticeText, optionDisabled } from './access'
+import { accessApplying, accessHeadline, accessLabel, accessNotice, accessOptions, accessPending, canChoose, noticeText, optionDisabled } from './access'
 
 const settings = (revision: number, mode: EnvironmentSettings['access']['mode'] = 'team', extra: Partial<EnvironmentSettings> = {}): EnvironmentSettings => ({ revision, access: { mode }, env: {}, resources: [], ai: { enabled: false, key_version: 0 }, secrets: [], secret_key: null, external_secrets: false, secret_stores: [], secrets_cluster_revoked: false, access_login_available: true, access_protection_available: true, ...extra })
 const online = (applied: number | null, active: unknown = null): CurrentRelease =>
@@ -38,6 +38,18 @@ describe('access', () => {
     expect(accessLabel(s.access.mode)).toBe('Cualquiera con el enlace')
     expect(accessPending(s, online(1))).toBe(false)
     expect(accessNotice(s, online(1), undefined)).toBeUndefined()
+  })
+
+  it('heads the panel with who can open it now, never the saved mode merely because it is saved', () => {
+    const withAccess = (access: CurrentRelease['access']) => ({ ...online(1), access })
+    // public is saved; the cluster still enforces team: "now" is team (the same as Inicio)
+    expect(accessHeadline(settings(2, 'public'), withAccess({ mode: 'team', pending: 'public' }))).toBe('Ahora: solo tu equipo.')
+    expect(accessHeadline(settings(1, 'organization'), withAccess({ mode: 'organization', pending: null }))).toBe('Ahora: toda la empresa.')
+    // nothing online: what publishing will apply, worded as such
+    expect(accessHeadline(settings(0), { ...online(null), release: null, access: null })).toBe('Al publicarla: solo tu equipo.')
+    // online but it cannot be told: nothing rather than a guess
+    expect(accessHeadline(settings(1, 'public'), withAccess(null))).toBeUndefined()
+    expect(accessHeadline(settings(1), undefined)).toBeUndefined()
   })
 
   describe('notices', () => {
@@ -78,15 +90,15 @@ describe('access', () => {
     })
   })
 
-  it('disables protected options on a cluster that cannot protect, but keeps displaying the value in force', () => {
-    const base = { canWrite: true, canPublic: true, inForce: 'team' as const, protectionAvailable: false }
+  it('disables protected options on a cluster that cannot protect, but keeps displaying the saved value', () => {
+    const base = { canWrite: true, canPublic: true, saved: 'team' as const, protectionAvailable: false }
     expect(optionDisabled('team', base)).toBe(true)
     expect(optionDisabled('organization', base)).toBe(true)
     expect(optionDisabled('public', base)).toBe(false)
     expect(optionDisabled('team', { ...base, protectionAvailable: true })).toBe(false)
     expect(optionDisabled('public', { ...base, protectionAvailable: true, canPublic: false })).toBe(true)
     // a public app stays displayable for someone who cannot choose it
-    expect(optionDisabled('public', { ...base, protectionAvailable: true, canPublic: false, inForce: 'public' })).toBe(false)
+    expect(optionDisabled('public', { ...base, protectionAvailable: true, canPublic: false, saved: 'public' })).toBe(false)
     expect(optionDisabled('public', { ...base, canWrite: false })).toBe(true)
   })
 })

@@ -87,6 +87,10 @@ export type AttentionKind = AttentionItem['kind']
 export type AttentionSource = Attention['unavailable'][number]
 /** Query of GET /inventory (the page is the standard one). */
 export type InventoryFilter = Omit<NonNullable<operations['listInventory']['parameters']['query']>, 'format'>
+/** How each app stands (GET /app-states): what Inicio shows instead of guessing. */
+export type AppStates = Schemas['AppStates']
+export type AppState = Schemas['AppState']
+export type AppStateStatus = AppState['status']
 
 /** The organization's Kubernetes clusters (TI: Infraestructura → Clústeres). */
 export type Cluster = Schemas['Cluster']

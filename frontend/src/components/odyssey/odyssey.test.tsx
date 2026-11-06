@@ -8,6 +8,7 @@ import { AlertTriangle } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   AppCard,
+  AppShell,
   AppStatus,
   AttentionItem,
   AttentionList,
@@ -42,6 +43,30 @@ describe('status vocabulary', () => {
   it('uses plain Spanish labels', () => {
     wrap(<><AppStatus status="live" /><AppStatus status="building" /><AppStatus status="attention" /></>)
     for (const t of ['En línea', 'Publicando…', 'Necesita atención']) expect(screen.getByText(t)).toBeInTheDocument()
+  })
+})
+
+describe('AppCard claims only what it was told', () => {
+  it('no audience row and no status when unknown', () => {
+    wrap(<AppCard app={{ name: 'Visitas', updated: 'hace 2 h' }} />)
+    expect(screen.queryByLabelText('Quién puede abrirla')).not.toBeInTheDocument()
+    expect(screen.queryByText('En pausa')).not.toBeInTheDocument()
+    expect(screen.queryByText('Solo tu equipo')).not.toBeInTheDocument()
+  })
+  it('shows the host and the audience it was given', () => {
+    wrap(<AppCard app={{ name: 'Visitas', status: 'live', updated: 'hace 2 h', host: 'visitas.apps.acme.com', audience: 'Toda la empresa' }} />)
+    expect(screen.getByText('visitas.apps.acme.com')).toBeInTheDocument()
+    expect(screen.getByText('Toda la empresa')).toBeInTheDocument()
+    expect(screen.getByText('En línea')).toBeInTheDocument()
+  })
+})
+
+describe('AppShell', () => {
+  it('hides a bar with a single tab', () => {
+    const { rerender } = wrap(<AppShell team="t" user="u" tabs={[{ to: '/apps/x', label: 'Resumen', end: true }]}>x</AppShell>)
+    expect(screen.queryByRole('link', { name: 'Resumen' })).not.toBeInTheDocument()
+    rerender(<MemoryRouter><TooltipProvider><AppShell team="t" user="u" tabs={[{ to: '/', label: 'Inicio', end: true }, { to: '/asistente', label: 'Asistente' }]}>x</AppShell></TooltipProvider></MemoryRouter>)
+    expect(screen.getByRole('link', { name: 'Asistente' })).toBeInTheDocument()
   })
 })
 

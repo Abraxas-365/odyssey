@@ -1141,6 +1141,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app-states": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How apps stand
+         * @description For the console's app lists: per app (its production environment) what a visitor finds now (`status`), where it answers, who can open it as the cluster enforces it, and where it runs. The same facts as each app's own page, read in batches. Apps the organization does not have are absent; the order is the order asked. A version online whose latest publication failed is `online` (the failure is on the app's page and its people's attention list).
+         */
+        get: operations["listAppStates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/attention": {
         parameters: {
             query?: never;
@@ -2335,6 +2355,8 @@ export interface components {
             environment_id: string;
             /** @description "" before the first deployment. */
             url: string;
+            /** @description Who can open the release online now, as the cluster enforces it (the same answer as `AppState.access`); the settings say what will be. Null when nothing is online or it cannot be told. */
+            access: null | components["schemas"]["ServingAccess"];
             /** @description The settings revision the cluster was last told (set when a deployment's apply step handed it to the cluster, even if that deployment then failed); null if never. Compare with the latest settings revision: lower means the change has not reached the app yet. */
             applied_settings_revision: number | null;
             release: null | components["schemas"]["Release"];
@@ -2342,6 +2364,11 @@ export interface components {
             deployment: null | components["schemas"]["Deployment"];
             /** @description The deployment in progress. */
             active: null | components["schemas"]["Deployment"];
+        };
+        /** @description Who can open an app online: the mode the cluster was last told (what the access gate enforces), never merely the stored one. `pending` is a different mode saved and not applied yet. */
+        ServingAccess: {
+            mode: components["schemas"]["AccessMode"];
+            pending: null | components["schemas"]["AccessMode"];
         };
         /**
          * @description `pending`: waiting for its agent to enrol. `active`: enrolled. `revoked`: disconnected for good.
@@ -2583,6 +2610,36 @@ export interface components {
                 who: "owner" | "it" | "wait";
             }[];
             /** @description The parts that could not be read now (scan, cluster, uses, resources, secrets, ai, egress). */
+            unavailable: string[];
+        };
+        AppStates: {
+            items: components["schemas"]["AppState"][];
+        };
+        /** @description How one app stands in its production environment. */
+        AppState: {
+            /** Format: uuid */
+            app_id: string;
+            /**
+             * @description What a visitor finds: `not_deployed` (nothing was ever online), `waiting_approval` (a publication waits for IT), `deploying`, `online` (a version answers, even if a later publication failed), `failed` (nothing online and the latest publication failed), `archived`.
+             * @enum {string}
+             */
+            status: "not_deployed" | "waiting_approval" | "deploying" | "online" | "failed" | "archived";
+            /** @description Where the version online answers; empty when none does. */
+            url: string;
+            /**
+             * Format: date-time
+             * @description When the version online went live.
+             */
+            since: string | null;
+            /** @description Who can open it now, as the cluster enforces it; `pending` is a different mode saved and not applied yet. Null when nothing is online or it cannot be told (the console then says nothing rather than guess). */
+            access: null | components["schemas"]["ServingAccess"];
+            /** @description Where it runs; null before it is placed or when the clusters could not be read (`unavailable` then says `cluster`). */
+            cluster: null | {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            };
+            /** @description The parts that could not be read now (`cluster`). */
             unavailable: string[];
         };
         Attention: {
@@ -4882,6 +4939,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["InventoryPage"];
                     "text/csv": string;
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listAppStates: {
+        parameters: {
+            query?: {
+                /** @description App ids. Repeatable, at most 100; none answers an empty list. */
+                id?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The states. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppStates"];
                 };
             };
             400: components["responses"]["Validation"];

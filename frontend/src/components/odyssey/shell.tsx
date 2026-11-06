@@ -226,7 +226,8 @@ export function AppShell({ team, project, tabs, search, notifications, user, chi
           </ButtonLink>
           {user}
         </div>
-        {tabs && tabs.length > 0 && <NavTabs tabs={tabs} />}
+        {/* One tab is not navigation: a bar with a single choice only takes room. */}
+        {tabs && tabs.length > 1 && <NavTabs tabs={tabs} />}
       </header>
       <main id="main" className={cn('mx-auto flex w-full flex-col gap-6 px-6 pt-8 pb-12', wide ? 'max-w-[1400px]' : 'max-w-[1160px]')}>
         {children}

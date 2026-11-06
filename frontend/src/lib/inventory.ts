@@ -1,14 +1,37 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api, apiFile, params } from './api'
-import type { Attention, InventoryFilter, InventoryPage } from './types'
+import type { AppStates, Attention, InventoryFilter, InventoryPage } from './types'
 
 /** The Inicio list and the sidebar look again every 30 s (a cluster dropping, an approval arriving). */
 export const ATTENTION_POLL_MS = 30_000
+/** While something is publishing, the app list looks again sooner. */
+export const PUBLISHING_POLL_MS = 5_000
 
 export const inventoryKeys = {
   all: ['inventory'] as const,
   list: (f: InventoryFilter) => ['inventory', 'list', f] as const,
   attention: ['attention'] as const,
+  states: (ids: string[]) => ['app-states', ids] as const,
+}
+
+/** GET /app-states?id=a&id=b…: the API repeats `id` (at most 100). */
+export const appStatesQuery = (ids: string[]) => (ids.length ? `?${ids.map(id => `id=${encodeURIComponent(id)}`).join('&')}` : '')
+
+/**
+ * How the apps of a list stand (status, URL, who can open them). Looks again
+ * every 30 s, and every 5 s while one is publishing or waiting for TI.
+ */
+export function useAppStates(ids: string[], enabled = true) {
+  // the same apps in another order (a re-sorted list) are the same read
+  const sorted = [...ids].sort()
+  return useQuery({
+    queryKey: inventoryKeys.states(sorted),
+    queryFn: ({ signal }) => api<AppStates>(`/app-states${appStatesQuery(sorted)}`, { signal }),
+    enabled: enabled && sorted.length > 0,
+    placeholderData: keepPreviousData,
+    refetchInterval: q =>
+      q.state.data?.items.some(s => s.status === 'deploying' || s.status === 'waiting_approval') ? PUBLISHING_POLL_MS : ATTENTION_POLL_MS,
+  })
 }
 
 /** GET /inventory?tier=a&tier=b…: the API repeats `tier` (OR). */

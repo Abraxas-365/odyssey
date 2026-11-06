@@ -49,12 +49,19 @@ func (s *Service) listProjects(ctx context.Context, org identity.OrganizationID,
 	}
 }
 
+// loadOptions says which degradable sources a read needs besides the core
+// ones (environments and what is online).
+type loadOptions struct {
+	placement bool // the cluster each environment runs on
+	scans     bool // the scans of the images online
+}
+
 // load reads, in one query per kind of data (never one per app), the
-// environments of the apps, what each serves, the scans of the images
-// online and, with placement, the cluster each runs on. The environments and
-// what is online are core (their failure fails the read); the scans and the
-// clusters degrade: the rows carry what could not be read.
-func (s *Service) load(ctx context.Context, org identity.OrganizationID, projects []project.Project, placement bool) ([]app, error) {
+// environments of the apps, what each serves and, as asked, the scans of the
+// images online and the cluster each runs on. The environments and what is
+// online are core (their failure fails the read); the scans and the clusters
+// degrade: the rows carry what could not be read.
+func (s *Service) load(ctx context.Context, org identity.OrganizationID, projects []project.Project, o loadOptions) ([]app, error) {
 	if len(projects) == 0 {
 		return nil, nil
 	}
@@ -84,13 +91,17 @@ func (s *Service) load(ctx context.Context, org identity.OrganizationID, project
 	}); err != nil {
 		return nil, err
 	}
-	scans, scansDown := s.scans(ctx, org, serving)
 	var (
+		scans        map[build.ID]build.Scan
+		scansDown    bool
 		placed       map[project.EnvironmentID]fleet.ClusterID
 		clusters     map[fleet.ClusterID]fleet.Cluster
 		clustersDown bool
 	)
-	if placement {
+	if o.scans {
+		scans, scansDown = s.scans(ctx, org, serving)
+	}
+	if o.placement {
 		placed, clusters, clustersDown = s.placements(ctx, org, envIDs)
 	}
 
@@ -108,7 +119,7 @@ func (s *Service) load(ctx context.Context, org identity.OrganizationID, project
 				}
 			}
 		}
-		if placement {
+		if o.placement {
 			if clustersDown {
 				x.down = append(x.down, "cluster")
 			} else if id, ok := placed[e.ID]; ok {

@@ -333,6 +333,11 @@ func TestAProtectedModeRefusedAtApplyRestoresNothing(t *testing.T) {
 	if c.Release == nil || c.Release.ID != *v1.Release || c.Active != nil || c.AppliedSettingsRevision == nil || *c.AppliedSettingsRevision != 1 {
 		t.Fatalf("current %+v", c)
 	}
+	// The page says who can open it now: still anyone with the link; team is
+	// saved and has not reached the app.
+	if c.Access == nil || c.Access.Mode != release.AccessPublic || c.Access.Pending == nil || *c.Access.Pending != release.AccessTeam {
+		t.Fatalf("access in force %+v", c.Access)
+	}
 }
 
 // TestAConfigDeploymentThatFailsAfterApplyDoesNotReopenTheApp: once the
@@ -398,6 +403,9 @@ func TestAConfigDeploymentThatFailsAfterApplyDoesNotReopenTheApp(t *testing.T) {
 	if a := current().AppliedSettingsRevision; a == nil || *a != 0 {
 		t.Fatalf("applied after the first version: %v", a)
 	}
+	if a := current().Access; a == nil || a.Mode != release.AccessTeam || a.Pending != nil {
+		t.Fatalf("access in force after the first version (the defaults): %+v", a)
+	}
 
 	broken.Store(true)
 	res = checked(t, app, http.MethodPut, base+"/access", token, map[string]any{"mode": "organization"})
@@ -411,6 +419,9 @@ func TestAConfigDeploymentThatFailsAfterApplyDoesNotReopenTheApp(t *testing.T) {
 	c := current()
 	if c.AppliedSettingsRevision == nil || *c.AppliedSettingsRevision != 1 || c.Active != nil || c.Release == nil || c.Release.ID != *v1.Release {
 		t.Fatalf("after the failed config deployment: %+v", c)
+	}
+	if c.Access == nil || c.Access.Mode != release.AccessOrganization || c.Access.Pending != nil {
+		t.Fatalf("the cluster was told organization; that is in force: %+v", c.Access)
 	}
 	res = checked(t, app, http.MethodGet, base+"/deployments", token, nil)
 	history := httpxtest.JSON[query.Paginated[release.Deployment]](t, res)

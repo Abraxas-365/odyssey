@@ -145,7 +145,7 @@ func (s *Service) appItems(ctx context.Context, org identity.OrganizationID, a a
 	if err != nil {
 		return nil, false, err
 	}
-	apps, err := s.load(ctx, org, projects, false)
+	apps, err := s.load(ctx, org, projects, loadOptions{scans: true})
 	if err != nil {
 		return nil, false, err
 	}

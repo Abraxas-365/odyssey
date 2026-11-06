@@ -30,6 +30,31 @@ func (h *Handler) Register(r fiber.Router) {
 	// and requests, TI's adds what they watch over (decided by the actor's
 	// permissions, never by a parameter).
 	r.Get("/attention", httpx.RequirePermissions(permission.ProjectsRead), h.attention)
+	// How apps stand, for the console's app lists: what each app's page says
+	// (its current release and access) to whoever can read both there.
+	r.Get("/app-states", httpx.RequirePermissions(permission.ProjectsRead, permission.DeploymentsRead), h.states)
+}
+
+// states: ?id= (repeatable, at most inventory.MaxStates).
+func (h *Handler) states(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	raw := httpx.QueryValues(c, "id")
+	ids := make([]project.ID, 0, len(raw))
+	for _, v := range raw {
+		id, err := project.ParseID(v)
+		if err != nil {
+			return errx.InvalidField("id", "id must be an app id")
+		}
+		ids = append(ids, id)
+	}
+	got, err := h.queries.States(c.UserContext(), org, ids)
+	if err != nil {
+		return err
+	}
+	return c.JSON(got)
 }
 
 func (h *Handler) attention(c *fiber.Ctx) error {

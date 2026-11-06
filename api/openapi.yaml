@@ -1827,6 +1827,40 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/app-states:
+    get:
+      tags: [inventory]
+      operationId: listAppStates
+      summary: How apps stand
+      description: >-
+        For the console's app lists: per app (its production environment) what a
+        visitor finds now (`status`), where it answers, who can open it as the
+        cluster enforces it, and where it runs. The same facts as each app's own
+        page, read in batches. Apps the organization does not have are absent; the
+        order is the order asked. A version online whose latest publication failed is
+        `online` (the failure is on the app's page and its people's attention list).
+      x-permissions: [odyssey:projects:read, odyssey:deployments:read]
+      parameters:
+        - name: id
+          in: query
+          description: App ids. Repeatable, at most 100; none answers an empty list.
+          schema:
+            type: array
+            maxItems: 100
+            items: { type: string, format: uuid }
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: The states.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppStates" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/attention:
     get:
       tags: [inventory]
@@ -3572,10 +3606,17 @@ components:
     CurrentRelease:
       type: object
       additionalProperties: false
-      required: [environment_id, url, release, deployment, active, applied_settings_revision]
+      required: [environment_id, url, release, deployment, active, applied_settings_revision, access]
       properties:
         environment_id: { type: string, format: uuid }
         url: { type: string, description: '"" before the first deployment.' }
+        access:
+          description: >-
+            Who can open the release online now, as the cluster enforces it (the same answer as
+            `AppState.access`); the settings say what will be. Null when nothing is online or it cannot be told.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ServingAccess"
         applied_settings_revision:
           description: >-
             The settings revision the cluster was last told (set when a deployment's apply step handed it to the
@@ -3596,6 +3637,20 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/Deployment"
+
+    ServingAccess:
+      type: object
+      additionalProperties: false
+      description: >-
+        Who can open an app online: the mode the cluster was last told (what the access gate enforces), never
+        merely the stored one. `pending` is a different mode saved and not applied yet.
+      required: [mode, pending]
+      properties:
+        mode: { $ref: "#/components/schemas/AccessMode" }
+        pending:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AccessMode"
 
     ClusterStatus:
       type: string
@@ -3894,6 +3949,53 @@ components:
           type: array
           items: { type: string }
           description: The parts that could not be read now (scan, cluster, uses, resources, secrets, ai, egress).
+    AppStates:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AppState" }
+    AppState:
+      type: object
+      additionalProperties: false
+      description: How one app stands in its production environment.
+      required: [app_id, status, url, since, access, cluster, unavailable]
+      properties:
+        app_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [not_deployed, waiting_approval, deploying, online, failed, archived]
+          description: >-
+            What a visitor finds: `not_deployed` (nothing was ever online),
+            `waiting_approval` (a publication waits for IT), `deploying`, `online`
+            (a version answers, even if a later publication failed), `failed`
+            (nothing online and the latest publication failed), `archived`.
+        url: { type: string, description: Where the version online answers; empty when none does. }
+        since: { type: [string, "null"], format: date-time, description: When the version online went live. }
+        access:
+          description: >-
+            Who can open it now, as the cluster enforces it; `pending` is a different
+            mode saved and not applied yet. Null when nothing is online or it cannot be
+            told (the console then says nothing rather than guess).
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ServingAccess"
+        cluster:
+          description: Where it runs; null before it is placed or when the clusters could not be read (`unavailable` then says `cluster`).
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [id, name]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+        unavailable:
+          type: array
+          items: { type: string }
+          description: The parts that could not be read now (`cluster`).
     Attention:
       type: object
       additionalProperties: false

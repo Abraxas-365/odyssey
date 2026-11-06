@@ -9,7 +9,7 @@ import { afterWrite } from '@/features/approvals/notice'
 import { permissions } from '@/lib/permissions'
 import { useSetAccess, useSettings } from '@/lib/releases'
 import type { AccessMode, CurrentRelease } from '@/lib/types'
-import { accessLabel, accessNotice, accessOptions, noticeText, optionDisabled } from './access'
+import { accessHeadline, accessNotice, accessOptions, noticeText, optionDisabled } from './access'
 
 /**
  * "Quién puede abrirla": who may open the app. Saving while the app is online
@@ -22,15 +22,15 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
   const save = useSetAccess(project, env)
   const [chosen, setChosen] = useState<AccessMode>()
   const [asked, setAsked] = useState(false)
-  const inForce = settings.data?.access.mode
-  const mode = chosen ?? inForce
+  const saved = settings.data?.access.mode
+  const mode = chosen ?? saved
   const notice = accessNotice(settings.data, current, chosen)
   const protectionAvailable = settings.data?.access_protection_available !== false
   const applying = notice === 'applying'
 
   return (
     <Panel id={anchors.access} tabIndex={-1} className="scroll-mt-20 outline-none">
-      <PanelHeader icon={Lock} title="Quién puede abrirla" description={inForce ? `Ahora: ${accessLabel(inForce).toLowerCase()}.` : undefined} />
+      <PanelHeader icon={Lock} title="Quién puede abrirla" description={accessHeadline(settings.data, current)} />
       <PanelBody>
         <ErrorNotice error={settings.error} onRetry={() => settings.refetch()} />
         {mode && (
@@ -46,7 +46,7 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
               title: o.title,
               description: o.description,
               icon: <o.icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />,
-              disabled: optionDisabled(o.value, { canWrite, canPublic: can(permissions.accessPublic), inForce, protectionAvailable }),
+              disabled: optionDisabled(o.value, { canWrite, canPublic: can(permissions.accessPublic), saved, protectionAvailable }),
             }))}
           />
         )}
@@ -65,7 +65,7 @@ export function AccessPanel({ project, env, current, canWrite, busy }: { project
       {canWrite && (
         <PanelFooter className="justify-end">
           <Button
-            disabled={save.isPending || busy || applying || !mode || mode === inForce}
+            disabled={save.isPending || busy || applying || !mode || mode === saved}
             onClick={() =>
               mode &&
               save.mutate(mode, {

@@ -569,6 +569,108 @@ func TestRetire(t *testing.T) {
 	}
 }
 
+// ListServing says who can open each app online: the mode of the settings
+// revision the cluster was last told (the defaults at revision 0), a newer
+// stored mode as pending, and nothing when nothing is online or the cluster
+// was never told; another organization reads none of it.
+func TestListServingAccess(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
+	repo := releasepg.New(db)
+	tx := txn.Postgres{DB: db}
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	proj := project.NewID()
+	r := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest, Config: release.Config{Port: 8080, HealthPath: "/", Replicas: 1}}
+	if err := repo.CreateRelease(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	// online publishes r to env with the cluster told revision applied (nil: never)
+	online := func(env project.EnvironmentID, applied *int64) {
+		t.Helper()
+		d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env, Release: &r.ID, Image: r.Image,
+			Status: release.StatusPending, Reason: release.ReasonDeploy, Step: release.StepApply, Revision: 1, Run: workflow.NewRunID()}
+		err := tx.Do(ctx, func(ctx context.Context) error {
+			if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"}); err != nil {
+				return err
+			}
+			if err := repo.CreateDeployment(ctx, d); err != nil {
+				return err
+			}
+			if err := repo.Begin(ctx, org, env, d.ID, 1); err != nil {
+				return err
+			}
+			if applied != nil {
+				if err := repo.SetAppliedSettings(ctx, org, env, 1, *applied); err != nil {
+					return err
+				}
+			}
+			if err := repo.Promote(ctx, org, env, d, "https://"+env.String()+".example"); err != nil {
+				return err
+			}
+			return repo.Finish(ctx, org, d.ID, release.StatusReady, nil)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings := func(env project.EnvironmentID, modes ...release.AccessMode) {
+		t.Helper()
+		for _, m := range modes {
+			if err := tx.Do(ctx, func(ctx context.Context) error {
+				_, err := repo.AppendSettings(ctx, release.Settings{Environment: env, Organization: org, Access: release.AccessSettings{Mode: m}})
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	zero, one, two := int64(0), int64(1), int64(2)
+	defaults, inForce, pending, same, never, offline := project.NewEnvironmentID(), project.NewEnvironmentID(), project.NewEnvironmentID(),
+		project.NewEnvironmentID(), project.NewEnvironmentID(), project.NewEnvironmentID()
+	online(defaults, &zero) // never configured: the defaults are in force
+	settings(inForce, release.AccessOrganization, release.AccessPublic)
+	online(inForce, &two)
+	settings(pending, release.AccessOrganization, release.AccessPublic)
+	online(pending, &one) // public stored, organization still enforced
+	settings(same, release.AccessTeam, release.AccessTeam)
+	online(same, &one) // a newer revision with the same mode is not a pending access change
+	online(never, nil)
+	if err := tx.Do(ctx, func(ctx context.Context) error {
+		_, err := repo.LockState(ctx, release.EnvironmentState{Environment: offline, Organization: org, Project: proj, App: "app"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	settings(offline, release.AccessPublic)
+
+	list, err := repo.ListServing(ctx, org, []project.EnvironmentID{defaults, inForce, pending, same, never, offline})
+	if err != nil || len(list) != 6 {
+		t.Fatalf("serving %d %v", len(list), err)
+	}
+	by := map[project.EnvironmentID]release.Serving{}
+	for _, s := range list {
+		by[s.Environment] = s
+	}
+	want := func(env project.EnvironmentID, mode release.AccessMode, next *release.AccessMode) {
+		t.Helper()
+		a := by[env].Access
+		if a == nil || a.Mode != mode || (a.Pending == nil) != (next == nil) || next != nil && *a.Pending != *next {
+			t.Fatalf("access of %s: %+v, want %s pending %v", env, a, mode, next)
+		}
+	}
+	public := release.AccessPublic
+	want(defaults, release.AccessTeam, nil)
+	want(inForce, release.AccessPublic, nil)
+	want(pending, release.AccessOrganization, &public)
+	want(same, release.AccessTeam, nil)
+	if by[never].Access != nil || by[offline].Access != nil {
+		t.Fatalf("access without a told revision or nothing online: %+v %+v", by[never].Access, by[offline].Access)
+	}
+	if list, err := repo.ListServing(ctx, other, []project.EnvironmentID{defaults, inForce, pending}); err != nil || len(list) != 0 {
+		t.Fatalf("another organization reads %+v %v", list, err)
+	}
+}
+
 // Migration 008 on a database that already holds apps: those published before
 // settings existed were served open, so each gets a `public` revision 1 (by
 // nobody) and it counts as applied; everything else is left alone.

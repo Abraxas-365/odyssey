@@ -468,7 +468,35 @@ func (s *Service) Current(ctx context.Context, organization identity.Organizatio
 		d = d.WithProgress()
 		*x.into = &d
 	}
+	if out.Access, err = s.accessInForce(ctx, organization, env, state.AppliedSettings, out.Release != nil); err != nil {
+		return release.Current{}, err
+	}
 	return out, nil
+}
+
+// accessInForce is Current's Access: the applied revision's mode against the
+// latest stored one (what ListServing reads in one query for many
+// environments). A revision that is gone tells nothing, as there.
+func (s *Service) accessInForce(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, applied *int64, online bool) (*release.ServingAccess, error) {
+	if !online || applied == nil {
+		return nil, nil
+	}
+	var appliedMode *release.AccessMode
+	if *applied > 0 {
+		at, err := s.repo.FindSettingsRevision(ctx, organization, env, *applied)
+		if errx.IsType(err, errx.TypeNotFound) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		appliedMode = &at.Access.Mode
+	}
+	latest, err := s.repo.FindSettings(ctx, organization, env)
+	if err != nil {
+		return nil, err
+	}
+	return release.AccessInForce(true, applied, appliedMode, &latest.Revision, &latest.Access.Mode), nil
 }
 
 // ---- settings ----

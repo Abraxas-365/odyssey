@@ -174,7 +174,17 @@ Read-only views composed from the other domains' own reads.
 |---|---|---|---|
 | `GET` | `/api/v1/inventory` | `inventory:read` (TI) | 200 `{items, page, truncated, unavailable}`, one row per app and environment; `?format=csv` downloads every match |
 | `GET` | `/api/v1/attention` | `projects:read` | 200 `{items, unavailable, truncated}` |
+| `GET` | `/api/v1/app-states?id=…` | `projects:read` + `deployments:read` | 200 `{items[{app_id, status, url, since, access:{mode, pending}\|null, cluster:{id, name}\|null, unavailable[]}]}` |
 
+- **App states** (the console's app lists): `id` repeatable, at most 100 (more
+  is 400; a malformed id is 400); none answers `{items: []}`. One item per app
+  the organization has, in the order asked (unknown ids are absent), for its
+  production environment. `status`: `not_deployed` · `waiting_approval` ·
+  `deploying` · `online` (a version answers, even after a failed attempt) ·
+  `failed` (nothing online, the latest attempt failed) · `archived`. `access` is
+  the mode the cluster enforces (the settings revision it was last told), with
+  `pending` a different mode saved and not applied; `null` when nothing is
+  online or it cannot be told. Batched: one query per kind of data.
 - **Inventory filters**: `tier` (repeatable, OR), `cluster`, `needs_attention`
   (`true`/`false`), `search` (name or slug), `limit`/`offset`, `format`
   (`json` | `csv`; anything else is 400 `VALIDATION`). A bad `tier` or `cluster`
@@ -276,7 +286,7 @@ is the `authorize` step that starts the deployment's workflow.
 
 | Method | Path | Permission | Success |
 |---|---|---|---|
-| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active, applied_settings_revision}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active, applied_settings_revision, access:{mode, pending}\|null}` |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments` | read | 200 `{items, page}`, newest first (filter `status`) |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
@@ -456,6 +466,11 @@ agent says otherwise).
   deployment that fails *after* that does not reopen the app on its own (the
   cluster keeps the mode it was told), and the console shows the change as not
   applied while the latest revision is higher.
+  `current.access` (and `app-states` `access`) is who can open the release
+  online *now*: the mode of the applied revision (revision 0 = the defaults),
+  with `pending` the different mode saved and not applied yet; null when
+  nothing is online or it cannot be told. The app page's "Ahora:" and Inicio's
+  card both say it; the settings say what will be, never what is.
 - **Variables and secrets** (cut 2a; data plane in `docs/secrets.md`). A
   settings revision is the environment's whole configuration: access, plain
   variables (`env`) and secret references (`secrets`), copied forward; every

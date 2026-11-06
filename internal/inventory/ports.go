@@ -37,6 +37,11 @@ type Queries interface {
 	// created. An app that cannot be judged, or that the actor is not told
 	// about, is absent.
 	NeedingAttention(ctx context.Context, organization identity.OrganizationID, apps []project.ID) (map[project.ID]bool, error)
+	// States are how the apps stand in their production environment (at
+	// most MaxStates; unknown ids are absent), read in batches: status, URL,
+	// who can open them and where they run. Anyone who reads the apps may
+	// ask (it says what the app page says).
+	States(ctx context.Context, organization identity.OrganizationID, apps []project.ID) (States, error)
 }
 
 // The ports below are the read sides of the domains inventory composes. Each

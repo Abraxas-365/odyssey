@@ -59,6 +59,27 @@ Degradation: a failed read of scans or clusters sets that row's `unavailable`;
 the inventory still answers. A row never shows "clean" for a scan it could not
 read.
 
+## App states — `GET /api/v1/app-states?id=…`
+
+`odyssey:projects:read` + `odyssey:deployments:read`: what each app's own page
+already tells anyone who can read it, for the console's app lists, so Inicio
+never claims a status, a URL or an audience it did not read. Up to 100 apps per
+request, their production environment, batched like the inventory (one read per
+kind of data: environments, what is serving with its access, placements,
+clusters; no `Uses`, no scans).
+
+- `status` is what a visitor finds: `waiting_approval` and `deploying` first
+  (like the app page), then `online` whenever a version answers (a failed
+  attempt over it is still `online`; the failure is the app page's and the
+  attention list's), `failed` only when nothing is online, `archived`.
+- `access` is the mode **the cluster enforces**: the mode of the settings
+  revision it was last told (revision 0 is the defaults, `team`), never the
+  stored mode as if it were applied. A different mode saved but not applied is
+  `pending`. `null` when nothing is online, the cluster was never told, or the
+  applied revision cannot be read: the console then shows no audience at all.
+- `cluster` degrades like the inventory's: unreadable clusters give `null` and
+  `unavailable: ["cluster"]`.
+
 ## Attention — `GET /api/v1/attention`
 
 Any caller with `odyssey:projects:read`. The list depends on who asks:

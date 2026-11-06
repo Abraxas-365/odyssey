@@ -42,11 +42,16 @@ export function AppThumbnail({ kind = 'chart', off, mini, className }: { kind?: 
 export interface AppCardData {
   name: string
   description?: string
-  status: AppStatusKind
+  /** Absent while it is not known: the card then claims no state (a placeholder while `loading`). */
+  status?: AppStatusKind
+  loading?: boolean
   /** Overrides the status word, e.g. "Sin publicar" before the first version. */
   statusLabel?: string
   updated: string
-  audience: string
+  /** Where it answers, e.g. "visitas.apps.empresa.com"; only when a version is online. */
+  host?: string
+  /** Who can open it, only when the API said so: never a default. */
+  audience?: string
   people?: number
   thumbnail?: 'chart' | 'form'
   git?: { sha: string; message: string; branch?: string }
@@ -54,10 +59,11 @@ export interface AppCardData {
 
 /** Home/apps grid card. The whole card is the link (pass `href` + `linkAs`). */
 export function AppCard({ app, technical, resources, href, linkAs: Link = 'a' }: { app: AppCardData; technical?: boolean; resources?: ReactNode; href?: string; linkAs?: React.ElementType }) {
+  const footer = app.audience !== undefined || resources !== undefined
   return (
     <article className="group relative overflow-hidden rounded-xl border bg-card transition-colors hover:border-foreground/30 has-[a:focus-visible]:border-foreground/30">
       <div className="px-3.5 pt-3.5">
-        <AppThumbnail kind={app.thumbnail} off={app.status === 'paused' || app.status === 'archived'} />
+        <AppThumbnail kind={app.thumbnail} off={!app.status || app.status === 'paused' || app.status === 'archived'} />
       </div>
       <div className="flex flex-col gap-2 px-4 pt-3.5 pb-4">
         <div>
@@ -71,21 +77,33 @@ export function AppCard({ app, technical, resources, href, linkAs: Link = 'a' }:
             )}
           </h3>
           {app.description && <p className="truncate text-xs text-muted-foreground">{app.description}</p>}
+          {app.host && <p className="truncate font-mono text-xs text-muted-foreground">{app.host}</p>}
         </div>
         <div className="flex items-center gap-2">
-          <AppStatus status={app.status} label={app.statusLabel} />
+          {app.status ? (
+            <AppStatus status={app.status} label={app.statusLabel} />
+          ) : app.loading ? (
+            <span aria-hidden className="h-4 w-20 animate-pulse rounded bg-muted" />
+          ) : null}
           <span className="flex-1" />
           <span className="text-xs text-muted-foreground">{app.updated}</span>
         </div>
         {technical && app.git && <GitLine branch="main" {...app.git} />}
-        <div className="mt-0.5 flex items-center gap-2 border-t pt-2.5 text-xs text-muted-foreground">
-          <Users className="size-[13px]" aria-hidden />
-          <span className="flex-1 truncate">
-            {app.audience}
-            {app.people !== undefined && ` · ${app.people} ${app.people === 1 ? 'persona' : 'personas'}`}
-          </span>
-          {resources}
-        </div>
+        {footer && (
+          <div className="mt-0.5 flex items-center gap-2 border-t pt-2.5 text-xs text-muted-foreground">
+            {app.audience !== undefined && (
+              <>
+                <Users className="size-[13px]" aria-label="Quién puede abrirla" />
+                <span className="flex-1 truncate">
+                  {app.audience}
+                  {app.people !== undefined && ` · ${app.people} ${app.people === 1 ? 'persona' : 'personas'}`}
+                </span>
+              </>
+            )}
+            {app.audience === undefined && <span className="flex-1" />}
+            {resources}
+          </div>
+        )}
       </div>
     </article>
   )

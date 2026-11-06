@@ -279,11 +279,17 @@ type servingRow struct {
 	ErrorDetail *string               `db:"error_detail"`
 	LastCreated *time.Time            `db:"last_created_at"`
 	LastEnded   *time.Time            `db:"last_finished_at"`
+	Applied     *int64                `db:"applied_settings_revision"`
+	AppliedMode *release.AccessMode   `db:"applied_mode"`
+	Latest      *int64                `db:"latest_revision"`
+	LatestMode  *release.AccessMode   `db:"latest_mode"`
 }
 
 // ListServing reads, in one statement, what each environment serves (its
-// current deployment's build and the time it went live) and how its latest
-// deployment stands. Environments with no state row are absent.
+// current deployment's build and the time it went live), how its latest
+// deployment stands and who can open it (the access mode of the settings
+// revision the cluster was last told, and the newest stored one). Environments
+// with no state row are absent.
 func (r *Repository) ListServing(ctx context.Context, organization identity.OrganizationID, envs []project.EnvironmentID) ([]release.Serving, error) {
 	rows := []servingRow{}
 	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `
@@ -293,7 +299,9 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 		         ORDER BY b.created_at LIMIT 1) AS build_id,
 		       cd.finished_at AS since,
 		       l.id AS last_id, l.status AS last_status, l.reason AS last_reason, l.error_code, l.error_message, l.error_detail,
-		       l.created_at AS last_created_at, l.finished_at AS last_finished_at
+		       l.created_at AS last_created_at, l.finished_at AS last_finished_at,
+		       s.applied_settings_revision, ap.access_mode AS applied_mode,
+		       lt.revision AS latest_revision, lt.access_mode AS latest_mode
 		  FROM release.environment_states s
 		  LEFT JOIN release.releases rel ON rel.id = s.current_release_id
 		  LEFT JOIN release.deployments cd ON cd.id = s.current_deployment_id
@@ -301,6 +309,11 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 		                       FROM release.deployments d
 		                      WHERE d.organization_id = s.organization_id AND d.environment_id = s.environment_id
 		                      ORDER BY d.created_at DESC, d.revision DESC LIMIT 1) l ON true
+		  LEFT JOIN release.environment_settings ap
+		         ON ap.environment_id = s.environment_id AND ap.organization_id = s.organization_id AND ap.revision = s.applied_settings_revision
+		  LEFT JOIN LATERAL (SELECT es.revision, es.access_mode FROM release.environment_settings es
+		                      WHERE es.environment_id = s.environment_id AND es.organization_id = s.organization_id
+		                      ORDER BY es.revision DESC LIMIT 1) lt ON true
 		 WHERE s.organization_id = $1 AND s.environment_id = ANY($2::uuid[])
 		 ORDER BY s.environment_id`, organization, pq.Array(envStrings(envs)))
 	if err != nil {
@@ -308,7 +321,8 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 	}
 	out := make([]release.Serving, len(rows))
 	for i, row := range rows {
-		s := release.Serving{Environment: row.Environment, Project: row.Project, URL: row.URL, Image: row.Image, Build: row.Build, Since: row.Since}
+		s := release.Serving{Environment: row.Environment, Project: row.Project, URL: row.URL, Image: row.Image, Build: row.Build, Since: row.Since,
+			Access: release.AccessInForce(row.Image != "", row.Applied, row.AppliedMode, row.Latest, row.LatestMode)}
 		if row.LastID != nil && row.LastStatus != nil && row.LastReason != nil && row.LastCreated != nil {
 			s.Last = &release.LastDeployment{ID: *row.LastID, Status: *row.LastStatus, Reason: *row.LastReason, CreatedAt: *row.LastCreated, FinishedAt: row.LastEnded}
 			if row.ErrorCode != nil {

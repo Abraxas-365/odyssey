@@ -10,7 +10,9 @@ import { formatRelative } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
 import { useProjects } from '@/lib/projects'
+import { useAppStates } from '@/lib/inventory'
 import type { ProjectStatus } from '@/lib/types'
+import { cardAudience, cardHost, cardStatus } from '@/features/apps/app-state'
 import { CreateAppDialog } from '@/features/apps/create-app-dialog'
 import { AttentionSection } from '@/features/inventory/attention-section'
 
@@ -29,6 +31,11 @@ export function HomePage() {
   const first = user.name?.split(' ')[0]
   const canWrite = can(permissions.projectsWrite)
   const items = projects.data?.items ?? []
+  // How each app stands: what its page would say (never a guessed default).
+  // Archived apps need no read: they are archived.
+  const ids = items.filter(p => p.status !== 'archived').map(p => p.id)
+  const states = useAppStates(ids, can(permissions.deploymentsRead))
+  const byId = new Map((states.data?.items ?? []).map(s => [s.app_id, s]))
 
   return (
     <>
@@ -64,6 +71,12 @@ export function HomePage() {
       />
 
       <ErrorNotice error={projects.error} onRetry={() => projects.refetch()} />
+      {states.isError && !projects.error && (
+        <p role="status" className="text-sm text-muted-foreground">
+          No pudimos leer el estado de las apps ahora.{' '}
+          <button type="button" className="underline underline-offset-2" onClick={() => states.refetch()}>Reintentar</button>
+        </p>
+      )}
 
       {projects.isPending ? (
         <div className="grid gap-4 md:grid-cols-3" aria-busy>
@@ -77,23 +90,32 @@ export function HomePage() {
         <EmptyState icon={AppWindow} title="No hay apps que coincidan">Prueba con otro nombre o cambia el filtro.</EmptyState>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {items.map(p => (
-            <AppCard
-              key={p.id}
-              href={`/apps/${p.id}`}
-              linkAs={Link}
-              technical={technical}
-              app={{
-                name: p.name,
-                description: p.description || (technical ? p.slug : undefined),
-                // TODO(api): real status once deployments exist.
-                status: p.status === 'archived' ? 'archived' : 'paused',
-                statusLabel: p.status === 'archived' ? undefined : 'Sin publicar',
-                updated: formatRelative(p.updated_at),
-                audience: 'Solo tu equipo',
-              }}
-            />
-          ))}
+          {items.map(p => {
+            const archived = p.status === 'archived'
+            const state = byId.get(p.id)
+            // The last states read stay after a failed refresh (the notice says so); an app whose
+            // state is not in yet (first load, or a new search still showing the previous one) waits.
+            const st = cardStatus(state, archived)
+            const waiting = !archived && !state && (states.isLoading || states.isPlaceholderData)
+            return (
+              <AppCard
+                key={p.id}
+                href={`/apps/${p.id}`}
+                linkAs={Link}
+                technical={technical}
+                app={{
+                  name: p.name,
+                  description: p.description || (technical ? p.slug : undefined),
+                  status: st?.status,
+                  statusLabel: st?.label,
+                  loading: waiting,
+                  updated: formatRelative(p.updated_at),
+                  host: archived ? undefined : cardHost(state),
+                  audience: archived ? undefined : cardAudience(state),
+                }}
+              />
+            )
+          })}
           {canWrite && status === 'active' && <CreateAppTile onClick={() => setCreating(true)} />}
         </div>
       )}

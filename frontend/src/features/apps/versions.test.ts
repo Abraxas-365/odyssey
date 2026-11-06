@@ -44,6 +44,7 @@ const current = (d: Deployment, active?: Deployment): CurrentRelease => ({
   deployment: d,
   active: active ?? null,
   applied_settings_revision: null,
+  access: null,
 })
 
 describe('versions', () => {

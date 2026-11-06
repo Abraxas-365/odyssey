@@ -332,7 +332,9 @@ deployment then goes live. Three consequences, on purpose:
   only while the latest revision is higher than `applied_settings_revision`,
   i.e. while no apply has told the cluster yet (a config deployment refused at
   apply: asking again retries it). Asking for the mode the cluster already has
-  changes nothing.
+  changes nothing. The console never says the saved mode is the one in force:
+  `current.access` / `app-states` `access` give the applied revision's mode
+  (plus `pending`), which is what the app page ("Ahora: …") and Inicio show.
 - A deployment refused **at** apply (for instance `ACCESS_UNAVAILABLE`: the
   cluster has no `odicea.access`) never reached the cluster, so it records
   nothing and gets no auto-rollback either (there is nothing to restore).

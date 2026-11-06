@@ -156,8 +156,27 @@ func TestAttentionForIT(t *testing.T) {
 		t.Fatalf("the builder's list %+v", b.Items)
 	}
 
+	// the app lists read the states: online with the access the cluster
+	// enforces, the refused app with nothing online; unknown ids are absent
+	res := checked(t, app, http.MethodGet, "/api/v1/app-states?id="+prod.id+"&id="+project.NewID().String()+"&id="+internal.id, builder, nil)
+	httpxtest.Want(t, res, http.StatusOK)
+	states := httpxtest.JSON[inventory.States](t, res).Items
+	if len(states) != 2 || states[0].App.String() != prod.id || states[1].App.String() != internal.id {
+		t.Fatalf("states %+v", states)
+	}
+	if s := states[1]; s.Status != inventory.AppOnline || s.URL == "" || s.Since == nil || s.Access == nil || s.Access.Mode != release.AccessTeam || s.Access.Pending != nil {
+		t.Fatalf("the online app %+v", s)
+	}
+	if s := states[0]; s.Status != inventory.AppFailed || s.URL != "" || s.Access != nil {
+		t.Fatalf("the refused app %+v", s)
+	}
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/app-states", builder, nil), http.StatusOK)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/app-states?id=nope", builder, nil), http.StatusBadRequest)
+	reader := httpxtest.TokenAs("7b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c09", org, permission.ProjectsRead)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/app-states?id="+internal.id, reader, nil), http.StatusForbidden)
+
 	// a held request: TI decides it; the requester waits, then is told
-	res := checked(t, app, http.MethodPut, internal.base+"/access", builder, map[string]any{"mode": "public"})
+	res = checked(t, app, http.MethodPut, internal.base+"/access", builder, map[string]any{"mode": "public"})
 	httpxtest.Want(t, res, http.StatusAccepted)
 	req := httpxtest.JSON[pendingBody](t, res).RequestID
 	if a := attention(itToken); !has(a, inventory.KindApprovalPending, inventory.ScopeIT, internal.id) {

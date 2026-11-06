@@ -26,6 +26,43 @@ type Serving struct {
 	// Last is the environment's latest deployment, whatever its status (nil
 	// before the first).
 	Last *LastDeployment `json:"last"`
+	// Access is who can open the app online now (nil when nothing is online
+	// or the mode in force cannot be told).
+	Access *ServingAccess `json:"access"`
+}
+
+// ServingAccess is who can open the app online: the mode the cluster was
+// last told (what the access gate enforces), never merely the stored one.
+type ServingAccess struct {
+	Mode AccessMode `json:"mode"`
+	// Pending is a different mode that is stored and not applied yet (nil
+	// when none): until it is, Mode is still who can open the app.
+	Pending *AccessMode `json:"pending"`
+}
+
+// AccessInForce is who can open an app online. applied is the settings
+// revision the cluster was last told (nil: never) and appliedMode that
+// revision's mode (nil for revision 0, the defaults, or when the revision is
+// gone); latest and latestMode are the newest stored revision (nil: none,
+// the defaults). Nothing online, or a mode that cannot be told, is nil: the
+// console then says nothing rather than guess.
+func AccessInForce(online bool, applied *int64, appliedMode *AccessMode, latest *int64, latestMode *AccessMode) *ServingAccess {
+	if !online || applied == nil {
+		return nil
+	}
+	mode := DefaultAccess
+	if *applied > 0 {
+		if appliedMode == nil {
+			return nil
+		}
+		mode = *appliedMode
+	}
+	out := &ServingAccess{Mode: mode}
+	if latest != nil && *latest > *applied && latestMode != nil && *latestMode != mode {
+		next := *latestMode
+		out.Pending = &next
+	}
+	return out
 }
 
 // LastDeployment is how an environment's latest deployment stands.

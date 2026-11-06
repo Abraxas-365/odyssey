@@ -321,6 +321,10 @@ type Current struct {
 	// a config deployment that fails after apply leaves the cluster told, and
 	// that is not reopened by itself (fail-closed beats convenience).
 	AppliedSettingsRevision *int64 `json:"applied_settings_revision"`
+	// Access is who can open the release online now, told the same way as
+	// Serving.Access (AccessInForce): the stored settings are what will be,
+	// this is what is.
+	Access *ServingAccess `json:"access"`
 }
 
 // DeploymentFilter narrows ListDeployments; zero fields match everything.

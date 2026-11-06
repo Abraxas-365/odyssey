@@ -11,6 +11,18 @@ export const accessOptions: { value: AccessMode; title: string; description: str
 export const accessLabel = (m: AccessMode) => accessOptions.find(o => o.value === m)?.title ?? m
 
 /**
+ * The panel's headline: who can open the app now, as the cluster enforces it
+ * (`current.access`, the same answer Inicio gives), never the saved mode
+ * merely because it is saved. With nothing online it says what publishing
+ * will apply; when it cannot be told it says nothing.
+ */
+export function accessHeadline(settings: EnvironmentSettings | undefined, current: CurrentRelease | undefined): string | undefined {
+  if (current?.access) return `Ahora: ${accessLabel(current.access.mode).toLowerCase()}.`
+  if (settings && current && !current.release) return `Al publicarla: ${accessLabel(settings.access.mode).toLowerCase()}.`
+  return undefined
+}
+
+/**
  * True while the cluster has not been told the settings in force: the latest
  * revision is newer than the one the last apply handed it
  * (`applied_settings_revision`, which a deployment that fails afterwards keeps:
@@ -60,12 +72,12 @@ export const noticeText = {
 /**
  * Whether an option can be picked. A protected mode needs a cluster that can
  * ask for the sign-in; `public` needs its own permission (unless it already is
- * the mode in force, which is only displayed).
+ * the saved mode, which is only displayed).
  */
-export function optionDisabled(mode: AccessMode, o: { canWrite: boolean; canPublic: boolean; inForce: AccessMode | undefined; protectionAvailable: boolean }): boolean {
+export function optionDisabled(mode: AccessMode, o: { canWrite: boolean; canPublic: boolean; saved: AccessMode | undefined; protectionAvailable: boolean }): boolean {
   if (!o.canWrite) return true
   if (mode !== 'public' && !o.protectionAvailable) return true
-  return !canChoose(mode, o.canPublic) && o.inForce !== 'public'
+  return !canChoose(mode, o.canPublic) && o.saved !== 'public'
 }
 
 /** Whether the person can choose the mode: `public` needs a permission of its own. */

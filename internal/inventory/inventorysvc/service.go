@@ -6,11 +6,13 @@ package inventorysvc
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/inventory"
 	"github.com/Abraxas-365/odyssey/internal/permission"
@@ -61,7 +63,7 @@ func (s *Service) candidates(ctx context.Context, org identity.OrganizationID, f
 	if err != nil {
 		return nil, false, nil, err
 	}
-	apps, err := s.load(ctx, org, projects, true)
+	apps, err := s.load(ctx, org, projects, loadOptions{placement: true, scans: true})
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -182,7 +184,7 @@ func (s *Service) NeedingAttention(ctx context.Context, org identity.Organizatio
 	if a := actor.From(ctx); !a.Can(permission.InventoryRead) {
 		projects = slices.DeleteFunc(projects, func(p project.Project) bool { return a.User.IsZero() || p.CreatedBy != a.User })
 	}
-	apps, err := s.load(ctx, org, projects, false)
+	apps, err := s.load(ctx, org, projects, loadOptions{scans: true})
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +197,83 @@ func (s *Service) NeedingAttention(ctx context.Context, org identity.Organizatio
 		}
 	}
 	return out, nil
+}
+
+// States reads the apps' production environments in batches (load: one query
+// per kind of data) and says how each stands.
+func (s *Service) States(ctx context.Context, org identity.OrganizationID, ids []project.ID) (inventory.States, error) {
+	out := inventory.States{Items: []inventory.AppState{}}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if len(ids) > inventory.MaxStates {
+		return out, errx.InvalidField("id", "at most "+strconv.Itoa(inventory.MaxStates)+" apps in one read")
+	}
+	projects, err := s.projects.FindMany(ctx, org, ids)
+	if err != nil {
+		return out, err
+	}
+	// what a visitor finds needs no scans: only the cluster it runs on
+	apps, err := s.load(ctx, org, projects, loadOptions{placement: true})
+	if err != nil {
+		return out, err
+	}
+	byID := make(map[project.ID]app, len(apps))
+	for _, a := range apps {
+		byID[a.project.ID] = a
+	}
+	seen := map[project.ID]bool{}
+	for _, id := range ids {
+		a, ok := byID[id]
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out.Items = append(out.Items, stateOf(a))
+	}
+	return out, nil
+}
+
+// stateOf is an app's state in its production environment (the only one the
+// console publishes to today).
+func stateOf(a app) inventory.AppState {
+	st := inventory.AppState{App: a.project.ID, Status: inventory.AppNotDeployed, Unavailable: []string{}}
+	i := slices.IndexFunc(a.envs, func(e env) bool { return e.environment.Kind == project.KindProduction })
+	if a.project.Archived() {
+		st.Status = inventory.AppArchived
+		return st
+	}
+	if i < 0 {
+		return st
+	}
+	e := a.envs[i]
+	st.Cluster = e.cluster
+	if slices.Contains(e.down, "cluster") {
+		st.Unavailable = append(st.Unavailable, "cluster")
+	}
+	st.Status = appStatusOf(e.serving)
+	if sv := e.serving; sv != nil && sv.Image != "" {
+		st.URL, st.Since, st.Access = sv.URL, sv.Since, sv.Access
+	}
+	return st
+}
+
+// appStatusOf says what a visitor finds, the way the app's own page does: a
+// publication under way (or waiting for TI) first, then what is online.
+func appStatusOf(sv *release.Serving) inventory.AppStatus {
+	switch {
+	case sv == nil:
+		return inventory.AppNotDeployed
+	case sv.Last != nil && sv.Last.Status == release.StatusWaitingApproval:
+		return inventory.AppWaitingApproval
+	case sv.Last != nil && !sv.Last.Status.Finished():
+		return inventory.AppDeploying
+	case sv.Image != "":
+		return inventory.AppOnline
+	case sv.Last != nil && sv.Last.Status == release.StatusFailed:
+		return inventory.AppFailed
+	}
+	return inventory.AppNotDeployed
 }
 
 // ---- derived facts ----
