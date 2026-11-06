@@ -187,13 +187,69 @@ func (r *Repository) CreateDeployment(ctx context.Context, d release.Deployment)
 			return errx.Wrap(err, "marshal deployment config", errx.TypeInternal)
 		}
 	}
+	if len(d.Builds) > 0 && (d.Build == nil || *d.Build != d.Builds[0].Build) {
+		return errx.Internal("a deployment's build is its first service's")
+	}
+	// The deployment and its builds commit together (joining the caller's
+	// transaction, if any).
+	return txn.Postgres{DB: r.db}.Do(ctx, func(ctx context.Context) error {
+		return r.createDeployment(ctx, d, source, name, size, git, cfg)
+	})
+}
+
+func (r *Repository) createDeployment(ctx context.Context, d release.Deployment, source *build.SourceID, name string, size int64, git, cfg []byte) error {
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.deployments
 		(id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name, source_size, source_git, config,
 		 status, reason, step, revision, previous_release_id, rollback_of, run_id, requested_by, requested_via, message)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		d.ID, d.Organization, d.Project, d.Environment, d.Release, d.Image, d.Build, source, name, size, git, cfg,
 		d.Status, d.Reason, d.Step, d.Revision, d.Previous, d.RollbackOf, d.Run, d.RequestedBy, d.RequestedVia, d.Message)
-	return pgerr.MapWith(err, "create deployment", messages)
+	if err != nil || len(d.Builds) == 0 {
+		return pgerr.MapWith(err, "create deployment", messages)
+	}
+	n := len(d.Builds)
+	names, kinds, roots, routes, builds := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+	strips := make([]bool, n)
+	for i, b := range d.Builds {
+		names[i], kinds[i], roots[i], routes[i], builds[i], strips[i] = b.Name, string(b.Kind), b.Root, b.Route, b.Build.String(), b.StripPrefix
+	}
+	_, err = txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.deployment_builds
+		(deployment_id, position, name, kind, root, route, strip_prefix, build_id)
+		SELECT $1, s.ord - 1, s.name, s.kind, s.root, s.route, s.strip, s.build
+		  FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::uuid[])
+		       WITH ORDINALITY AS s(name, kind, root, route, strip, build, ord)`,
+		d.ID, pq.Array(names), pq.Array(kinds), pq.Array(roots), pq.Array(routes), pq.Array(strips), pq.Array(builds))
+	return pgerr.MapWith(err, "create deployment builds", pgerr.Messages{Unique: "two services of the deployment have the same name or build"})
+}
+
+// withBuilds fills the services and builds of the deployments (one query).
+func (r *Repository) withBuilds(ctx context.Context, deployments []release.Deployment) error {
+	ids := make([]string, 0, len(deployments))
+	for _, d := range deployments {
+		if d.Build != nil {
+			ids = append(ids, d.ID.String())
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var rows []struct {
+		Deployment release.DeploymentID `db:"deployment_id"`
+		release.ServiceBuild
+	}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT deployment_id, name, kind, root, route, strip_prefix, build_id
+		FROM release.deployment_builds WHERE deployment_id = ANY($1::uuid[]) ORDER BY deployment_id, position`, pq.Array(ids))
+	if err != nil {
+		return pgerr.MapWith(err, "list deployment builds", messages)
+	}
+	by := map[release.DeploymentID][]release.ServiceBuild{}
+	for _, row := range rows {
+		by[row.Deployment] = append(by[row.Deployment], row.ServiceBuild)
+	}
+	for i := range deployments {
+		deployments[i].Builds = by[deployments[i].ID]
+	}
+	return nil
 }
 
 func (r *Repository) FindDeployment(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID) (release.Deployment, error) {
@@ -214,7 +270,15 @@ func (r *Repository) findDeployment(ctx context.Context, lock string, organizati
 	if err != nil {
 		return release.Deployment{}, pgerr.MapWith(err, "find deployment", messages)
 	}
-	return row.deployment()
+	d, err := row.deployment()
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	out := []release.Deployment{d}
+	if err := r.withBuilds(ctx, out); err != nil {
+		return release.Deployment{}, err
+	}
+	return out[0], nil
 }
 
 // ListDeployments orders newest first.
@@ -245,6 +309,9 @@ func (r *Repository) ListDeployments(ctx context.Context, organization identity.
 		if items[i], err = row.deployment(); err != nil {
 			return query.Paginated[release.Deployment]{}, err
 		}
+	}
+	if err := r.withBuilds(ctx, items); err != nil {
+		return query.Paginated[release.Deployment]{}, err
 	}
 	return query.NewPaginated(items, total, page), nil
 }

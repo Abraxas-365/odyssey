@@ -264,10 +264,15 @@ Rules:
   - Anything but one `web` at `/` with all of the code needs every
     environment's cluster (or the default one, before a first deploy) to run
     several services (agent capability `odicea.services`): otherwise 422
-    `SERVICES_UNAVAILABLE`. Until each service is built on its own, a new
-    version of one image is refused with the same code while the app has
-    such a list (a publish with 422; a build from source fails its
-    deployment).
+    `SERVICES_UNAVAILABLE`.
+  - A deployment from source builds each service from its own folder, all
+    at once (the deployment's `builds`: the services as they were when it
+    was asked for, each with its build). The version (with each service's
+    image) exists only if every build succeeds: one that fails fails the
+    deployment with its code (the message names the service) and the others
+    are cancelled. A folder missing from the code fails it with
+    `SOURCE_ROOT_MISSING`. Publishing an image is for apps of one service:
+    otherwise 422 `IMAGE_NEEDS_ONE_SERVICE`.
 - **Create** takes `{name, slug?, description?}`.
   - `slug` is a DNS label: 3–40 characters of `[a-z0-9-]`, starting with a
     letter, not ending with `-`, no `--`. It becomes part of hostnames.
@@ -562,6 +567,7 @@ agent says otherwise).
   `PROMOTE_FAILED`. From the build:
   `UNSUPPORTED_APP` (no known way to build or start it), `BUILD_FAILED`,
   `BUILD_TIMEOUT` (25 min), `SOURCE_INVALID`, `SOURCE_EXPIRED`,
+  `SOURCE_ROOT_MISSING` (a service's folder is not in the code),
   `PUSH_FAILED`, `NO_BUILDER`, `NO_CLUSTER`, `BUILD_INTERNAL`. `message` is
   plain Spanish for whoever deploys; `detail` holds the cluster's own words
   (often English, `""` when it said nothing) for technical readers.

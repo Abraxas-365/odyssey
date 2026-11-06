@@ -1,0 +1,10 @@
+{
+  "source_id": "00000000-0000-4000-8000-0000000000e2",
+  "parent_id": "00000000-0000-4000-8000-0000000000e1",
+  "project_id": "00000000-0000-4000-8000-0000000000aa",
+  "root": "apps/api",
+  "size": 9120,
+  "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+  "files": 12,
+  "unpacked_size": 40211
+}

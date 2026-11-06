@@ -27,9 +27,9 @@ import (
 // TestServicesOverHTTP: MS-1 end to end. A new app is one web service; a
 // list of several services is refused until every cluster of the app runs
 // them (capability odicea.services), then stored and audited; a version of
-// one image is refused while the app has several services (per-service
-// builds are MS-3) without touching what is online; going back to one web
-// service at "/" deploys again, and every version keeps its services.
+// one image is refused while the app has several services (each is built
+// from its own folder) without touching what is online; going back to one
+// web service at "/" deploys again, and every version keeps its services.
 func TestServicesOverHTTP(t *testing.T) {
 	db := pgtest.DB(t)
 	ctx := context.Background()
@@ -203,10 +203,11 @@ func TestServicesOverHTTP(t *testing.T) {
 		t.Fatalf("read back %+v", s)
 	}
 
-	// A version of one image cannot run several services yet: refused with
-	// the code, and the first version stays online.
+	// One image cannot be several services: refused with the code, and the
+	// first version stays online (each is built from its own folder: see
+	// TestDeployServicesFromSource).
 	code(checked(t, app, http.MethodPost, base+"/deployments", token, map[string]any{"image": image("2"), "port": 3000}),
-		http.StatusUnprocessableEntity, project.CodeServicesUnavailable)
+		http.StatusUnprocessableEntity, release.CodeImageNeedsOneService)
 	cur := httpxtest.JSON[release.Current](t, checked(t, app, http.MethodGet, base+"/current", token, nil))
 	if cur.Release == nil || cur.Release.ID != *first.Release || cur.Active != nil {
 		t.Fatalf("online after the refusal %+v", cur)

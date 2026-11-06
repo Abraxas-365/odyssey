@@ -188,6 +188,22 @@ func (d Deployment) StepNames() []string {
 	return Steps()
 }
 
+// BuildIDs are every build of the deployment (none for an image; Build alone
+// for one made before an app had services).
+func (d Deployment) BuildIDs() []build.ID {
+	if len(d.Builds) > 0 {
+		out := make([]build.ID, len(d.Builds))
+		for i, b := range d.Builds {
+			out[i] = b.Build
+		}
+		return out
+	}
+	if d.Build != nil {
+		return []build.ID{*d.Build}
+	}
+	return nil
+}
+
 // StepState is one step's progress.
 type StepState string
 
@@ -238,6 +254,10 @@ type Deployment struct {
 	// nil when an image was published).
 	Build  *build.ID         `json:"build_id" db:"build_id"`
 	Source *DeploymentSource `json:"source" db:"-"`
+	// Builds are the deployment's services and the build of each (Build is
+	// the first's), in the app's order; empty for an image and for
+	// deployments from source made before an app had services.
+	Builds []ServiceBuild `json:"builds" db:"-"`
 	// Config is how a deployment from source runs once built; its release
 	// keeps it from then on (nil for an image: its release's).
 	Config *Config `json:"-" db:"-"`
@@ -353,8 +373,12 @@ func (f DeploymentFilter) Validate() error {
 	return nil
 }
 
-// WithProgress fills Steps from Status and Step.
+// WithProgress fills Steps from Status and Step (and Builds is a list, empty
+// when there is none).
 func (d Deployment) WithProgress() Deployment {
+	if d.Builds == nil {
+		d.Builds = []ServiceBuild{}
+	}
 	names := d.StepNames()
 	d.Steps = make([]Progress, 0, len(names))
 	reached := false

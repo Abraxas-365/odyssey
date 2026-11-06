@@ -139,7 +139,7 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 	var d release.Deployment
 	var superseded *release.Deployment
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		if r.Services, err = s.servicesOf(ctx, organization, id, r.Image, r.Config); err != nil {
+		if r.Services, err = s.imageServices(ctx, organization, id, r.Image, r.Config); err != nil {
 			return err
 		}
 		if err := s.repo.CreateRelease(ctx, r); err != nil {
@@ -242,7 +242,6 @@ type asked struct {
 // project so it cannot have been archived meanwhile, and stops the one it
 // superseded.
 func (s *Service) startSource(ctx context.Context, organization identity.OrganizationID, id project.ID, e project.Environment, src build.Source, cfg release.Config, a asked) (release.Deployment, error) {
-	b := build.NewID()
 	var d release.Deployment
 	var superseded *release.Deployment
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
@@ -253,12 +252,19 @@ func (s *Service) startSource(ctx context.Context, organization identity.Organiz
 		if err := archived(held); err != nil { // archived while the source was uploading
 			return err
 		}
+		// The services as they are now: the version is made of these, and a
+		// change from here on waits for the next deployment.
+		topology, err := s.projects.Services(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		builds := release.BuildsFor(topology)
 		state, err := s.lockState(ctx, held, e)
 		if err != nil {
 			return err
 		}
-		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &b,
-			Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size, Git: src.Git}, Config: &cfg,
+		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &builds[0].Build,
+			Builds: builds, Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size, Git: src.Git}, Config: &cfg,
 			Reason: release.ReasonDeploy, RequestedBy: a.by, RequestedVia: a.via, Message: a.message})
 		return err
 	})
@@ -321,11 +327,12 @@ func (s *Service) lockState(ctx context.Context, p project.Project, e project.En
 		Project: p.ID, App: release.AppName(p.Slug, e)})
 }
 
-// servicesOf snapshots the app's services for a new version of one image.
-// It holds the project (in the caller's transaction) first, so the services
-// read are the ones committed: a concurrent change of the list (which locks
-// the project) lands before or after this version, never half.
-func (s *Service) servicesOf(ctx context.Context, organization identity.OrganizationID, id project.ID, image string, c release.Config) ([]release.Service, error) {
+// imageServices snapshots the app's services for a new version of one
+// published image (an app of one service only). It holds the project (in
+// the caller's transaction) first, so the services read are the ones
+// committed: a concurrent change of the list (which locks the project)
+// lands before or after this version, never half.
+func (s *Service) imageServices(ctx context.Context, organization identity.OrganizationID, id project.ID, image string, c release.Config) ([]release.Service, error) {
 	if _, err := s.projects.Hold(ctx, organization, id); err != nil {
 		return nil, err
 	}
@@ -333,7 +340,7 @@ func (s *Service) servicesOf(ctx context.Context, organization identity.Organiza
 	if err != nil {
 		return nil, err
 	}
-	return release.ServicesOf(topology, image, c)
+	return release.ImageServices(topology, image, c)
 }
 
 // begin starts the deployment d (its ID, what it runs, why and for whom) in
@@ -373,8 +380,8 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 			if err := s.repo.Finish(ctx, p.Organization, old.ID, release.StatusCancelled, nil); err != nil {
 				return release.Deployment{}, nil, err
 			}
-			if old.Build != nil && old.Release == nil { // nobody needs its image now
-				if err := s.builder.Cancel(ctx, p.Organization, *old.Build, build.Cancel{CancelledBy: by}); err != nil {
+			if old.Build != nil && old.Release == nil { // nobody needs its images now
+				if err := s.cancelBuilds(ctx, old, by); err != nil {
 					return release.Deployment{}, nil, err
 				}
 			}
@@ -424,6 +431,17 @@ func (s *Service) stop(ctx context.Context, d *release.Deployment) {
 	if d != nil {
 		_ = s.engine.Cancel(ctx, d.Organization, d.Run, "superseded by a newer deployment")
 	}
+}
+
+// cancelBuilds stops every build of d (one per service) in the caller's
+// transaction; one that never started has nothing to stop.
+func (s *Service) cancelBuilds(ctx context.Context, d release.Deployment, by identity.UserID) error {
+	for _, id := range d.BuildIDs() {
+		if err := s.builder.Cancel(ctx, d.Organization, id, build.Cancel{CancelledBy: by}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- queries ----

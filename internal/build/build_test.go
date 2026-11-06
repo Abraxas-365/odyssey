@@ -24,8 +24,12 @@ func TestEventContracts(t *testing.T) {
 		Image: "registry.local/o/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	n := build.Names{Project: "Visitas"}
 	f := build.Failure{Code: build.CodeUnsupported, Message: build.Message(build.CodeUnsupported), Detail: "railpack: no start command"}
+	derived := s
+	derived.ID, derived.Parent, derived.Root = build.MustParseSourceID("00000000-0000-4000-8000-0000000000e2"), &s.ID, "apps/api"
+	derived.Size, derived.Files, derived.UnpackedSize = 9120, 12, 40211
 	for _, e := range []event.Event{
 		build.NewSourceUploaded(org, user, s, n),
+		build.NewSourceDerived(org, user, derived, n),
 		build.NewSourceExpired(org, s),
 		build.NewStarted(org, user, b, n),
 		build.NewSucceeded(org, b, n),

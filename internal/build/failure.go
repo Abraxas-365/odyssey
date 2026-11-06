@@ -17,7 +17,9 @@ const (
 	CodeNoBuilder     = "NO_BUILDER"      // the environment's cluster cannot build
 	CodeNoCluster     = "NO_CLUSTER"      // no cluster to build in
 	CodeSourceExpired = "SOURCE_EXPIRED"  // the source was swept before it was built
-	CodeInternal      = "INTERNAL"
+	// CodeRootMissing: a service's folder is not in the code (Derive).
+	CodeRootMissing = "SOURCE_ROOT_MISSING"
+	CodeInternal    = "INTERNAL"
 )
 
 // CodeSourceQuota refuses an upload (not a build): the organization's
@@ -37,6 +39,7 @@ var messages = map[string]string{
 	CodeNoBuilder:     "El clúster de esta app no está preparado para construir. Pide a TI que configure un registry.",
 	CodeNoCluster:     "No hay un clúster donde construir esta app. Pide a TI que registre uno.",
 	CodeSourceExpired: "La carpeta subida ya no está disponible. Vuelve a publicarla.",
+	CodeRootMissing:   "La carpeta de este servicio no está en el código. Revisa la carpeta de cada servicio en Configuración.",
 	CodeInternal:      "Algo falló de nuestro lado al construir tu app. Vuelve a intentarlo.",
 }
 

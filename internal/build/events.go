@@ -12,6 +12,7 @@ import (
 const (
 	EventSourceUploaded = "source.uploaded"
 	EventSourceExpired  = "source.expired"
+	EventSourceDerived  = "source.derived"
 	EventStarted        = "build.started"
 	EventSucceeded      = "build.succeeded"
 	EventFailed         = "build.failed"
@@ -30,6 +31,19 @@ type SourceUploaded struct {
 	Source       SourceID `json:"source_id"`
 	Project      string   `json:"project_id"`
 	Name         string   `json:"name"`
+	Size         int64    `json:"size"`
+	SHA256       string   `json:"sha256"`
+	Files        int      `json:"files"`
+	UnpackedSize int64    `json:"unpacked_size"`
+}
+
+// SourceDerived v1: a service's folder was cut from an uploaded source
+// (Parent), to be built on its own.
+type SourceDerived struct {
+	Source       SourceID `json:"source_id"`
+	Parent       SourceID `json:"parent_id"`
+	Project      string   `json:"project_id"`
+	Root         string   `json:"root"`
 	Size         int64    `json:"size"`
 	SHA256       string   `json:"sha256"`
 	Files        int      `json:"files"`
@@ -99,6 +113,15 @@ func NewSourceUploaded(org identity.OrganizationID, actor identity.UserID, s Sou
 	return event.New(EventSourceUploaded, 1, org, actor, event.Subject(SourceSubjectKind, s.ID),
 		"Subió el código de "+n.Project,
 		SourceUploaded{Source: s.ID, Project: s.Project.String(), Name: s.Name, Size: s.Size, SHA256: s.SHA256,
+			Files: s.Files, UnpackedSize: s.UnpackedSize})
+}
+
+// NewSourceDerived is the event of s, cut from its parent (s.Parent set).
+// The actor is whoever asked for the deployment that needed it.
+func NewSourceDerived(org identity.OrganizationID, actor identity.UserID, s Source, n Names) event.Event {
+	return event.New(EventSourceDerived, 1, org, actor, event.Subject(SourceSubjectKind, s.ID),
+		"Preparó la carpeta "+s.Root+" de "+n.Project,
+		SourceDerived{Source: s.ID, Parent: *s.Parent, Project: s.Project.String(), Root: s.Root, Size: s.Size, SHA256: s.SHA256,
 			Files: s.Files, UnpackedSize: s.UnpackedSize})
 }
 

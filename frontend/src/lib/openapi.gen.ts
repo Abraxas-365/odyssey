@@ -269,10 +269,11 @@ export interface paths {
          *     are dropped (their images stay); when none can be, 422
          *     `SOURCE_QUOTA`.
          *
-         *     While the app has several services (`PUT …/services`), an image is
-         *     refused with 422 `SERVICES_UNAVAILABLE` (one image cannot run them
-         *     until each service is built on its own); a folder's build fails its
-         *     deployment with that code.
+         *     An image is for apps of one service: while the app has several
+         *     (`PUT …/services`) it is refused with 422 `IMAGE_NEEDS_ONE_SERVICE`
+         *     (publish the code instead: each service is built from its own
+         *     folder, all at once, and the version exists only if every build
+         *     succeeds).
          *
          *     Answers 202: the worker applies it, waits for its health check and
          *     only then makes it the environment's current release; poll the
@@ -2134,7 +2135,7 @@ export interface components {
         };
         BuildFailure: {
             /** @enum {string} */
-            code: "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "INTERNAL";
+            code: "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "SOURCE_ROOT_MISSING" | "INTERNAL";
             /** @description Plain words for the person who deployed. */
             message: string;
             /** @description The technical cause (the technical view). */
@@ -2469,9 +2470,24 @@ export interface components {
             image: string;
             /**
              * Format: uuid
-             * @description The build of a deployment from source (`GET /projects/{id}/builds/{build}`); null for an image.
+             * @description The build of a deployment from source (`GET /projects/{id}/builds/{build}`): its first service's when the app has several (see `builds`); null for an image.
              */
             build_id: string | null;
+            /**
+             * @description A deployment from source builds each service of the app from its own folder, all at once: the services as
+             *     they were when it was asked for (its version is made of exactly these) and the build of each. The version
+             *     exists only if every build succeeds. Empty for an image and for deployments made before apps had services.
+             */
+            builds: {
+                name: string;
+                kind: components["schemas"]["ServiceKind"];
+                /** @description The folder of the code it is built from ("" = all of it). */
+                root: string;
+                route: string;
+                strip_prefix: boolean;
+                /** Format: uuid */
+                build_id: string;
+            }[];
             source: null | {
                 /** Format: uuid */
                 id: string;
@@ -2504,10 +2520,10 @@ export interface components {
             settings_revision: number | null;
             error: null | {
                 /**
-                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule. `SERVICES_UNAVAILABLE`: the app's services changed to a list this version cannot run (several services need a cluster that runs them).
+                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side); with several services, the message names the one that failed. `SOURCE_ROOT_MISSING`: a service's folder is not in the code. `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the images' scan (a critical vulnerability in production; with several services, their findings added up); the message names the rule. `SERVICES_UNAVAILABLE`: the app's services changed to a list this version cannot run (several services need a cluster that runs them).
                  * @enum {string}
                  */
-                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL" | "POLICY_DENIED" | "SERVICES_UNAVAILABLE";
+                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "SOURCE_ROOT_MISSING" | "BUILD_INTERNAL" | "POLICY_DENIED" | "SERVICES_UNAVAILABLE";
                 /** @description Plain Spanish for whoever deploys. */
                 message: string;
                 /** @description The cluster's own words (often English); "" when it said nothing. Show it as technical detail. */

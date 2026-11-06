@@ -12,6 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 )
@@ -32,13 +33,18 @@ func (r *scanRules) Check(_ context.Context, _ identity.OrganizationID, q gate.R
 	return r.by(q), nil
 }
 
-// builds serves one scripted build.
+// builds serves one scripted build (b), or one per ID (each, for a
+// deployment of several services).
 type builds struct {
 	release.Builder
-	b build.Build
+	b    build.Build
+	each map[build.ID]build.Build
 }
 
-func (b *builds) Status(context.Context, identity.OrganizationID, build.ID) (build.Build, error) {
+func (b *builds) Status(_ context.Context, _ identity.OrganizationID, id build.ID) (build.Build, error) {
+	if x, ok := b.each[id]; ok {
+		return x, nil
+	}
 	return b.b, nil
 }
 
@@ -103,6 +109,91 @@ func TestAuthorizeScanAllowsACleanImage(t *testing.T) {
 	}
 	if len(r.approver.held) != 0 {
 		t.Fatalf("held %v", r.approver.held)
+	}
+}
+
+// MS-3a: a version of several services is judged on all of its images: the
+// findings added up, unknown when any image's is, and not before every
+// scan could have come.
+func TestAuthorizeScanAddsUpTheServicesImages(t *testing.T) {
+	now := time.Now()
+	topology := []project.Service{{Name: "web", Kind: project.ServiceWeb, Route: "/"}, {Name: "api", Kind: project.ServiceWeb, Route: "/api"}}
+	for name, c := range map[string]struct {
+		api  build.Build
+		want *gate.Scan
+	}{
+		"both scanned":  {api: scanned(1, 2), want: &gate.Scan{Critical: 1, High: 5}},
+		"one unscanned": {api: build.Build{Status: build.StatusSucceeded, FinishedAt: &now, Scan: &build.Scan{Error: build.ScanUnsupportedMessage}}},
+		"one still due": {api: build.Build{Status: build.StatusSucceeded, FinishedAt: &now}},
+	} {
+		r, rules := scanRig(t, func(gate.Request) gate.Verdict { return gate.Verdict{Effect: gate.Allow} }, build.Build{})
+		services := release.BuildsFor(topology)
+		r.repo.dep.Build, r.repo.dep.Builds = &services[0].Build, services
+		r.svc.builder = &builds{each: map[build.ID]build.Build{services[0].Build: scanned(0, 3), services[1].Build: c.api}}
+		out, err := r.svc.authorizeScanStep(context.Background(), r.st)
+		if name == "one still due" {
+			if ctl, ok := workflow.AsControl(err); !ok || ctl.Kind != workflow.ControlPoll || len(rules.scans) != 0 {
+				t.Fatalf("%s: want a poll before judging, got %v %v", name, out, err)
+			}
+			continue
+		}
+		if err != nil || out.(gate.Decision).Status != gate.DecisionAllowed {
+			t.Fatalf("%s: out %v, err %v", name, out, err)
+		}
+		got := rules.scans[0]
+		if (got == nil) != (c.want == nil) || (got != nil && *got != *c.want) {
+			t.Fatalf("%s: judged with scan %+v, want %+v", name, got, c.want)
+		}
+		// unknown with findings elsewhere: judged also on what is known
+		if name == "one unscanned" && (len(rules.scans) != 2 || rules.scans[1] == nil || *rules.scans[1] != (gate.Scan{High: 3})) {
+			t.Fatalf("%s: the known findings were not judged: %+v", name, rules.scans)
+		}
+	}
+}
+
+// An unscanned service does not hide another's critical findings: a rule on
+// the findings still denies, and one requiring a scan still fires.
+func TestAuthorizeScanDoesNotHideFindingsBehindAnUnscannedService(t *testing.T) {
+	now := time.Now()
+	topology := []project.Service{{Name: "web", Kind: project.ServiceWeb, Route: "/"}, {Name: "api", Kind: project.ServiceWeb, Route: "/api"}}
+	unscanned := build.Build{Status: build.StatusSucceeded, FinishedAt: &now, Scan: &build.Scan{Error: build.ScanUnsupportedMessage}}
+	for name, rule := range map[string]func(gate.Request) gate.Verdict{
+		"critical denies": func(q gate.Request) gate.Verdict {
+			if q.Scan != nil && q.Scan.Critical > 0 {
+				return deny
+			}
+			return gate.Verdict{Effect: gate.Allow}
+		},
+		"unknown denies": func(q gate.Request) gate.Verdict {
+			if q.ScanChecked && q.Scan == nil {
+				return deny
+			}
+			return gate.Verdict{Effect: gate.Allow}
+		},
+	} {
+		r, _ := scanRig(t, rule, build.Build{})
+		services := release.BuildsFor(topology)
+		r.repo.dep.Build, r.repo.dep.Builds = &services[0].Build, services
+		r.svc.builder = &builds{each: map[build.ID]build.Build{services[0].Build: scanned(2, 0), services[1].Build: unscanned}}
+		_, err := r.svc.authorizeScanStep(context.Background(), r.st)
+		var coded *errx.Error
+		if c, ok := workflow.AsControl(err); !ok || c.Kind != workflow.ControlFail || !errors.As(err, &coded) || coded.Code != release.CodePolicyDenied {
+			t.Fatalf("%s: want POLICY_DENIED, got %v", name, err)
+		}
+	}
+}
+
+func TestStricterVerdict(t *testing.T) {
+	allow := gate.Verdict{Effect: gate.Allow}
+	if got := stricter(allow, deny); got.Effect != gate.Deny {
+		t.Errorf("allow, deny: %+v", got)
+	}
+	if got := stricter(deny, approve); got.Effect != gate.Deny {
+		t.Errorf("deny, approve: %+v", got)
+	}
+	got := stricter(approve, ask)
+	if got.Effect != gate.Approval || len(got.Rules) != 2 || len(got.Approvers) != 1 {
+		t.Errorf("two approvals: %+v", got)
 	}
 }
 

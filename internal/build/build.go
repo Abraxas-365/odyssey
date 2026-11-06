@@ -51,6 +51,11 @@ type Source struct {
 	ExpiredAt *time.Time `json:"expired_at" db:"expired_at"`
 	// Git is the commit the source was taken from (nil for an uploaded folder).
 	Git *GitRef `json:"git" db:"-"`
+	// Parent is the source this one was cut from (nil for an upload): a
+	// service with a folder builds only that folder (Root) of its app's code,
+	// re-rooted. Derive makes it, once per parent and folder.
+	Parent *SourceID `json:"parent_id" db:"parent_id"`
+	Root   string    `json:"root" db:"root"`
 }
 
 // Git providers a source can come from.
@@ -297,6 +302,24 @@ type Cancel struct {
 }
 
 func (Cancel) Validate() error { return nil }
+
+// Derive asks for the source of one folder (Root) of an uploaded source
+// (Parent): what a service whose code lives in that folder builds.
+type Derive struct {
+	Parent      SourceID
+	Root        string
+	RequestedBy identity.UserID
+}
+
+func (d Derive) Validate() error {
+	switch {
+	case d.Parent.IsZero():
+		return errx.InvalidField("source_id", "source_id is required")
+	case d.Root == "" || project.ValidRoot(d.Root) != nil:
+		return errx.InvalidField("root", "root must be a folder of the code")
+	}
+	return nil
+}
 
 // WorkflowRun is the workflow that drives a build (buildsvc).
 const WorkflowRun = "build.run"

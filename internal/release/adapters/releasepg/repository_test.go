@@ -29,7 +29,7 @@ const digest = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef01234567
 // withServices gives r the snapshot of a one-image version of a new app.
 func withServices(r release.Release) release.Release {
 	c := r.Config.Normalize()
-	s, err := release.ServicesOf(project.DefaultServices(r.Organization, r.Project), r.Image, c)
+	s, err := release.ServicesOf(project.DefaultServices(r.Organization, r.Project), []string{r.Image}, c)
 	if err != nil {
 		panic(err)
 	}
@@ -316,6 +316,60 @@ func TestRepository(t *testing.T) {
 	got, err = repo.FindDeployment(ctx, org, fourth.ID)
 	if err != nil || got.Source == nil || got.Source.Git == nil || *got.Source.Git != *ref {
 		t.Fatalf("git deployment %+v %v", got, err)
+	}
+	if len(got.Builds) != 0 {
+		t.Fatalf("a deployment of one build has services: %+v", got.Builds)
+	}
+	// services and their builds: in order, read back by find and list;
+	// the first's build must be the deployment's
+	builds := release.BuildsFor([]project.Service{
+		{Name: "web", Kind: project.ServiceWeb, Root: "apps/web", Route: "/"},
+		{Name: "api", Kind: project.ServiceWeb, Root: "apps/api", Route: "/api", StripPrefix: true},
+		{Name: "jobs", Kind: project.ServiceWorker, Root: "apps/jobs"},
+	})
+	svcEnv := project.NewEnvironmentID()
+	if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: svcEnv, Organization: org, Project: proj, App: "portal"}); err != nil {
+		t.Fatal(err)
+	}
+	fifth := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: svcEnv,
+		Build: &builds[1].Build, Builds: builds, Source: &release.DeploymentSource{ID: build.NewSourceID(), Name: "portal", Size: 9}, Config: &cfg,
+		Status: release.StatusBuilding, Reason: release.ReasonDeploy, Step: release.StepBuild, Revision: 1, Run: workflow.NewRunID()}
+	if err := repo.CreateDeployment(ctx, fifth); err == nil {
+		t.Fatal("a deployment whose build is not its first service's was stored")
+	}
+	fifth.Build = &builds[0].Build
+	if err := repo.CreateDeployment(ctx, fifth); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.FindDeployment(ctx, org, fifth.ID)
+	if err != nil || len(got.Builds) != 3 || got.Builds[0] != builds[0] || got.Builds[1] != builds[1] || got.Builds[2] != builds[2] {
+		t.Fatalf("deployment builds %+v %v", got.Builds, err)
+	}
+	if page, err := repo.ListDeployments(ctx, org, svcEnv, release.DeploymentFilter{}, query.Pagination{Limit: 10}); err != nil ||
+		len(page.Items) != 1 || len(page.Items[0].Builds) != 3 || page.Items[0].Builds[2] != builds[2] {
+		t.Fatalf("listed deployment builds %+v %v", page, err)
+	}
+	if page, err := repo.ListDeployments(ctx, org, gitEnv, release.DeploymentFilter{}, query.Pagination{Limit: 10}); err != nil ||
+		len(page.Items) != 1 || len(page.Items[0].Builds) != 0 {
+		t.Fatalf("listed deployment of one build %+v %v", page, err)
+	}
+	if _, err := repo.FindDeployment(ctx, other, fifth.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("another organization read the deployment's builds: %v", err)
+	}
+	// a service twice is refused, and nothing of the deployment is stored
+	twinEnv := project.NewEnvironmentID()
+	if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: twinEnv, Organization: org, Project: proj, App: "twin"}); err != nil {
+		t.Fatal(err)
+	}
+	twin := release.BuildsFor([]project.Service{{Name: "web", Kind: project.ServiceWeb, Route: "/"}, {Name: "web", Kind: project.ServiceWeb}})
+	twice := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: twinEnv,
+		Build: &twin[0].Build, Builds: twin, Source: fifth.Source, Config: &cfg,
+		Status: release.StatusBuilding, Reason: release.ReasonDeploy, Step: release.StepBuild, Revision: 1, Run: workflow.NewRunID()}
+	if err := repo.CreateDeployment(ctx, twice); err == nil {
+		t.Fatal("a deployment with a service twice was stored")
+	}
+	if _, err := repo.FindDeployment(ctx, org, twice.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("half a deployment was stored: %v", err)
 	}
 	if page, err := repo.ListDeployments(ctx, org, gitEnv, release.DeploymentFilter{}, query.Pagination{Limit: 10}); err != nil ||
 		len(page.Items) != 1 || page.Items[0].Source == nil || page.Items[0].Source.Git == nil || *page.Items[0].Source.Git != *ref {

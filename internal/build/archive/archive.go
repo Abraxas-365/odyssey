@@ -47,6 +47,26 @@ func (v *Verifier) Summary() Summary { return v.v.Summary() }
 // Close stops the checker (a no-op after the end of the stream).
 func (v *Verifier) Close() error { return v.v.Close() }
 
+// Subtree writes to w the source of the folder root of the archive read
+// from r (srcarchive.Subtree). It runs on a stored source, so every refusal
+// is a build's, a Business error with its code: a folder that is not there
+// is build.CodeRootMissing; one that breaks a rule or is too large,
+// build.CodeSourceInvalid. Other errors (the reader's, w's) pass as they are.
+func Subtree(r io.Reader, w io.Writer, root string, limits Limits) (Summary, error) {
+	sum, err := srcarchive.Subtree(r, w, root, limits)
+	var bad *srcarchive.Invalid
+	var big *srcarchive.TooLarge
+	switch {
+	case errors.Is(err, srcarchive.ErrRootMissing):
+		return Summary{}, build.Refused(build.CodeRootMissing, "the folder "+root+" is not in the code")
+	case errors.As(err, &bad):
+		return Summary{}, build.Refused(build.CodeSourceInvalid, bad.Message)
+	case errors.As(err, &big):
+		return Summary{}, build.Refused(build.CodeSourceInvalid, "the folder "+root+": "+big.Error())
+	}
+	return sum, err
+}
+
 // translate words the shared refusals as API errors; other errors (the
 // reader's, io.EOF) pass as they are.
 func translate(err error) error {

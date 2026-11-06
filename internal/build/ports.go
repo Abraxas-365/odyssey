@@ -25,6 +25,12 @@ type Commands interface {
 	// uploaded it could not start). A source a build used is a Conflict: the
 	// sweep keeps it for its retention.
 	Discard(ctx context.Context, organization identity.OrganizationID, source SourceID) error
+	// Derive is the source of one folder of an uploaded source, re-rooted
+	// (what a service with a folder builds): made once per parent and folder
+	// and the same one after, while it lasts. A folder that is not in the
+	// code is a Business error coded CodeRootMissing; an expired parent,
+	// CodeSourceExpired. It streams bytes: never call it in a transaction.
+	Derive(ctx context.Context, organization identity.OrganizationID, input Derive) (Source, error)
 	// Sweep expires sources older than their retention that no unfinished
 	// build needs, deleting their bytes (a scheduled task).
 	Sweep(ctx context.Context) (int, error)
@@ -70,6 +76,9 @@ type Runner interface {
 // Every statement filters by organization (another tenant's row is NotFound).
 type Repository interface {
 	CreateSource(ctx context.Context, source Source) error
+	// FindDerived is the unexpired source cut from parent at root (NotFound
+	// when there is none).
+	FindDerived(ctx context.Context, organization identity.OrganizationID, parent SourceID, root string) (Source, error)
 	FindSource(ctx context.Context, organization identity.OrganizationID, source SourceID) (Source, error)
 	// LockSource holds the source (FOR SHARE) so a sweep cannot expire it
 	// while a build of it is being created.

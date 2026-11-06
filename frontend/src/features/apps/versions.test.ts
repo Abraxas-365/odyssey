@@ -13,6 +13,7 @@ function dep(over: Partial<Deployment>): Deployment {
     release_id: `r${n}`,
     image: `r.local/app@sha256:${String(n).padStart(64, '0')}`,
     build_id: null,
+    builds: [],
     source: null,
     status: 'ready',
     reason: 'deploy',

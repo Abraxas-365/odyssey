@@ -265,6 +265,86 @@ func TestQuotaAndDiscard(t *testing.T) {
 	}
 }
 
+// TestDerivedSources: a source cut from an upload is found by its parent and
+// folder (in its organization, while it lasts), only one lives per folder,
+// and its builds count as the parent's for the quota and the discard.
+func TestDerivedSources(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: buildpg.Schema, Files: buildpg.Migrations()})
+	repo := buildpg.New(db)
+	tx := txn.Postgres{DB: db}
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	proj, env := project.NewID(), project.NewEnvironmentID()
+	create := func(parent *build.Source, root string, size int64) (build.Source, error) {
+		s := build.Source{ID: build.NewSourceID(), Organization: org, Project: proj, Name: "mono", Size: size,
+			SHA256: strings.Repeat("ab", 32), Files: 1, UnpackedSize: size, Root: root}
+		if parent != nil {
+			s.Parent = &parent.ID
+		}
+		s.Key = "org/" + org.String() + "/sources/" + s.ID.String()
+		return s, repo.CreateSource(ctx, s)
+	}
+	mono, err := create(nil, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := create(&mono, "apps/api", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.FindDerived(ctx, org, mono.ID, "apps/api")
+	if err != nil || got.ID != api.ID || got.Parent == nil || *got.Parent != mono.ID || got.Root != "apps/api" {
+		t.Fatalf("find derived %+v %v", got, err)
+	}
+	if _, err := repo.FindDerived(ctx, other, mono.ID, "apps/api"); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("another tenant's: %v", err)
+	}
+	if _, err := repo.FindDerived(ctx, org, mono.ID, "apps/web"); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("another folder: %v", err)
+	}
+	// One live source per folder; a parent and a folder go together.
+	if _, err := create(&mono, "apps/api", 10); !errx.IsType(err, errx.TypeConflict) {
+		t.Fatalf("second cut of a folder: %v", err)
+	}
+	if _, err := create(nil, "apps/api", 10); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("a folder without a parent: %v", err)
+	}
+
+	// A build of the folder makes the parent built: not discardable,
+	// evictable with it once the build ends.
+	b := build.Build{ID: build.NewID(), Organization: org, Project: proj, Environment: env, Source: api.ID,
+		Status: build.StatusQueued, Run: workflow.NewRunID()}
+	if err := repo.CreateBuild(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := repo.Usage(ctx, org); u != (build.Usage{Stored: 110, Evictable: 0}) {
+		t.Fatalf("usage while building %+v", u)
+	}
+	if err := repo.Finish(ctx, org, b.ID, build.StatusSucceeded, "img@sha256:"+strings.Repeat("0", 64), nil); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := repo.Usage(ctx, org); u != (build.Usage{Stored: 110, Evictable: 110}) {
+		t.Fatalf("usage once built %+v", u)
+	}
+	err = tx.Do(ctx, func(ctx context.Context) error {
+		_, err := repo.ExpireUnused(ctx, org, mono.ID)
+		return err
+	})
+	if !errx.IsType(err, errx.TypeConflict) {
+		t.Fatalf("discarded a parent whose folder was built: %v", err)
+	}
+	// Expired, the folder can be cut again.
+	if err := repo.Expire(ctx, org, api.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.FindDerived(ctx, org, mono.ID, "apps/api"); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("expired derived: %v", err)
+	}
+	if _, err := create(&mono, "apps/api", 10); err != nil {
+		t.Fatalf("cut again after expiry: %v", err)
+	}
+}
+
 func idsOf(sources []build.Source) map[build.SourceID]bool {
 	out := map[build.SourceID]bool{}
 	for _, s := range sources {

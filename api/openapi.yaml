@@ -430,10 +430,11 @@ paths:
         are dropped (their images stay); when none can be, 422
         `SOURCE_QUOTA`.
 
-        While the app has several services (`PUT …/services`), an image is
-        refused with 422 `SERVICES_UNAVAILABLE` (one image cannot run them
-        until each service is built on its own); a folder's build fails its
-        deployment with that code.
+        An image is for apps of one service: while the app has several
+        (`PUT …/services`) it is refused with 422 `IMAGE_NEEDS_ONE_SERVICE`
+        (publish the code instead: each service is built from its own
+        folder, all at once, and the version exists only if every build
+        succeeds).
 
         Answers 202: the worker applies it, waits for its health check and
         only then makes it the environment's current release; poll the
@@ -3356,7 +3357,7 @@ components:
       properties:
         code:
           type: string
-          enum: [UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER, SOURCE_EXPIRED, INTERNAL]
+          enum: [UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER, SOURCE_EXPIRED, SOURCE_ROOT_MISSING, INTERNAL]
         message: { type: string, description: Plain words for the person who deployed. }
         detail: { type: string, description: The technical cause (the technical view). }
     BuildLogPage:
@@ -3748,7 +3749,7 @@ components:
       type: object
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
-      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, status, reason, step, steps,
+      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, builds, status, reason, step, steps,
                  revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_by_name, requested_via, message, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
@@ -3763,7 +3764,25 @@ components:
         build_id:
           type: [string, "null"]
           format: uuid
-          description: "The build of a deployment from source (`GET /projects/{id}/builds/{build}`); null for an image."
+          description: "The build of a deployment from source (`GET /projects/{id}/builds/{build}`): its first service's when the app has several (see `builds`); null for an image."
+        builds:
+          type: array
+          maxItems: 8
+          description: |
+            A deployment from source builds each service of the app from its own folder, all at once: the services as
+            they were when it was asked for (its version is made of exactly these) and the build of each. The version
+            exists only if every build succeeds. Empty for an image and for deployments made before apps had services.
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, kind, root, route, strip_prefix, build_id]
+            properties:
+              name: { type: string }
+              kind: { $ref: "#/components/schemas/ServiceKind" }
+              root: { type: string, description: The folder of the code it is built from ("" = all of it). }
+              route: { type: string }
+              strip_prefix: { type: boolean }
+              build_id: { type: string, format: uuid }
         source:
           oneOf:
             - type: "null"
@@ -3811,8 +3830,8 @@ components:
                   type: string
                   enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, RESOURCE_NOT_READY, PROMOTE_FAILED,
                          UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER,
-                         SOURCE_EXPIRED, BUILD_INTERNAL, POLICY_DENIED, SERVICES_UNAVAILABLE]
-                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule. `SERVICES_UNAVAILABLE`: the app's services changed to a list this version cannot run (several services need a cluster that runs them)."
+                         SOURCE_EXPIRED, SOURCE_ROOT_MISSING, BUILD_INTERNAL, POLICY_DENIED, SERVICES_UNAVAILABLE]
+                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side); with several services, the message names the one that failed. `SOURCE_ROOT_MISSING`: a service's folder is not in the code. `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the images' scan (a critical vulnerability in production; with several services, their findings added up); the message names the rule. `SERVICES_UNAVAILABLE`: the app's services changed to a list this version cannot run (several services need a cluster that runs them)."
                 message: { type: string, description: Plain Spanish for whoever deploys. }
                 detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }

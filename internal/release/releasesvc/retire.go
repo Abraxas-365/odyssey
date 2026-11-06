@@ -3,7 +3,6 @@ package releasesvc
 import (
 	"context"
 
-	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -96,7 +95,7 @@ func (s *Service) cancelArchived(ctx context.Context, p project.Project, e proje
 		return nil, err
 	}
 	if d.Build != nil && d.Release == nil {
-		if err := s.builder.Cancel(ctx, org, *d.Build, build.Cancel{CancelledBy: by}); err != nil {
+		if err := s.cancelBuilds(ctx, d, by); err != nil {
 			return nil, err
 		}
 	}

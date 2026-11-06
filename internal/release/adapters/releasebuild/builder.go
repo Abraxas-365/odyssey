@@ -56,3 +56,7 @@ func (b *Builder) Discard(ctx context.Context, organization identity.Organizatio
 func (b *Builder) Source(ctx context.Context, organization identity.OrganizationID, source build.SourceID) (build.Source, error) {
 	return b.queries.FindSource(ctx, organization, source)
 }
+
+func (b *Builder) Derive(ctx context.Context, organization identity.OrganizationID, input build.Derive) (build.Source, error) {
+	return b.commands.Derive(ctx, organization, input)
+}

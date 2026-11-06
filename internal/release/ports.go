@@ -164,6 +164,10 @@ type Builder interface {
 	// Source is an uploaded source (NotFound when it is not the
 	// organization's).
 	Source(ctx context.Context, organization identity.OrganizationID, source build.SourceID) (build.Source, error)
+	// Derive is the source of one folder of an uploaded source (once per
+	// source and folder; build.Commands.Derive). It streams bytes: never in
+	// a transaction.
+	Derive(ctx context.Context, organization identity.OrganizationID, input build.Derive) (build.Source, error)
 }
 
 // Resources is what release asks the resource domain, through an adapter

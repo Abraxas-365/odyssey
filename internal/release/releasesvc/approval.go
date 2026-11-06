@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
-	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -263,7 +262,7 @@ func (s *Service) cancelHeld(ctx context.Context, st *workflow.State, dec gate.D
 			return err
 		}
 		if cur.Build != nil && cur.Release == nil {
-			if err := s.builder.Cancel(ctx, org, *cur.Build, build.Cancel{CancelledBy: cur.RequestedBy}); err != nil {
+			if err := s.cancelBuilds(ctx, cur, cur.RequestedBy); err != nil {
 				return err
 			}
 		}

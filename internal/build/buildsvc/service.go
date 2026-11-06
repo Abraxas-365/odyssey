@@ -7,6 +7,7 @@ package buildsvc
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"time"
@@ -133,7 +134,7 @@ func (s *Service) Upload(ctx context.Context, organization identity.Organization
 	src.Size, src.SHA256, src.Files, src.UnpackedSize = sum.Size, sum.SHA256, sum.Files, sum.UnpackedSize
 	var evicted []build.Source
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		if evicted, err = s.makeRoom(ctx, organization, src.Size); err != nil {
+		if evicted, err = s.makeRoom(ctx, organization, src.Size, false); err != nil {
 			return err
 		}
 		if err := s.repo.CreateSource(ctx, src); err != nil {
@@ -160,7 +161,13 @@ func quotaFull() error {
 // it expires the oldest sources already built (their images stay) until
 // they fit, or refuses with SOURCE_QUOTA. Uploads of an organization take
 // turns here (LockQuota), so two cannot both count the same room.
-func (s *Service) makeRoom(ctx context.Context, organization identity.OrganizationID, size int64) ([]build.Source, error) {
+//
+// admitted is for a folder cut from an upload (Derive): the quota admitted
+// that upload, and its folders together weigh about what it does, so they
+// make what room there is and are stored even over the quota (the next
+// upload makes the room back). Refusing would fail a deployment whose
+// upload was accepted, for room nothing frees while its builds wait.
+func (s *Service) makeRoom(ctx context.Context, organization identity.OrganizationID, size int64, admitted bool) ([]build.Source, error) {
 	if err := s.repo.LockQuota(ctx, organization); err != nil {
 		return nil, err
 	}
@@ -172,7 +179,7 @@ func (s *Service) makeRoom(ctx context.Context, organization identity.Organizati
 	if need <= 0 {
 		return nil, nil
 	}
-	if need > u.Evictable {
+	if need > u.Evictable && !admitted {
 		return nil, quotaFull()
 	}
 	var evicted []build.Source
@@ -182,6 +189,9 @@ func (s *Service) makeRoom(ctx context.Context, organization identity.Organizati
 			return nil, err
 		}
 		if len(batch) == 0 { // the rest is held by a sweep expiring it
+			if admitted {
+				return evicted, nil
+			}
 			return nil, quotaFull()
 		}
 		for _, src := range batch {
@@ -232,6 +242,120 @@ func (s *Service) Discard(ctx context.Context, organization identity.Organizatio
 	}
 	s.dropBytes(ctx, []build.Source{src})
 	return nil
+}
+
+// Derive cuts the folder root out of an uploaded source into a source of
+// its own (stored like an upload, counted in the quota), once per parent
+// and folder: asking again returns the same source while it lasts. The
+// bytes stream from the parent's blob to the new one, outside any
+// transaction.
+func (s *Service) Derive(ctx context.Context, organization identity.OrganizationID, input build.Derive) (build.Source, error) {
+	if err := input.Validate(); err != nil {
+		return build.Source{}, err
+	}
+	parent, err := s.repo.FindSource(ctx, organization, input.Parent)
+	if err != nil {
+		return build.Source{}, err
+	}
+	if parent.Parent != nil {
+		return build.Source{}, errx.Validation("only an uploaded source can be cut into folders")
+	}
+	if found, err := s.repo.FindDerived(ctx, organization, parent.ID, input.Root); err == nil {
+		return found, nil
+	} else if !errx.IsType(err, errx.TypeNotFound) {
+		return build.Source{}, err
+	}
+	if parent.Expired() {
+		return build.Source{}, build.Refused(build.CodeSourceExpired, "the source was swept before it was built")
+	}
+	p, err := s.projects.Find(ctx, organization, parent.Project)
+	if err != nil {
+		return build.Source{}, err
+	}
+	src := build.Source{ID: build.NewSourceID(), Organization: organization, Project: parent.Project, Name: parent.Name,
+		UploadedBy: input.RequestedBy, Git: parent.Git, Parent: &parent.ID, Root: input.Root}
+	src.Key = sourceKey(src)
+	sum, err := s.cut(ctx, parent, src, input.Root)
+	if err != nil {
+		return build.Source{}, err
+	}
+	src.Size, src.SHA256, src.Files, src.UnpackedSize = sum.Size, sum.SHA256, sum.Files, sum.UnpackedSize
+	var evicted []build.Source
+	raced := false
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		// Held so a sweep cannot expire the parent under its new folder.
+		held, err := s.repo.LockSource(ctx, organization, parent.ID)
+		if err != nil {
+			return err
+		}
+		if held.Expired() {
+			return build.Refused(build.CodeSourceExpired, "the source was swept before it was built")
+		}
+		if _, err := s.repo.FindDerived(ctx, organization, parent.ID, input.Root); err == nil {
+			raced = true // another deploy cut the same folder first
+			return nil
+		} else if !errx.IsType(err, errx.TypeNotFound) {
+			return err
+		}
+		if evicted, err = s.makeRoom(ctx, organization, src.Size, true); err != nil {
+			return err
+		}
+		if err := s.repo.CreateSource(ctx, src); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, build.NewSourceDerived(organization, input.RequestedBy, src, build.Names{Project: p.Name}))
+	})
+	if err != nil && errx.IsType(err, errx.TypeConflict) {
+		raced, err = true, nil // the unique folder index: same as above, seen late
+	}
+	if err != nil || raced {
+		if derr := s.blobs.Delete(context.WithoutCancel(ctx), src.Key); derr != nil {
+			slog.Warn("could not delete the bytes of an unrecorded source", "key", src.Key, "error", derr)
+		}
+		if err != nil {
+			return build.Source{}, err
+		}
+		return s.repo.FindDerived(ctx, organization, parent.ID, input.Root)
+	}
+	s.dropBytes(ctx, evicted)
+	return s.repo.FindSource(ctx, organization, src.ID)
+}
+
+// cut streams the folder root of parent's bytes into src's key.
+func (s *Service) cut(ctx context.Context, parent, src build.Source, root string) (archive.Summary, error) {
+	in, err := s.blobs.Open(ctx, parent.Key)
+	if err != nil {
+		if errx.IsType(err, errx.TypeNotFound) {
+			return archive.Summary{}, build.Refused(build.CodeSourceExpired, "the source's bytes are gone")
+		}
+		return archive.Summary{}, err
+	}
+	defer in.Close()
+	pr, pw := io.Pipe()
+	type result struct {
+		sum archive.Summary
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		sum, err := archive.Subtree(in, pw, root, s.opts.Limits)
+		pw.CloseWithError(err) // nil: Put reads io.EOF
+		done <- result{sum, err}
+	}()
+	perr := s.blobs.Put(ctx, src.Key, pr, blob.PutOptions{ContentType: "application/gzip",
+		Metadata: map[string]string{"organization": src.Organization.String(), "project": src.Project.String()}})
+	pr.CloseWithError(io.ErrClosedPipe) // unblocks the cut when Put gave up early
+	r := <-done
+	if r.err == nil && perr == nil {
+		return r.sum, nil
+	}
+	if derr := s.blobs.Delete(context.WithoutCancel(ctx), src.Key); derr != nil && !errx.IsType(derr, errx.TypeNotFound) {
+		slog.Warn("could not delete the bytes of an unrecorded source", "key", src.Key, "error", derr)
+	}
+	if r.err != nil && !errors.Is(r.err, io.ErrClosedPipe) {
+		return archive.Summary{}, r.err // the cut's own refusal explains it best
+	}
+	return archive.Summary{}, perr
 }
 
 // Start creates the build and its run; with an ID that exists it returns

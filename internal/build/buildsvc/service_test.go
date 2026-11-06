@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -611,6 +612,140 @@ func TestDiscard(t *testing.T) {
 	if n, err := e.svc.Sweep(ctx); err != nil || n != 0 {
 		t.Fatalf("sweep %d %v", n, err)
 	}
+}
+
+// A folder cut from an accepted upload is stored even when the quota is
+// full and nothing can be dropped: refusing it would fail a deployment the
+// quota already admitted. A new upload is still refused.
+func TestDeriveIsAdmittedWithItsUpload(t *testing.T) {
+	ctx := context.Background()
+	body := func() io.Reader {
+		return bytes.NewReader(tgz(t, map[string]string{"apps/api/go.mod": "module api\n", "apps/api/main.go": "package main\n",
+			"apps/web/package.json": "{}"}))
+	}
+	probe := setup(t)
+	first, err := probe.svc.Upload(ctx, probe.org, probe.project, build.Upload{Name: "mono"}, body())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// room for the upload, not for it and a folder of it
+	e := setupWith(t, buildfake.Options{}, buildsvc.Options{SourceQuota: first.Size + first.Size/4})
+	mono, err := e.svc.Upload(ctx, e.org, e.project, build.Upload{Name: "mono", UploadedBy: e.user}, body())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: mono.ID, Root: "apps/api", RequestedBy: e.user})
+	if err != nil {
+		t.Fatalf("a folder of an admitted upload was refused: %v", err)
+	}
+	if api.Expired() || api.Parent == nil || *api.Parent != mono.ID {
+		t.Fatalf("derived %+v", api)
+	}
+	var x *errx.Error
+	if _, err := e.svc.Upload(ctx, e.org, e.project, build.Upload{Name: "x"}, body()); !errors.As(err, &x) || x.Code != build.CodeSourceQuota {
+		t.Fatalf("a new upload over the quota: %v", err)
+	}
+}
+
+func TestDerive(t *testing.T) {
+	e := setupWith(t, buildfake.Options{}, buildsvc.Options{Retention: time.Hour, OrphanRetention: time.Minute})
+	ctx := context.Background()
+	mono, err := e.svc.Upload(ctx, e.org, e.project, build.Upload{Name: "mono", UploadedBy: e.user},
+		bytes.NewReader(tgz(t, map[string]string{"apps/api/go.mod": "module api\n", "apps/api/main.go": "package main\n",
+			"apps/web/package.json": "{}"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: mono.ID, Root: "apps/api", RequestedBy: e.user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.Parent == nil || *api.Parent != mono.ID || api.Root != "apps/api" || api.Files != 2 || api.Name != "mono" ||
+		api.Key == mono.Key || len(api.SHA256) != 64 {
+		t.Fatalf("derived %+v", api)
+	}
+	// Its bytes are the folder, re-rooted.
+	r, err := e.blobs.Open(ctx, api.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := tarNames(t, r)
+	r.Close()
+	if strings.Join(names, ",") != "go.mod,main.go" {
+		t.Fatalf("derived archive holds %v", names)
+	}
+	// Once per parent and folder.
+	again, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: mono.ID, Root: "apps/api", RequestedBy: e.user})
+	if err != nil || again.ID != api.ID {
+		t.Fatalf("again %+v %v", again, err)
+	}
+	if e.count(build.EventSourceDerived) != 1 {
+		t.Fatalf("events %v", e.events.Types())
+	}
+	// A folder that is not there; a derived source is not cut again; another tenant.
+	var x *errx.Error
+	if _, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: mono.ID, Root: "apps/worker"}); !errors.As(err, &x) ||
+		x.Code != build.CodeRootMissing || x.Type != errx.TypeBusiness {
+		t.Fatalf("missing folder: %v", err)
+	}
+	if _, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: api.ID, Root: "x"}); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("derived of derived: %v", err)
+	}
+	if _, err := e.svc.Derive(ctx, identity.NewOrganizationID(), build.Derive{Parent: mono.ID, Root: "apps/api"}); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("another tenant's source: %v", err)
+	}
+	if _, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: mono.ID, Root: "../etc"}); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("bad root: %v", err)
+	}
+	if e.count(build.EventSourceDerived) != 1 {
+		t.Fatalf("a refused cut was recorded: %v", e.events.Types())
+	}
+
+	// A build of the folder keeps the parent from the orphan sweep and the
+	// parent cannot be discarded: it is in use.
+	running := e.start(t, api)
+	if _, err := e.db.ExecContext(ctx, `UPDATE build.sources SET created_at = now() - interval '2 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Discard(ctx, e.org, mono.ID); !errx.IsType(err, errx.TypeConflict) {
+		t.Fatalf("discarded a parent whose folder builds: %v", err)
+	}
+	if n, err := e.svc.Sweep(ctx); err != nil || n != 0 {
+		t.Fatalf("swept while building: %d %v", n, err)
+	}
+	// Built: both go with retention; an expired parent cuts nothing new.
+	e.steps(t, running.ID, build.StepDispatch, build.StepWait, build.StepFinish)
+	if n, err := e.svc.Sweep(ctx); err != nil || n != 2 {
+		t.Fatalf("after the build: %d %v", n, err)
+	}
+	if _, err := e.svc.Derive(ctx, e.org, build.Derive{Parent: mono.ID, Root: "apps/web"}); !errors.As(err, &x) ||
+		x.Code != build.CodeSourceExpired {
+		t.Fatalf("expired parent: %v", err)
+	}
+}
+
+func tarNames(t *testing.T, r io.Reader) []string {
+	t.Helper()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			names = append(names, h.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func TestBuildRefusedAndTimedOut(t *testing.T) {

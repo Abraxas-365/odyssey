@@ -48,7 +48,7 @@ var messages = pgerr.Messages{
 // ---- sources ----
 
 const sourceColumns = `id, organization_id, project_id, name, size, sha256, files, unpacked_size, blob_key,
-	uploaded_by, created_at, expired_at, git`
+	uploaded_by, created_at, expired_at, git, parent_id, root`
 
 // sourceRow is a source with its git reference still JSON.
 type sourceRow struct {
@@ -89,10 +89,23 @@ func (r *Repository) CreateSource(ctx context.Context, s build.Source) error {
 		}
 	}
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO build.sources
-		(id, organization_id, project_id, name, size, sha256, files, unpacked_size, blob_key, uploaded_by, git)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		s.ID, s.Organization, s.Project, s.Name, s.Size, s.SHA256, s.Files, s.UnpackedSize, s.Key, s.UploadedBy, git)
+		(id, organization_id, project_id, name, size, sha256, files, unpacked_size, blob_key, uploaded_by, git, parent_id, root)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		s.ID, s.Organization, s.Project, s.Name, s.Size, s.SHA256, s.Files, s.UnpackedSize, s.Key, s.UploadedBy, git, s.Parent, s.Root)
 	return pgerr.MapWith(err, "create source", messages)
+}
+
+func (r *Repository) FindDerived(ctx context.Context, organization identity.OrganizationID, parent build.SourceID, root string) (build.Source, error) {
+	var row sourceRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `SELECT `+sourceColumns+` FROM build.sources
+		WHERE organization_id = $1 AND parent_id = $2 AND root = $3 AND expired_at IS NULL`, organization, parent, root)
+	if errors.Is(err, sql.ErrNoRows) {
+		return build.Source{}, errx.NotFound("source not found")
+	}
+	if err != nil {
+		return build.Source{}, pgerr.MapWith(err, "find derived source", messages)
+	}
+	return row.source()
 }
 
 func (r *Repository) FindSource(ctx context.Context, organization identity.OrganizationID, id build.SourceID) (build.Source, error) {
@@ -116,18 +129,23 @@ func (r *Repository) findSource(ctx context.Context, lock string, organization i
 	return row.source()
 }
 
+// builds are the builds of the source s or of a source cut from it (a
+// parent is built, and needed, through its derived sources).
+const builds = `build.builds b WHERE (b.source_id = s.id
+	OR b.source_id IN (SELECT c.id FROM build.sources c WHERE c.parent_id = s.id))`
+
 // LockExpirable spans organizations: it is the sweep's, and each source it
 // returns is then expired within its own organization.
 func (r *Repository) LockExpirable(ctx context.Context, cutoff, orphanCutoff time.Time, limit int) ([]build.Source, error) {
 	var rows []sourceRow
 	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT `+sourceColumns+` FROM build.sources s
 		WHERE s.expired_at IS NULL
-		  AND NOT EXISTS (SELECT 1 FROM build.builds b WHERE b.source_id = s.id AND b.finished_at IS NULL)
+		  AND NOT EXISTS (SELECT 1 FROM `+builds+` AND b.finished_at IS NULL)
 		  AND (s.created_at < $1
-		       OR (s.created_at < $2 AND NOT EXISTS (SELECT 1 FROM build.builds b WHERE b.source_id = s.id)))
+		       OR (s.created_at < $2 AND NOT EXISTS (SELECT 1 FROM `+builds+`)))
 		ORDER BY s.created_at
 		LIMIT $3
-		FOR UPDATE SKIP LOCKED`, cutoff, orphanCutoff, limit)
+		FOR UPDATE OF s SKIP LOCKED`, cutoff, orphanCutoff, limit)
 	if err != nil {
 		return nil, pgerr.MapWith(err, "list expirable sources", messages)
 	}
@@ -169,7 +187,8 @@ func (r *Repository) ExpireUnused(ctx context.Context, organization identity.Org
 		return build.Source{}, err
 	}
 	var used bool
-	err = txn.Q(ctx, r.db).GetContext(ctx, &used, `SELECT EXISTS (SELECT 1 FROM build.builds WHERE source_id = $1)`, id)
+	err = txn.Q(ctx, r.db).GetContext(ctx, &used, `SELECT EXISTS (SELECT 1 FROM build.sources s
+		WHERE s.id = $1 AND EXISTS (SELECT 1 FROM `+builds+`))`, id)
 	if err != nil {
 		return build.Source{}, pgerr.MapWith(err, "find builds of source", messages)
 	}
@@ -192,9 +211,10 @@ func (r *Repository) LockQuota(ctx context.Context, organization identity.Organi
 	return pgerr.MapWith(err, "lock source quota", messages)
 }
 
-// evictable: built, and no unfinished build needs it.
-const evictable = `EXISTS (SELECT 1 FROM build.builds b WHERE b.source_id = s.id)
-	AND NOT EXISTS (SELECT 1 FROM build.builds b WHERE b.source_id = s.id AND b.finished_at IS NULL)`
+// evictable: built (itself or through a source cut from it), and no
+// unfinished build needs it.
+const evictable = `EXISTS (SELECT 1 FROM ` + builds + `)
+	AND NOT EXISTS (SELECT 1 FROM ` + builds + ` AND b.finished_at IS NULL)`
 
 func (r *Repository) Usage(ctx context.Context, organization identity.OrganizationID) (build.Usage, error) {
 	var u build.Usage

@@ -3,6 +3,7 @@ package releasesvc
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
@@ -58,11 +59,10 @@ func (s *Service) authorizeScanStep(ctx context.Context, st *workflow.State) (an
 	if err := s.progress(ctx, j, release.StatusBuilding, release.StepBuild); err != nil {
 		return nil, err
 	}
-	b, err := s.builder.Status(ctx, org, *d.Build)
+	scan, partial, wait, err := s.scanOfAll(ctx, d)
 	if err != nil {
 		return nil, err
 	}
-	scan, wait := s.scanOf(b)
 	if wait {
 		return nil, workflow.Poll(s.opts.PollEvery)
 	}
@@ -78,6 +78,17 @@ func (s *Service) authorizeScanStep(ctx context.Context, st *workflow.State) (an
 	verdict, err := s.policy.Check(ctx, org, withScan)
 	if err != nil {
 		return nil, err
+	}
+	if scan == nil && partial != nil {
+		// Some images unscanned, others with findings: judged as unknown (a
+		// rule that requires a scan fires) and on what is known (a rule on
+		// the findings fires too); the stricter verdict stands.
+		withScan.Scan = partial
+		found, err := s.policy.Check(ctx, org, withScan)
+		if err != nil {
+			return nil, err
+		}
+		verdict = stricter(verdict, found)
 	}
 	switch verdict.Effect {
 	case gate.Deny:
@@ -105,10 +116,72 @@ func (s *Service) authorizeScanStep(ctx context.Context, st *workflow.State) (an
 		return nil, errx.Internal("approvals are not wired")
 	}
 	summary := "Publicar " + where(p, e) + " (" + scanSummary(scan) + ")"
+	if scan == nil && partial != nil {
+		summary = "Publicar " + where(p, e) + " (" + scanSummary(partial) + " en lo revisado; hay servicios sin revisar)"
+	}
 	if err := s.holdDeployment(ctx, st, p, e, d, action, verdict, release.StepAuthorizeScan, summary); err != nil {
 		return nil, err
 	}
 	return nil, workflow.WaitFor(gate.SignalFor(release.StepAuthorizeScan), approvalWait)
+}
+
+// scanOfAll is the scan of the deployment's images, one per service: the
+// findings of all of them added up, unknown (nil) when any is — one
+// unscanned image is not a clean version. partial is then the findings of
+// the images that were scanned, when some have any (so they are judged
+// too, not hidden by the unknown one). It waits while any scan may still
+// come.
+func (s *Service) scanOfAll(ctx context.Context, d release.Deployment) (scan, partial *gate.Scan, wait bool, err error) {
+	total, known := &gate.Scan{}, true
+	for _, id := range d.BuildIDs() {
+		b, err := s.builder.Status(ctx, d.Organization, id)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		one, wait := s.scanOf(b)
+		if wait {
+			return nil, nil, true, nil
+		}
+		if one == nil {
+			known = false
+			continue
+		}
+		total.Critical += one.Critical
+		total.High += one.High
+	}
+	if known {
+		return total, nil, false, nil
+	}
+	if total.Critical+total.High > 0 {
+		return nil, total, false, nil
+	}
+	return nil, nil, false, nil
+}
+
+// stricter is the verdict that weighs more: a denial over an approval over
+// an allowance; two approvals ask for both (their rules and approvers).
+func stricter(a, b gate.Verdict) gate.Verdict {
+	weight := map[gate.Effect]int{gate.Allow: 0, gate.Approval: 1, gate.Deny: 2}
+	if weight[b.Effect] > weight[a.Effect] {
+		return b
+	}
+	if a.Effect != gate.Approval || b.Effect != gate.Approval {
+		return a
+	}
+	out := a
+	out.Rules = slices.Clone(a.Rules)
+	for _, r := range b.Rules {
+		if !slices.ContainsFunc(out.Rules, func(x gate.Rule) bool { return x.ID == r.ID }) {
+			out.Rules = append(out.Rules, r)
+		}
+	}
+	out.Approvers = slices.Clone(a.Approvers)
+	for _, p := range b.Approvers {
+		if !slices.Contains(out.Approvers, p) {
+			out.Approvers = append(out.Approvers, p)
+		}
+	}
+	return out
 }
 
 // scanOf is the scan IT's rules judge: nil when unknown (never reported, not

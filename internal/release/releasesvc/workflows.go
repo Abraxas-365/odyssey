@@ -239,9 +239,12 @@ func (s *Service) resolveSettings(ctx context.Context, j job) (release.Settings,
 	return latest, nil
 }
 
-// build starts the deployment's build and follows it until its image is
-// ready; then, in one transaction, it creates the release (the image plus
-// the deployment's configuration) and moves the deployment on to apply. A
+// build starts the deployment's builds (one per service, each of its own
+// folder of the code) and follows them until every image is ready; then, in
+// one transaction, it creates the release (each service with its image,
+// plus the deployment's configuration) and moves the deployment on to
+// apply. All or nothing: one build that fails fails the deployment (the
+// others are cancelled by deployFailed) and no version is made. A
 // deployment of an image has nothing to build.
 func (s *Service) build(ctx context.Context, st *workflow.State) (any, error) {
 	j, err := s.load(ctx, st)
@@ -255,47 +258,109 @@ func (s *Service) build(ctx context.Context, st *workflow.State) (any, error) {
 	if d.Source == nil || d.Config == nil {
 		return nil, workflow.Fail(errx.Internal("deployment " + d.ID.String() + " has a build but no source"))
 	}
-	b, err := s.builder.Status(ctx, org, *d.Build)
-	if errx.IsType(err, errx.TypeNotFound) {
-		return nil, s.startBuild(ctx, j)
-	}
-	if err != nil {
-		return nil, err
-	}
-	switch b.Status {
-	case build.StatusSucceeded:
-		return nil, s.built(ctx, j, b)
-	case build.StatusFailed:
-		f := build.Failure{Code: build.CodeInternal}
-		if b.Error != nil {
-			f = *b.Error
+	services := buildsOf(d)
+	builds := make([]build.Build, len(services))
+	var missing []release.ServiceBuild
+	for i, sb := range services {
+		b, err := s.builder.Status(ctx, org, sb.Build)
+		if errx.IsType(err, errx.TypeNotFound) {
+			missing = append(missing, sb)
+			continue
 		}
-		return nil, workflow.Fail(release.BuildFailed(f))
-	case build.StatusCancelled: // only a newer deployment cancels it, and it cancels this one too
-		return nil, workflow.Fail(errSuperseded)
+		if err != nil {
+			return nil, err
+		}
+		builds[i] = b
 	}
-	return nil, workflow.Poll(s.opts.PollEvery)
+	if len(missing) > 0 {
+		return nil, s.startBuilds(ctx, j, missing, len(services))
+	}
+	done := true
+	for i, b := range builds {
+		switch b.Status {
+		case build.StatusSucceeded:
+		case build.StatusFailed:
+			f := build.Failure{Code: build.CodeInternal}
+			if b.Error != nil {
+				f = *b.Error
+			}
+			return nil, workflow.Fail(release.BuildFailed(ofService(f, services[i].Name, len(services))))
+		case build.StatusCancelled: // only a newer deployment cancels it, and it cancels this one too
+			return nil, workflow.Fail(errSuperseded)
+		default:
+			done = false
+		}
+	}
+	if !done {
+		return nil, workflow.Poll(s.opts.PollEvery)
+	}
+	return nil, s.built(ctx, j, services, builds)
 }
 
-// startBuild starts the build holding the deployment's row: begin, which
-// cancels a superseded deployment's build, takes the same lock, so a build
-// never starts for a deployment already cancelled.
-func (s *Service) startBuild(ctx context.Context, j job) error {
-	org := j.target.Organization
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		d, err := s.repo.FindDeploymentForUpdate(ctx, org, j.deployment.ID)
+// buildsOf are the deployment's services and their builds: a deployment
+// made before apps had services built one web service of all of the code.
+func buildsOf(d release.Deployment) []release.ServiceBuild {
+	if len(d.Builds) > 0 {
+		return d.Builds
+	}
+	return []release.ServiceBuild{{Name: project.DefaultService, Kind: project.ServiceWeb, Route: "/", Build: *d.Build}}
+}
+
+// ofService names the service a failure is of, when the app has several.
+func ofService(f build.Failure, service string, services int) build.Failure {
+	if services < 2 {
+		return f
+	}
+	if f.Message == "" {
+		f.Message = build.Message(f.Code)
+	}
+	f.Message = "Servicio " + service + " — " + f.Message
+	return f
+}
+
+// startBuilds starts the builds not started yet. A service with a folder
+// builds the source of that folder alone, cut first (a stream, outside any
+// transaction; the same cut on a retry). The builds then start together
+// holding the deployment's row: begin, which cancels a superseded
+// deployment's builds, takes the same lock, so a build never starts for a
+// deployment already cancelled.
+func (s *Service) startBuilds(ctx context.Context, j job, missing []release.ServiceBuild, services int) error {
+	org, d := j.target.Organization, j.deployment
+	sources := make([]build.SourceID, len(missing))
+	for i, sb := range missing {
+		sources[i] = d.Source.ID
+		if sb.Root == "" {
+			continue
+		}
+		src, err := s.builder.Derive(ctx, org, build.Derive{Parent: d.Source.ID, Root: sb.Root, RequestedBy: d.RequestedBy})
+		if f, ok := refusal(err); ok {
+			return workflow.Fail(release.BuildFailed(ofService(f, sb.Name, services)))
+		}
 		if err != nil {
 			return err
 		}
-		if d.Status.Finished() {
+		sources[i] = src.ID
+	}
+	var failed release.ServiceBuild
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		cur, err := s.repo.FindDeploymentForUpdate(ctx, org, d.ID)
+		if err != nil {
+			return err
+		}
+		if cur.Status.Finished() {
 			return workflow.Fail(errSuperseded)
 		}
-		return s.builder.Start(ctx, org, build.Start{ID: *d.Build, Project: d.Project, Environment: d.Environment,
-			Source: d.Source.ID, RequestedBy: d.RequestedBy})
+		for i, sb := range missing {
+			failed = sb
+			if err := s.builder.Start(ctx, org, build.Start{ID: sb.Build, Project: cur.Project, Environment: cur.Environment,
+				Source: sources[i], RequestedBy: cur.RequestedBy}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
-	var e *errx.Error
-	if errors.As(err, &e) && e.Type == errx.TypeBusiness && e.Code != "" { // the build cannot start (SOURCE_EXPIRED)
-		return workflow.Fail(release.BuildFailed(build.Failure{Code: e.Code, Message: build.Message(e.Code)}))
+	if f, ok := refusal(err); ok { // the build cannot start (SOURCE_EXPIRED)
+		return workflow.Fail(release.BuildFailed(ofService(f, failed.Name, services)))
 	}
 	if err != nil {
 		return err
@@ -303,12 +368,31 @@ func (s *Service) startBuild(ctx context.Context, j job) error {
 	return workflow.Poll(s.opts.PollEvery)
 }
 
-// built records the release of a succeeded build, once.
-func (s *Service) built(ctx context.Context, j job, b build.Build) error {
+// refusal is the build failure of a coded Business error: the build domain
+// refusing for good (SOURCE_EXPIRED, SOURCE_ROOT_MISSING, SOURCE_INVALID).
+func refusal(err error) (build.Failure, bool) {
+	var e *errx.Error
+	if errors.As(err, &e) && e.Type == errx.TypeBusiness && e.Code != "" {
+		return build.Failure{Code: e.Code, Message: build.Message(e.Code), Detail: e.Message}, true
+	}
+	return build.Failure{}, false
+}
+
+// built records the release of the succeeded builds, once: the services
+// as the deployment asked for them, each with its image.
+func (s *Service) built(ctx context.Context, j job, services []release.ServiceBuild, builds []build.Build) error {
 	org := j.target.Organization
 	p, e, err := s.place(ctx, org, j.deployment.Project, j.deployment.Environment)
 	if err != nil {
 		return err
+	}
+	topology, images := make([]project.Service, len(services)), make([]string, len(services))
+	for i, b := range builds {
+		if !release.ValidImage(b.Image) {
+			return workflow.Fail(release.BuildFailed(ofService(build.Failure{Code: build.CodeInternal,
+				Detail: "the builder reported an image that is not pinned by digest: " + b.Image}, services[i].Name, len(services))))
+		}
+		topology[i], images[i] = services[i].Service(), b.Image
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		if _, err := s.lockState(ctx, p, e); err != nil {
@@ -324,17 +408,10 @@ func (s *Service) built(ctx context.Context, j job, b build.Build) error {
 		if d.Release != nil {
 			return nil // recorded by an earlier attempt
 		}
-		r := release.Release{ID: release.NewID(), Organization: org, Project: d.Project, Image: b.Image,
+		r := release.Release{ID: release.NewID(), Organization: org, Project: d.Project, Image: images[0],
 			Config: *d.Config, CreatedBy: d.RequestedBy}
-		if !release.ValidImage(r.Image) {
-			return workflow.Fail(release.BuildFailed(build.Failure{Code: build.CodeInternal,
-				Detail: "the builder reported an image that is not pinned by digest: " + r.Image}))
-		}
-		if r.Services, err = s.servicesOf(ctx, org, d.Project, r.Image, r.Config); err != nil {
-			if coded(err, project.CodeServicesUnavailable) {
-				return workflow.Fail(err)
-			}
-			return err
+		if r.Services, err = release.ServicesOf(topology, images, r.Config); err != nil {
+			return workflow.Fail(err)
 		}
 		if err := s.repo.CreateRelease(ctx, r); err != nil {
 			return err
@@ -482,9 +559,9 @@ func (s *Service) deployFailed(ctx context.Context, st *workflow.State, cause er
 	}
 	d.Status, d.Error = release.StatusFailed, &failure
 
-	// A build that is still running is no longer needed.
+	// Builds still running are no longer needed.
 	if d.Build != nil && d.Release == nil {
-		if err := s.builder.Cancel(ctx, org, *d.Build, build.Cancel{}); err != nil {
+		if err := s.cancelBuilds(ctx, d, identity.UserID{}); err != nil {
 			return err
 		}
 	}

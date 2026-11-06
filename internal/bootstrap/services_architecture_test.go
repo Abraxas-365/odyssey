@@ -5,7 +5,8 @@ package bootstrap_test
 // transaction, after validation, publishing project.services_changed); every
 // other domain reads the list through project.Queries.Services. A version's
 // snapshot of them is made in one place, release/releasesvc, through
-// release.ServicesOf (which refuses what the version cannot run).
+// release.ServicesOf / ImageServices (which refuses an image for several
+// services), and so is a deployment's (release.BuildsFor).
 
 import (
 	"go/ast"
@@ -23,6 +24,8 @@ import (
 var serviceWriters = map[string]string{
 	"ReplaceServices": "project/projectsvc",
 	"ServicesOf":      "release/releasesvc",
+	"ImageServices":   "release/releasesvc",
+	"BuildsFor":       "release/releasesvc",
 }
 
 func serviceWriteViolations(files []goFile) []string {
@@ -73,6 +76,8 @@ func TestServicesRuleCatchesViolations(t *testing.T) {
 		"release/adapters/releasefleet/c.go": `package releasefleet; func (c *C) f() { release.ServicesOf(topology, image, cfg) }`,
 		"release/release.go":                 `package release; func f() { ServicesOf(topology, image, c) }`,
 		"build/buildsvc/s.go":                `package buildsvc; func (s *S) f() { release.ServicesOf(topology, image, c) }`,
+		"release/adapters/releasemcp/p.go":   `package releasemcp; func (t *T) f() { release.ImageServices(topology, image, c) }`,
+		"release/adapters/releasehttp/h.go":  `package releasehttp; func (h *H) f() { release.BuildsFor(topology) }`,
 	})
 	expectViolations(t, serviceWriteViolations(files),
 		"project/adapters/projecthttp/h.go: project/adapters/projecthttp calls ReplaceServices",
@@ -81,6 +86,8 @@ func TestServicesRuleCatchesViolations(t *testing.T) {
 		"release/adapters/releasefleet/c.go: release/adapters/releasefleet calls ServicesOf",
 		"release/release.go: release calls ServicesOf",
 		"build/buildsvc/s.go: build/buildsvc calls ServicesOf",
+		"release/adapters/releasemcp/p.go: release/adapters/releasemcp calls ImageServices",
+		"release/adapters/releasehttp/h.go: release/adapters/releasehttp calls BuildsFor",
 	)
 }
 
@@ -174,6 +181,69 @@ func agentAppSources(t *testing.T) []goFile {
 
 func TestWorkloadsSelectByWorkload(t *testing.T) {
 	report(t, workloadSelectorViolations(agentAppSources(t)))
+}
+
+// Multi-service builds (MS-3a): a deployment from source has one build per
+// service, so stopping it stops all of them. In release/releasesvc only
+// cancelBuilds (over Deployment.BuildIDs) calls Builder.Cancel: a direct
+// Cancel(*d.Build) would stop the first service's and leave the others
+// running.
+const (
+	releaseServiceDir = "release/releasesvc"
+	buildCancelOwner  = "cancelBuilds"
+)
+
+func buildCancelViolations(files []goFile) []string {
+	var out []string
+	for _, f := range files {
+		if path.Dir(f.rel) != releaseServiceDir || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		for _, d := range f.file.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Name.Name == buildCancelOwner {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Cancel" || !mentions(sel.X, "builder") {
+					return true
+				}
+				out = append(out, f.fset.Position(call.Pos()).String()+": "+fn.Name.Name+" cancels a build directly"+
+					"; a deployment's builds (one per service) are cancelled together by "+buildCancelOwner)
+				return true
+			})
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestDeploymentBuildsAreCancelledTogether(t *testing.T) {
+	report(t, buildCancelViolations(sources(t, false)))
+}
+
+func TestBuildCancelRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		// correct
+		"release/releasesvc/ok.go": `package releasesvc
+func (s *Service) cancelBuilds(d Deployment) error { for _, id := range d.BuildIDs() { s.builder.Cancel(ctx, d.Organization, id, c) }; return nil }
+func (s *Service) retire(d Deployment) error { return s.cancelBuilds(d) }
+func (s *Service) stop(d *Deployment) { s.engine.Cancel(ctx, d.Organization, d.Run, "superseded") }`,
+		"release/releasesvc/x_test.go":       `package releasesvc; func fixture(s *Service) { s.builder.Cancel(ctx, org, id, c) }`,
+		"build/buildsvc/s.go":                `package buildsvc; func (s *Service) f() { s.builder.Cancel(ctx, org, id, c) }`,
+		"release/adapters/releasebuild/b.go": `package releasebuild; func (b *Builder) Cancel() error { return b.commands.Cancel(ctx, org, id, in) }`,
+		// violations
+		"release/releasesvc/bad.go": `package releasesvc
+func (s *Service) deployFailed(d Deployment) error { return s.builder.Cancel(ctx, d.Organization, *d.Build, c) }`,
+	})
+	expectViolations(t, buildCancelViolations(files),
+		"release/releasesvc/bad.go: deployFailed cancels a build directly",
+	)
 }
 
 func TestWorkloadSelectorRuleCatchesViolations(t *testing.T) {
