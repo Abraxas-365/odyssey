@@ -36,16 +36,28 @@ type Policy struct {
 // front of an app. Traefik is the one adapter today; Gateway API or nginx
 // would be others. Implementations must be idempotent.
 type Exposure interface {
-	// Available reports whether the cluster can protect apps now (the
-	// variant's API exists). A protected app is never exposed otherwise.
+	// Available reports whether the variant's API exists now (what removes
+	// a route's prefix can be written).
 	Available(ctx context.Context) bool
+	// CanProtect reports whether the cluster can protect apps now: the
+	// variant is available and the gate is installed. A protected app is
+	// never exposed otherwise.
+	CanProtect(ctx context.Context) bool
 	// Protect creates or updates, owned by a, what the gate needs for a.
 	Protect(ctx context.Context, a *v1alpha1.OdysseyApp, p Policy) error
-	// IngressAnnotations are the annotations that make a's Ingress use
-	// what Protect created. Public apps have none of these keys.
-	IngressAnnotations(a *v1alpha1.OdysseyApp) map[string]string
+	// Prefixes creates or updates, owned by a, what removes each route of
+	// want (workload → route) before the request reaches that workload.
+	Prefixes(ctx context.Context, a *v1alpha1.OdysseyApp, want map[string]string) error
+	// IngressAnnotations are the annotations the Ingress of w needs: the
+	// gate (protected) and then the removal of w's route (w.StripPrefix),
+	// in that order, so the gate sees, and the sign-in returns to, the
+	// address the person opened. A key with an empty value must be removed.
+	IngressAnnotations(a *v1alpha1.OdysseyApp, w workload, protected bool) map[string]string
 	// Unprotect removes what Protect created (absent is fine).
 	Unprotect(ctx context.Context, a *v1alpha1.OdysseyApp) error
+	// DropPrefixes removes what Prefixes created for workloads not in keep
+	// (absent is fine). Called once no Ingress references them.
+	DropPrefixes(ctx context.Context, a *v1alpha1.OdysseyApp, keep map[string]string) error
 }
 
 // accessMode is a's mode; an app without access is public (an object
@@ -78,25 +90,22 @@ func verifyAddress(base string, p Policy) string {
 	return base + "?" + q.Encode()
 }
 
-// applyExposure sets (protected) or clears (public) the exposure's
-// annotations on the Ingress. A public app never keeps the middleware
-// annotation, with or without an Exposure configured: it would point Traefik
-// at Middlewares that are gone (404).
-func applyExposure(i *networkingv1.Ingress, x Exposure, a *v1alpha1.OdysseyApp, protected bool) {
-	if !protected {
-		delete(i.Annotations, annotationMiddlewares)
-	}
+// applyExposure sets the exposure's annotations on the Ingress of w. Without
+// an Exposure there is nothing they could reference: a stale middleware
+// annotation would point Traefik at Middlewares that are gone (404).
+func applyExposure(i *networkingv1.Ingress, x Exposure, a *v1alpha1.OdysseyApp, w workload, protected bool) {
 	if x == nil {
+		delete(i.Annotations, annotationMiddlewares)
 		return
 	}
-	for k, v := range x.IngressAnnotations(a) {
-		if protected {
-			if i.Annotations == nil {
-				i.Annotations = map[string]string{}
-			}
-			i.Annotations[k] = v
-		} else {
+	for k, v := range x.IngressAnnotations(a, w, protected) {
+		if v == "" {
 			delete(i.Annotations, k)
+			continue
 		}
+		if i.Annotations == nil {
+			i.Annotations = map[string]string{}
+		}
+		i.Annotations[k] = v
 	}
 }

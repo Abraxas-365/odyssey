@@ -37,10 +37,15 @@ func reportFromProto(r *fleetv1.AppReport) (fleet.Report, error) {
 		if err != nil {
 			return fleet.Report{}, err
 		}
+		var services []fleet.ServiceStatus
+		for _, s := range a.GetServices() {
+			services = append(services, fleet.ServiceStatus{Name: s.GetName(), Phase: fleet.Phase(s.GetPhase()), Reason: fleet.Reason(s.GetReason()),
+				Message: s.GetMessage(), ReadyReplicas: int(s.GetReadyReplicas())})
+		}
 		out.Apps = append(out.Apps, fleet.AppStatus{
 			Environment: env, Name: a.GetName(), ObservedRevision: a.GetObservedRevision(),
 			Phase: fleet.Phase(a.GetPhase()), Reason: fleet.Reason(a.GetReason()), Message: a.GetMessage(),
-			ReadyReplicas: int(a.GetReadyReplicas()), URL: a.GetUrl(),
+			ReadyReplicas: int(a.GetReadyReplicas()), URL: a.GetUrl(), Services: services,
 		})
 	}
 	return out, nil
@@ -64,8 +69,13 @@ func appToProto(a fleet.App) *fleetv1.App {
 	if a.AI != nil {
 		ai = &fleetv1.AI{BaseUrl: a.AI.BaseURL, KeySecret: a.AI.KeySecret}
 	}
+	services := make([]*fleetv1.Service, 0, len(a.Services))
+	for _, s := range a.Services {
+		services = append(services, &fleetv1.Service{Name: s.Name, Kind: s.Kind, Route: s.Route, StripPrefix: s.StripPrefix,
+			Image: s.Image, Port: int32(s.Port), HealthPath: s.HealthPath, Replicas: int32(s.Replicas)})
+	}
 	return &fleetv1.App{
-		Resources: resources, Ai: ai,
+		Resources: resources, Ai: ai, Services: services,
 		OrganizationId: a.Organization.String(), ProjectId: a.Project.String(), EnvironmentId: a.Environment.String(),
 		Name: a.Name, Revision: a.Revision, Image: a.Image, Port: int32(a.Port), HealthPath: a.HealthPath,
 		Replicas: int32(a.Replicas), Env: a.Env, Labels: a.Labels, Access: &fleetv1.Access{Mode: a.Access}, Secrets: secrets,

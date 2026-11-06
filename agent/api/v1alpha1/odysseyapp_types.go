@@ -6,25 +6,32 @@ import (
 
 // OdysseyAppSpec is what the cluster must run for one app in one environment.
 // It mirrors the control plane's release.DesiredApp (field for field).
+// +kubebuilder:validation:XValidation:rule="(has(self.services) && size(self.services) > 0) || (has(self.image) && has(self.port) && has(self.healthPath) && has(self.replicas))",message="an app without services needs image, port, healthPath and replicas"
 type OdysseyAppSpec struct {
 	// Revision increases with every deployment of the environment. Whoever
 	// applies the spec never lowers it, so a superseded deployment cannot win
 	// late; status.observedRevision says which revision the status describes.
 	// +kubebuilder:validation:Minimum=1
 	Revision int64 `json:"revision"`
+	// Image, Port, HealthPath and Replicas are the app's only service when
+	// Services is empty (an object written before services existed).
 	// Image is pinned by digest: registry/repository@sha256:<64 hex>.
+	// +optional
 	// +kubebuilder:validation:Pattern=`^[^\s@]+@sha256:[a-f0-9]{64}$`
-	Image string `json:"image"`
+	Image string `json:"image,omitempty"`
 	// Port the app listens on (PORT is set to it unless env says otherwise).
+	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	Port int32 `json:"port,omitempty"`
 	// HealthPath must answer 2xx/3xx once the app is ready to serve.
+	// +optional
 	// +kubebuilder:validation:Pattern=`^/`
-	HealthPath string `json:"healthPath"`
+	HealthPath string `json:"healthPath,omitempty"`
+	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=20
-	Replicas int32 `json:"replicas"`
+	Replicas int32 `json:"replicas,omitempty"`
 	// Env holds non-secret configuration.
 	// +optional
 	Env map[string]string `json:"env,omitempty"`
@@ -61,6 +68,60 @@ type OdysseyAppSpec struct {
 	// win over the same names in env, secrets and resources). Absent: no AI.
 	// +optional
 	AI *AISpec `json:"ai,omitempty"`
+	// Services are the app's workloads, in order (at most 8). Empty: one web
+	// service "web" at "/" made of Image, Port, HealthPath and Replicas (an
+	// object written before services existed). When set, those four fields
+	// are ignored; each service names its own.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=8
+	Services []ServiceSpec `json:"services,omitempty"`
+}
+
+// ServiceKind is what a service is.
+// +kubebuilder:validation:Enum=web;worker
+type ServiceKind string
+
+const (
+	ServiceWeb    ServiceKind = "web"    // answers HTTP on its port
+	ServiceWorker ServiceKind = "worker" // no port, no route (a queue consumer)
+)
+
+// ServiceSpec is one workload of an app. Its Deployment (and, for a web
+// service, its Service and Ingress) is named after the app: "<app>" for the
+// service at "/", "<app>-<name>" for any other.
+// +kubebuilder:validation:XValidation:rule="self.kind != 'worker' || !has(self.route) || size(self.route) == 0",message="a worker has no route"
+// +kubebuilder:validation:XValidation:rule="self.kind != 'web' || (has(self.port) && self.port >= 1)",message="a web service needs a port"
+// +kubebuilder:validation:XValidation:rule="!has(self.stripPrefix) || !self.stripPrefix || (has(self.route) && size(self.route) > 1)",message="only a route other than / can be stripped"
+type ServiceSpec struct {
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9]{0,19}$`
+	Name string      `json:"name"`
+	Kind ServiceKind `json:"kind"`
+	// Route is the path of the app's address the service answers ("/",
+	// "/api"); empty: internal (web) or none (worker).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(/|(/[A-Za-z0-9._~-]+)+)?$`
+	// +kubebuilder:validation:MaxLength=100
+	Route string `json:"route,omitempty"`
+	// StripPrefix removes Route from the path before the request reaches
+	// the service.
+	// +optional
+	StripPrefix bool `json:"stripPrefix,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[^\s@]+@sha256:[a-f0-9]{64}$`
+	Image string `json:"image"`
+	// Port the service listens on (web only).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port,omitempty"`
+	// HealthPath must answer 2xx/3xx once a web service is ready.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(/.*)?$`
+	HealthPath string `json:"healthPath,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=20
+	Replicas int32 `json:"replicas"`
 }
 
 // AISpec is how an app reaches the AI gateway.
@@ -175,6 +236,26 @@ type OdysseyAppStatus struct {
 	// URL is where the app answers.
 	// +optional
 	URL string `json:"url,omitempty"`
+	// Services is each service's rollout of ObservedRevision (the app's
+	// phase is their aggregate).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=8
+	Services []ServiceStatus `json:"services,omitempty"`
+}
+
+// ServiceStatus is one service's part of the app's status.
+type ServiceStatus struct {
+	Name string `json:"name"`
+	// +optional
+	Phase Phase `json:"phase,omitempty"`
+	// +optional
+	Reason Reason `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
+	// +optional
+	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 }
 
 // OdysseyApp is one app in one environment: the agent turns it into a

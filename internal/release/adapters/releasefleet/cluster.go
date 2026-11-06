@@ -10,6 +10,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 )
 
@@ -37,17 +38,23 @@ func (c *Cluster) Apply(ctx context.Context, t release.Target, app release.Desir
 	if app.AI != nil {
 		ai = &fleet.AIRef{BaseURL: app.AI.BaseURL, KeySecret: app.AI.KeySecret}
 	}
+	var services []fleet.AppService
+	for _, s := range app.Services {
+		services = append(services, fleet.AppService{Name: s.Name, Kind: string(s.Kind), Route: s.Route, StripPrefix: s.StripPrefix,
+			Image: s.Image, Port: s.Port, HealthPath: s.HealthPath, Replicas: s.Replicas})
+	}
 	err := c.fleet.Apply(ctx, fleet.App{
 		Organization: t.Organization, Project: t.Project, Environment: t.Environment, Name: app.Name,
 		Revision: app.Revision, Image: app.Image, Port: app.Port, HealthPath: app.HealthPath,
 		Replicas: app.Replicas, Env: app.Env, Labels: app.Labels, Access: app.Access, Secrets: secrets, Resources: resources, AI: ai,
+		Services: services,
 	})
 	var e *errx.Error
 	if errors.As(err, &e) && (e.Type == errx.TypeBusiness || e.Type == errx.TypeValidation) {
 		switch e.Code {
 		case fleet.CodeNoCluster, fleet.CodeClusterRevoked, fleet.CodeAccessUnavailable, fleet.CodeSecretsUnavailable,
 			fleet.CodeExternalSecretsUnavailable, fleet.CodeSecretKeyChanged, fleet.CodeSecretStoreUnknown,
-			fleet.CodeResourcesUnavailable, fleet.CodeAIUnavailable:
+			fleet.CodeResourcesUnavailable, fleet.CodeAIUnavailable, project.CodeServicesUnavailable:
 			return release.Failed(release.CodeApplyFailed, e.Message)
 		}
 		return release.Failed(release.CodeApplyFailed, "El clúster no pudo aceptar la configuración de la app.", e.Message)
@@ -109,23 +116,35 @@ func (c *Cluster) Status(ctx context.Context, t release.Target, name string) (re
 		return release.AppStatus{}, err
 	}
 	out := release.AppStatus{ObservedRevision: s.ObservedRevision, Message: s.Message, ReadyReplicas: s.ReadyReplicas,
-		URL: s.URL, Phase: release.PhaseProgressing}
-	switch s.Phase {
+		URL: s.URL}
+	out.Phase, out.Reason = phaseOf(s.Phase, s.Reason)
+	for _, sv := range s.Services {
+		st := release.ServiceStatus{Name: sv.Name, Message: sv.Message, ReadyReplicas: sv.ReadyReplicas}
+		st.Phase, st.Reason = phaseOf(sv.Phase, sv.Reason)
+		out.Services = append(out.Services, st)
+	}
+	return out, nil
+}
+
+// phaseOf maps the fleet's phase and reason (an unknown reason of a failure
+// is "unhealthy").
+func phaseOf(p fleet.Phase, r fleet.Reason) (release.Phase, release.FailureReason) {
+	switch p {
 	case fleet.PhaseReady:
-		out.Phase = release.PhaseReady
+		return release.PhaseReady, ""
 	case fleet.PhaseFailed:
-		out.Phase = release.PhaseFailed
-		out.Reason = map[fleet.Reason]release.FailureReason{
+		reason := map[fleet.Reason]release.FailureReason{
 			fleet.ReasonImagePull: release.FailureImagePull,
 			fleet.ReasonCrash:     release.FailureCrash,
 			fleet.ReasonConfig:    release.FailureConfig,
 			fleet.ReasonResource:  release.FailureResource,
-		}[s.Reason]
-		if out.Reason == "" {
-			out.Reason = release.FailureUnhealthy
+		}[r]
+		if reason == "" {
+			reason = release.FailureUnhealthy
 		}
+		return release.PhaseFailed, reason
 	}
-	return out, nil
+	return release.PhaseProgressing, ""
 }
 
 // Egress is the policy of the environment's cluster (fleet.EgressTarget).

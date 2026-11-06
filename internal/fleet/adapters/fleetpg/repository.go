@@ -313,11 +313,20 @@ func (r *Repository) ObserveDisconnect(ctx context.Context, organization identit
 // "deleted" at (or past) its revision is removed, status first, and returned.
 func (r *Repository) ObserveApps(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID, session fleet.Session, report fleet.Report) (bool, []fleet.App, error) {
 	n := len(report.Apps)
-	envs, names, revs, phases, reasons, msgs, replicas, urls :=
-		make([]string, n), make([]string, n), make([]int64, n), make([]string, n), make([]string, n), make([]string, n), make([]int64, n), make([]string, n)
+	envs, names, revs, phases, reasons, msgs, replicas, urls, services :=
+		make([]string, n), make([]string, n), make([]int64, n), make([]string, n), make([]string, n), make([]string, n), make([]int64, n), make([]string, n), make([]string, n)
 	for i, s := range report.Apps {
 		envs[i], names[i], revs[i], phases[i] = s.Environment.String(), s.Name, s.ObservedRevision, string(s.Phase)
 		reasons[i], msgs[i], replicas[i], urls[i] = string(s.Reason), s.Message, int64(s.ReadyReplicas), s.URL
+		svcs := s.Services
+		if svcs == nil {
+			svcs = []fleet.ServiceStatus{}
+		}
+		raw, err := json.Marshal(svcs)
+		if err != nil {
+			return false, nil, errx.Wrap(err, "encode service status", errx.TypeInternal)
+		}
+		services[i] = string(raw)
 	}
 	var live bool
 	q := txn.Q(ctx, r.db)
@@ -326,29 +335,29 @@ func (r *Repository) ObserveApps(ctx context.Context, organization identity.Orga
 		    SELECT 1 FROM fleet.clusters WHERE organization_id = $1 AND id = $2 AND status = 'active' AND session_id = $3
 		 ), reported AS (
 		    SELECT DISTINCT ON (r.env, r.name) d.environment_id, d.name, d.organization_id, d.cluster_id,
-		           r.rev, r.phase, r.reason, r.message, r.replicas, r.url
-		    FROM unnest($4::uuid[], $5::text[], $6::bigint[], $7::text[], $8::text[], $9::text[], $10::int[], $11::text[])
-		         AS r(env, name, rev, phase, reason, message, replicas, url)
+		           r.rev, r.phase, r.reason, r.message, r.replicas, r.url, r.services
+		    FROM unnest($4::uuid[], $5::text[], $6::bigint[], $7::text[], $8::text[], $9::text[], $10::int[], $11::text[], $12::jsonb[])
+		         AS r(env, name, rev, phase, reason, message, replicas, url, services)
 		    JOIN fleet.desired_apps d ON d.environment_id = r.env AND d.name = r.name
 		    WHERE d.organization_id = $1 AND d.cluster_id = $2 AND r.rev <= d.revision AND r.phase <> 'deleted'
 		    ORDER BY r.env, r.name, r.rev DESC
 		 ), upserted AS (
 		    INSERT INTO fleet.app_status (environment_id, name, organization_id, cluster_id, observed_revision, phase,
-		        reason, message, ready_replicas, url, observed_at)
-		    SELECT environment_id, name, organization_id, cluster_id, rev, phase, reason, message, replicas, url, now()
+		        reason, message, ready_replicas, url, services, observed_at)
+		    SELECT environment_id, name, organization_id, cluster_id, rev, phase, reason, message, replicas, url, services, now()
 		    FROM reported
 		    WHERE EXISTS (SELECT 1 FROM tunnel)
 		    ON CONFLICT (environment_id, name) DO UPDATE SET
 		        observed_revision = EXCLUDED.observed_revision, phase = EXCLUDED.phase, reason = EXCLUDED.reason,
 		        message = EXCLUDED.message, ready_replicas = EXCLUDED.ready_replicas, url = EXCLUDED.url,
-		        observed_at = now()
+		        services = EXCLUDED.services, observed_at = now()
 		    WHERE fleet.app_status.organization_id = $1 AND fleet.app_status.cluster_id = $2
 		      AND fleet.app_status.observed_revision <= EXCLUDED.observed_revision
 		    RETURNING 1
 		 )
 		 SELECT EXISTS (SELECT 1 FROM tunnel)`,
 		organization, id, session, pq.Array(envs), pq.Array(names), pq.Array(revs), pq.Array(phases), pq.Array(reasons),
-		pq.Array(msgs), pq.Array(replicas), pq.Array(urls))
+		pq.Array(msgs), pq.Array(replicas), pq.Array(urls), pq.Array(services))
 	if err != nil {
 		return false, nil, pgerr.Map(err, "observe apps")
 	}
@@ -514,11 +523,12 @@ type spec struct {
 	Secrets    []fleet.AppSecret   `json:"secrets,omitempty"`
 	Resources  []fleet.ResourceRef `json:"resources,omitempty"`
 	AI         *fleet.AIRef        `json:"ai,omitempty"`
+	Services   []fleet.AppService  `json:"services,omitempty"`
 }
 
 func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
 	raw, err := json.Marshal(spec{Image: a.Image, Port: a.Port, HealthPath: a.HealthPath, Replicas: a.Replicas, Env: a.Env, Labels: a.Labels,
-		Access: a.Access, Secrets: a.Secrets, Resources: a.Resources, AI: a.AI})
+		Access: a.Access, Secrets: a.Secrets, Resources: a.Resources, AI: a.AI, Services: a.Services})
 	if err != nil {
 		return false, errx.Wrap(err, "encode app", errx.TypeInternal)
 	}
@@ -586,7 +596,7 @@ func (r appRow) app() (fleet.App, error) {
 	if a.Secrets == nil {
 		a.Secrets = []fleet.AppSecret{}
 	}
-	a.Resources, a.AI = s.Resources, s.AI
+	a.Resources, a.AI, a.Services = s.Resources, s.AI, s.Services
 	if a.Resources == nil {
 		a.Resources = []fleet.ResourceRef{}
 	}
@@ -625,14 +635,24 @@ func (r *Repository) FindApp(ctx context.Context, organization identity.Organiza
 }
 
 func (r *Repository) FindAppStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (fleet.AppStatus, error) {
-	var s fleet.AppStatus
-	err := txn.Q(ctx, r.db).GetContext(ctx, &s,
-		`SELECT environment_id, name, observed_revision, phase, reason, message, ready_replicas, url, observed_at
+	var row struct {
+		fleet.AppStatus
+		Services []byte `db:"services"`
+	}
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row,
+		`SELECT environment_id, name, observed_revision, phase, reason, message, ready_replicas, url, services, observed_at
 		 FROM fleet.app_status WHERE organization_id = $1 AND environment_id = $2 AND name = $3`, organization, environment, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fleet.AppStatus{}, errx.NotFound("app status not found")
 	}
-	return s, pgerr.Map(err, "find app status")
+	if err != nil {
+		return fleet.AppStatus{}, pgerr.Map(err, "find app status")
+	}
+	s := row.AppStatus
+	if err := json.Unmarshal(row.Services, &s.Services); err != nil {
+		return fleet.AppStatus{}, errx.Wrap(err, "decode service status", errx.TypeInternal)
+	}
+	return s, nil
 }
 
 // notify is delivered at commit (Postgres holds NOTIFY until then), so a

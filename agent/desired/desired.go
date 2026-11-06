@@ -109,7 +109,56 @@ func Valid(a *fleetv1.App) error {
 	if err := validSecretRefs(a.GetSecrets()); err != nil {
 		return err
 	}
+	if err := validServices(a); err != nil {
+		return err
+	}
 	return validResourceRefs(a.GetResources())
+}
+
+// MaxServices bounds an app's services (as the control plane does).
+const MaxServices = 8
+
+var serviceName = regexp.MustCompile(`^[a-z][a-z0-9]{0,19}$`)
+
+// validServices checks what the CRD cannot say to a person: names unique,
+// one service per route, at most one at "/", and the route of a service
+// unique (the longest prefix decides between the others).
+func validServices(a *fleetv1.App) error {
+	svcs := a.GetServices()
+	if a.GetDeleted() || len(svcs) == 0 {
+		return nil
+	}
+	if len(svcs) > MaxServices {
+		return fmt.Errorf("app has %d services, at most %d", len(svcs), MaxServices)
+	}
+	names, routes := map[string]bool{}, map[string]bool{}
+	for _, s := range svcs {
+		switch {
+		case !serviceName.MatchString(s.GetName()):
+			return fmt.Errorf("service name %q must be 1-20 lowercase letters and digits, starting with a letter", s.GetName())
+		case names[s.GetName()]:
+			return fmt.Errorf("service %q is repeated", s.GetName())
+		case s.GetKind() != string(v1alpha1.ServiceWeb) && s.GetKind() != string(v1alpha1.ServiceWorker):
+			return fmt.Errorf("service %q has kind %q, not web or worker", s.GetName(), s.GetKind())
+		case s.GetRoute() != "" && routes[s.GetRoute()]:
+			return fmt.Errorf("route %q is used by two services", s.GetRoute())
+		}
+		names[s.GetName()], routes[s.GetRoute()] = true, s.GetRoute() != ""
+	}
+	return nil
+}
+
+// servicesOf maps the proto's services (nil: an app of the top-level fields).
+func servicesOf(svcs []*fleetv1.Service) []v1alpha1.ServiceSpec {
+	if len(svcs) == 0 {
+		return nil
+	}
+	out := make([]v1alpha1.ServiceSpec, len(svcs))
+	for i, s := range svcs {
+		out[i] = v1alpha1.ServiceSpec{Name: s.GetName(), Kind: v1alpha1.ServiceKind(s.GetKind()), Route: s.GetRoute(),
+			StripPrefix: s.GetStripPrefix(), Image: s.GetImage(), Port: s.GetPort(), HealthPath: s.GetHealthPath(), Replicas: s.GetReplicas()}
+	}
+	return out
 }
 
 // MaxSecrets bounds an app's secret variables.
@@ -232,7 +281,7 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	spec := v1alpha1.OdysseyAppSpec{
 		Revision: a.GetRevision(), Image: a.GetImage(), Port: a.GetPort(), HealthPath: a.GetHealthPath(),
 		Replicas: a.GetReplicas(), Env: a.GetEnv(), Labels: a.GetLabels(), Access: access, Secrets: secretsOf(a.GetSecrets()),
-		Resources: resourcesOf(a.GetResources()), AI: aiOf(a.GetAi()),
+		Resources: resourcesOf(a.GetResources()), AI: aiOf(a.GetAi()), Services: servicesOf(a.GetServices()),
 	}
 	ns := Namespace(a.GetEnvironmentId())
 	var cur v1alpha1.OdysseyApp
@@ -536,12 +585,20 @@ func statusOf(a *v1alpha1.OdysseyApp) *fleetv1.AppStatus {
 	default:
 		return nil
 	}
-	return &fleetv1.AppStatus{
+	out := &fleetv1.AppStatus{
 		EnvironmentId: env, Name: a.Name, ObservedRevision: st.ObservedRevision, Phase: string(st.Phase),
 		Reason: string(st.Reason), Message: clip(st.Message, maxMessage), ReadyReplicas: st.ReadyReplicas,
 		Url: clip(st.URL, maxURL),
 	}
+	for _, s := range st.Services {
+		out.Services = append(out.Services, &fleetv1.ServiceStatus{Name: s.Name, Phase: string(s.Phase), Reason: string(s.Reason),
+			Message: clip(s.Message, maxServiceMessage), ReadyReplicas: s.ReadyReplicas})
+	}
+	return out
 }
+
+// maxServiceMessage bounds a service's message (fleet.MaxServiceMessage).
+const maxServiceMessage = 500
 
 // clip shortens s to n runes and drops control characters other than tab
 // and newline (the gateway refuses them).
@@ -581,11 +638,17 @@ const CapabilityAI = "odicea.ai"
 // the control plane keeps a retirement for an agent that does not list it.
 const CapabilityRetire = "odicea.retire"
 
+// CapabilityServices is always reported: the agent runs an app as one
+// workload per service (App.services). Same string as
+// fleet.CapabilityServices; the control plane refuses an app of several
+// services for a cluster that does not list it.
+const CapabilityServices = "odicea.services"
+
 // Capabilities describes the cluster: its Kubernetes version, which known
 // platform APIs it has, and its ingress and storage classes. Whatever
 // cannot be read is left empty (the agent still connects).
 func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
-	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI, CapabilityRetire}, IngressClasses: []string{}, StorageClasses: []string{}}
+	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI, CapabilityRetire, CapabilityServices}, IngressClasses: []string{}, StorageClasses: []string{}}
 	if s.Discovery != nil {
 		if v, err := s.Discovery.ServerVersion(); err == nil {
 			out.KubernetesVersion = v.GitVersion

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -25,7 +26,7 @@ func (c *Client) WatchStatuses(mgr ctrl.Manager) error {
 		GenericFunc: func(event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			o, n := e.ObjectOld.(*v1alpha1.OdysseyApp), e.ObjectNew.(*v1alpha1.OdysseyApp)
-			return applied(n) && o.Status != n.Status
+			return applied(n) && !equality.Semantic.DeepEqual(o.Status, n.Status)
 		},
 	}
 	return ctrl.NewControllerManagedBy(mgr).

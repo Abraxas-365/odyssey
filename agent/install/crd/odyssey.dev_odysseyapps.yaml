@@ -121,8 +121,10 @@ spec:
                 pattern: ^/
                 type: string
               image:
-                description: 'Image is pinned by digest: registry/repository@sha256:<64
-                  hex>.'
+                description: |-
+                  Image, Port, HealthPath and Replicas are the app's only service when
+                  Services is empty (an object written before services existed).
+                  Image is pinned by digest: registry/repository@sha256:<64 hex>.
                 pattern: ^[^\s@]+@sha256:[a-f0-9]{64}$
                 type: string
               labels:
@@ -242,13 +244,85 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              services:
+                description: |-
+                  Services are the app's workloads, in order (at most 8). Empty: one web
+                  service "web" at "/" made of Image, Port, HealthPath and Replicas (an
+                  object written before services existed). When set, those four fields
+                  are ignored; each service names its own.
+                items:
+                  description: |-
+                    ServiceSpec is one workload of an app. Its Deployment (and, for a web
+                    service, its Service and Ingress) is named after the app: "<app>" for the
+                    service at "/", "<app>-<name>" for any other.
+                  properties:
+                    healthPath:
+                      description: HealthPath must answer 2xx/3xx once a web service
+                        is ready.
+                      pattern: ^(/.*)?$
+                      type: string
+                    image:
+                      pattern: ^[^\s@]+@sha256:[a-f0-9]{64}$
+                      type: string
+                    kind:
+                      description: ServiceKind is what a service is.
+                      enum:
+                      - web
+                      - worker
+                      type: string
+                    name:
+                      pattern: ^[a-z][a-z0-9]{0,19}$
+                      type: string
+                    port:
+                      description: Port the service listens on (web only).
+                      format: int32
+                      maximum: 65535
+                      minimum: 0
+                      type: integer
+                    replicas:
+                      format: int32
+                      maximum: 20
+                      minimum: 1
+                      type: integer
+                    route:
+                      description: |-
+                        Route is the path of the app's address the service answers ("/",
+                        "/api"); empty: internal (web) or none (worker).
+                      maxLength: 100
+                      pattern: ^(/|(/[A-Za-z0-9._~-]+)+)?$
+                      type: string
+                    stripPrefix:
+                      description: |-
+                        StripPrefix removes Route from the path before the request reaches
+                        the service.
+                      type: boolean
+                  required:
+                  - image
+                  - kind
+                  - name
+                  - replicas
+                  type: object
+                  x-kubernetes-validations:
+                  - message: a worker has no route
+                    rule: self.kind != 'worker' || !has(self.route) || size(self.route)
+                      == 0
+                  - message: a web service needs a port
+                    rule: self.kind != 'web' || (has(self.port) && self.port >= 1)
+                  - message: only a route other than / can be stripped
+                    rule: '!has(self.stripPrefix) || !self.stripPrefix || (has(self.route)
+                      && size(self.route) > 1)'
+                maxItems: 8
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
             required:
-            - healthPath
-            - image
-            - port
-            - replicas
             - revision
             type: object
+            x-kubernetes-validations:
+            - message: an app without services needs image, port, healthPath and replicas
+              rule: (has(self.services) && size(self.services) > 0) || (has(self.image)
+                && has(self.port) && has(self.healthPath) && has(self.replicas))
           status:
             description: OdysseyAppStatus is what the agent observed.
             properties:
@@ -287,6 +361,45 @@ spec:
                 - config
                 - resource
                 type: string
+              services:
+                description: |-
+                  Services is each service's rollout of ObservedRevision (the app's
+                  phase is their aggregate).
+                items:
+                  description: ServiceStatus is one service's part of the app's status.
+                  properties:
+                    message:
+                      type: string
+                    name:
+                      type: string
+                    phase:
+                      description: Phase is how the cluster sees the app at status.observedRevision.
+                      enum:
+                      - progressing
+                      - ready
+                      - failed
+                      type: string
+                    readyReplicas:
+                      format: int32
+                      type: integer
+                    reason:
+                      description: Reason explains a failed phase.
+                      enum:
+                      - ""
+                      - image_pull
+                      - crash
+                      - unhealthy
+                      - config
+                      - resource
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 8
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               url:
                 description: URL is where the app answers.
                 type: string

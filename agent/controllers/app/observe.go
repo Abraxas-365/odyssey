@@ -23,6 +23,8 @@ type Observation struct {
 	Reason        v1alpha1.Reason
 	Message       string
 	ReadyReplicas int32
+	// Services is each service's part (an app with spec.services only).
+	Services []v1alpha1.ServiceStatus
 }
 
 // Observe decides how the rollout of revision rev is going at now. It judges

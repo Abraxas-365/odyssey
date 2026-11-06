@@ -298,6 +298,10 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		if err := c.Agent.Capabilities.CheckAI(app.AI); err != nil {
 			return err
 		}
+		// One that runs a single workload would serve half of the app.
+		if !app.Simple() && !c.Agent.Capabilities.CanRunServices() {
+			return errx.Business(project.ServicesUnavailableMessage).WithCode(project.CodeServicesUnavailable)
+		}
 		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)
 		if err != nil || !changed {

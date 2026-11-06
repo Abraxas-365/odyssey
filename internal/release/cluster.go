@@ -45,8 +45,9 @@ type DesiredApp struct {
 	// gateway; its key is the managed secret AIKeySecret, listed in Secrets.
 	AI *DesiredAI `json:"ai,omitempty"`
 	// Services are the version's services, in order (Release.Services). The
-	// top-level Image, Port, HealthPath and Replicas are the first service's
-	// for an agent that runs one workload per app (without odicea.services).
+	// top-level Image, Port, HealthPath and Replicas repeat the only one's
+	// for a version of one web service at "/" and are empty otherwise
+	// (Desired).
 	Services []Service `json:"services"`
 }
 
@@ -79,17 +80,33 @@ type AppStatus struct {
 	Message          string        `json:"message"`
 	ReadyReplicas    int           `json:"ready_replicas"`
 	URL              string        `json:"url"`
+	// Services is each service's part (empty from a cluster that runs one
+	// workload per app); Phase is their aggregate.
+	Services []ServiceStatus `json:"services"`
+}
+
+// ServiceStatus is how the cluster sees one service of an app.
+type ServiceStatus struct {
+	Name          string        `json:"name"`
+	Phase         Phase         `json:"phase"`
+	Reason        FailureReason `json:"reason,omitempty"`
+	Message       string        `json:"message,omitempty"`
+	ReadyReplicas int           `json:"ready_replicas"`
 }
 
 // Desired builds what the cluster must run for deployment d of release r.
+// For a version of one web service at "/" (or of none: made before
+// services) the top-level image, port, health path and replicas are that
+// service's, so a cluster that runs one workload per app runs it as
+// before; for any other they stay empty, so such a cluster fails visibly
+// instead of serving half of the app.
 func Desired(name string, d Deployment, r Release) DesiredApp {
 	env := make(map[string]string, len(r.Config.Env))
 	for k, v := range r.Config.Env {
 		env[k] = v
 	}
-	return DesiredApp{
-		Name: name, Revision: d.Revision, Image: r.Image, Port: r.Config.Port, HealthPath: r.Config.HealthPath,
-		Replicas: r.Config.Replicas, Env: env, Services: slices.Clone(r.Services),
+	out := DesiredApp{
+		Name: name, Revision: d.Revision, Env: env, Services: slices.Clone(r.Services),
 		Labels: map[string]string{
 			"odyssey.dev/project":     d.Project.String(),
 			"odyssey.dev/environment": d.Environment.String(),
@@ -97,4 +114,18 @@ func Desired(name string, d Deployment, r Release) DesiredApp {
 			"odyssey.dev/deployment":  d.ID.String(),
 		},
 	}
+	if OneWebService(r.Services) {
+		out.Image, out.Port, out.HealthPath, out.Replicas = r.Image, r.Config.Port, r.Config.HealthPath, r.Config.Replicas
+	}
+	return out
+}
+
+// OneWebService reports whether services are one web service at "/" whose
+// whole path reaches it (or none: a version made before services).
+func OneWebService(services []Service) bool {
+	if len(services) == 0 {
+		return true
+	}
+	s := services[0]
+	return len(services) == 1 && s.Kind == project.ServiceWeb && s.Route == "/" && !s.StripPrefix
 }

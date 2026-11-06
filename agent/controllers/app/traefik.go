@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/agent/access"
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,7 +61,9 @@ var middlewareGVK = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alp
 type Traefik struct {
 	Client client.Client
 	// VerifyURL is the gate's /verify endpoint as Traefik reaches it
-	// (http://odyssey-access.odyssey-system.svc:8098/verify).
+	// (http://odyssey-access.odyssey-system.svc:8098/verify). Empty: the
+	// gate is not installed; routes' prefixes are still removed, but no app
+	// can be protected.
 	VerifyURL string
 	// Mapper tells whether the Middleware kind exists (nil: Client's).
 	Mapper meta.RESTMapper
@@ -69,8 +73,26 @@ var _ Exposure = (*Traefik)(nil)
 
 const annotationMiddlewares = "traefik.ingress.kubernetes.io/router.middlewares"
 
+// annotationPriority ranks a route's routers. Traefik ranks by the rule's
+// length by default, and Host(h) && Path(`/api`) is shorter than the root's
+// Host(h) && PathPrefix(`/`): the web would take "/api". A route other than
+// "/" ranks at routePriority plus its length, above any root (whose
+// default is under 300: a host has at most 253 characters) and with the
+// longer route ahead ("/api/v2" before "/api/").
+const (
+	annotationPriority = "traefik.ingress.kubernetes.io/router.priority"
+	routePriority      = 1000
+)
+
 func stripName(a *v1alpha1.OdysseyApp) string  { return a.Name + "-odicea-strip" }
 func accessName(a *v1alpha1.OdysseyApp) string { return a.Name + "-odicea-access" }
+
+// prefixName is the Middleware that removes a workload's route.
+func prefixName(workload string) string { return workload + "-odicea-prefix" }
+
+// labelMiddleware tells the agent's Middlewares apart by role ("prefix" for
+// the route removers, which are listed to be collected).
+const labelMiddleware = "odyssey.dev/middleware"
 
 func (t *Traefik) Available(context.Context) bool {
 	m := t.Mapper
@@ -81,10 +103,61 @@ func (t *Traefik) Available(context.Context) bool {
 	return err == nil
 }
 
-func (t *Traefik) IngressAnnotations(a *v1alpha1.OdysseyApp) map[string]string {
+func (t *Traefik) CanProtect(ctx context.Context) bool { return t.VerifyURL != "" && t.Available(ctx) }
+
+func (t *Traefik) IngressAnnotations(a *v1alpha1.OdysseyApp, w workload, protected bool) map[string]string {
 	ref := func(name string) string { return a.Namespace + "-" + name + "@kubernetescrd" }
-	// The strip runs first: the gate's headers are added after it.
-	return map[string]string{annotationMiddlewares: ref(stripName(a)) + "," + ref(accessName(a))}
+	var chain []string
+	if protected {
+		// The strip runs first: the gate's headers are added after it.
+		chain = append(chain, ref(stripName(a)), ref(accessName(a)))
+	}
+	if w.StripPrefix {
+		// Last: the gate judges, and returns the person to, the address
+		// they opened, not the one the service sees.
+		chain = append(chain, ref(prefixName(w.Deployment)))
+	}
+	priority := ""
+	if w.Route != "/" {
+		priority = strconv.Itoa(routePriority + len(w.Route))
+	}
+	return map[string]string{annotationMiddlewares: strings.Join(chain, ","), annotationPriority: priority}
+}
+
+func (t *Traefik) Prefixes(ctx context.Context, a *v1alpha1.OdysseyApp, want map[string]string) error {
+	for workload, route := range want {
+		spec := map[string]any{"stripPrefix": map[string]any{"prefixes": []any{route}}}
+		if err := t.put(ctx, a, prefixName(workload), spec, "prefix"); err != nil {
+			return fmt.Errorf("middleware %s: %w", prefixName(workload), err)
+		}
+	}
+	return nil
+}
+
+func (t *Traefik) DropPrefixes(ctx context.Context, a *v1alpha1.OdysseyApp, keep map[string]string) error {
+	if !t.Available(ctx) {
+		return nil
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(middlewareGVK.GroupVersion().WithKind("MiddlewareList"))
+	if err := t.Client.List(ctx, list, client.InNamespace(a.Namespace),
+		client.MatchingLabels{LabelManagedBy: ManagedBy, LabelApp: a.Name, labelMiddleware: "prefix"}); err != nil {
+		return fmt.Errorf("list middlewares: %w", err)
+	}
+	wanted := make(map[string]bool, len(keep))
+	for workload := range keep {
+		wanted[prefixName(workload)] = true
+	}
+	for i := range list.Items {
+		m := &list.Items[i]
+		if wanted[m.GetName()] || !metav1.IsControlledBy(m, a) {
+			continue
+		}
+		if err := t.Client.Delete(ctx, m); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete middleware %s: %w", m.GetName(), err)
+		}
+	}
+	return nil
 }
 
 func (t *Traefik) Protect(ctx context.Context, a *v1alpha1.OdysseyApp, p Policy) error {
@@ -110,20 +183,22 @@ func (t *Traefik) Protect(ctx context.Context, a *v1alpha1.OdysseyApp, p Policy)
 			"authResponseHeaders": auth,
 		}}},
 	} {
-		if err := t.put(ctx, a, m.name, m.spec); err != nil {
+		if err := t.put(ctx, a, m.name, m.spec, "access"); err != nil {
 			return fmt.Errorf("middleware %s: %w", m.name, err)
 		}
 	}
 	return nil
 }
 
-func (t *Traefik) put(ctx context.Context, a *v1alpha1.OdysseyApp, name string, spec map[string]any) error {
+func (t *Traefik) put(ctx context.Context, a *v1alpha1.OdysseyApp, name string, spec map[string]any, role string) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(middlewareGVK)
 	obj.SetName(name)
 	obj.SetNamespace(a.Namespace)
 	_, err := controllerutil.CreateOrUpdate(ctx, t.Client, obj, func() error {
-		obj.SetLabels(labels(a))
+		l := labels(a)
+		l[labelMiddleware] = role
+		obj.SetLabels(l)
 		obj.Object["spec"] = spec
 		return controllerutil.SetControllerReference(a, obj, t.Client.Scheme())
 	})

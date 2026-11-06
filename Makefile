@@ -193,10 +193,14 @@ agent-image:
 test-kube:
 	ODYSSEY_TEST_KUBE=1 go test -count=1 -timeout 15m -run '^TestKube$$' -v ./internal/bootstrap/
 
-# The same e2e against the long-lived k3d cluster (stop other agents first).
+# The same e2e against the long-lived k3d cluster (stop other agents first),
+# then the apps of several services (TestKubeServices: needs the cluster to
+# reach the host, like test-build). One agent per process: two runs.
 test-kube-k3d:
 	ODYSSEY_TEST_KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_TEST_APPS_PORT=$(APPS_PORT) \
 	go test -count=1 -run '^TestKube$$' -v ./internal/bootstrap/
+	ODYSSEY_TEST_KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_TEST_APPS_PORT=$(APPS_PORT) \
+	go test -count=1 -timeout 15m -run '^TestKubeServices$$' -v ./internal/bootstrap/
 
 # Real builds on k3d (needs make cluster: zot + its mirror): folders uploaded
 # through the API are built by an in-process agent's BuildKit pods, pushed to

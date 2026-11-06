@@ -49,6 +49,12 @@ type App struct {
 	// AI connects the app to the organization's AI gateway (2d-ai); nil: no
 	// AI. Its key is one of Secrets.
 	AI *AIRef `json:"ai,omitempty" db:"-"`
+	// Services are the app's workloads, in order (release.Services). For an
+	// app of one web service at "/" (Simple) the top-level Image, Port,
+	// HealthPath and Replicas repeat it, so an agent without
+	// CapabilityServices runs it as before; for any other they are empty, so
+	// such an agent fails visibly instead of serving half of the app.
+	Services []AppService `json:"services,omitempty" db:"-"`
 	// Deleted: the app was retired (its project archived). Only the ids, name
 	// and revision matter; the agent removes it and reports it PhaseDeleted,
 	// and then it is forgotten.
@@ -97,6 +103,81 @@ const CapabilityServices = "odicea.services"
 // CanRunServices reports whether the cluster lists CapabilityServices.
 func (c Capabilities) CanRunServices() bool { return slices.Contains(c.APIs, CapabilityServices) }
 
+// Kinds of an AppService.
+const (
+	ServiceWeb    = "web"    // answers HTTP on its port
+	ServiceWorker = "worker" // no port, no route
+)
+
+// MaxAppServices bounds an app's services (project.MaxServices).
+const MaxAppServices = 8
+
+var (
+	serviceNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9]{0,19}$`)
+	serviceRoutePattern = regexp.MustCompile(`^(/|(/[A-Za-z0-9._~-]+)+)$`)
+	imageByDigest       = regexp.MustCompile(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
+)
+
+// AppService is one workload of an app: the agent runs a Deployment per
+// service and, for a web one, a Service and (with a route) an Ingress.
+type AppService struct {
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Route       string `json:"route,omitempty"`
+	StripPrefix bool   `json:"strip_prefix,omitempty"`
+	Image       string `json:"image"`
+	// Port and HealthPath are 0 and "" for a worker.
+	Port       int    `json:"port,omitempty"`
+	HealthPath string `json:"health_path,omitempty"`
+	Replicas   int    `json:"replicas"`
+}
+
+// Simple reports whether the app is one web service at "/" (or has no
+// services: stored before them): what an agent without CapabilityServices
+// can run.
+func (a App) Simple() bool {
+	if len(a.Services) == 0 {
+		return true
+	}
+	s := a.Services[0]
+	return len(a.Services) == 1 && s.Kind == ServiceWeb && s.Route == "/" && !s.StripPrefix
+}
+
+func validServices(svcs []AppService) error {
+	if len(svcs) > MaxAppServices {
+		return errx.Validation("an app has at most 8 services")
+	}
+	names, routes := map[string]bool{}, map[string]bool{}
+	for _, s := range svcs {
+		switch {
+		case !serviceNamePattern.MatchString(s.Name) || names[s.Name]:
+			return errx.Validation("services must be distinct, named with 1-20 lowercase letters and digits")
+		case !imageByDigest.MatchString(s.Image):
+			return errx.Validation("a service's image must be pinned by digest")
+		case s.Replicas < 1 || s.Replicas > 20:
+			return errx.Validation("a service runs 1 to 20 replicas")
+		case s.Route != "" && (!serviceRoutePattern.MatchString(s.Route) || routes[s.Route]):
+			return errx.Validation("service routes must be distinct paths")
+		case s.StripPrefix && (s.Route == "" || s.Route == "/"):
+			return errx.Validation("only a route other than / can be stripped")
+		}
+		switch s.Kind {
+		case ServiceWeb:
+			if s.Port < 1 || s.Port > 65535 || !strings.HasPrefix(s.HealthPath, "/") {
+				return errx.Validation("a web service needs a port and a health path")
+			}
+		case ServiceWorker:
+			if s.Route != "" || s.Port != 0 || s.HealthPath != "" {
+				return errx.Validation("a worker has no route, port or health path")
+			}
+		default:
+			return errx.Validation("a service is web or worker")
+		}
+		names[s.Name], routes[s.Route] = true, s.Route != ""
+	}
+	return nil
+}
+
 // MaxAppSecrets bounds an app's secret variables.
 const MaxAppSecrets = 100
 
@@ -124,8 +205,10 @@ func (a App) Validate() error {
 		return errx.Validation("app name must be a DNS label")
 	case a.Revision < 1:
 		return errx.Validation("app revision must be positive")
-	case a.Image == "":
+	case a.Simple() && a.Image == "":
 		return errx.Validation("app image is required")
+	case !a.Simple() && (a.Image != "" || a.Port != 0 || a.HealthPath != "" || a.Replicas != 0):
+		return errx.Validation("an app of several services has no top-level image, port, health path or replicas")
 	case !ValidAccess(a.Access):
 		return errx.Validation("app access must be public, team or organization")
 	case len(a.Secrets) > MaxAppSecrets:
@@ -137,6 +220,9 @@ func (a App) Validate() error {
 		if err := a.AI.Validate(a.Secrets); err != nil {
 			return err
 		}
+	}
+	if err := validServices(a.Services); err != nil {
+		return err
 	}
 	seenRes := make(map[string]bool, len(a.Resources))
 	for _, r := range a.Resources {
@@ -211,6 +297,35 @@ type AppStatus struct {
 	ReadyReplicas    int       `json:"ready_replicas" db:"ready_replicas"`
 	URL              string    `json:"url" db:"url"`
 	ObservedAt       time.Time `json:"observed_at" db:"observed_at"`
+	// Services is each service's part of the rollout (empty from an agent
+	// without CapabilityServices); Phase is their aggregate.
+	Services []ServiceStatus `json:"services" db:"-"`
+}
+
+// ServiceStatus is one service's part of an AppStatus.
+type ServiceStatus struct {
+	Name          string `json:"name"`
+	Phase         Phase  `json:"phase"`
+	Reason        Reason `json:"reason,omitempty"`
+	Message       string `json:"message,omitempty"`
+	ReadyReplicas int    `json:"ready_replicas"`
+}
+
+// MaxServiceMessage bounds the agent's message of one service.
+const MaxServiceMessage = 500
+
+func (s ServiceStatus) validate() error {
+	switch {
+	case !serviceNamePattern.MatchString(s.Name):
+		return errx.Validation("reported service needs a valid name")
+	case s.Phase != PhaseProgressing && s.Phase != PhaseReady && s.Phase != PhaseFailed || !s.Reason.Valid():
+		return errx.Validation("reported service phase or reason is not valid")
+	case s.ReadyReplicas < 0:
+		return errx.Validation("reported service replicas must not be negative")
+	case utf8.RuneCountInString(s.Message) > MaxServiceMessage || text.HasForbiddenControl(s.Message):
+		return errx.Validation("reported service message is too long or has control characters")
+	}
+	return nil
 }
 
 // MaxMessage bounds the agent's message of an app.
@@ -231,6 +346,18 @@ func (s AppStatus) Validate() error {
 		return errx.Validation("reported message or url contains control characters")
 	case !ValidAppURL(s.URL):
 		return errx.Validation("reported url must be an http or https address")
+	case len(s.Services) > MaxAppServices:
+		return errx.Validation("reported app has too many services")
+	}
+	seen := make(map[string]bool, len(s.Services))
+	for _, sv := range s.Services {
+		if err := sv.validate(); err != nil {
+			return err
+		}
+		if seen[sv.Name] {
+			return errx.Validation("reported service is repeated")
+		}
+		seen[sv.Name] = true
 	}
 	return nil
 }

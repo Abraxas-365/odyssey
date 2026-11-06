@@ -87,7 +87,7 @@ func secretsRec(t *testing.T, mapper meta.RESTMapper, at *time.Time, a *v1alpha1
 func deploymentOf(t *testing.T, c client.Client, a *v1alpha1.OdysseyApp) *appsv1.Deployment {
 	t.Helper()
 	var d appsv1.Deployment
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(a), &d); err != nil {
+	if err := c.Get(context.Background(), workloadKey(a), &d); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -281,7 +281,7 @@ func TestManagedSecretGatesTheRollout(t *testing.T) {
 func TestMissingSecretLeavesTheRunningVersionAlone(t *testing.T) {
 	ctx := context.Background()
 	at := now
-	running := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "portal", Namespace: "odyssey-env1", Generation: 2}}
+	running := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "portal-web", Namespace: "odyssey-env1", Generation: 2}}
 	mutateDeployment(running, newApp(1), cfg)
 	a := withSecrets(2, managedRef("TOKEN", 1))
 	a.Status = v1alpha1.OdysseyAppStatus{ObservedRevision: 1, Phase: v1alpha1.PhaseReady}
@@ -292,7 +292,7 @@ func TestMissingSecretLeavesTheRunningVersionAlone(t *testing.T) {
 		t.Fatalf("status: %+v", got.Status)
 	}
 	var d appsv1.Deployment
-	if err := c.Get(ctx, client.ObjectKeyFromObject(a), &d); err != nil {
+	if err := c.Get(ctx, workloadKey(a), &d); err != nil {
 		t.Fatal(err)
 	}
 	if revisionOf(&d) != 1 || d.Spec.Template.Annotations[AnnotationSecrets] != "" || len(d.Spec.Template.Spec.Containers[0].Env) != 3 {

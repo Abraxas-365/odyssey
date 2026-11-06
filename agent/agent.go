@@ -292,7 +292,8 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 	// manager from starting. Without the watch, protected apps are re-checked
 	// periodically (app.Reconciler).
 	var mw []client.Object
-	if o.Access.Ready() && hasTraefik(cfg) {
+	traefik := hasTraefik(cfg)
+	if traefik {
 		m := app.NewMiddleware()
 		byObject[m] = owned
 		mw = append(mw, m)
@@ -327,8 +328,15 @@ func NewManager(cfg *rest.Config, o Options) (ctrl.Manager, error) {
 		if err := mgr.Add(ensureAccessKey{cfg: cfg, o: o.Access}); err != nil {
 			return nil, err
 		}
-		rec.Exposure = &app.Traefik{Client: mgr.GetClient(), VerifyURL: o.Access.VerifyURL, Mapper: mgr.GetRESTMapper()}
 	}
+	// Routes' prefixes are removed wherever Traefik is (its API is looked
+	// up on every pass: one installed later is used); apps are protected
+	// only where the gate is too.
+	exposure := &app.Traefik{Client: mgr.GetClient(), Mapper: mgr.GetRESTMapper()}
+	if o.Access.Ready() {
+		exposure.VerifyURL = o.Access.VerifyURL
+	}
+	rec.Exposure = exposure
 	if err := rec.SetupWithManager(mgr); err != nil {
 		return nil, err
 	}

@@ -385,6 +385,36 @@ message App {
   // stays) and reports it "deleted" at this revision. Only the ids, name and
   // revision are set.
   bool deleted = 16;
+  // services are the app's workloads (MS-2), in order. For an app of one
+  // web service at "/" the top-level image, port, health_path and replicas
+  // repeat it (an agent without "odicea.services" ignores this field and
+  // runs those); for any other they are empty, and the control plane sends
+  // it only to an agent that lists "odicea.services" (an older one would
+  // fail visibly, never serve half of the app). Empty: the app is one web
+  // service at "/" made of the top-level fields (as before services).
+  repeated Service services = 17;
+}
+
+// Service is one workload of an app. Its objects are named after the app
+// ("<app>" for the service at "/", "<app>-<name>" for any other); they are
+// selected by the label odyssey.dev/workload, never by odyssey.dev/app.
+message Service {
+  // name is 1-20 lowercase letters and digits, starting with a letter.
+  string name = 1;
+  // kind is "web" (answers HTTP on port) or "worker" (no port, no route).
+  string kind = 2;
+  // route is the path of the app's address the service answers ("/",
+  // "/api"); empty: an internal web service (reachable by the app's other
+  // services only) or a worker.
+  string route = 3;
+  // strip_prefix removes route from the path before the request reaches
+  // the service.
+  bool strip_prefix = 4;
+  string image = 5;
+  // port and health_path are 0 and "" for a worker.
+  int32 port = 6;
+  string health_path = 7;
+  int32 replicas = 8;
 }
 
 // AI is how an app reaches the AI gateway (freerouter): its key is a
@@ -449,6 +479,21 @@ message AppStatus {
   string message = 6;
   int32 ready_replicas = 7;
   string url = 8;
+  // services is how each service's rollout of observed_revision is going
+  // (MS-2; empty from an older agent). The app's phase is their aggregate:
+  // ready when every one is, failed when one failed.
+  repeated ServiceStatus services = 9;
+}
+
+// ServiceStatus is one service's part of an AppStatus.
+message ServiceStatus {
+  string name = 1;
+  // phase is "progressing", "ready" or "failed"; reason and message as in
+  // AppStatus.
+  string phase = 2;
+  string reason = 3;
+  string message = 4;
+  int32 ready_replicas = 5;
 }
 
 // ResourceRef is one resource of the environment an app uses (2b).

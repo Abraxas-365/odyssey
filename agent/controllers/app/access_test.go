@@ -167,7 +167,7 @@ func TestProtectedAppFailsClosedWithoutTheGate(t *testing.T) {
 		if err := c.Get(context.Background(), client.ObjectKeyFromObject(a), &networkingv1.Ingress{}); !apierrors.IsNotFound(err) {
 			t.Errorf("%s: the app must not be exposed: %v", name, err)
 		}
-		if err := c.Get(context.Background(), client.ObjectKeyFromObject(a), &appsv1.Deployment{}); !apierrors.IsNotFound(err) {
+		if err := c.Get(context.Background(), workloadKey(a), &appsv1.Deployment{}); !apierrors.IsNotFound(err) {
 			t.Errorf("%s: nothing runs for it: %v", name, err)
 		}
 	}
@@ -348,7 +348,7 @@ func TestProtectedInvalidIngressUpdateLeavesNothingOpen(t *testing.T) {
 func authEnv(t *testing.T, c client.Client, a *v1alpha1.OdysseyApp) map[string]string {
 	t.Helper()
 	var d appsv1.Deployment
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(a), &d); err != nil {
+	if err := c.Get(context.Background(), workloadKey(a), &d); err != nil {
 		t.Fatal(err)
 	}
 	out := map[string]string{}

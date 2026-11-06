@@ -55,6 +55,28 @@ Middlewares → update the existing Ingress (the annotation) → Deployment/Serv
 - any error while applying protection (Middlewares, Ingress) deletes the
   existing Ingress before the error is returned, and the pass is retried.
 
+### Apps of several services (MS-2)
+
+Access is the app's, so every service's Ingress carries the same two
+Middlewares, and every service gets the same `ODICEA_AUTH_*`. A service
+whose route keeps no prefix (`stripPrefix`, e.g. `/api` → the api sees
+`/orders`) gets a third Middleware, `<app>-<service>-odicea-prefix`
+(`stripPrefix`), **last** in the chain: strip headers → forwardAuth →
+stripPrefix. The gate therefore sees, and the sign-in returns to, the URL the
+person opened (`/api/orders?page=2`), never the one the service receives.
+The prefix Middleware is written wherever Traefik is, with or without the
+gate (`Exposure.Available`); protection needs the gate too
+(`Exposure.CanProtect`). When no service answers `/`, the callback path
+`/_odicea/callback` rides on the first public service's Ingress, so the gate
+still sees it. Prefix Middlewares of services a revision dropped are removed
+once no Ingress references them.
+
+Traefik ranks routers by the length of their rule, and
+`Host(h) && Path(/api)` is shorter than the root's `Host(h) && PathPrefix(/)`:
+without help the web would take `/api`. Every route other than `/` carries
+`traefik.ingress.kubernetes.io/router.priority: 1000 + len(route)`, above any
+root (whose default stays under 300) and with the longer route first.
+
 ### Host binding (no host spoofing)
 
 The host the gate trusts is the one **the agent wrote** in the forwardAuth

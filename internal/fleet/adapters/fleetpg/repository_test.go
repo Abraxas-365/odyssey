@@ -283,6 +283,21 @@ func TestDesiredApps(t *testing.T) {
 	if err != nil || got.Revision != 2 || got.Image != app.Image || got.Env["TZ"] != "America/Lima" || got.Labels["team"] != "ventas" || got.Port != 8080 || got.Access != fleet.AccessTeam {
 		t.Fatalf("find app %+v %v", got, err)
 	}
+	// an app of several services keeps them in its spec
+	shop := fleet.App{Organization: org, Project: proj, Environment: environment, Cluster: c.ID, Name: "shop", Revision: 1,
+		Services: []fleet.AppService{{Name: "web", Kind: fleet.ServiceWeb, Route: "/", Image: "r.local/web@sha256:00", Port: 3000, HealthPath: "/", Replicas: 1},
+			{Name: "worker", Kind: fleet.ServiceWorker, Image: "r.local/w@sha256:00", Replicas: 2}}}
+	if changed, err := repo.PutApp(ctx, shop); err != nil || !changed {
+		t.Fatalf("put shop %v %v", changed, err)
+	}
+	if got, err := repo.FindApp(ctx, org, c.ID, environment, "shop"); err != nil || len(got.Services) != 2 || got.Services[1] != shop.Services[1] {
+		t.Fatalf("find shop %+v %v", got, err)
+	}
+	_, err = repo.FindApp(ctx, other, theirs.ID, environment, "shop")
+	notFound(t, "cross-tenant services", err)
+	if _, err := e.db.Exec(`DELETE FROM fleet.desired_apps WHERE name = 'shop'`); err != nil {
+		t.Fatal(err)
+	}
 	_, err = repo.FindApp(ctx, other, theirs.ID, environment, "web")
 	notFound(t, "cross-tenant app", err)
 	if apps, err := repo.ListApps(ctx, org, c.ID); err != nil || len(apps) != 1 {
@@ -329,8 +344,21 @@ func TestDesiredApps(t *testing.T) {
 	}
 	report(org, c.ID, mine, 1, fleet.PhaseFailed)
 	s, err := repo.FindAppStatus(ctx, org, environment, "web")
-	if err != nil || s.ObservedRevision != 2 || s.Phase != fleet.PhaseReady || s.URL != "http://web.apps.local" {
+	if err != nil || s.ObservedRevision != 2 || s.Phase != fleet.PhaseReady || s.URL != "http://web.apps.local" || s.Services == nil || len(s.Services) != 0 {
 		t.Fatalf("status %+v %v", s, err)
+	}
+	// each service's part is kept with the app's
+	svcs := []fleet.ServiceStatus{{Name: "web", Phase: fleet.PhaseReady, ReadyReplicas: 1}, {Name: "worker", Phase: fleet.PhaseFailed, Reason: fleet.ReasonCrash, Message: "restarted"}}
+	if _, _, err := repo.ObserveApps(ctx, org, c.ID, mine, fleet.Report{Apps: []fleet.AppStatus{{Environment: environment, Name: "web",
+		ObservedRevision: 2, Phase: fleet.PhaseFailed, Reason: fleet.ReasonCrash, URL: "http://web.apps.local", Services: svcs}}}); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := repo.FindAppStatus(ctx, org, environment, "web"); err != nil || len(s.Services) != 2 || s.Services[1] != svcs[1] {
+		t.Fatalf("service status %+v %v", s, err)
+	}
+	report(org, c.ID, mine, 2, fleet.PhaseReady) // back to an agent without services
+	if s, _ := repo.FindAppStatus(ctx, org, environment, "web"); len(s.Services) != 0 {
+		t.Fatalf("stale service status %+v", s.Services)
 	}
 	_, err = repo.FindAppStatus(ctx, other, environment, "web")
 	notFound(t, "cross-tenant status", err)

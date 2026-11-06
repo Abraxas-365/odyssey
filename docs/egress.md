@@ -138,6 +138,11 @@ NetworkPolicies per environment namespace (label
 
 - `odicea-apps`: selects the pods with the label `odyssey.dev/app`; ingress from
   the ingress controller and the namespace; egress as in the table above.
+  Every service of an app (web or worker, MS-2) carries `odyssey.dev/app`, so
+  the app's services reach one another inside the namespace (an environment
+  namespace holds one app) and nothing new is needed; each Deployment and
+  Service selects by `odyssey.dev/workload=<deployment>` instead, never by
+  `odyssey.dev/app`.
 - `odicea-resources`: **positively** selects the pods with the label
   `odyssey.dev/resource` (Redis pods carry it from their template; CloudNativePG
   pods get it through the Cluster's `spec.inheritedMetadata.labels`, which the

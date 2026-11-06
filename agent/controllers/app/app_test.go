@@ -54,9 +54,14 @@ func pod(rev string, statuses ...corev1.ContainerStatus) corev1.Pod {
 		}
 	}
 	return corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{LabelApp: "portal", LabelRevision: rev}},
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{LabelApp: "portal", LabelWorkload: "portal-web", LabelRevision: rev}},
 		Status:     corev1.PodStatus{ContainerStatuses: statuses, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: ready}}},
 	}
+}
+
+// workloadKey is the Deployment of a's only service (an app without services).
+func workloadKey(a *v1alpha1.OdysseyApp) client.ObjectKey {
+	return client.ObjectKey{Namespace: a.Namespace, Name: a.Name + "-web"}
 }
 
 func running(since time.Duration, ready bool) corev1.ContainerStatus {
@@ -88,8 +93,8 @@ func TestObjects(t *testing.T) {
 	}
 	delete(a.Spec.Labels, LabelRevision)
 	delete(a.Spec.Labels, LabelApp)
-	if len(d.Spec.Selector.MatchLabels) != 1 || d.Spec.Selector.MatchLabels[LabelApp] != "portal" {
-		t.Errorf("the selector is immutable, so it holds only the app: %v", d.Spec.Selector.MatchLabels)
+	if len(d.Spec.Selector.MatchLabels) != 1 || d.Spec.Selector.MatchLabels[LabelWorkload] != "portal-web" {
+		t.Errorf("the selector is immutable, so it holds only the workload: %v", d.Spec.Selector.MatchLabels)
 	}
 	var env []string
 	for _, e := range c.Env {
@@ -204,7 +209,7 @@ func TestReconcile(t *testing.T) {
 		t.Fatalf("first reconcile: %+v %+v", got.Status, res)
 	}
 	var d appsv1.Deployment
-	if err := c.Get(ctx, client.ObjectKeyFromObject(a), &d); err != nil {
+	if err := c.Get(ctx, workloadKey(a), &d); err != nil {
 		t.Fatal(err)
 	}
 	if len(d.OwnerReferences) != 1 || d.OwnerReferences[0].Name != "portal" {
@@ -279,7 +284,7 @@ func TestReconcileRefusesATakenHost(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseFailed || got.Status.Reason != v1alpha1.ReasonConfig || !strings.Contains(got.Status.Message, "odyssey-env2/portal") {
 		t.Fatalf("taken host: %+v", got.Status)
 	}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(a), &appsv1.Deployment{}); err == nil {
+	if err := c.Get(context.Background(), workloadKey(a), &appsv1.Deployment{}); err == nil {
 		t.Error("nothing is created for an app whose host is taken")
 	}
 }
@@ -317,7 +322,7 @@ func TestReconcileSeesUnmanagedObjects(t *testing.T) {
 	foreign := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "default"}}
 	mutateIngress(foreign, a, cfg)
 	foreign.Labels = nil
-	squatter := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "portal", Namespace: a.Namespace}}
+	squatter := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "portal-web", Namespace: a.Namespace}}
 	api := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(a, foreign).WithStatusSubresource(&v1alpha1.OdysseyApp{}).Build()
 	r := &Reconciler{Client: cacheOf(api), API: api, Config: cfg, HealthGrace: time.Minute, Now: func() time.Time { return now }}
 	if got, _ := runWith(t, r, api, a); got.Status.Phase != v1alpha1.PhaseFailed || !strings.Contains(got.Status.Message, "default/legacy") {
@@ -326,7 +331,7 @@ func TestReconcileSeesUnmanagedObjects(t *testing.T) {
 
 	api = fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(a, squatter).WithStatusSubresource(&v1alpha1.OdysseyApp{}).Build()
 	r = &Reconciler{Client: cacheOf(api), API: api, Config: cfg, HealthGrace: time.Minute, Now: func() time.Time { return now }}
-	if got, _ := runWith(t, r, api, a); got.Status.Phase != v1alpha1.PhaseFailed || got.Status.Reason != v1alpha1.ReasonConfig || !strings.Contains(got.Status.Message, "Deployment named portal already exists") {
+	if got, _ := runWith(t, r, api, a); got.Status.Phase != v1alpha1.PhaseFailed || got.Status.Reason != v1alpha1.ReasonConfig || !strings.Contains(got.Status.Message, "Deployment named portal-web already exists") {
 		t.Fatalf("an unmanaged Deployment in the way: %+v", got.Status)
 	}
 }
