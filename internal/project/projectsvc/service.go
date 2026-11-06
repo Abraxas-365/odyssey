@@ -17,11 +17,18 @@ type Service struct {
 	repo   project.Repository
 	tx     txn.Runner
 	events event.Publisher
+	// runtime says whether the app's clusters can run several services
+	// (wired after the fleet is built; nil allows only Simple services).
+	runtime project.Runtime
 }
 
 func New(repo project.Repository, tx txn.Runner, events event.Publisher) *Service {
 	return &Service{repo: repo, tx: tx, events: events}
 }
+
+// UseRuntime wires the fleet's answer to "can these clusters run several
+// services" (the fleet module is built after this one).
+func (s *Service) UseRuntime(r project.Runtime) { s.runtime = r }
 
 var (
 	_ project.Commands = (*Service)(nil)
@@ -44,6 +51,9 @@ func (s *Service) Create(ctx context.Context, organization identity.Organization
 			return err
 		}
 		if err := s.repo.CreateEnvironment(ctx, production); err != nil {
+			return err
+		}
+		if err := s.repo.ReplaceServices(ctx, organization, id, project.DefaultServices(organization, id)); err != nil {
 			return err
 		}
 		return s.events.Publish(ctx,
@@ -124,6 +134,78 @@ func (s *Service) Archive(ctx context.Context, organization identity.Organizatio
 
 func (s *Service) Find(ctx context.Context, organization identity.OrganizationID, id project.ID) (project.Project, error) {
 	return s.repo.Find(ctx, organization, id)
+}
+
+// SetServices replaces the app's services. The project row is locked, so
+// two replacements serialize and an archived app refuses; the capability
+// check runs on the environments as they are at that moment.
+func (s *Service) SetServices(ctx context.Context, organization identity.OrganizationID, id project.ID, input project.SetServices) ([]project.Service, error) {
+	input = input.Normalize()
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	next := input.Services(organization, id)
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		current, err := s.repo.FindForUpdate(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		if current.Archived() {
+			return project.ArchivedError()
+		}
+		before, err := s.repo.ListServices(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		if project.SameServices(before, next) {
+			return nil
+		}
+		if !project.Simple(next) {
+			if err := s.canRun(ctx, organization, id); err != nil {
+				return err
+			}
+		}
+		if err := s.repo.ReplaceServices(ctx, organization, id, next); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, project.NewServicesChanged(organization, input.UpdatedBy, current, before, next))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListServices(ctx, organization, id)
+}
+
+// canRun refuses a topology the app's clusters cannot run.
+func (s *Service) canRun(ctx context.Context, organization identity.OrganizationID, id project.ID) error {
+	unavailable := errx.Business(project.ServicesUnavailableMessage).WithCode(project.CodeServicesUnavailable)
+	if s.runtime == nil {
+		return unavailable
+	}
+	envs, err := s.repo.ListEnvironments(ctx, organization, id, project.EnvironmentFilter{})
+	if err != nil {
+		return err
+	}
+	ids := make([]project.EnvironmentID, len(envs))
+	for i, e := range envs {
+		ids[i] = e.ID
+	}
+	ok, err := s.runtime.CanRunServices(ctx, organization, ids)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return unavailable
+	}
+	return nil
+}
+
+// Services answers NotFound for an unknown project.
+func (s *Service) Services(ctx context.Context, organization identity.OrganizationID, id project.ID) ([]project.Service, error) {
+	if _, err := s.repo.Find(ctx, organization, id); err != nil {
+		return nil, err
+	}
+	return s.repo.ListServices(ctx, organization, id)
 }
 
 // FindBySlug resolves an app by its URL slug.

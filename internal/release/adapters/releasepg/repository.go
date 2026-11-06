@@ -57,14 +57,50 @@ type releaseRow struct {
 }
 
 func (r *Repository) CreateRelease(ctx context.Context, rel release.Release) error {
+	if len(rel.Services) == 0 {
+		return errx.Internal("a release has at least one service")
+	}
 	cfg, err := json.Marshal(rel.Config)
 	if err != nil {
 		return errx.Wrap(err, "marshal release config", errx.TypeInternal)
 	}
-	_, err = txn.Q(ctx, r.db).ExecContext(ctx,
+	// The version and its services commit together (joining the caller's
+	// transaction, if any).
+	return txn.Postgres{DB: r.db}.Do(ctx, func(ctx context.Context) error {
+		return r.createRelease(ctx, rel, cfg)
+	})
+}
+
+func (r *Repository) createRelease(ctx context.Context, rel release.Release, cfg []byte) error {
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`INSERT INTO release.releases (id, organization_id, project_id, image, config, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
 		rel.ID, rel.Organization, rel.Project, rel.Image, cfg, rel.CreatedBy)
-	return pgerr.MapWith(err, "create release", messages)
+	if err != nil {
+		return pgerr.MapWith(err, "create release", messages)
+	}
+	n := len(rel.Services)
+	names, kinds, roots, routes, images, healths := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+	strips, ports, replicas := make([]bool, n), make([]int64, n), make([]int64, n)
+	for i, s := range rel.Services {
+		names[i], kinds[i], roots[i], routes[i], images[i], healths[i] = s.Name, string(s.Kind), s.Root, s.Route, s.Image, s.HealthPath
+		strips[i], ports[i], replicas[i] = s.StripPrefix, int64(s.Port), int64(s.Replicas)
+	}
+	_, err = txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.release_services
+		(release_id, position, name, kind, root, route, strip_prefix, image, port, health_path, replicas)
+		SELECT $1, s.ord - 1, s.name, s.kind, s.root, s.route, s.strip, s.image, s.port, s.health, s.replicas
+		  FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::text[], $8::int[], $9::text[], $10::int[])
+		       WITH ORDINALITY AS s(name, kind, root, route, strip, image, port, health, replicas, ord)`,
+		rel.ID, pq.Array(names), pq.Array(kinds), pq.Array(roots), pq.Array(routes), pq.Array(strips), pq.Array(images),
+		pq.Array(ports), pq.Array(healths), pq.Array(replicas))
+	return pgerr.MapWith(err, "create release services", pgerr.Messages{Unique: "two services of the version have the same name"})
+}
+
+// releaseServices are the services of a release, in their order.
+func (r *Repository) releaseServices(ctx context.Context, id release.ID) ([]release.Service, error) {
+	out := []release.Service{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT name, kind, root, route, strip_prefix, image, port, health_path, replicas
+		FROM release.release_services WHERE release_id = $1 ORDER BY position`, id)
+	return out, pgerr.MapWith(err, "list release services", messages)
 }
 
 func (r *Repository) FindRelease(ctx context.Context, organization identity.OrganizationID, id release.ID) (release.Release, error) {
@@ -79,6 +115,9 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 	}
 	if err := json.Unmarshal(row.RawConfig, &row.Release.Config); err != nil {
 		return release.Release{}, errx.Wrap(err, "decode release config", errx.TypeInternal)
+	}
+	if row.Release.Services, err = r.releaseServices(ctx, row.ID); err != nil {
+		return release.Release{}, err
 	}
 	return row.Release, nil
 }

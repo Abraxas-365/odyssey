@@ -42,7 +42,7 @@ function dep(over: Partial<Deployment>): Deployment {
 const current = (d: Deployment, active?: Deployment): CurrentRelease => ({
   environment_id: 'e',
   url: 'https://app.example',
-  release: { id: d.release_id!, organization_id: 'o', project_id: 'p', image: d.image, config: { port: 80, health_path: '/', replicas: 1, env: {} }, created_by: 'me', created_at: d.created_at },
+  release: { id: d.release_id!, organization_id: 'o', project_id: 'p', image: d.image, config: { port: 80, health_path: '/', replicas: 1, env: {} }, services: [], created_by: 'me', created_at: d.created_at },
   deployment: d,
   active: active ?? null,
   applied_settings_revision: null,

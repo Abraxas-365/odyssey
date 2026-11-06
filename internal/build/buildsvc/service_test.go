@@ -125,6 +125,9 @@ func (q projects) EnvironmentsOf(context.Context, identity.OrganizationID, []pro
 func (q projects) Hold(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
 	return q.Find(ctx, org, id)
 }
+func (q projects) Services(_ context.Context, org identity.OrganizationID, id project.ID) ([]project.Service, error) {
+	return project.DefaultServices(org, id), nil
+}
 
 type env struct {
 	db      *sqlx.DB

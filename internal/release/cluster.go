@@ -1,6 +1,8 @@
 package release
 
 import (
+	"slices"
+
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 )
@@ -42,6 +44,10 @@ type DesiredApp struct {
 	// AI, when set (WithSettings), tells the agent to wire the app to the AI
 	// gateway; its key is the managed secret AIKeySecret, listed in Secrets.
 	AI *DesiredAI `json:"ai,omitempty"`
+	// Services are the version's services, in order (Release.Services). The
+	// top-level Image, Port, HealthPath and Replicas are the first service's
+	// for an agent that runs one workload per app (without odicea.services).
+	Services []Service `json:"services"`
 }
 
 // Phase is how the cluster sees an app.
@@ -83,7 +89,7 @@ func Desired(name string, d Deployment, r Release) DesiredApp {
 	}
 	return DesiredApp{
 		Name: name, Revision: d.Revision, Image: r.Image, Port: r.Config.Port, HealthPath: r.Config.HealthPath,
-		Replicas: r.Config.Replicas, Env: env,
+		Replicas: r.Config.Replicas, Env: env, Services: slices.Clone(r.Services),
 		Labels: map[string]string{
 			"odyssey.dev/project":     d.Project.String(),
 			"odyssey.dev/environment": d.Environment.String(),

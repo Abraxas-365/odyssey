@@ -22,6 +22,11 @@ func TestEventContracts(t *testing.T) {
 		project.NewUpdated(org, user, p, project.Update{Name: &name, Description: &desc}),
 		project.NewArchived(org, user, p),
 		project.NewTierChanged(org, user, project.Project{ID: id, Name: p.Name, Slug: p.Slug, Tier: project.TierInternal}, project.TierProduction),
+		project.NewServicesChanged(org, user, p, project.DefaultServices(org, id), []project.Service{
+			{Name: "web", Kind: project.ServiceWeb, Root: "apps/web", Route: "/"},
+			{Name: "api", Kind: project.ServiceWeb, Root: "apps/api", Route: "/api", StripPrefix: true},
+			{Name: "jobs", Kind: project.ServiceWorker, Root: "apps/jobs"},
+		}),
 		project.NewEnvironmentCreated(org, user, project.Environment{
 			ID: project.MustParseEnvironmentID("00000000-0000-4000-8000-0000000000bb"), Project: id,
 			Slug: project.ProductionSlug, Kind: project.KindProduction,

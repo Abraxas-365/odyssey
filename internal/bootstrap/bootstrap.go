@@ -411,6 +411,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	policies := policymodule.New(policymodule.Deps{DB: db, Events: events})
 	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
 		CertificateTTL: opts.CertificateTTL})
+	// project is built before the fleet, so it learns of its clusters after.
+	projects.UseFleet(fleets.Dispatch)
 	if opts.Blobs == nil {
 		mem, err := gocloudblob.Open(ctx, "mem://")
 		if err != nil {

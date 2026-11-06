@@ -26,6 +26,17 @@ import (
 
 const digest = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+// withServices gives r the snapshot of a one-image version of a new app.
+func withServices(r release.Release) release.Release {
+	c := r.Config.Normalize()
+	s, err := release.ServicesOf(project.DefaultServices(r.Organization, r.Project), r.Image, c)
+	if err != nil {
+		panic(err)
+	}
+	r.Services = s
+	return r
+}
+
 func TestRepository(t *testing.T) {
 	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
 	repo := releasepg.New(db)
@@ -34,13 +45,41 @@ func TestRepository(t *testing.T) {
 	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
 	proj, env := project.NewID(), project.NewEnvironmentID()
 
-	r := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest,
-		Config: release.Config{Port: 8080, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}}}
+	r := withServices(release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest,
+		Config: release.Config{Port: 8080, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}}})
+	if err := repo.CreateRelease(ctx, release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: r.Image}); err == nil {
+		t.Fatal("a release without services was stored")
+	}
 	if err := repo.CreateRelease(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := repo.FindRelease(ctx, org, r.ID); err != nil || got.Config.Env["TZ"] != "America/Lima" || got.Config.Port != 8080 {
 		t.Fatalf("find release %+v %v", got, err)
+	}
+	if got, _ := repo.FindRelease(ctx, org, r.ID); len(got.Services) != 1 || got.Services[0] != (release.Service{Name: "web",
+		Kind: project.ServiceWeb, Route: "/", Image: r.Image, Port: 8080, HealthPath: "/health", Replicas: 2}) {
+		t.Fatalf("release services %+v", got.Services)
+	}
+	// a version of several services keeps them in order; a refused one stores nothing
+	multi := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: r.Image, Services: []release.Service{
+		{Name: "web", Kind: project.ServiceWeb, Root: "apps/web", Route: "/", Image: r.Image, Port: 3000, HealthPath: "/", Replicas: 1},
+		{Name: "jobs", Kind: project.ServiceWorker, Root: "apps/jobs", Image: r.Image, Replicas: 2},
+		{Name: "api", Kind: project.ServiceWeb, Route: "/api", StripPrefix: true, Image: r.Image, Port: 8080, HealthPath: "/health", Replicas: 1},
+	}}
+	if err := repo.CreateRelease(ctx, multi); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.FindRelease(ctx, org, multi.ID); len(got.Services) != 3 || got.Services[1] != multi.Services[1] ||
+		got.Services[2] != multi.Services[2] {
+		t.Fatalf("multi-service release %+v", got.Services)
+	}
+	dup := multi
+	dup.ID, dup.Services = release.NewID(), []release.Service{multi.Services[0], multi.Services[0]}
+	if err := repo.CreateRelease(ctx, dup); err == nil {
+		t.Fatal("two services with one name stored")
+	}
+	if _, err := repo.FindRelease(ctx, org, dup.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("a refused version left its row: %v", err)
 	}
 	if _, err := repo.FindRelease(ctx, other, r.ID); !errx.IsType(err, errx.TypeNotFound) {
 		t.Fatalf("cross-tenant release: %v", err)
@@ -237,7 +276,7 @@ func TestRepository(t *testing.T) {
 	if err := repo.SetProgress(ctx, org, third.ID, release.StatusApplying, release.StepApply); err == nil {
 		t.Fatal("a release-less deployment moved to apply")
 	}
-	built := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/built" + digest, Config: cfg}
+	built := withServices(release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/built" + digest, Config: cfg})
 	err = tx.Do(ctx, func(ctx context.Context) error {
 		if err := repo.CreateRelease(ctx, built); err != nil {
 			return err
@@ -360,7 +399,7 @@ func TestSettings(t *testing.T) {
 
 	// the revision a deployment applied is recorded on it, once unfinished,
 	// and only in its own organization
-	r := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest, Config: release.Config{Port: 80}}
+	r := withServices(release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest, Config: release.Config{Port: 80}})
 	d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env, Release: &r.ID, Image: r.Image,
 		Status: release.StatusPending, Reason: release.ReasonConfig, Step: release.StepApply, Revision: 1, Run: workflow.NewRunID()}
 	if err := tx.Do(ctx, func(ctx context.Context) error {
@@ -621,7 +660,7 @@ func TestListServingAccess(t *testing.T) {
 	ctx := context.Background()
 	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
 	proj := project.NewID()
-	r := release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest, Config: release.Config{Port: 8080, HealthPath: "/", Replicas: 1}}
+	r := withServices(release.Release{ID: release.NewID(), Organization: org, Project: proj, Image: "r.local/app" + digest, Config: release.Config{Port: 8080, HealthPath: "/", Replicas: 1}})
 	if err := repo.CreateRelease(ctx, r); err != nil {
 		t.Fatal(err)
 	}

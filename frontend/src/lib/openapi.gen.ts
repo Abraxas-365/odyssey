@@ -133,6 +133,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List an app's services
+         * @description The workloads the app is made of (its web, its API, a queue worker),
+         *     in their order. Every app has at least one; an app made before
+         *     services existed has one, `web` at `/` with all of its code. Not
+         *     paginated (at most 8).
+         */
+        get: operations["listServices"];
+        /**
+         * Replace an app's services
+         * @description The whole list, in order (1 to 8). The next version of the app takes
+         *     it; the version online keeps running with the services it was made
+         *     with. Names are unique, at most one service per route, and routes
+         *     under `/_odicea` belong to the platform. The same list again writes
+         *     nothing. Event `project.services_changed`.
+         *
+         *     Anything but one `web` service at `/` with all of the code needs the
+         *     cluster of every environment (or the organization's default one, for
+         *     an environment not deployed yet) to run several services: otherwise
+         *     422 `SERVICES_UNAVAILABLE`. Archived apps refuse it
+         *     (`PROJECT_ARCHIVED`).
+         */
+        put: operations["setServices"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments": {
         parameters: {
             query?: never;
@@ -229,6 +268,11 @@ export interface paths {
          *     compressed by default): when full, the oldest folders already built
          *     are dropped (their images stay); when none can be, 422
          *     `SOURCE_QUOTA`.
+         *
+         *     While the app has several services (`PUT …/services`), an image is
+         *     refused with 422 `SERVICES_UNAVAILABLE` (one image cannot run them
+         *     until each service is built on its own); a folder's build fails its
+         *     deployment with that code.
          *
          *     Answers 202: the worker applies it, waits for its health check and
          *     only then makes it the environment's current release; poll the
@@ -1760,6 +1804,53 @@ export interface components {
          * @enum {string}
          */
         ProjectTier: "sandbox" | "internal" | "production";
+        /**
+         * @description `web` answers HTTP (publicly under its `route`, or only inside the app with `route` empty); `worker` runs without a port (a queue consumer).
+         * @enum {string}
+         */
+        ServiceKind: "web" | "worker";
+        Service: {
+            /** @description Part of the service's address inside the app and of `ODICEA_SERVICE_<NAME>_URL`. */
+            name: string;
+            kind: components["schemas"]["ServiceKind"];
+            /** @description Its folder in the app's code (empty: all of it). */
+            root: string;
+            /** @description The path of the app's address it answers (`/`, `/api`); empty: internal (a worker, or a web only the app's services reach). */
+            route: string;
+            /** @description The service sees `/users` for `/api/users`. */
+            strip_prefix: boolean;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ServiceList: {
+            items: components["schemas"]["Service"][];
+        };
+        SetServicesRequest: {
+            items: {
+                name: string;
+                kind?: components["schemas"]["ServiceKind"];
+                /** @description Relative folder, no `.` or `..` parts; slashes around it are trimmed. */
+                root?: string;
+                /** @description `/` or a path like `/api` (letters, digits, `. _ ~ -`); a trailing `/` is trimmed. Not under `/_odicea`. Empty for a worker or an internal web. */
+                route?: string;
+                /** @description Only for a route other than `/`. */
+                strip_prefix?: boolean;
+            }[];
+        };
+        /** @description A service as one version runs it (the app's services when the version was made). */
+        ReleaseService: {
+            name: string;
+            kind: components["schemas"]["ServiceKind"];
+            root: string;
+            route: string;
+            strip_prefix: boolean;
+            image: string;
+            /** @description 0 for a worker. */
+            port: number;
+            /** @description Empty for a worker. */
+            health_path: string;
+            replicas: number;
+        };
         Project: {
             /** Format: uuid */
             id: string;
@@ -1833,6 +1924,8 @@ export interface components {
             project_id: string;
             image: string;
             config: components["schemas"]["ReleaseConfig"];
+            /** @description The app's services as this version runs them (a rollback brings them back). */
+            services: components["schemas"]["ReleaseService"][];
             created_by: string;
             /** Format: date-time */
             created_at: string;
@@ -2411,10 +2504,10 @@ export interface components {
             settings_revision: number | null;
             error: null | {
                 /**
-                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule.
+                 * @description Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule. `SERVICES_UNAVAILABLE`: the app's services changed to a list this version cannot run (several services need a cluster that runs them).
                  * @enum {string}
                  */
-                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL" | "POLICY_DENIED";
+                code: "HEALTH_CHECK_FAILED" | "IMAGE_PULL_FAILED" | "APP_CRASHED" | "NOT_READY" | "APPLY_FAILED" | "RESOURCE_NOT_READY" | "PROMOTE_FAILED" | "UNSUPPORTED_APP" | "BUILD_FAILED" | "BUILD_TIMEOUT" | "SOURCE_INVALID" | "PUSH_FAILED" | "NO_BUILDER" | "NO_CLUSTER" | "SOURCE_EXPIRED" | "BUILD_INTERNAL" | "POLICY_DENIED" | "SERVICES_UNAVAILABLE";
                 /** @description Plain Spanish for whoever deploys. */
                 message: string;
                 /** @description The cluster's own words (often English); "" when it said nothing. Show it as technical detail. */
@@ -3525,6 +3618,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The services. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    setServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetServicesRequest"];
+            };
+        };
+        responses: {
+            /** @description The services after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceList"];
                 };
             };
             400: components["responses"]["Validation"];

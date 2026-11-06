@@ -246,6 +246,66 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/services:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [projects]
+      operationId: listServices
+      summary: List an app's services
+      description: |
+        The workloads the app is made of (its web, its API, a queue worker),
+        in their order. Every app has at least one; an app made before
+        services existed has one, `web` at `/` with all of its code. Not
+        paginated (at most 8).
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: The services.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+    put:
+      tags: [projects]
+      operationId: setServices
+      summary: Replace an app's services
+      description: |
+        The whole list, in order (1 to 8). The next version of the app takes
+        it; the version online keeps running with the services it was made
+        with. Names are unique, at most one service per route, and routes
+        under `/_odicea` belong to the platform. The same list again writes
+        nothing. Event `project.services_changed`.
+
+        Anything but one `web` service at `/` with all of the code needs the
+        cluster of every environment (or the organization's default one, for
+        an environment not deployed yet) to run several services: otherwise
+        422 `SERVICES_UNAVAILABLE`. Archived apps refuse it
+        (`PROJECT_ARCHIVED`).
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetServicesRequest" }
+      responses:
+        "200":
+          description: The services after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/projects/{id}/environments:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -369,6 +429,11 @@ paths:
         compressed by default): when full, the oldest folders already built
         are dropped (their images stay); when none can be, 422
         `SOURCE_QUOTA`.
+
+        While the app has several services (`PUT …/services`), an image is
+        refused with 422 `SERVICES_UNAVAILABLE` (one image cannot run them
+        until each service is built on its own); a folder's build fails its
+        deployment with that code.
 
         Answers 202: the worker applies it, waits for its health check and
         only then makes it the environment's current release; poll the
@@ -2906,6 +2971,74 @@ components:
       enum: [sandbox, internal, production]
       description: How much the app matters; IT's rules ask for it. New apps are `internal`.
 
+    ServiceKind:
+      type: string
+      enum: [web, worker]
+      description: "`web` answers HTTP (publicly under its `route`, or only inside the app with `route` empty); `worker` runs without a port (a queue consumer)."
+
+    Service:
+      type: object
+      additionalProperties: false
+      required: [name, kind, root, route, strip_prefix, updated_at]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z][a-z0-9]{0,19}$"
+          description: Part of the service's address inside the app and of `ODICEA_SERVICE_<NAME>_URL`.
+        kind: { $ref: "#/components/schemas/ServiceKind" }
+        root: { type: string, maxLength: 200, description: "Its folder in the app's code (empty: all of it)." }
+        route: { type: string, maxLength: 100, description: "The path of the app's address it answers (`/`, `/api`); empty: internal (a worker, or a web only the app's services reach)." }
+        strip_prefix: { type: boolean, description: "The service sees `/users` for `/api/users`." }
+        updated_at: { type: string, format: date-time }
+
+    ServiceList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Service" }
+
+    SetServicesRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string, pattern: "^[a-z][a-z0-9]{0,19}$" }
+              kind: { $ref: "#/components/schemas/ServiceKind" }
+              root: { type: string, maxLength: 200, description: "Relative folder, no `.` or `..` parts; slashes around it are trimmed." }
+              route:
+                type: string
+                maxLength: 100
+                description: "`/` or a path like `/api` (letters, digits, `. _ ~ -`); a trailing `/` is trimmed. Not under `/_odicea`. Empty for a worker or an internal web."
+              strip_prefix: { type: boolean, description: "Only for a route other than `/`." }
+
+    ReleaseService:
+      type: object
+      additionalProperties: false
+      required: [name, kind, root, route, strip_prefix, image, port, health_path, replicas]
+      description: A service as one version runs it (the app's services when the version was made).
+      properties:
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/ServiceKind" }
+        root: { type: string }
+        route: { type: string }
+        strip_prefix: { type: boolean }
+        image: { type: string }
+        port: { type: integer, description: 0 for a worker. }
+        health_path: { type: string, description: Empty for a worker. }
+        replicas: { type: integer }
+
     Project:
       type: object
       additionalProperties: false
@@ -3000,13 +3133,17 @@ components:
       type: object
       additionalProperties: false
       description: An image pinned by digest plus the configuration it runs with. Immutable.
-      required: [id, organization_id, project_id, image, config, created_by, created_at]
+      required: [id, organization_id, project_id, image, config, services, created_by, created_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
         image: { type: string }
         config: { $ref: "#/components/schemas/ReleaseConfig" }
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/ReleaseService" }
+          description: The app's services as this version runs them (a rollback brings them back).
         created_by: { type: string }
         created_at: { type: string, format: date-time }
 
@@ -3674,8 +3811,8 @@ components:
                   type: string
                   enum: [HEALTH_CHECK_FAILED, IMAGE_PULL_FAILED, APP_CRASHED, NOT_READY, APPLY_FAILED, RESOURCE_NOT_READY, PROMOTE_FAILED,
                          UNSUPPORTED_APP, BUILD_FAILED, BUILD_TIMEOUT, SOURCE_INVALID, PUSH_FAILED, NO_BUILDER, NO_CLUSTER,
-                         SOURCE_EXPIRED, BUILD_INTERNAL, POLICY_DENIED]
-                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule."
+                         SOURCE_EXPIRED, BUILD_INTERNAL, POLICY_DENIED, SERVICES_UNAVAILABLE]
+                  description: "Step `build` fails with its build's code (`BUILD_INTERNAL`: the platform's side). `RESOURCE_NOT_READY`: a database, cache or volume the app uses was not ready in time (step `wait_ready`). `POLICY_DENIED`: one of IT's rules refused it, before the build (step `authorize`, `step` is the first one) or right after it with the image's scan (a critical vulnerability in production); the message names the rule. `SERVICES_UNAVAILABLE`: the app's services changed to a list this version cannot run (several services need a cluster that runs them)."
                 message: { type: string, description: Plain Spanish for whoever deploys. }
                 detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }

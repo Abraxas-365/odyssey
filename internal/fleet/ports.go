@@ -66,6 +66,11 @@ type Dispatch interface {
 	// default cluster (where its first Apply would put it); false when there is
 	// none, or its cluster was revoked. It changes nothing (no placement).
 	CanProtect(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (bool, error)
+	// CanRunServices reports whether the cluster of every environment (an
+	// environment not placed yet: the organization's default) lists
+	// CapabilityServices; false when one has no cluster or a revoked one. At
+	// most MaxPlacements environments. It changes nothing.
+	CanRunServices(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) (bool, error)
 	// SecretTarget is what the environment's cluster (or, unplaced, the
 	// organization's default) offers for secrets. It changes nothing; a zero
 	// Cluster when there is none or it was revoked.

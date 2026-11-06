@@ -330,6 +330,12 @@ func (s *Service) built(ctx context.Context, j job, b build.Build) error {
 			return workflow.Fail(release.BuildFailed(build.Failure{Code: build.CodeInternal,
 				Detail: "the builder reported an image that is not pinned by digest: " + r.Image}))
 		}
+		if r.Services, err = s.servicesOf(ctx, org, d.Project, r.Image, r.Config); err != nil {
+			if coded(err, project.CodeServicesUnavailable) {
+				return workflow.Fail(err)
+			}
+			return err
+		}
 		if err := s.repo.CreateRelease(ctx, r); err != nil {
 			return err
 		}

@@ -26,8 +26,11 @@ type Release struct {
 	Project      project.ID              `json:"project_id" db:"project_id"`
 	Image        string                  `json:"image" db:"image"`
 	Config       Config                  `json:"config" db:"-"`
-	CreatedBy    identity.UserID         `json:"created_by" db:"created_by"`
-	CreatedAt    time.Time               `json:"created_at" db:"created_at"`
+	// Services are the app's services as this version runs them (one, "web"
+	// at "/", for every version made before services existed).
+	Services  []Service       `json:"services" db:"-"`
+	CreatedBy identity.UserID `json:"created_by" db:"created_by"`
+	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 }
 
 // Config is how a release runs. It holds no secrets: those are references

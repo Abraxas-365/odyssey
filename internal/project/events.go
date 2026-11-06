@@ -13,6 +13,8 @@ const (
 	EventUpdated     = "project.updated"
 	EventArchived    = "project.archived"
 	EventTierChanged = "project.tier_changed"
+	// EventServicesChanged: the app's services were replaced.
+	EventServicesChanged = "project.services_changed"
 
 	EventEnvironmentCreated = "environment.created"
 )
@@ -65,6 +67,38 @@ func NewTierChanged(org identity.OrganizationID, actor identity.UserID, p Projec
 	return event.New(EventTierChanged, 1, org, actor, event.Subject(SubjectKind, p.ID),
 		"Cambió el nivel de la app "+p.Name+" a "+string(to),
 		TierChanged{Project: p.ID, Name: p.Name, Slug: p.Slug, From: p.Tier, To: to})
+}
+
+// ServicesChanged v1: the whole list before and after.
+type ServicesChanged struct {
+	Project ID             `json:"project_id"`
+	Name    string         `json:"name"`
+	Slug    string         `json:"slug"`
+	From    []ServiceEntry `json:"from"`
+	To      []ServiceEntry `json:"to"`
+}
+
+// ServiceEntry is a service in an event payload.
+type ServiceEntry struct {
+	Name        string      `json:"name"`
+	Kind        ServiceKind `json:"kind"`
+	Root        string      `json:"root"`
+	Route       string      `json:"route"`
+	StripPrefix bool        `json:"strip_prefix"`
+}
+
+func entries(services []Service) []ServiceEntry {
+	out := make([]ServiceEntry, len(services))
+	for i, s := range services {
+		out[i] = ServiceEntry{Name: s.Name, Kind: s.Kind, Root: s.Root, Route: s.Route, StripPrefix: s.StripPrefix}
+	}
+	return out
+}
+
+func NewServicesChanged(org identity.OrganizationID, actor identity.UserID, p Project, from, to []Service) event.Event {
+	return event.New(EventServicesChanged, 1, org, actor, event.Subject(SubjectKind, p.ID),
+		"Cambió los servicios de la app "+p.Name,
+		ServicesChanged{Project: p.ID, Name: p.Name, Slug: p.Slug, From: entries(from), To: entries(to)})
 }
 
 func NewCreated(org identity.OrganizationID, actor identity.UserID, id ID, name, slug string) event.Event {

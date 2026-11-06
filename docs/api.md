@@ -227,6 +227,8 @@ releases and resources. Projects are archived, never deleted.
 | `PATCH` | `/api/v1/projects/:id` | write | 200 project |
 | `POST` | `/api/v1/projects/:id/archive` | write | 200 project (idempotent) |
 | `PUT` | `/api/v1/projects/:id/tier` | `odyssey:projects:tier` | 200 project (idempotent) |
+| `GET` | `/api/v1/projects/:id/services` | read | 200 `{items}` |
+| `PUT` | `/api/v1/projects/:id/services` | write | 200 `{items}` (idempotent) |
 
 The project resource:
 
@@ -243,6 +245,29 @@ Rules:
   gated by `odyssey:projects:tier` (the TI role), is not a create or patch
   field, publishes `project.tier_changed`, and refuses an archived app with
   422 `PROJECT_ARCHIVED`. Setting the tier it already has changes nothing.
+- **Services** are the workloads the app is made of (its web, its API, a
+  queue worker), in order: `{name, kind: web|worker, root, route,
+  strip_prefix, updated_at}`. Every app has at least one; a new app (and
+  every app made before services existed) has `web` at `/` with all of its
+  code. `PUT …/services` takes `{items: [...]}`, the whole list:
+  - 1–8 services; `name` matches `^[a-z][a-z0-9]{0,19}$`, unique.
+  - `root` is a relative folder of the code (no `.`/`..`; "" = all of it).
+  - `route` is `/` or a path like `/api`, one service per route, never under
+    `/_odicea` (the platform's); "" keeps a web internal. A worker has none.
+  - `strip_prefix` (only for a route other than `/`) makes the service see
+    `/users` for `/api/users`.
+  - The next version of the app takes the list (its `services` field keeps
+    it, with each service's image, port, health path and replicas); the
+    version online keeps running as it was. The same list writes nothing;
+    otherwise `project.services_changed`. Archived apps refuse it with 422
+    `PROJECT_ARCHIVED`.
+  - Anything but one `web` at `/` with all of the code needs every
+    environment's cluster (or the default one, before a first deploy) to run
+    several services (agent capability `odicea.services`): otherwise 422
+    `SERVICES_UNAVAILABLE`. Until each service is built on its own, a new
+    version of one image is refused with the same code while the app has
+    such a list (a publish with 422; a build from source fails its
+    deployment).
 - **Create** takes `{name, slug?, description?}`.
   - `slug` is a DNS label: 3–40 characters of `[a-z0-9-]`, starting with a
     letter, not ending with `-`, no `--`. It becomes part of hostnames.

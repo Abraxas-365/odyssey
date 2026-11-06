@@ -397,6 +397,46 @@ func (s *Service) CanProtect(ctx context.Context, organization identity.Organiza
 	return c.Status != fleet.StatusRevoked && c.Agent.Capabilities.CanProtect(), nil
 }
 
+// CanRunServices answers fleet.Dispatch.CanRunServices without placing
+// anything: one read of the placements, one of each cluster involved.
+func (s *Service) CanRunServices(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) (bool, error) {
+	if len(environments) == 0 {
+		return false, nil
+	}
+	if len(environments) > fleet.MaxPlacements {
+		return false, errx.Validation("too many environments in one read")
+	}
+	placed, err := s.repo.ListPlacementsOf(ctx, organization, environments)
+	if err != nil {
+		return false, err
+	}
+	clusters := map[fleet.ClusterID]bool{}
+	for _, e := range environments {
+		id, ok := placed[e]
+		if !ok {
+			def, err := s.repo.FindDefaultCluster(ctx, organization)
+			if errx.IsType(err, errx.TypeNotFound) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			id = def.ID
+		}
+		clusters[id] = true
+	}
+	for id := range clusters {
+		c, err := s.repo.FindCluster(ctx, organization, id)
+		if err != nil {
+			return false, err
+		}
+		if c.Status == fleet.StatusRevoked || !c.Agent.Capabilities.CanRunServices() {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (s *Service) Status(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (fleet.AppStatus, error) {
 	st, err := s.repo.FindAppStatus(ctx, organization, environment, name)
 	if errx.IsType(err, errx.TypeNotFound) {

@@ -152,6 +152,9 @@ func (q *projects) FindBySlug(_ context.Context, org identity.OrganizationID, sl
 func (q *projects) Hold(ctx context.Context, org identity.OrganizationID, id project.ID) (project.Project, error) {
 	return q.Find(ctx, org, id)
 }
+func (q *projects) Services(_ context.Context, org identity.OrganizationID, id project.ID) ([]project.Service, error) {
+	return project.DefaultServices(org, id), nil
+}
 func (q *projects) FindEnvironment(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID) (project.Environment, error) {
 	if _, err := q.Find(ctx, org, id); err != nil {
 		return project.Environment{}, err

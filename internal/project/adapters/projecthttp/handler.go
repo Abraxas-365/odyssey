@@ -28,6 +28,8 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Put("/:id/tier", httpx.RequirePermissions(permission.ProjectsTier), h.setTier)
 	g.Get("/:id/environments", httpx.RequirePermissions(permission.ProjectsRead), h.listEnvironments)
 	g.Get("/:id/environments/:environment", httpx.RequirePermissions(permission.ProjectsRead), h.findEnvironment)
+	g.Get("/:id/services", httpx.RequirePermissions(permission.ProjectsRead), h.listServices)
+	g.Put("/:id/services", httpx.RequirePermissions(permission.ProjectsWrite), h.setServices)
 }
 
 // listEnvironments is not paginated: a project has a handful (production,
@@ -214,4 +216,49 @@ func (h *Handler) archive(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(archived)
+}
+
+// listServices answers {"items": [...]} in the app's order (a handful; not
+// paginated).
+func (h *Handler) listServices(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := project.ParseID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	items, err := h.queries.Services(c.UserContext(), org, id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"items": items})
+}
+
+// setServices replaces the whole list (body {"items": [...]}); answers 200
+// with the stored list. The next version of the app takes it.
+func (h *Handler) setServices(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	id, err := project.ParseID(c.Params("id"))
+	if err != nil {
+		return err
+	}
+	user, err := httpx.User(c)
+	if err != nil {
+		return err
+	}
+	var input project.SetServices
+	if err := httpx.DecodeJSON(c, &input); err != nil {
+		return err
+	}
+	input.UpdatedBy = user
+	items, err := h.commands.SetServices(c.UserContext(), org, id, input)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"items": items})
 }

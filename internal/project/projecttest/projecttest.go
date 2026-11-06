@@ -18,12 +18,43 @@ import (
 
 // Repo is a project.Repository in memory, scoped by organization.
 type Repo struct {
-	mu   sync.Mutex
-	rows map[project.ID]project.Project
-	envs []project.Environment
+	mu       sync.Mutex
+	rows     map[project.ID]project.Project
+	envs     []project.Environment
+	services map[project.ID][]project.Service
 }
 
-func NewRepo() *Repo { return &Repo{rows: map[project.ID]project.Project{}} }
+func NewRepo() *Repo {
+	return &Repo{rows: map[project.ID]project.Project{}, services: map[project.ID][]project.Service{}}
+}
+
+func (m *Repo) ListServices(_ context.Context, org identity.OrganizationID, id project.ID) ([]project.Service, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []project.Service{}
+	for _, s := range m.services[id] {
+		if s.Organization == org {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (m *Repo) ReplaceServices(_ context.Context, org identity.OrganizationID, id project.ID, services []project.Service) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.rows[id]; !ok || p.Organization != org {
+		return errx.NotFound("project not found")
+	}
+	now := time.Now()
+	out := make([]project.Service, len(services))
+	for i, s := range services {
+		s.Organization, s.Project, s.Position, s.UpdatedAt = org, id, i, now
+		out[i] = s
+	}
+	m.services[id] = out
+	return nil
+}
 
 func (m *Repo) CreateEnvironment(_ context.Context, e project.Environment) error {
 	m.mu.Lock()

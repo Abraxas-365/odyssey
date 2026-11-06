@@ -19,6 +19,21 @@ type Commands interface {
 	// SetTier is IT's change of the app's tier (permission projects:tier).
 	// The same tier again is a no-op.
 	SetTier(ctx context.Context, organization identity.OrganizationID, project ID, input SetTier) error
+	// SetServices replaces the app's services (the next version of the app
+	// takes them). The same list again is a no-op. A list that is not Simple
+	// is refused with Business CodeServicesUnavailable unless the cluster of
+	// every environment can run it (Runtime).
+	SetServices(ctx context.Context, organization identity.OrganizationID, project ID, input SetServices) ([]Service, error)
+}
+
+// Runtime is what the project asks of where its environments run (the
+// fleet, through adapter projectfleet): whether their clusters can run an
+// app made of several services.
+type Runtime interface {
+	// CanRunServices is true when the cluster of every environment (or, for
+	// one not placed yet, the organization's default) lists the services
+	// capability; false when one cannot, or there is no cluster.
+	CanRunServices(ctx context.Context, organization identity.OrganizationID, environments []EnvironmentID) (bool, error)
 }
 
 // Queries are the read operations, implemented by projectsvc.Service.
@@ -45,6 +60,8 @@ type Queries interface {
 	// check of its status stays true while the caller writes. Call it inside
 	// txn.Runner.Do.
 	Hold(ctx context.Context, organization identity.OrganizationID, project ID) (Project, error)
+	// Services are the app's services, in their order (at least one).
+	Services(ctx context.Context, organization identity.OrganizationID, project ID) ([]Service, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -70,4 +87,9 @@ type Repository interface {
 	ListEnvironments(ctx context.Context, organization identity.OrganizationID, project ID, filter EnvironmentFilter) ([]Environment, error)
 	FindMany(ctx context.Context, organization identity.OrganizationID, projects []ID) ([]Project, error)
 	ListEnvironmentsOf(ctx context.Context, organization identity.OrganizationID, projects []ID) ([]Environment, error)
+	// ListServices returns the project's services by position (none for
+	// another tenant's project).
+	ListServices(ctx context.Context, organization identity.OrganizationID, project ID) ([]Service, error)
+	// ReplaceServices stores services as the project's whole list.
+	ReplaceServices(ctx context.Context, organization identity.OrganizationID, project ID, services []Service) error
 }

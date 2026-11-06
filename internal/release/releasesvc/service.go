@@ -139,6 +139,9 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 	var d release.Deployment
 	var superseded *release.Deployment
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if r.Services, err = s.servicesOf(ctx, organization, id, r.Image, r.Config); err != nil {
+			return err
+		}
 		if err := s.repo.CreateRelease(ctx, r); err != nil {
 			return err
 		}
@@ -316,6 +319,21 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 func (s *Service) lockState(ctx context.Context, p project.Project, e project.Environment) (release.EnvironmentState, error) {
 	return s.repo.LockState(ctx, release.EnvironmentState{Environment: e.ID, Organization: p.Organization,
 		Project: p.ID, App: release.AppName(p.Slug, e)})
+}
+
+// servicesOf snapshots the app's services for a new version of one image.
+// It holds the project (in the caller's transaction) first, so the services
+// read are the ones committed: a concurrent change of the list (which locks
+// the project) lands before or after this version, never half.
+func (s *Service) servicesOf(ctx context.Context, organization identity.OrganizationID, id project.ID, image string, c release.Config) ([]release.Service, error) {
+	if _, err := s.projects.Hold(ctx, organization, id); err != nil {
+		return nil, err
+	}
+	topology, err := s.projects.Services(ctx, organization, id)
+	if err != nil {
+		return nil, err
+	}
+	return release.ServicesOf(topology, image, c)
 }
 
 // begin starts the deployment d (its ID, what it runs, why and for whom) in

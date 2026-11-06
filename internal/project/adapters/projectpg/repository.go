@@ -260,6 +260,56 @@ func (r *Repository) ListEnvironmentsOf(ctx context.Context, organization identi
 	return out, nil
 }
 
+const serviceColumns = `organization_id, project_id, name, kind, root, route, strip_prefix, position, updated_at`
+
+var serviceMessages = pgerr.Messages{Unique: "two services of the app have the same name or route"}
+
+// ListServices returns the project's services by position.
+func (r *Repository) ListServices(ctx context.Context, organization identity.OrganizationID, id project.ID) ([]project.Service, error) {
+	out := []project.Service{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT `+serviceColumns+` FROM project.services
+		WHERE organization_id = $1 AND project_id = $2 ORDER BY position`, organization, id)
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list services", serviceMessages)
+	}
+	return out, nil
+}
+
+// ReplaceServices deletes the project's services and inserts services, in
+// one transaction (the caller's, if any). NotFound when the project is not
+// the organization's.
+func (r *Repository) ReplaceServices(ctx context.Context, organization identity.OrganizationID, id project.ID, services []project.Service) error {
+	return txn.Postgres{DB: r.db}.Do(ctx, func(ctx context.Context) error {
+		return r.replaceServices(ctx, organization, id, services)
+	})
+}
+
+func (r *Repository) replaceServices(ctx context.Context, organization identity.OrganizationID, id project.ID, services []project.Service) error {
+	var exists bool
+	if err := txn.Q(ctx, r.db).GetContext(ctx, &exists,
+		`SELECT EXISTS (SELECT 1 FROM project.projects WHERE organization_id = $1 AND id = $2)`, organization, id); err != nil {
+		return pgerr.MapWith(err, "find project", messages)
+	}
+	if !exists {
+		return notFound()
+	}
+	if _, err := txn.Q(ctx, r.db).ExecContext(ctx,
+		`DELETE FROM project.services WHERE organization_id = $1 AND project_id = $2`, organization, id); err != nil {
+		return pgerr.MapWith(err, "replace services", serviceMessages)
+	}
+	names, kinds, roots, routes := make([]string, len(services)), make([]string, len(services)), make([]string, len(services)), make([]string, len(services))
+	strips := make([]bool, len(services))
+	for i, s := range services {
+		names[i], kinds[i], roots[i], routes[i], strips[i] = s.Name, string(s.Kind), s.Root, s.Route, s.StripPrefix
+	}
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO project.services
+		(organization_id, project_id, name, kind, root, route, strip_prefix, position)
+		SELECT $1, $2, s.name, s.kind, s.root, s.route, s.strip, s.ord - 1
+		  FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::bool[]) WITH ORDINALITY AS s(name, kind, root, route, strip, ord)`,
+		organization, id, pq.Array(names), pq.Array(kinds), pq.Array(roots), pq.Array(routes), pq.Array(strips))
+	return pgerr.MapWith(err, "replace services", serviceMessages)
+}
+
 func idStrings(ids []project.ID) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {

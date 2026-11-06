@@ -87,6 +87,16 @@ const CapabilityRetire = "odicea.retire"
 // CanRetire reports whether the cluster lists CapabilityRetire.
 func (c Capabilities) CanRetire() bool { return slices.Contains(c.APIs, CapabilityRetire) }
 
+// CapabilityServices is listed in Capabilities.APIs when the agent runs an
+// app made of several services (one workload per service, a route of the
+// app's address each). An agent without it would run only the app's
+// top-level image: the control plane refuses to give it anything else, so
+// an app is never served half.
+const CapabilityServices = "odicea.services"
+
+// CanRunServices reports whether the cluster lists CapabilityServices.
+func (c Capabilities) CanRunServices() bool { return slices.Contains(c.APIs, CapabilityServices) }
+
 // MaxAppSecrets bounds an app's secret variables.
 const MaxAppSecrets = 100
 
