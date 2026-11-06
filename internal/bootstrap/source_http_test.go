@@ -112,12 +112,12 @@ func TestGitHubHTTP(t *testing.T) {
 	// -- the public callback: a bad state, then a good one (no token on either)
 	res = checked(t, app, http.MethodGet, "/github/setup?installation_id=7&code=code-1&state=forged.state", "", nil)
 	httpxtest.Want(t, res, http.StatusFound)
-	if loc := res.Header.Get("Location"); loc != console+"/configuracion/github?github_error=GITHUB_STATE_INVALID" {
+	if loc := res.Header.Get("Location"); loc != console+"/administracion/github?github_error=GITHUB_STATE_INVALID" {
 		t.Fatalf("bad state redirects to %q", loc)
 	}
 	res = checked(t, app, http.MethodGet, "/github/setup?installation_id=7&code=nope&state="+url.QueryEscape(state), "", nil)
 	httpxtest.Want(t, res, http.StatusFound)
-	if loc := res.Header.Get("Location"); loc != console+"/configuracion/github?github_error=GITHUB_NOT_YOURS" {
+	if loc := res.Header.Get("Location"); loc != console+"/administracion/github?github_error=GITHUB_NOT_YOURS" {
 		t.Fatalf("bad code redirects to %q", loc)
 	}
 	if items := httpxtest.JSON[query.Paginated[source.Installation]](t, checked(t, app, http.MethodGet, "/api/v1/github/installations", token, nil)).Items; len(items) != 0 {
@@ -126,7 +126,7 @@ func TestGitHubHTTP(t *testing.T) {
 	res = checked(t, app, http.MethodGet, "/github/setup?installation_id=7&code=code-1&state="+url.QueryEscape(state), "", nil)
 	httpxtest.Want(t, res, http.StatusFound)
 	loc, err := url.Parse(res.Header.Get("Location"))
-	if err != nil || loc.Scheme+"://"+loc.Host+loc.Path != console+"/configuracion/github" || loc.Query().Get("github_claim") == "" {
+	if err != nil || loc.Scheme+"://"+loc.Host+loc.Path != console+"/administracion/github" || loc.Query().Get("github_claim") == "" {
 		t.Fatalf("good state redirects to %q (%v)", res.Header.Get("Location"), err)
 	}
 	claim := loc.Query().Get("github_claim")
@@ -163,7 +163,7 @@ func TestGitHubHTTP(t *testing.T) {
 	// an owner approval pending on GitHub lands on the console too
 	res = checked(t, app, http.MethodGet, "/github/setup?setup_action=request", "", nil)
 	httpxtest.Want(t, res, http.StatusFound)
-	if loc := res.Header.Get("Location"); loc != console+"/configuracion/github?github=requested" {
+	if loc := res.Header.Get("Location"); loc != console+"/administracion/github?github=requested" {
 		t.Fatalf("request redirects to %q", loc)
 	}
 

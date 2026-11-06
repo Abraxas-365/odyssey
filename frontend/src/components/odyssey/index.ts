@@ -3,6 +3,7 @@
 // Showcase: /design (src/pages/design-system.tsx).
 export * from './app-card'
 export * from './approval'
+export * from './assistant-chip'
 export * from './attention'
 export * from './callout'
 export * from './channel'

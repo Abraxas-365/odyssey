@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { useClaimInstallation, safeReturnTo } from '@/lib/github'
 
 /**
- * What GitHub's setup callback leaves in the URL of /configuracion/github:
+ * What GitHub's setup callback leaves in the URL of /administracion/github:
  * a `github_claim` to redeem (once), a `github_error` code, or
  * `github=requested` (an owner on GitHub must approve the install).
  */

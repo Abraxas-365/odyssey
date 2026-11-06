@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -49,9 +50,10 @@ type Options struct {
 	// ConsoleURL is the console's base URL: commit statuses link to
 	// <ConsoleURL>/apps/<project id> (no link when empty).
 	ConsoleURL string
-	// AntigravityClientID is IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID, to name that
-	// assistant in a deployment's requested_via.
-	AntigravityClientID string
+	// Assistants are the clients IAMKit registered for the template
+	// assistants (IAMKIT_MCP_CLIENT_<KEY>_ID), to name them in a
+	// deployment's requested_via.
+	Assistants assistant.Registered
 }
 
 type Service struct {

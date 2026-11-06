@@ -28,9 +28,9 @@ describe('GitHub links', () => {
   })
   it('return_to only stays inside the console', () => {
     expect(safeReturnTo('/apps/1')).toBe('/apps/1')
-    expect(safeReturnTo('//evil.example')).toBe('/configuracion/github')
-    expect(safeReturnTo('https://evil.example')).toBe('/configuracion/github')
-    expect(safeReturnTo(undefined)).toBe('/configuracion/github')
+    expect(safeReturnTo('//evil.example')).toBe('/administracion/github')
+    expect(safeReturnTo('https://evil.example')).toBe('/administracion/github')
+    expect(safeReturnTo(undefined)).toBe('/administracion/github')
   })
 })
 

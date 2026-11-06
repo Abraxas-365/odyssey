@@ -400,7 +400,7 @@ agent says otherwise).
   deployments and for older versions.
 - **`requested_via`** (on every deployment) says where the request came from.
   The server derives it; no request body can set it: `console`,
-  `assistant:<preset>` (`claude_code`, `codex`, `vscode`, `antigravity`, or
+  `assistant:<preset>` (`claude_code`, `codex`, `cursor`, `vscode`, `antigravity`, or
   `other` for an MCP client with no preset; read from the request's OAuth
   client), `github` (nobody asked: a push or the poll of a connected
   repository) or `platform` (`auto_rollback`). It follows the requester, not
@@ -810,15 +810,43 @@ Tickets are kept 24 h after they expire so a late upload still hears
 
 "Conecta tu asistente" in the console. No secrets, the same for everyone with
 `projects:read`. `200 {available, mcp_url, skill: {url, version, name},
-clients: [{key, name, install, skill_install, notes}]}`: `available` is
+clients: [{key, name, install, install_link?, skill_install, notes}]}`: `available` is
 `false` and `clients` empty when the MCP endpoint is not enabled. `mcp_url` is
 the MCP audience (`IAMKIT_AUDIENCE`); `clients` follow `ODYSSEY_MCP_CLIENTS`
-(keys `claude_code`, `codex`, `vscode`, `antigravity`; unknown keys are
-ignored; `antigravity` is offered only when `IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID`
-is set, since it cannot register itself and its JSON snippet carries
-`oauth.clientId`). `install` registers the MCP server `odicea` (a command, or the JSON
-for the client's MCP config); `skill_install` downloads and unpacks the skill
-into the client's skills folder.
+(keys `claude_code`, `codex`, `cursor`, `vscode`, `antigravity`; unknown keys are
+ignored; `cursor` and `antigravity` are offered only when
+`IAMKIT_MCP_CLIENT_CURSOR_ID` / `IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID` is set,
+since they cannot register themselves and their config carries the client id).
+`install` registers the MCP server `odicea` (a command, or the JSON
+for the client's MCP config); `install_link`, where the client has one, does it
+in one click (VS Code `vscode:mcp/install?…`, Cursor
+`cursor://anysphere.cursor-deeplink/mcp/install?…`); `skill_install` downloads
+and unpacks the skill into the client's skills folder.
+
+### Me (any signed-in user: `GET /api/v1/me`, `DELETE /api/v1/me/assistants/{id}`)
+
+The person using the console, about themselves (`Cache-Control: no-store`).
+`200 {user_id, organization_id, role, permissions, assistant}`: `role` is the
+catalog role whose permissions are exactly the token's (`TI`, `Builder`,
+`Lector`; `""` for none). `assistant` is `null` when MCP is not served or
+IAMKit could not say what is connected (never a guessed "no conectado");
+otherwise `{connected: [{id, key, name, consented_at, last_used_at}], can, cannot, tools}`.
+`connected` is what IAMKit lists for the user (asked with the user's own
+token: `GET /identity/v1/me/connected-apps`), kept to the clients at Odicea's
+MCP server (not the console's own client `IAMKIT_WEB_CLIENT_ID`, not other
+servers; an assistant the administrator granted counts, with `consented_at`
+null), the one used last first, then the one connected last; `key` as in `requested_via` (`other` for an unknown
+client). `can`/`cannot` are plain-Spanish sentences, one per group of MCP
+tools (`assistant.Capabilities`; every tool is in one,
+`TestEveryMCPToolHasACapability`): a group is in `can` when the user holds the
+permissions of all its tools. `tools` names the MCP tools those permissions
+let an assistant call, sorted (the console shows them in technical mode).
+
+`DELETE /api/v1/me/assistants/{id}` (`id` from `connected`) ends that
+assistant's sessions and consent at IAMKit for the caller: `204`; `404` for an
+id that is not one of the caller's connections to Odicea; `401` when the
+session expired; `403` when IAMKit does not let this session manage them (an
+impersonated token); `502` when IAMKit does not answer.
 
 ### Skill download (public: `GET /skills/odicea.tar.gz`)
 

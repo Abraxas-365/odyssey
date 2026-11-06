@@ -311,12 +311,12 @@ func TestListRepositoriesWhenGitHubIsOffOrNotInstalled(t *testing.T) {
 
 	f.gh.enabled, f.gh.installations, f.gh.repos = true, nil, nil
 	_, res := call[sourcemcp.ListRepositoriesOut](t, cs, "list_repositories", nil)
-	if body := errorBody(t, res); !strings.Contains(body["next_step"], "https://odicea.test/configuracion/github") {
+	if body := errorBody(t, res); !strings.Contains(body["next_step"], "https://odicea.test/administracion/github") {
 		t.Fatalf("no installation: %v", body)
 	}
 	// Connecting with none installed sends there too.
 	_, res = call[sourcemcp.ConnectRepositoryOut](t, cs, "connect_repository", map[string]any{"app": "cotizador", "repository": "acme/x"})
-	if body := errorBody(t, res); !strings.Contains(body["next_step"], "/configuracion/github") {
+	if body := errorBody(t, res); !strings.Contains(body["next_step"], "/administracion/github") {
 		t.Fatalf("connect without installation: %v", body)
 	}
 

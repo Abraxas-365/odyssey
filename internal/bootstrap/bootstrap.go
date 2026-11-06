@@ -22,6 +22,8 @@ import (
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
 	"github.com/Abraxas-365/odyssey/internal/access"
 	"github.com/Abraxas-365/odyssey/internal/access/accessmodule"
+	"github.com/Abraxas-365/odyssey/internal/account/accountmodule"
+	"github.com/Abraxas-365/odyssey/internal/account/adapters/accountiam"
 	"github.com/Abraxas-365/odyssey/internal/ai"
 	"github.com/Abraxas-365/odyssey/internal/ai/adapters/aimcp"
 	"github.com/Abraxas-365/odyssey/internal/ai/aimodule"
@@ -539,8 +541,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	a.closers = append(a.closers, blobs.Close)
-	opts := Options{Release: releasesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID},
-		Source: sourcesvc.Options{AntigravityClientID: cfg.MCP.AntigravityClientID}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder, AI: cfg.AI,
+	opts := Options{Release: releasesvc.Options{Assistants: cfg.MCP.TemplateClients},
+		Source: sourcesvc.Options{Assistants: cfg.MCP.TemplateClients}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder, AI: cfg.AI,
 		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub, ClusterConfig: cfg.Cluster}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
@@ -587,13 +589,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *httpx.MCPAuth) *fiber.App {
 	skill := skills.Default()
 	assistantRoutes := server.Assistant{
-		Info:    assistant.Build(cfg.MCP.Enabled(), cfg.IAM.Audience, PublicAPIURL(cfg)+"/skills/"+skills.Name+".tar.gz", skill.Version, cfg.MCP.AntigravityClientID, cfg.MCP.Clients),
+		Info:    assistant.Build(cfg.MCP.Enabled(), cfg.IAM.Audience, PublicAPIURL(cfg)+"/skills/"+skills.Name+".tar.gz", skill.Version, cfg.MCP.TemplateClients, cfg.MCP.Clients),
 		Archive: skill.Archive, Version: skill.Version,
 	}
 	opts := server.Options{CORSOrigins: cfg.CORSOrigins, Public: []server.PublicRoutes{p.Sources.HTTP, p.Releases.HTTP, p.Access.HTTP, assistantRoutes}}
 	if mcpAuth != nil {
 		opts.MCP = &server.MCP{Auth: mcpAuth, Handler: NewMCPHandler(p, cfg)}
 	}
+	accounts := NewAccount(p, cfg)
 	return server.New(
 		func() error { return p.DB.Ping() },
 		server.PublicConfig{IAMURL: cfg.IAM.PublicURL, ClientID: cfg.IAM.WebClientID, Environment: cfg.IAM.Environment},
@@ -610,8 +613,27 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.Policy.HTTP,
 		p.Approvals.HTTP,
 		p.Inventory.HTTP,
+		accounts.HTTP,
 		assistantRoutes,
 	)
+}
+
+// NewAccount assembles /me. Its assistant part reads IAMKit with the
+// user's own token, only where the MCP endpoint is served (otherwise there
+// is nothing to be connected to).
+func NewAccount(p *Platform, cfg config.Config) accountmodule.Module {
+	tools := map[string][]string{}
+	for _, t := range MCPTools(p, cfg) {
+		tools[t.Name] = t.Permissions
+	}
+	deps := accountmodule.Deps{Assistants: cfg.MCP.TemplateClients, Tools: tools}
+	if cfg.MCP.Enabled() && cfg.IAM.URL != "" {
+		deps.Connections = accountiam.Connections{
+			API:         authclient.New(cfg.IAM.URL, authclient.WithHTTPClient(&http.Client{Timeout: 5 * time.Second})),
+			Environment: cfg.IAM.Environment, Audience: cfg.IAM.Audience, Resource: cfg.IAM.Audience,
+			FirstParty: []string{cfg.IAM.WebClientID}}
+	}
+	return accountmodule.New(deps)
 }
 
 // MCPTools are every domain's tools for coding agents: the one MCP server

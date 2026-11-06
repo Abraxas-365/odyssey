@@ -11,6 +11,7 @@ import type { Deployment } from '@/lib/types'
 const assistantNames: Record<string, string> = {
   claude_code: 'Claude Code',
   codex: 'Codex',
+  cursor: 'Cursor',
   vscode: 'VS Code',
   antigravity: 'Antigravity',
 }

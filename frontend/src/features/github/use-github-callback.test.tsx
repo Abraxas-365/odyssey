@@ -24,7 +24,7 @@ function mount(url: string, children: ReactNode = <Probe />) {
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={[url]}>
           <Routes>
-            <Route path="/configuracion/github" element={children} />
+            <Route path="/administracion/github" element={children} />
             <Route path="/apps/:id" element={children} />
           </Routes>
         </MemoryRouter>
@@ -38,7 +38,7 @@ describe('useGitHubCallback', () => {
 
   it('posts the claim exactly once (even under StrictMode), toasts and goes back', async () => {
     api.mockResolvedValue({ installation: { account: 'acme' }, return_to: '/apps/7' })
-    mount('/configuracion/github?github_claim=tok')
+    mount('/administracion/github?github_claim=tok')
     await waitFor(() => expect(screen.getByTestId('out').textContent).toMatch(/^\/apps\/7/))
     expect(api).toHaveBeenCalledTimes(1)
     expect(api).toHaveBeenCalledWith('/github/installations', { method: 'POST', body: { claim: 'tok' } })
@@ -47,16 +47,16 @@ describe('useGitHubCallback', () => {
 
   it('removes the claim from the URL and keeps the error to show', async () => {
     api.mockRejectedValue(new Error('x'))
-    mount('/configuracion/github?github_claim=tok')
+    mount('/administracion/github?github_claim=tok')
     await waitFor(() => expect(api).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByTestId('out').textContent).toBe('/configuracion/github|false||false'))
+    await waitFor(() => expect(screen.getByTestId('out').textContent).toBe('/administracion/github|false||false'))
     expect(api).toHaveBeenCalledTimes(1)
   })
 
   it('reads the error and the requested approval without posting', () => {
     api.mockReset()
-    mount('/configuracion/github?github_error=GITHUB_NOT_YOURS&github=requested')
-    expect(screen.getByTestId('out').textContent).toBe('/configuracion/github?github_error=GITHUB_NOT_YOURS&github=requested|false|GITHUB_NOT_YOURS|true')
+    mount('/administracion/github?github_error=GITHUB_NOT_YOURS&github=requested')
+    expect(screen.getByTestId('out').textContent).toBe('/administracion/github?github_error=GITHUB_NOT_YOURS&github=requested|false|GITHUB_NOT_YOURS|true')
     expect(api).not.toHaveBeenCalled()
   })
 })

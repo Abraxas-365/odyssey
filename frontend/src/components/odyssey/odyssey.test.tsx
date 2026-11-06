@@ -12,6 +12,7 @@ import {
   AppRow,
   AppShell,
   AppStatus,
+  AssistantChip,
   AttentionItem,
   AttentionList,
   Callout,
@@ -100,8 +101,19 @@ describe('AppShell', () => {
   it('hides a bar with a single tab', () => {
     const { rerender } = wrap(<AppShell team="t" user="u" tabs={[{ to: '/apps/x', label: 'Resumen', end: true }]}>x</AppShell>)
     expect(screen.queryByRole('link', { name: 'Resumen' })).not.toBeInTheDocument()
-    rerender(<MemoryRouter><TooltipProvider><AppShell team="t" user="u" tabs={[{ to: '/', label: 'Inicio', end: true }, { to: '/asistente', label: 'Asistente' }]}>x</AppShell></TooltipProvider></MemoryRouter>)
-    expect(screen.getByRole('link', { name: 'Asistente' })).toBeInTheDocument()
+    rerender(<MemoryRouter><TooltipProvider><AppShell team="t" user="u" tabs={[{ to: '/', label: 'Inicio', end: true }, { to: '/bandeja', label: 'Bandeja' }]}>x</AppShell></TooltipProvider></MemoryRouter>)
+    expect(screen.getByRole('link', { name: 'Bandeja' })).toBeInTheDocument()
+  })
+
+  it('carries the assistant chip: a call to action, what is connected, or a quiet "we could not ask"', async () => {
+    const { container, rerender } = wrap(<AppShell team="t" user="u" assistant={<AssistantChip label="Conecta tu asistente" kind="connect" />}>x</AppShell>)
+    expect(screen.getByRole('link', { name: 'Conecta tu asistente' })).toHaveAttribute('href', '/asistente')
+    await expectAccessible(container)
+    rerender(<MemoryRouter><TooltipProvider><AppShell team="t" user="u" assistant={<AssistantChip label="Claude Code · hace 5 minutos" kind="connected" />}>x</AppShell></TooltipProvider></MemoryRouter>)
+    expect(screen.getByRole('link', { name: 'Tu asistente: Claude Code · hace 5 minutos' })).toBeInTheDocument()
+    rerender(<MemoryRouter><TooltipProvider><AppShell team="t" user="u" assistant={<AssistantChip label="Tu asistente" kind="unknown" />}>x</AppShell></TooltipProvider></MemoryRouter>)
+    // not the call to action's look: unknown is not "not connected"
+    expect(screen.getByRole('link', { name: 'Tu asistente' }).className).not.toContain('bg-ai')
   })
 })
 

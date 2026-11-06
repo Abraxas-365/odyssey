@@ -1396,7 +1396,7 @@ export interface paths {
         };
         /**
          * Where GitHub sends the browser after installing the App
-         * @description Public (the user has no Odyssey token here: the signed `state` names the organization and the Odyssey user who asked, and the OAuth `code` proves the GitHub user owns the installation's account: is the User account itself, or an active admin of the Organization, which needs the App's `members: read` permission). It links nothing. Always answers 302 to the console, never a body or an error page. On success: `<console>/configuracion/github?github_claim=<claim>`, a signed 15-minute claim (carrying the return path) that the console posts, logged in, to `claimGitHubInstallation`. On failure: `<console>/configuracion/github?github_error=<CODE>`, where CODE is `GITHUB_NOT_CONFIGURED`, `GITHUB_STATE_INVALID` (bad or expired state), `GITHUB_NOT_YOURS` (the GitHub user does not own or administer the installation's account), `GITHUB_NO_ACCESS` or `GITHUB_UNAVAILABLE`.
+         * @description Public (the user has no Odyssey token here: the signed `state` names the organization and the Odyssey user who asked, and the OAuth `code` proves the GitHub user owns the installation's account: is the User account itself, or an active admin of the Organization, which needs the App's `members: read` permission). It links nothing. Always answers 302 to the console, never a body or an error page. On success: `<console>/administracion/github?github_claim=<claim>`, a signed 15-minute claim (carrying the return path) that the console posts, logged in, to `claimGitHubInstallation`. On failure: `<console>/administracion/github?github_error=<CODE>`, where CODE is `GITHUB_NOT_CONFIGURED`, `GITHUB_STATE_INVALID` (bad or expired state), `GITHUB_NOT_YOURS` (the GitHub user does not own or administer the installation's account), `GITHUB_NO_ACCESS` or `GITHUB_UNAVAILABLE`.
          */
         get: operations["gitHubSetup"];
         put?: never;
@@ -1456,12 +1456,55 @@ export interface paths {
         };
         /**
          * How to connect an AI assistant to Odicea ("Conecta tu asistente")
-         * @description Holds no secrets and is the same for everyone. `available` is false (and `clients` empty) when the MCP endpoint is not enabled on this installation. `mcp_url` is the endpoint to register (the MCP audience); `skill` is the downloadable `odicea` skill (`GET /skills/odicea.tar.gz`, `version` changes when its files do); `clients` are the assistants this installation offers (`ODYSSEY_MCP_CLIENTS`, in that order; Antigravity only when its OAuth client id is configured, since it cannot register itself), each with the command or JSON that registers the MCP server (`install`), the command that installs the skill (`skill_install`) and plain-Spanish `notes` on signing in.
+         * @description Holds no secrets and is the same for everyone. `available` is false (and `clients` empty) when the MCP endpoint is not enabled on this installation. `mcp_url` is the endpoint to register (the MCP audience); `skill` is the downloadable `odicea` skill (`GET /skills/odicea.tar.gz`, `version` changes when its files do); `clients` are the assistants this installation offers (`ODYSSEY_MCP_CLIENTS`, in that order; Cursor and Antigravity only when the OAuth client id IAMKit registered for them is configured (`IAMKIT_MCP_CLIENT_CURSOR_ID`, `IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID`), since they cannot register themselves), each with the command or JSON that registers the MCP server (`install`), a one-click `install_link` where the client has one (VS Code, Cursor), the command that installs the skill (`skill_install`) and plain-Spanish `notes` on signing in.
          */
         get: operations["getAssistant"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in person, their role and their connected assistants
+         * @description Any signed-in user, about themselves (`Cache-Control: no-store`). `role` is the catalog role whose permissions are exactly the token's (`TI`, `Builder`, `Lector`), or empty for a grant that matches none. `assistant` is null when this installation does not serve MCP or IAMKit could not say what is connected (the console then says nothing rather than "no conectado"); otherwise `connected` lists the assistants the user allowed at Odicea's MCP server (asked of IAMKit with the user's own token; the one used last first) and `can`/`cannot` word, in plain Spanish, what an assistant may do with the user's permissions (one sentence per group of MCP tools).
+         */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/assistants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The connection's `id` from `GET /api/v1/me`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect one of the caller's assistants
+         * @description Ends the assistant's sessions and consent at IAMKit, for the caller only: it must sign in and be allowed again to reach Odicea. Only an assistant connected to Odicea's MCP server can be disconnected here; any other id is 404. 401 when the session expired (sign in again); 403 when IAMKit does not let this session manage the user's assistants (an impersonated token); 502 when IAMKit does not answer.
+         */
+        delete: operations["disconnectAssistant"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2708,11 +2751,13 @@ export interface components {
         };
         AssistantClient: {
             /** @enum {string} */
-            key: "claude_code" | "codex" | "vscode" | "antigravity";
+            key: "claude_code" | "codex" | "cursor" | "vscode" | "antigravity";
             /** @description The assistant as people know it ("Claude Code"). */
             name: string;
             /** @description The command (or JSON for the client's MCP config) that registers the MCP server `odicea`. */
             install: string;
+            /** @description A link that registers the server in one click (`vscode:mcp/install?…`, `cursor://anysphere.cursor-deeplink/mcp/install?…`); absent for clients without one (their `install` is the way). */
+            install_link?: string;
             /** @description The command that downloads and unpacks the `odicea` skill into the client's skills folder. */
             skill_install: string;
             /** @description Plain Spanish: how to sign in with the company account, and where the config lives. */
@@ -2732,6 +2777,47 @@ export interface components {
                 name: "odicea";
             };
             clients: components["schemas"]["AssistantClient"][];
+        };
+        AssistantConnection: {
+            /** @description IAMKit's id for the client: what `DELETE /api/v1/me/assistants/{id}` takes. */
+            id: string;
+            /** @enum {string} */
+            key: "claude_code" | "codex" | "cursor" | "vscode" | "antigravity" | "other";
+            /** @description The assistant as people know it ("Claude Code", "Otro asistente"). */
+            name: string;
+            /**
+             * Format: date-time
+             * @description When the user allowed it (null: the administrator granted it).
+             */
+            consented_at: string | null;
+            /**
+             * Format: date-time
+             * @description The newest refresh of its live sessions (null when none is live).
+             */
+            last_used_at: string | null;
+        };
+        Me: {
+            /** Format: uuid */
+            user_id: string;
+            /** Format: uuid */
+            organization_id: string;
+            /**
+             * @description The catalog role the permissions match exactly; empty for none.
+             * @enum {string}
+             */
+            role: "TI" | "Builder" | "Lector" | "";
+            /** @description The token's permissions, sorted. */
+            permissions: string[];
+            /** @description Null when MCP is not served here or IAMKit could not say what is connected. */
+            assistant: null | {
+                connected: components["schemas"]["AssistantConnection"][];
+                /** @description Plain Spanish: what an assistant may do with these permissions ("Ver tus apps, su estado…"). */
+                can: string[];
+                /** @description Plain Spanish, what it may not (the console says "no podrá…"). */
+                cannot: string[];
+                /** @description The MCP tools these permissions let an assistant call, sorted (shown in technical mode). */
+                tools: string[];
+            };
         };
         AccessKeys: {
             keys: {
@@ -5499,6 +5585,55 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    disconnectAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The connection's `id` from `GET /api/v1/me`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
         };
     };
     getAccessKeys: {

@@ -102,8 +102,8 @@ export function NotificationsMenu({ items, onSeeAll, seeAllLabel = 'Ver toda la 
   )
 }
 
-/** Avatar menu: identity, "Mostrar detalles técnicos", theme, sign out. */
-export function UserMenu({ name, email, technical, onTechnicalChange, onSwitchOrganization, onLogout, children }: { name: string; email?: string; technical: boolean; onTechnicalChange: (v: boolean) => void; onSwitchOrganization?: () => void; onLogout: () => void; children?: ReactNode }) {
+/** Avatar menu: identity and role, "Mostrar detalles técnicos", theme, sign out. `children` go after the theme (e.g. "Tu asistente"). */
+export function UserMenu({ name, email, role, technical, onTechnicalChange, onSwitchOrganization, onLogout, children }: { name: string; email?: string; role?: string; technical: boolean; onTechnicalChange: (v: boolean) => void; onSwitchOrganization?: () => void; onLogout: () => void; children?: ReactNode }) {
   const { theme, setTheme } = useTheme()
   return (
     <DropdownMenu>
@@ -115,7 +115,10 @@ export function UserMenu({ name, email, technical, onTechnicalChange, onSwitchOr
       <DropdownMenuContent align="end" className="w-[280px]">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="flex flex-col">
-            <span className="font-semibold text-foreground">{name}</span>
+            <span className="flex items-center gap-2">
+              <span className="min-w-0 truncate font-semibold text-foreground">{name}</span>
+              {role && <Badge variant="secondary"><span className="sr-only">Rol: </span>{role}</Badge>}
+            </span>
             {email && <span className="text-xs font-normal">{email}</span>}
           </DropdownMenuLabel>
         </DropdownMenuGroup>
@@ -199,7 +202,7 @@ export function CommandPalette({ entries }: { entries: CommandEntry[] }) {
  * The console chrome (mockup header): logo / team / app crumbs, search, bell,
  * help, avatar; tabs underneath; a centred 1160px main column.
  */
-export function AppShell({ team, project, tabs, search, notifications, user, children, wide }: { team: ReactNode; project?: ReactNode; tabs?: NavTab[]; search?: ReactNode; notifications?: ReactNode; user: ReactNode; children: ReactNode; wide?: boolean }) {
+export function AppShell({ team, project, tabs, search, assistant, notifications, user, children, wide }: { team: ReactNode; project?: ReactNode; tabs?: NavTab[]; search?: ReactNode; assistant?: ReactNode; notifications?: ReactNode; user: ReactNode; children: ReactNode; wide?: boolean }) {
   return (
     <div className="min-h-dvh">
       <a href="#main" className="sr-only z-50 rounded-md bg-strong px-3 py-2 text-strong-foreground focus:not-sr-only focus:fixed focus:top-2 focus:left-2">
@@ -220,6 +223,7 @@ export function AppShell({ team, project, tabs, search, notifications, user, chi
           )}
           <div className="flex-1" />
           {search}
+          {assistant}
           {notifications}
           <ButtonLink variant="ghost" size="icon" aria-label="Ayuda" href="https://github.com/Abraxas-365/odyssey" target="_blank" rel="noreferrer">
             <CircleHelp />

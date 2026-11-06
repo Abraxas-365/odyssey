@@ -66,7 +66,7 @@ func github(sender string) actor.Actor {
 func (s *Service) release(src build.SourceID, c source.Connection, push source.Push) release.DeployUploaded {
 	via := release.ViaGitHub
 	if !push.RequestedBy.IsZero() {
-		via = release.ViaFor(release.ReasonDeploy, push.RequestedClient, s.opts.AntigravityClientID)
+		via = release.ViaFor(release.ReasonDeploy, push.RequestedClient, s.opts.Assistants)
 	}
 	return release.DeployUploaded{Source: src, Config: c.Config, RequestedBy: push.RequestedBy, Via: via}.Normalize()
 }

@@ -70,3 +70,27 @@ describe('UX v4 §5.2: Inicio', () => {
     expect(offenders(/<AttentionItem\s/, ['features/inventory/attention-section.tsx', 'pages/design-system.tsx', 'components/odyssey/attention.tsx'])).toEqual([])
   })
 })
+
+describe('UX v4 §6.1: the assistant', () => {
+  // "Conectado" has one source, GET /me, read in one place: no surface can
+  // guess it (from a deployment's channel, a preference, a dismissed tip) or
+  // disagree with another one.
+  it('only features/assistant/state.ts reads whether an assistant is connected', () => {
+    expect(offenders(/assistant\??\.connected\b/, ['features/assistant/state.ts', 'pages/assistant.tsx'])).toEqual([])
+    expect(offenders(/['"]\/me['"]|\/me\/assistants/, ['lib/me.ts'])).toEqual([])
+  })
+
+  // The assistant is the header chip, not a tab; and "connect your assistant"
+  // is not a notification nor an attention item.
+  it('the assistant is not a tab nor a notification', () => {
+    const layout = readFileSync(join(src, 'pages/console-layout.tsx'), 'utf8')
+    expect(layout).not.toMatch(/label:\s*'Asistente'/)
+    expect(layout).toMatch(/<AssistantChip\b/)
+    expect(offenders(/Conecta tu asistente para/, [])).toEqual([])
+  })
+
+  // Administración is one tab with its sections; the old addresses only redirect.
+  it('admin pages live under /administracion', () => {
+    expect(offenders(/['"`]\/(configuracion\/(github|reglas)|infraestructura\/clusteres)\b/, [])).toEqual([])
+  })
+})

@@ -13,6 +13,7 @@ import {
   AppList,
   AppRow,
   AppStatus,
+  AssistantChip,
   appStatuses,
   ApprovalDetail,
   ApprovalItem,
@@ -227,6 +228,12 @@ function StateAndFeedback() {
     <Section id="estado" title="Estado y feedback" description="Los errores se explican como consecuencias, con un solo botón para resolverlos.">
       <Sample title="Estados de una app" className="flex flex-wrap gap-4">
         {(Object.keys(appStatuses) as AppStatusKind[]).map(s => <AppStatus key={s} status={s} />)}
+      </Sample>
+      <Sample title="Tu asistente (cabecera)" className="flex flex-wrap gap-3">
+        <AssistantChip label="Conecta tu asistente" kind="connect" />
+        <AssistantChip label="Claude Code · hace 5 minutos" kind="connected" />
+        <AssistantChip label="Codex · solo lectura" kind="connected" />
+        <AssistantChip label="Tu asistente" kind="unknown" />
       </Sample>
       <Sample title="Insignias" className="flex flex-wrap gap-2">
         <Badge variant="success">Publicada ahora</Badge><Badge variant="warning">Falta algo</Badge><Badge variant="destructive">No se publicó</Badge><Badge variant="info">En revisión</Badge><Badge variant="ai">tu asistente</Badge><Badge>Versión de prueba</Badge><Badge variant="count">3</Badge>

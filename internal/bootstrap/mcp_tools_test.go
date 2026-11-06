@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -70,6 +71,31 @@ func listTools(t *testing.T, h http.Handler, perms []string) []*mcp.Tool {
 		t.Fatal(err)
 	}
 	return res.Tools
+}
+
+// TestEveryMCPToolHasACapability: the console words what a user's assistant
+// can and cannot do from assistant.Capabilities (UX v4 §5.7); a tool none of
+// them names would be a power nobody is told about, and a name no tool has
+// is a stale sentence.
+func TestEveryMCPToolHasACapability(t *testing.T) {
+	served := map[string]bool{}
+	for _, tool := range bootstrap.MCPTools(mcpPlatform(t), config.Config{}) {
+		served[tool.Name] = true
+	}
+	named := map[string]bool{}
+	for _, c := range assistant.Capabilities {
+		for _, name := range c.Tools {
+			named[name] = true
+			if !served[name] {
+				t.Errorf("assistant.Capabilities names %s, which no MCP tool is", name)
+			}
+		}
+	}
+	for name := range served {
+		if !named[name] {
+			t.Errorf("MCP tool %s is in no assistant.Capabilities sentence: say what it lets an assistant do", name)
+		}
+	}
 }
 
 func TestMCPToolsContract(t *testing.T) {

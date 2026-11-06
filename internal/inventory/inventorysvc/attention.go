@@ -238,7 +238,7 @@ func (s *Service) githubItems(ctx context.Context, org identity.OrganizationID) 
 	if err != nil {
 		return nil, err
 	}
-	const link = "/configuracion/github"
+	const link = "/administracion/github"
 	if len(list) == 0 {
 		return []inventory.Item{{Kind: inventory.KindGitHubNotConnected, Scope: inventory.ScopeIT, Severity: inventory.SeverityInfo, Link: link,
 			Sentence: "GitHub no está conectado: nadie puede importar un repositorio ni publicar desde sus cambios."}}, nil
@@ -266,7 +266,7 @@ func (s *Service) clusterItems(ctx context.Context, org identity.OrganizationID)
 		if c.Status != fleet.StatusActive {
 			continue // pending: not enrolled yet; revoked: gone on purpose
 		}
-		link := "/infraestructura/clusteres"
+		link := "/administracion/clusteres"
 		if !c.Connected {
 			it := inventory.Item{Kind: inventory.KindClusterDisconnected, Scope: inventory.ScopeIT, Severity: inventory.SeverityCritical, Link: link,
 				Sentence: fmt.Sprintf("El clúster «%s» no responde: sus apps siguen corriendo, pero no se pueden cambiar.", c.Name),

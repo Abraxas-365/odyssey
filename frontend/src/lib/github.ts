@@ -207,6 +207,6 @@ export function manageOnGitHubURL(i: Pick<GitHubInstallation, 'account' | 'accou
 }
 
 /** Only console paths, never another site: GitHub's return path comes through the URL. */
-export function safeReturnTo(path: string | undefined, fallback = '/configuracion/github'): string {
+export function safeReturnTo(path: string | undefined, fallback = '/administracion/github'): string {
   return path && path.startsWith('/') && !path.startsWith('//') && !path.includes('\\') ? path : fallback
 }

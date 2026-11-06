@@ -59,8 +59,9 @@ var shapePorts = []string{"Commands", "Queries", "Repository"}
 
 // statelessDomains keep nothing of their own, so they declare no Repository
 // port: access seals a sign-in's state in the browser's cookie and looks the
-// app up through release.AccessLookup.
-var statelessDomains = map[string]bool{"access": true}
+// app up through release.AccessLookup; account asks IAMKit (which holds the
+// user's assistant connections) through account.Connections.
+var statelessDomains = map[string]bool{"access": true, "account": true}
 
 // readOnlyDomains compose what other domains answer and change nothing:
 // no Commands to give and no Repository to keep (TestInventoryIsReadOnly

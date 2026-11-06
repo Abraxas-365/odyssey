@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -163,6 +164,24 @@ func User(c *fiber.Ctx) (identity.UserID, error) {
 		return identity.UserID{}, errx.Forbidden("token subject is invalid")
 	}
 	return user, nil
+}
+
+// Permissions are the authenticated token's permissions (nil without one).
+func Permissions(c *fiber.Ctx) []string {
+	if claims := fiberauth.Claims(c); claims != nil {
+		return slices.Clone(claims.Permissions)
+	}
+	return nil
+}
+
+// BearerToken is the request's bearer token, already authenticated (only
+// for calling IAMKit on the user's behalf: it never leaves for anyone else).
+func BearerToken(c *fiber.Ctx) string {
+	scheme, token, ok := strings.Cut(c.Get(fiber.HeaderAuthorization), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }
 
 // Provenance puts the request's event provenance in the user context (after

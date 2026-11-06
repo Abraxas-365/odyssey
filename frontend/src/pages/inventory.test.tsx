@@ -75,12 +75,12 @@ describe('AttentionSection', () => {
     api.mockResolvedValue(attention({
       items: [
         item({ kind: 'publishing', severity: 'info', sentence: 'Visitas: se está publicando una versión nueva.' }),
-        item({ kind: 'github_not_connected', scope: 'it', severity: 'info', sentence: 'GitHub no está conectado.', link: '/configuracion/github', app_id: null }),
+        item({ kind: 'github_not_connected', scope: 'it', severity: 'info', sentence: 'GitHub no está conectado.', link: '/administracion/github', app_id: null }),
       ],
     }))
     mount(<AttentionSection />)
     expect((await screen.findByRole('link', { name: 'Ver progreso' })).getAttribute('href')).toBe('/apps/a1')
-    expect(screen.getByRole('link', { name: 'Conectar GitHub' }).getAttribute('href')).toBe('/configuracion/github')
+    expect(screen.getByRole('link', { name: 'Conectar GitHub' }).getAttribute('href')).toBe('/administracion/github')
   })
 
   it('never says "Todo en orden" when a source could not be read', async () => {
@@ -94,7 +94,7 @@ describe('AttentionSection', () => {
   it('lists each item with its sentence and one link, marking TI’s', async () => {
     api.mockResolvedValue(attention({
       items: [
-        item({ kind: 'cluster_disconnected', scope: 'it', severity: 'critical', sentence: 'El clúster «Lima» no responde.', link: '/infraestructura/clusteres', app_id: null, cluster_id: 'c1' }),
+        item({ kind: 'cluster_disconnected', scope: 'it', severity: 'critical', sentence: 'El clúster «Lima» no responde.', link: '/administracion/clusteres', app_id: null, cluster_id: 'c1' }),
         item({}),
       ],
     }))
@@ -102,7 +102,7 @@ describe('AttentionSection', () => {
     expect(await screen.findByText('El clúster «Lima» no responde.')).toBeTruthy()
     expect(screen.getByText('Visitas: falta cargar un secreto.')).toBeTruthy()
     expect(screen.getAllByText('TI')).toHaveLength(1)
-    expect(screen.getByRole('link', { name: 'Ver clústeres' }).getAttribute('href')).toBe('/infraestructura/clusteres')
+    expect(screen.getByRole('link', { name: 'Ver clústeres' }).getAttribute('href')).toBe('/administracion/clusteres')
     expect(screen.getByRole('link', { name: 'Resolver' }).getAttribute('href')).toBe('/apps/a1')
     expect(screen.queryByText('Todo en orden')).toBeNull()
   })

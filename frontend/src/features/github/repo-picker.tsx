@@ -60,7 +60,7 @@ export function ConnectGitHubNotice({ state }: { state: 'disabled' | 'none' }) {
     <Callout
       tone="info"
       title={title}
-      action={canManage && <ButtonLink size="sm" variant="outline" render={<Link to="/configuracion/github" />}>{state === 'disabled' ? 'Ver cómo' : 'Conectar GitHub'}</ButtonLink>}
+      action={canManage && <ButtonLink size="sm" variant="outline" render={<Link to="/administracion/github" />}>{state === 'disabled' ? 'Ver cómo' : 'Conectar GitHub'}</ButtonLink>}
     >
       {canManage ? 'Conéctalo en la configuración y vuelve aquí.' : 'Pídele a TI que conecte GitHub y vuelve aquí.'}
     </Callout>

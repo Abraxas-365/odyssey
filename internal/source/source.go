@@ -381,7 +381,7 @@ type SetupResult struct {
 
 // SettingsPage is the console's GitHub settings page: where the setup
 // callback returns when the install link named no page, and on failures.
-const SettingsPage = "/configuracion/github"
+const SettingsPage = "/administracion/github"
 
 // WorkflowImport turns a push into a deployment (sourcesvc).
 const WorkflowImport = "source.import"

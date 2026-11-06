@@ -63,7 +63,7 @@ export function ClustersPage() {
     <>
       <PageHeader
         title="Clústeres"
-        breadcrumb="Infraestructura"
+        breadcrumb="Administración"
         description="Donde corren las apps de tu organización. Cada clúster se conecta a Odicea por su cuenta, sin abrir puertos."
         actions={canManage && live.length > 0 && <Button onClick={() => setConnecting(true)}><Plus />Conectar clúster</Button>}
       />

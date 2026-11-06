@@ -97,7 +97,7 @@ func (s *Service) RequestSecret(ctx context.Context, organization identity.Organ
 			return err
 		}
 		q := release.SecretRequest{Environment: e.ID, Organization: organization, Name: input.Name, Note: input.Note,
-			RequestedBy: input.RequestedBy, RequestedVia: release.ViaFor(release.ReasonDeploy, event.MetaFrom(ctx).Client, s.opts.AntigravityClientID),
+			RequestedBy: input.RequestedBy, RequestedVia: release.ViaFor(release.ReasonDeploy, event.MetaFrom(ctx).Client, s.opts.Assistants),
 			CreatedAt: time.Now().UTC()}
 		if err := s.repo.PutSecretRequest(ctx, q); err != nil {
 			return err

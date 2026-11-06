@@ -632,11 +632,11 @@ func TestSetup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if again.Return != "/configuracion/github" {
+		if again.Return != "/administracion/github" {
 			t.Errorf("default return = %q", again.Return)
 		}
 		reclaimed, err := e.svc.Claim(ctx, e.org, e.user, source.ClaimInstallation{Claim: again.Claim})
-		if err != nil || reclaimed.Installation.ID != i.ID || reclaimed.Return != "/configuracion/github" {
+		if err != nil || reclaimed.Installation.ID != i.ID || reclaimed.Return != "/administracion/github" {
 			t.Fatalf("refresh = %+v %v", reclaimed, err)
 		}
 		e.wantEvents(t, source.EventInstallationLinked)

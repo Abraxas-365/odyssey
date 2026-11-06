@@ -35,7 +35,7 @@ export function GitHubSettingsPage() {
   return (
     <>
       <PageHeader
-        breadcrumb="Configuración"
+        breadcrumb="Administración"
         title="GitHub"
         description="Conecta las cuentas de GitHub donde vive el código de tus apps. Cada cambio que se suba se publica solo."
         actions={enabled && canManage && (

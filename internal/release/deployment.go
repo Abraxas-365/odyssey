@@ -104,20 +104,20 @@ const (
 	ViaConsole  = "console"  // someone in the console (or the API)
 	ViaGitHub   = "github"   // a push, the poll or "Publicar ahora" on a connected repository
 	ViaPlatform = "platform" // the platform itself (the automatic restore)
-	// ViaAssistantPrefix + an assistant key (claude_code, codex, vscode,
-	// antigravity, other): an AI assistant through the MCP endpoint.
+	// ViaAssistantPrefix + an assistant key (claude_code, codex, cursor,
+	// vscode, antigravity, other): an AI assistant through the MCP endpoint.
 	ViaAssistantPrefix = "assistant:"
 )
 
 // ViaFor names where a request came from: the platform for an automatic
 // restore; an assistant when the event client is an MCP one ("mcp:<oauth
-// client id>", antigravityID being the id IAMKit gave Antigravity); the
-// console otherwise.
-func ViaFor(reason Reason, client, antigravityID string) string {
+// client id>", registered naming the clients IAMKit made for the template
+// assistants); the console otherwise.
+func ViaFor(reason Reason, client string, registered assistant.Registered) string {
 	if reason == ReasonAutoRollback {
 		return ViaPlatform
 	}
-	if key, ok := assistant.Preset(client, antigravityID); ok {
+	if key, ok := assistant.Preset(client, registered); ok {
 		return ViaAssistantPrefix + key
 	}
 	return ViaConsole

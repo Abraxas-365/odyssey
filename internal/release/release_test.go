@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
@@ -287,7 +288,8 @@ func TestUploadToken(t *testing.T) {
 }
 
 func TestViaFor(t *testing.T) {
-	const agy = "agy-client"
+	const agy, cur = "agy-client", "cursor-client"
+	registered := assistant.Registered{assistant.Antigravity: agy, assistant.Cursor: cur}
 	for name, c := range map[string]struct {
 		reason release.Reason
 		client string
@@ -299,12 +301,13 @@ func TestViaFor(t *testing.T) {
 		"codex":             {release.ReasonRollback, "mcp:https://chatgpt.com/oauth/codex/client.json", "assistant:codex"},
 		"vscode":            {release.ReasonDeploy, "mcp:https://vscode.dev/oauth/client-metadata.json", "assistant:vscode"},
 		"antigravity":       {release.ReasonDeploy, "mcp:" + agy, "assistant:antigravity"},
+		"cursor":            {release.ReasonDeploy, "mcp:" + cur, "assistant:cursor"},
 		"unknown assistant": {release.ReasonDeploy, "mcp:other-client", "assistant:other"},
 		"auto rollback":     {release.ReasonAutoRollback, "", "platform"},
 		"auto rollback mcp": {release.ReasonAutoRollback, "mcp:" + agy, "platform"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := release.ViaFor(c.reason, c.client, agy); got != c.want {
+			if got := release.ViaFor(c.reason, c.client, registered); got != c.want {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})

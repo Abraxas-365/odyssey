@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -35,9 +36,10 @@ type Options struct {
 	ReadyTimeout time.Duration
 	// PollEvery is how often wait_ready asks the cluster (default 2 s).
 	PollEvery time.Duration
-	// AntigravityClientID is IAMKIT_MCP_CLIENT_ANTIGRAVITY_ID: the OAuth
-	// client of Antigravity, to name it in a deployment's requested_via.
-	AntigravityClientID string
+	// Assistants are the clients IAMKit registered for the template
+	// assistants (IAMKIT_MCP_CLIENT_<KEY>_ID), to name them in a
+	// deployment's requested_via.
+	Assistants assistant.Registered
 }
 
 type Service struct {
@@ -329,7 +331,7 @@ func (s *Service) begin(ctx context.Context, state release.EnvironmentState, p p
 	}
 	d.Revision, d.Previous = state.Revision+1, state.Current
 	if d.RequestedVia == "" {
-		d.RequestedVia = release.ViaFor(d.Reason, event.MetaFrom(ctx).Client, s.opts.AntigravityClientID)
+		d.RequestedVia = release.ViaFor(d.Reason, event.MetaFrom(ctx).Client, s.opts.Assistants)
 	}
 	by := d.RequestedBy
 	// who asked, as they were: the authorize step judges the deployment as

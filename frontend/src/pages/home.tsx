@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AppWindow, ArrowRight, Bot, LayoutGrid, List, Plus, Sparkles } from 'lucide-react'
-import { Button, ButtonLink } from '@/components/ui/button'
+import { AppWindow, ArrowRight, LayoutGrid, List, Plus, Sparkles } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { AppCard, AppList, AppRow, ChipGroup, CreateAppTile, EmptyState, ErrorNotice, Panel, PanelBody, SectionHeader, type AppRowData } from '@/components/odyssey'
@@ -79,10 +79,6 @@ export function HomePage() {
           {allInOrder(attention.data) && !firstTime && ' · todo en orden'}
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <ButtonLink variant="outline" render={<Link to="/asistente" />}>
-            <Bot />
-            Conectar mi asistente
-          </ButtonLink>
           {canWrite && !firstTime && (
             <Button onClick={() => setCreating(true)}>
               <Plus />

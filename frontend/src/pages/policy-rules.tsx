@@ -30,7 +30,7 @@ export function PolicyRulesPage() {
   if (!can(permissions.policyManage)) {
     return (
       <>
-        <PageHeader breadcrumb="Configuración" title="Reglas de TI" />
+        <PageHeader breadcrumb="Administración" title="Reglas de TI" />
         <EmptyState icon={Lock} title="Solo TI puede ver las reglas">
           Las reglas de TI las administra el equipo de TI de tu organización. Si necesitas que cambie una, pídeselo.
         </EmptyState>
@@ -48,7 +48,7 @@ function PolicyRules() {
   return (
     <>
       <PageHeader
-        breadcrumb="Configuración"
+        breadcrumb="Administración"
         title="Reglas de TI"
         description="Lo que Odicea revisa antes de publicar, abrir una app a más gente o conectar datos. Cada regla bloquea la acción o pide la aprobación de TI."
         actions={

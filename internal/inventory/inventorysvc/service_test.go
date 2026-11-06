@@ -520,7 +520,7 @@ func TestGitHubItemsForWhoManagesIt(t *testing.T) {
 		return out, got
 	}
 
-	if k, got := kinds(manager); len(k) != 1 || k[0] != inventory.KindGitHubNotConnected || got.Items[0].Link != "/configuracion/github" || got.Items[0].Scope != inventory.ScopeIT {
+	if k, got := kinds(manager); len(k) != 1 || k[0] != inventory.KindGitHubNotConnected || got.Items[0].Link != "/administracion/github" || got.Items[0].Scope != inventory.ScopeIT {
 		t.Fatalf("not connected: %+v", got.Items)
 	}
 	if k, _ := kinds(ctxOf(user, permission.ProjectsRead)); len(k) != 0 {

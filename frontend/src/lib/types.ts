@@ -114,6 +114,10 @@ export type PublicConfig = Schemas['PublicConfig']
 export type Assistant = Schemas['Assistant']
 export type AssistantClient = Schemas['AssistantClient']
 
+/** The person using the console (GET /me): role, permissions and their assistant's state. */
+export type Me = Schemas['Me']
+export type AssistantConnection = Schemas['AssistantConnection']
+
 /** GitHub: the App's installations on the organization's accounts, and each app's repository. */
 export type GitHubInfo = Schemas['GitHubInfo']
 export type GitHubInstallation = Schemas['GitHubInstallation']
