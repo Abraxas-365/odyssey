@@ -193,6 +193,111 @@ func TestApplyErrors(t *testing.T) {
 	}
 }
 
+func retired(rev int64) *fleetv1.App {
+	return &fleetv1.App{OrganizationId: org, ProjectId: proj, EnvironmentId: env, Name: "portal", Revision: rev, Deleted: true}
+}
+
+func TestRetireRemovesTheAppAndLeavesTheNamespace(t *testing.T) {
+	ctx := context.Background()
+	s, c := newSyncer(t, interceptor.Funcs{})
+	// Nothing to remove: done (a retirement resent after the app went).
+	if err := s.Apply(ctx, retired(3)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx, app(4)); err != nil {
+		t.Fatal(err)
+	}
+	// An older retirement never removes a newer revision.
+	if err := s.Apply(ctx, retired(3)); err != nil {
+		t.Fatal(err)
+	}
+	get(t, c)
+	if err := s.Apply(ctx, retired(5)); err != nil {
+		t.Fatal(err)
+	}
+	var a v1alpha1.OdysseyApp
+	if err := c.Get(ctx, client.ObjectKey{Namespace: Namespace(env), Name: "portal"}, &a); !apierrors.IsNotFound(err) {
+		t.Fatalf("the retired app must be gone: %v", err)
+	}
+	var ns corev1.Namespace
+	if err := c.Get(ctx, client.ObjectKey{Name: Namespace(env)}, &ns); err != nil {
+		t.Errorf("the environment's namespace (and its resources' data) stays: %v", err)
+	}
+	if err := s.Apply(ctx, retired(5)); err != nil {
+		t.Errorf("a retirement is idempotent: %v", err)
+	}
+}
+
+// The cache may not have seen an app created a moment ago (a deployment
+// applied right before the archive): retire reads the API server, or the app
+// would be reported "deleted", forgotten, and left running.
+func TestRetireReadsTheAPIServerNotTheCache(t *testing.T) {
+	ctx := context.Background()
+	gr := schema.GroupResource{Group: "odyssey.dev", Resource: "odysseyapps"}
+	s, api := newSyncer(t, interceptor.Funcs{})
+	if err := s.Apply(ctx, app(1)); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := newSyncer(t, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+		if _, ok := obj.(*v1alpha1.OdysseyApp); ok {
+			return apierrors.NewNotFound(gr, key.Name) // the cache has not seen it yet
+		}
+		return c.Get(ctx, key, obj, opts...)
+	}})
+	// writes go to the real store; reads of the app through Client are stale
+	s.Client = &staleReads{Client: api, stale: stale.Client}
+	s.API = api
+	if err := s.Apply(ctx, retired(2)); err != nil {
+		t.Fatal(err)
+	}
+	var a v1alpha1.OdysseyApp
+	if err := api.Get(ctx, client.ObjectKey{Namespace: Namespace(env), Name: "portal"}, &a); !apierrors.IsNotFound(err) {
+		t.Fatalf("an app the cache had not seen yet survived its retirement: %v", err)
+	}
+}
+
+// staleReads is a Client whose reads come from another (stale) client.
+type staleReads struct {
+	client.Client
+	stale client.Client
+}
+
+func (s *staleReads) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	return s.stale.Get(ctx, key, obj, opts...)
+}
+
+func TestRetireErrors(t *testing.T) {
+	gr := schema.GroupResource{Group: "odyssey.dev", Resource: "odysseyapps"}
+	for _, c := range []struct {
+		name     string
+		err      error
+		rejected bool
+	}{
+		{"changed meanwhile", apierrors.NewConflict(gr, "portal", errors.New("precondition")), false},
+		{"gone meanwhile", apierrors.NewNotFound(gr, "portal"), false},
+		{"not allowed", apierrors.NewForbidden(gr, "portal", errors.New("rbac")), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, cl := newSyncer(t, interceptor.Funcs{Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				return c.err
+			}})
+			if err := s.Apply(context.Background(), app(1)); err != nil {
+				t.Fatal(err)
+			}
+			get(t, cl)
+			err := s.Apply(context.Background(), retired(2))
+			switch {
+			case apierrors.IsNotFound(c.err):
+				if err != nil {
+					t.Errorf("an app gone meanwhile is retired: %v", err)
+				}
+			case err == nil || IsRejected(err) != c.rejected:
+				t.Errorf("err %v, rejected %v", err, IsRejected(err))
+			}
+		})
+	}
+}
+
 func TestStatuses(t *testing.T) {
 	ctx := context.Background()
 	s, c := newSyncer(t, interceptor.Funcs{})

@@ -189,6 +189,11 @@ paths:
       tags: [projects]
       operationId: archiveProject
       summary: Archive a project (idempotent)
+      description: >-
+        The project stops taking changes and its apps go offline: the
+        deployments in progress are cancelled (reason archived) and each
+        environment's cluster removes the app, asynchronously. Databases,
+        caches, files and the history stay.
       x-permissions: [odyssey:projects:write]
       responses:
         "200":

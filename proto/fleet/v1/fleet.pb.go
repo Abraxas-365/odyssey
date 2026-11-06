@@ -1278,7 +1278,9 @@ type Capabilities struct {
 	// "odicea.ai" (2d): the agent wires App.ai into the app. An agent without
 	// it must not be sent an app with ai. "odicea.egress" (2d): the agent
 	// enforces ClusterPolicy.egress with NetworkPolicies (the cluster's
-	// network plugin must enforce them: TI's part).
+	// network plugin must enforce them: TI's part). "odicea.retire": the agent
+	// removes an app sent with App.deleted (and reports it "deleted"); an
+	// agent without it must not be sent one (it would run it again).
 	Apis           []string `protobuf:"bytes,2,rep,name=apis,proto3" json:"apis,omitempty"`
 	IngressClasses []string `protobuf:"bytes,3,rep,name=ingress_classes,json=ingressClasses,proto3" json:"ingress_classes,omitempty"`
 	StorageClasses []string `protobuf:"bytes,4,rep,name=storage_classes,json=storageClasses,proto3" json:"storage_classes,omitempty"`
@@ -2143,7 +2145,12 @@ type App struct {
 	Resources []*ResourceRef `protobuf:"bytes,14,rep,name=resources,proto3" json:"resources,omitempty"`
 	// ai connects the app to the organization's AI gateway (2d). Unset: the
 	// app has no AI.
-	Ai            *AI `protobuf:"bytes,15,opt,name=ai,proto3" json:"ai,omitempty"`
+	Ai *AI `protobuf:"bytes,15,opt,name=ai,proto3" json:"ai,omitempty"`
+	// deleted: the app was retired (its project archived). The agent removes
+	// it with everything it runs (not the environment's resources: their data
+	// stays) and reports it "deleted" at this revision. Only the ids, name and
+	// revision are set.
+	Deleted       bool `protobuf:"varint,16,opt,name=deleted,proto3" json:"deleted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2281,6 +2288,13 @@ func (x *App) GetAi() *AI {
 		return x.Ai
 	}
 	return nil
+}
+
+func (x *App) GetDeleted() bool {
+	if x != nil {
+		return x.Deleted
+	}
+	return false
 }
 
 // AI is how an app reaches the AI gateway (freerouter): its key is a
@@ -2546,7 +2560,8 @@ type AppStatus struct {
 	// observed_revision is the desired revision the status describes
 	// (0: the agent has not acted on the app yet).
 	ObservedRevision int64 `protobuf:"varint,3,opt,name=observed_revision,json=observedRevision,proto3" json:"observed_revision,omitempty"`
-	// phase is "progressing", "ready" or "failed".
+	// phase is "progressing", "ready", "failed" or "deleted" (an App.deleted
+	// was carried out: nothing of the app runs any more).
 	Phase string `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
 	// reason explains a failed phase: "unhealthy", "image_pull", "crash", "config",
 	// "resource" (a resource the app uses did not become ready in time).
@@ -3106,7 +3121,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\aLogLine\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text\"\x87\x05\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"\xa1\x05\n" +
 	"\x03App\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -3125,7 +3140,8 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x06access\x18\f \x01(\v2\x10.fleet.v1.AccessR\x06access\x12-\n" +
 	"\asecrets\x18\r \x03(\v2\x13.fleet.v1.SecretRefR\asecrets\x123\n" +
 	"\tresources\x18\x0e \x03(\v2\x15.fleet.v1.ResourceRefR\tresources\x12\x1c\n" +
-	"\x02ai\x18\x0f \x01(\v2\f.fleet.v1.AIR\x02ai\x1a6\n" +
+	"\x02ai\x18\x0f \x01(\v2\f.fleet.v1.AIR\x02ai\x12\x18\n" +
+	"\adeleted\x18\x10 \x01(\bR\adeleted\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +

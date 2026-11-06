@@ -122,6 +122,11 @@ type Cluster interface {
 	// Apply hands the desired app to the cluster. It is idempotent, and a
 	// desired revision older than the last applied one is ignored.
 	Apply(ctx context.Context, target Target, app DesiredApp) error
+	// Retire has the cluster remove the app named name (its project was
+	// archived): revision is above every deployment of the environment, so
+	// no older one runs it again. It joins the caller's transaction; an app
+	// the cluster never had is a no-op, and so is a repeated retirement.
+	Retire(ctx context.Context, target Target, name string, revision int64) error
 	// Status reports the app named name (ObservedRevision 0 when unknown).
 	Status(ctx context.Context, target Target, name string) (AppStatus, error)
 	// CanProtect reports whether the environment's cluster can serve apps
@@ -269,6 +274,11 @@ type Repository interface {
 	Begin(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deployment DeploymentID, revision int64) error
 	// Settle clears the active deployment (it finished without going live).
 	Settle(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deployment DeploymentID) error
+	// Retire records that the environment's app was retired at revision (its
+	// project was archived): the revision handed to the cluster, and when
+	// (RetiredAt; SetAppliedSettings clears it). NotFound when the environment
+	// has no state, or holds that revision or a newer one.
+	Retire(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, revision int64) error
 	// Promote makes the deployment's release the one the environment serves.
 	// Only the deploy workflow's promote step calls it (architecture test).
 	Promote(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deployment Deployment, url string) error

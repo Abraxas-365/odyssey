@@ -15,6 +15,12 @@ package bootstrap_test
 //     turns a ticket into a deployment, is called only by the public upload
 //     route in release/adapters/releasehttp (never by an MCP tool, which acts
 //     as an authenticated user). Tests are free to drive tickets.
+//  3. The cluster is told about an app (Cluster.Apply, Cluster.Retire) only
+//     while the project is held: in release/releasesvc a function that calls
+//     cluster.Apply or cluster.Retire calls projects.Hold before it (in the
+//     same transaction). That is what keeps an archive and a deployment from
+//     crossing: either the deployment reached the cluster first and the
+//     retirement is above it, or it sees the archive and stops.
 
 import (
 	"go/ast"
@@ -220,5 +226,86 @@ func TestUploadTicketRulesCatchViolations(t *testing.T) {
 		releasePg+"/self.go: "+releasePg+" calls FindUploadTicketByHash, which is not scoped",
 		"release/release.go: release calls ConsumeUploadTicket, which is not scoped",
 		"source/adapters/sourcerelease/peek.go: source/adapters/sourcerelease calls ConsumeUploadTicket, which is not scoped by organization",
+	)
+}
+
+// clusterCalls are the release.Cluster methods that change what a cluster runs.
+var clusterCalls = map[string]bool{"Apply": true, "Retire": true}
+
+// on reports whether call is <owner>.<method> (s.cluster.Apply, s.projects.Hold).
+func on(call *ast.CallExpr, owner string, methods map[string]bool) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !methods[sel.Sel.Name] {
+		return false
+	}
+	switch x := sel.X.(type) {
+	case *ast.SelectorExpr:
+		return x.Sel.Name == owner
+	case *ast.Ident:
+		return x.Name == owner
+	}
+	return false
+}
+
+func heldClusterViolations(files []goFile) []string {
+	var out []string
+	hold := map[string]bool{"Hold": true}
+	for _, f := range files {
+		if path.Dir(f.rel) != releaseSvc || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		for _, decl := range f.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			held := token.NoPos
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if on(call, "projects", hold) && (held == token.NoPos || call.Pos() < held) {
+					held = call.Pos()
+				}
+				return true
+			})
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok && on(call, "cluster", clusterCalls) && (held == token.NoPos || call.Pos() < held) {
+					out = append(out, f.fset.Position(call.Pos()).String()+": "+fn.Name.Name+
+						" tells the cluster without holding the project first (projects.Hold); an archive could cross it")
+				}
+				return true
+			})
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestTheClusterIsToldOnlyWhileTheProjectIsHeld(t *testing.T) {
+	report(t, heldClusterViolations(sources(t, false)))
+}
+
+func TestHeldClusterRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		// correct
+		releaseSvc + "/ok.go": `package releasesvc
+func (s *S) handOver() { s.tx.Do(ctx, func(ctx C) error { s.projects.Hold(ctx); return s.cluster.Apply(ctx) }) }
+func (s *S) retire() { s.tx.Do(ctx, func(ctx C) error { s.projects.Hold(ctx); return s.cluster.Retire(ctx) }) }`,
+		releaseSvc + "/x_test.go":            `package releasesvc; func T() { s.cluster.Apply(nil) }`,
+		"release/adapters/releasefleet/c.go": `package releasefleet; func (c *C) Apply() { c.fleet.Apply(nil) }`,
+		// violations
+		releaseSvc + "/none.go": `package releasesvc
+func (s *S) push() { s.cluster.Apply(nil) }`,
+		releaseSvc + "/late.go": `package releasesvc
+func (s *S) gone() { s.cluster.Retire(nil); s.projects.Hold(nil) }`,
+		releaseSvc + "/find.go": `package releasesvc
+func (s *S) found() { s.projects.Find(nil); s.cluster.Apply(nil) }`,
+	})
+	expectViolations(t, heldClusterViolations(files),
+		releaseSvc+"/find.go: found tells the cluster without holding",
+		releaseSvc+"/late.go: gone tells the cluster without holding",
+		releaseSvc+"/none.go: push tells the cluster without holding",
 	)
 }

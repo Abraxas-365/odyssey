@@ -95,6 +95,14 @@ func (c *Cluster) CanProtect(ctx context.Context, t release.Target) (bool, error
 	return c.fleet.CanProtect(ctx, t.Organization, t.Environment)
 }
 
+// Retire has the fleet remove the app (fleet.Dispatch.Retire): an app it
+// never stored has nothing to remove.
+func (c *Cluster) Retire(ctx context.Context, t release.Target, name string, revision int64) error {
+	_, err := c.fleet.Retire(ctx, fleet.Retirement{Organization: t.Organization, Project: t.Project, Environment: t.Environment,
+		Name: name, Revision: revision})
+	return err
+}
+
 func (c *Cluster) Status(ctx context.Context, t release.Target, name string) (release.AppStatus, error) {
 	s, err := c.fleet.Status(ctx, t.Organization, t.Environment, name)
 	if err != nil {

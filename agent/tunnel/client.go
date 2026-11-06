@@ -615,20 +615,31 @@ func (c *Client) work(ctx context.Context) {
 	}
 }
 
-// applied clears the app unless a newer revision arrived meanwhile.
+// applied clears the app unless a newer revision arrived meanwhile. A retired
+// app (App.deleted) that is gone is reported "deleted" at its revision (the
+// cluster has nothing left to read it from) until that report is sent
+// (forgetRetired).
 func (c *Client) applied(k key, a *fleetv1.App, refused error) {
 	c.mu.Lock()
 	if c.apps[k] == a {
 		delete(c.apps, k)
 	}
-	if refused != nil && c.o.Rejected != nil {
+	switch {
+	case refused != nil && c.o.Rejected != nil:
 		c.rejected[k] = c.o.Rejected(a, refused)
-	} else {
+	case refused == nil && a.GetDeleted():
+		c.rejected[k] = &fleetv1.AppStatus{EnvironmentId: a.GetEnvironmentId(), Name: a.GetName(),
+			ObservedRevision: a.GetRevision(), Phase: PhaseDeleted}
+	default:
 		delete(c.rejected, k)
 	}
 	c.mu.Unlock()
 	c.Changed(k.environment, k.name)
 }
+
+// PhaseDeleted is the reported phase of a retired app once it is gone
+// (fleet.PhaseDeleted).
+const PhaseDeleted = "deleted"
 
 // reportLoop sends what changed (coalesced) and, every ReportEvery, everything.
 func (c *Client) reportLoop(ctx context.Context, send func(*fleetv1.AgentMessage) error, builds *buildSession) error {
@@ -694,7 +705,25 @@ func (c *Client) reportChanged(ctx context.Context, send func(*fleetv1.AgentMess
 			apps = append(apps, s)
 		}
 	}
-	return sendReport(send, false, apps)
+	if err := sendReport(send, false, apps); err != nil {
+		return err
+	}
+	c.forgetRetired(apps)
+	return nil
+}
+
+// forgetRetired drops the "deleted" statuses just sent: the control plane
+// forgets the app on them, and a lost report is made again from the
+// retirement it resends on the next tunnel.
+func (c *Client) forgetRetired(sent []*fleetv1.AppStatus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range sent {
+		k := key{s.GetEnvironmentId(), s.GetName()}
+		if s.GetPhase() == PhaseDeleted && c.rejected[k] == s {
+			delete(c.rejected, k)
+		}
+	}
 }
 
 func (c *Client) reportAll(ctx context.Context, send func(*fleetv1.AgentMessage) error) error {
@@ -716,7 +745,11 @@ func (c *Client) reportAll(ctx context.Context, send func(*fleetv1.AgentMessage)
 		}
 	}
 	c.mu.Unlock()
-	return sendReport(send, err == nil, apps)
+	if err := sendReport(send, err == nil, apps); err != nil {
+		return err
+	}
+	c.forgetRetired(apps)
+	return nil
 }
 
 // withRejected prefers a refusal of a newer revision over what the cluster

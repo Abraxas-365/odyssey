@@ -247,7 +247,7 @@ func (r *Repository) Finish(ctx context.Context, organization identity.Organizat
 // ---- environment state ----
 
 const stateColumns = `environment_id, organization_id, project_id, app, revision, current_release_id,
-	current_deployment_id, active_deployment_id, url, updated_at, applied_settings_revision`
+	current_deployment_id, active_deployment_id, url, updated_at, applied_settings_revision, retired_at`
 
 func (r *Repository) FindState(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID) (release.EnvironmentState, error) {
 	var s release.EnvironmentState
@@ -373,12 +373,21 @@ func (r *Repository) Begin(ctx context.Context, organization identity.Organizati
 	return affected(res, err, "begin deployment", "environment not found")
 }
 
-// SetAppliedSettings records the settings revision the cluster was just told.
+// Retire records the retirement at revision; like Begin, never backwards.
+func (r *Repository) Retire(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, revision int64) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.environment_states
+		SET revision = $3, retired_at = now(), updated_at = now()
+		WHERE organization_id = $1 AND environment_id = $2 AND revision < $3`, organization, env, revision)
+	return affected(res, err, "retire app", "environment not found")
+}
+
+// SetAppliedSettings records the settings revision the cluster was just told
+// (and that it runs the app again: no longer retired).
 // Only the deployment that holds the environment's latest revision may: one
 // superseded meanwhile must not put back older settings.
 func (r *Repository) SetAppliedSettings(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, deploymentRevision, settings int64) error {
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.environment_states
-		SET applied_settings_revision = $4, updated_at = now()
+		SET applied_settings_revision = $4, retired_at = NULL, updated_at = now()
 		WHERE organization_id = $1 AND environment_id = $2 AND revision = $3`, organization, env, deploymentRevision, settings)
 	return pgerr.MapWith(err, "record applied settings", messages)
 }

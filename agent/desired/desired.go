@@ -38,7 +38,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=odyssey-agent-environment,verbs=bind
-// +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyapps,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyapps,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyresources,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=list
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=list
@@ -213,6 +213,9 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 	if err := Valid(a); err != nil {
 		return &Rejected{Message: err.Error()}
 	}
+	if a.GetDeleted() {
+		return s.retire(ctx, a)
+	}
 	if err := s.ensureNamespace(ctx, a); err != nil {
 		return permanent(err)
 	}
@@ -263,6 +266,41 @@ func (s *Syncer) Apply(ctx context.Context, a *fleetv1.App) error {
 			return permanent(err)
 		}
 		return s.fenceAI(ctx, ns, hadAI || spec.AI != nil)
+	}
+	return permanent(err)
+}
+
+// retire removes a retired app (App.deleted): its OdysseyApp goes, and with it
+// (owner references) its Deployment, Service, Ingress, sign-in middlewares
+// and managed secrets. The environment's namespace and resources stay: their
+// data outlives the app. An app already at a newer revision is not touched (a
+// deployment after the retirement got here first); one already gone is done.
+// The namespace's AI policy closes on the egress enforcer's next check, once
+// the app's pods are gone.
+func (s *Syncer) retire(ctx context.Context, a *fleetv1.App) error {
+	// Read from the API server, never the cache: a NotFound here is reported
+	// as "deleted" and the control plane forgets the app, so a cache that has
+	// not seen a Create made a moment ago would leave the app running.
+	reader := s.API
+	if reader == nil {
+		reader = s.Client
+	}
+	var cur v1alpha1.OdysseyApp
+	err := reader.Get(ctx, client.ObjectKey{Namespace: Namespace(a.GetEnvironmentId()), Name: a.GetName()}, &cur)
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil
+	case err != nil:
+		return permanent(fmt.Errorf("read %s: %w", a.GetName(), err))
+	case cur.Spec.Revision > a.GetRevision():
+		return nil
+	}
+	// Preconditions: what is deleted is the revision just read, never a newer
+	// one written meanwhile (the retry reads again).
+	err = s.Client.Delete(ctx, &cur, client.Preconditions{UID: &cur.UID, ResourceVersion: &cur.ResourceVersion},
+		client.PropagationPolicy(metav1.DeletePropagationBackground))
+	if apierrors.IsNotFound(err) {
+		return nil
 	}
 	return permanent(err)
 }
@@ -538,11 +576,16 @@ const CapabilityAccess = "odicea.access"
 // to turn the AI on for that cluster.
 const CapabilityAI = "odicea.ai"
 
+// CapabilityRetire is always reported: the agent removes an app sent with
+// App.deleted and reports it "deleted". Same string as fleet.CapabilityRetire;
+// the control plane keeps a retirement for an agent that does not list it.
+const CapabilityRetire = "odicea.retire"
+
 // Capabilities describes the cluster: its Kubernetes version, which known
 // platform APIs it has, and its ingress and storage classes. Whatever
 // cannot be read is left empty (the agent still connects).
 func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
-	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI}, IngressClasses: []string{}, StorageClasses: []string{}}
+	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI, CapabilityRetire}, IngressClasses: []string{}, StorageClasses: []string{}}
 	if s.Discovery != nil {
 		if v, err := s.Discovery.ServerVersion(); err == nil {
 			out.KubernetesVersion = v.GitVersion

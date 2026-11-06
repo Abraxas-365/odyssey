@@ -71,6 +71,8 @@ type Cluster struct {
 	revoked  bool
 	// egress is what SetEgress made the cluster report (nil: the default)
 	egress *release.ClusterEgress
+	// retired are the revisions apps were retired at (an older Apply is ignored)
+	retired map[string]int64
 }
 
 func New(opts Options) *Cluster {
@@ -80,7 +82,8 @@ func New(opts Options) *Cluster {
 	if opts.Domain == "" {
 		opts.Domain = "apps.odyssey.localhost"
 	}
-	return &Cluster{opts: opts, apps: map[string]*app{}, key: mustKey(), secrets: map[string]Secret{}, failures: map[string]release.SecretFailure{}}
+	return &Cluster{opts: opts, apps: map[string]*app{}, key: mustKey(), secrets: map[string]Secret{}, failures: map[string]release.SecretFailure{},
+		retired: map[string]int64{}}
 }
 
 var _ release.Cluster = (*Cluster)(nil)
@@ -116,6 +119,10 @@ func (c *Cluster) Apply(_ context.Context, t release.Target, d release.DesiredAp
 	if cur, ok := c.apps[k]; ok && cur.desired.Revision >= d.Revision {
 		return nil // idempotent; an older revision is ignored
 	}
+	if r, ok := c.retired[k]; ok && r >= d.Revision {
+		return nil // retired after it: the app stays removed
+	}
+	delete(c.retired, k)
 	o := c.opts.Behavior(d)
 	if o.Reject {
 		return release.Failed(release.CodeApplyFailed, "El clúster rechazó la configuración de la app.", "fake cluster: rejected")
@@ -268,6 +275,29 @@ func (c *Cluster) Status(_ context.Context, t release.Target, name string) (rele
 	}
 	s.Phase, s.ReadyReplicas = release.PhaseReady, a.desired.Replicas
 	return s, nil
+}
+
+// Retire removes the app at once, as an agent that took the retirement (an
+// app it never ran has nothing to remove).
+func (c *Cluster) Retire(_ context.Context, t release.Target, name string, revision int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.down != nil {
+		return c.down
+	}
+	k := key(t, name)
+	if cur, ok := c.apps[k]; ok && cur.desired.Revision < revision {
+		delete(c.apps, k)
+		c.retired[k] = revision
+	}
+	return nil
+}
+
+// Retired is the revision the app named name was retired at (0: it was not).
+func (c *Cluster) Retired(t release.Target, name string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.retired[key(t, name)]
 }
 
 // Applied lists what the fake accepted, in order.

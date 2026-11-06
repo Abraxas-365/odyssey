@@ -185,6 +185,15 @@ func NewDeploymentHeld(org identity.OrganizationID, actor identity.UserID, d Dep
 			Reason: reason})
 }
 
+// NewDeploymentArchived is deployment.cancelled for a deployment its
+// project's archiving stopped (reason CancelArchived).
+func NewDeploymentArchived(org identity.OrganizationID, actor identity.UserID, d Deployment, n Names) event.Event {
+	return event.New(EventDeploymentCancelled, 1, org, actor, event.Subject(DeploymentSubjectKind, d.ID),
+		"Se canceló una publicación de "+n.where()+" (se archivó la app)",
+		DeploymentCancelled{Deployment: d.ID, Project: d.Project.String(), Environment: d.Environment.String(), Release: d.Release,
+			Reason: CancelArchived})
+}
+
 // UploadTicketIssued v1. Neither the token nor its hash is ever in the trail.
 type UploadTicketIssued struct {
 	Ticket      UploadTicketID `json:"ticket_id"`

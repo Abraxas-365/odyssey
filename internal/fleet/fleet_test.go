@@ -44,6 +44,8 @@ func TestEventContracts(t *testing.T) {
 		fleet.NewAppsMoved(org, user, c, fleet.Cluster{ID: fleet.MustParseClusterID("00000000-0000-4000-8000-0000000000c2"), Name: "Producción Arequipa"},
 			fleet.Moved{Environments: []project.EnvironmentID{env}, Apps: 2}),
 		fleet.NewAppApplied(org, c, app, true),
+		fleet.NewAppRetired(org, c, fleet.Retirement{Organization: org, Project: proj, Environment: env, Name: "visitas", Revision: 4}),
+		fleet.NewAppRemoved(org, c, fleet.App{Organization: org, Project: proj, Environment: env, Name: "visitas", Revision: 4, Deleted: true}),
 		fleet.NewBuildSent(org, c, fleet.DesiredBuild{ID: fleet.MustParseBuildID("00000000-0000-4000-8000-0000000000b1"),
 			Project: proj, Environment: env, SourceSHA256: strings.Repeat("b", 64),
 			ImageRepository: "registry.local/" + org.String() + "/" + proj.String()}, false),

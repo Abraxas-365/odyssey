@@ -307,6 +307,30 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 	})
 }
 
+// Retire answers fleet.Dispatch.Retire. The row lock of the app orders it
+// with deployments and moves (both write the same row); the cluster is the
+// one the app is stored for, revoked or not (moved, the tombstone moves with
+// it). The gateway holds it back from an agent without CapabilityRetire.
+func (s *Service) Retire(ctx context.Context, r fleet.Retirement) (bool, error) {
+	if err := r.Validate(); err != nil {
+		return false, err
+	}
+	retired := false
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		a, changed, err := s.repo.RetireApp(ctx, r)
+		if err != nil || !changed {
+			return err
+		}
+		c, err := s.repo.FindCluster(ctx, r.Organization, a.Cluster)
+		if err != nil {
+			return err
+		}
+		retired = true
+		return s.events.Publish(ctx, fleet.NewAppRetired(r.Organization, c, r))
+	})
+	return retired, err
+}
+
 // placement is the active cluster of an environment, placing it on the
 // organization's default cluster on first use (placed). It runs in the
 // caller's transaction and locks the cluster against revocation and moves
@@ -590,8 +614,24 @@ func (s *Service) Disconnect(ctx context.Context, agent fleet.AgentRef, session 
 	return s.repo.ObserveDisconnect(ctx, agent.Organization, agent.Cluster, session)
 }
 
+// Desired leaves out retirements an agent without CapabilityRetire would not
+// carry out (it would run the app again): they wait, stored, for its update.
 func (s *Service) Desired(ctx context.Context, agent fleet.AgentRef) ([]fleet.App, error) {
-	return s.repo.ListApps(ctx, agent.Organization, agent.Cluster)
+	apps, err := s.repo.ListApps(ctx, agent.Organization, agent.Cluster)
+	if err != nil {
+		return nil, err
+	}
+	canRetire, err := s.canRetire(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	out := apps[:0]
+	for _, a := range apps {
+		if !a.Deleted || canRetire {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) DesiredApp(ctx context.Context, agent fleet.AgentRef, environment project.EnvironmentID, name string) (fleet.App, bool, error) {
@@ -599,19 +639,56 @@ func (s *Service) DesiredApp(ctx context.Context, agent fleet.AgentRef, environm
 	if errx.IsType(err, errx.TypeNotFound) {
 		return fleet.App{}, false, nil
 	}
-	return a, err == nil, err
+	if err != nil {
+		return fleet.App{}, false, err
+	}
+	if a.Deleted {
+		if ok, err := s.canRetire(ctx, agent); err != nil || !ok {
+			return fleet.App{}, false, err
+		}
+	}
+	return a, true, nil
+}
+
+func (s *Service) canRetire(ctx context.Context, agent fleet.AgentRef) (bool, error) {
+	c, err := s.repo.FindCluster(ctx, agent.Organization, agent.Cluster)
+	if err != nil {
+		return false, err
+	}
+	return c.Agent.Capabilities.CanRetire(), nil
 }
 
 // Report stores what the agent observed. An invalid app status is dropped
 // (and the report answered with a validation error naming how many) while
 // the valid ones in the same report are kept: one bad app must not hide
-// the others' state.
+// the others' state. Retired apps reported gone are forgotten and published
+// (cluster.app_removed) in the same transaction.
 func (s *Service) Report(ctx context.Context, agent fleet.AgentRef, session fleet.Session, report fleet.Report) error {
 	if err := report.Validate(); err != nil {
 		return err
 	}
 	valid, invalid := report.Valid()
-	live, err := s.repo.ObserveApps(ctx, agent.Organization, agent.Cluster, session, valid)
+	live := false
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		ok, removed, err := s.repo.ObserveApps(ctx, agent.Organization, agent.Cluster, session, valid)
+		if err != nil || !ok {
+			return err
+		}
+		live = true
+		if len(removed) == 0 {
+			return nil
+		}
+		c, err := s.repo.FindCluster(ctx, agent.Organization, agent.Cluster)
+		if err != nil {
+			return err
+		}
+		for _, a := range removed {
+			if err := s.events.Publish(ctx, fleet.NewAppRemoved(agent.Organization, c, a)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}

@@ -526,6 +526,49 @@ func TestSetAppliedSettings(t *testing.T) {
 	}
 }
 
+// Retire moves the revision up and records when, never backwards and only in
+// its organization; the next deployment that reaches the cluster clears it.
+func TestRetire(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: releasepg.Schema, Files: releasepg.Migrations()})
+	repo := releasepg.New(db)
+	tx := txn.Postgres{DB: db}
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	proj, env := project.NewID(), project.NewEnvironmentID()
+	if err := repo.Retire(ctx, org, env, 1); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("retire without a state: %v", err)
+	}
+	if err := tx.Do(ctx, func(ctx context.Context) error {
+		_, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, other, env, 3); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("another organization retired it: %v", err)
+	}
+	if err := repo.Retire(ctx, org, env, 3); err != nil {
+		t.Fatal(err)
+	}
+	s, err := repo.FindState(ctx, org, env)
+	if err != nil || s.Revision != 3 || s.RetiredAt == nil {
+		t.Fatalf("retired %+v %v", s, err)
+	}
+	if err := repo.Retire(ctx, org, env, 3); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("retire at the same revision: %v", err)
+	}
+	if s, _ := repo.FindState(ctx, other, env); s.RetiredAt != nil {
+		t.Fatalf("another organization reads %+v", s)
+	}
+	// a deployment that reaches the cluster after it runs the app again
+	if err := repo.SetAppliedSettings(ctx, org, env, 3, 1); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := repo.FindState(ctx, org, env); s.RetiredAt != nil || s.Revision != 3 {
+		t.Fatalf("after apply %+v", s)
+	}
+}
+
 // Migration 008 on a database that already holds apps: those published before
 // settings existed were served open, so each gets a `public` revision 1 (by
 // nobody) and it counts as applied; everything else is left alone.

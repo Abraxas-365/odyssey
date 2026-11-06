@@ -237,6 +237,15 @@ Rules:
   - The slug is unique per organization, forever: a duplicate is 409.
 - **Patch** takes `{name?, description?}`. The slug is immutable.
 - **Archived** projects refuse changes with 422 `PROJECT_ARCHIVED`.
+- **Archiving takes the app offline** (asynchronously, from
+  `project.archived`): in every environment that deployed it, the deployment
+  in progress is cancelled (`deployment.cancelled`, reason `archived`, with
+  its build and its pending approval) and the cluster is told to remove the
+  app (`cluster.app_retired`; `cluster.app_removed` once the agent reports it
+  gone). A deployment that reaches `apply` after the archive is cancelled the
+  same way and never reaches the cluster. Databases, caches and files stay,
+  and so does the history. A cluster whose agent cannot retire apps (older
+  than `odicea.retire`) keeps the app until the agent is updated.
 - **List filters**: `status` (`active` | `archived`, repeatable, default
   `active`) and `search` (name or slug).
 - **List order**: `lower(name)`, then `id`.
@@ -405,8 +414,9 @@ agent says otherwise).
   `promote` changes what the environment serves, so a version that fails
   never replaces the one online.
 - **One at a time**: a new deployment cancels the one in progress
-  (`cancelled`, event `deployment.cancelled`), and its build if it is still
-  building.
+  (`cancelled`, event `deployment.cancelled`, reason `superseded`), and its
+  build if it is still building. Archiving the app cancels it too (reason
+  `archived`).
 - **Automatic restore**: when a deployment fails and another release was
   online, the platform starts a deployment of it with reason `auto_rollback`
   (`rollback_of` = the failed one). A failed `auto_rollback` is not retried.
@@ -610,7 +620,7 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
   token answers 422 `FLEET_DISABLED`.
 - **Events**: `cluster.created`, `cluster.token_issued`, `cluster.enrolled`,
   `cluster.certificate_renewed`, `cluster.connected`, `cluster.revoked`,
-  `cluster.apps_moved`, `cluster.app_applied`, `cluster.egress_changed` (subject `cluster/<id>`).
+  `cluster.apps_moved`, `cluster.app_applied`, `cluster.app_retired`, `cluster.app_removed`, `cluster.egress_changed` (subject `cluster/<id>`).
   Heartbeats and app status reports are observations: they update the
   cluster but record no event; neither does an agent recovering a
   certificate whose answer it lost (gRPC `Recover`: same key, nothing new is

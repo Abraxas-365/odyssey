@@ -96,7 +96,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Archive a project (idempotent) */
+        /**
+         * Archive a project (idempotent)
+         * @description The project stops taking changes and its apps go offline: the deployments in progress are cancelled (reason archived) and each environment's cluster removes the app, asynchronously. Databases, caches, files and the history stay.
+         */
         post: operations["archiveProject"];
         delete?: never;
         options?: never;

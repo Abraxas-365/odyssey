@@ -17,6 +17,25 @@ func TestAppToProtoCarriesAccess(t *testing.T) {
 	}
 }
 
+// A retirement carries who the app is and nothing of what it ran (no image,
+// variables or secret references reach the cluster for an app being removed).
+func TestAppToProtoOfARetirement(t *testing.T) {
+	a := fleet.App{Name: "web", Revision: 4, Deleted: true, Image: "r.local/web@sha256:00", Env: map[string]string{"A": "1"},
+		Secrets: []fleet.AppSecret{{Name: "K", Source: fleet.SecretManaged, Version: 1, KeyID: "k"}}}
+	got := appToProto(a)
+	if !got.GetDeleted() || got.GetName() != "web" || got.GetRevision() != 4 || got.GetImage() != "" || len(got.GetEnv()) != 0 || len(got.GetSecrets()) != 0 {
+		t.Fatalf("retirement %+v", got)
+	}
+	r, err := reportFromProto(&fleetv1.AppReport{Apps: []*fleetv1.AppStatus{{EnvironmentId: project.NewEnvironmentID().String(), Name: "web",
+		Phase: "deleted", ObservedRevision: 4}}})
+	if err != nil || r.Apps[0].Phase != fleet.PhaseDeleted {
+		t.Fatalf("deleted report %+v %v", r, err)
+	}
+	if _, err := r.Valid(); err != nil {
+		t.Errorf("the deleted phase was refused: %v", err)
+	}
+}
+
 func TestAgentFromProtoCarriesTheAccessCapability(t *testing.T) {
 	with := &fleetv1.Hello{Capabilities: &fleetv1.Capabilities{Apis: []string{"traefik.io", fleet.CapabilityAccess}}}
 	if !agentFromProto(with).Capabilities.CanProtect() {

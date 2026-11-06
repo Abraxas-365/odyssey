@@ -47,6 +47,10 @@ func reportFromProto(r *fleetv1.AppReport) (fleet.Report, error) {
 }
 
 func appToProto(a fleet.App) *fleetv1.App {
+	if a.Deleted { // a retirement: only who it is (the agent removes it)
+		return &fleetv1.App{OrganizationId: a.Organization.String(), ProjectId: a.Project.String(), EnvironmentId: a.Environment.String(),
+			Name: a.Name, Revision: a.Revision, Deleted: true}
+	}
 	secrets := make([]*fleetv1.SecretRef, 0, len(a.Secrets))
 	for _, s := range a.Secrets {
 		secrets = append(secrets, &fleetv1.SecretRef{Name: s.Name, Source: s.Source, Version: s.Version,

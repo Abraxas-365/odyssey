@@ -154,21 +154,64 @@ func (s *Service) apply(ctx context.Context, st *workflow.State) (any, error) {
 		return nil, err
 	}
 	desired := release.Desired(j.app, j.deployment, r).WithSettings(settings) // the one place access, variables and secrets reach the cluster
-	if err := s.cluster.Apply(ctx, j.target, desired); err != nil {
+	if err := s.handOver(ctx, j, desired, settings.Revision); err != nil {
 		if coded(err, release.CodeApplyFailed) {
 			return nil, workflow.Fail(err)
 		}
 		return nil, err // the cluster is unreachable: retry
 	}
-	// The cluster has been told (a refusal above never gets here). From now on
-	// the app is protected as these settings say, whatever happens to this
-	// deployment: a config deployment that fails afterwards does NOT reopen the
-	// app by itself, and the sign-in keeps asking for this mode. The console
-	// compares the latest settings with this revision.
-	if err := s.repo.SetAppliedSettings(ctx, j.target.Organization, j.target.Environment, j.deployment.Revision, settings.Revision); err != nil {
-		return nil, err
-	}
 	return applyOutput{Resources: len(desired.Resources) > 0, AppliedAt: s.now().UTC()}, nil
+}
+
+// handOver tells the cluster, in one transaction that holds the project (so
+// it is not archived meanwhile: Archive takes it for update) and then the
+// environment (the order of every lock here, and RetireArchived's). Either
+// this commits before the archive, and the retirement that follows carries a
+// higher revision, or it sees the project archived and cancels the
+// deployment as RetireArchived would (reason archived), without reaching the
+// cluster. Architecture test: TestTheClusterIsToldOnlyWhileTheProjectIsHeld.
+func (s *Service) handOver(ctx context.Context, j job, desired release.DesiredApp, settings int64) error {
+	org := j.target.Organization
+	var stopped bool
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		p, err := s.projects.Hold(ctx, org, j.target.Project)
+		if err != nil {
+			return err
+		}
+		if p.Archived() {
+			e, err := s.projects.FindEnvironment(ctx, org, p.ID, j.target.Environment)
+			if err != nil {
+				return err
+			}
+			if _, err := s.lockState(ctx, p, e); err != nil {
+				return err
+			}
+			// An archived project refuses every change: its last editor is
+			// whoever archived it.
+			if _, err := s.cancelArchived(ctx, p, e, j.deployment.ID, p.UpdatedBy); err != nil {
+				return err
+			}
+			stopped = true
+			return s.repo.Settle(ctx, org, e.ID, j.deployment.ID)
+		}
+		if _, err := s.repo.LockState(ctx, release.EnvironmentState{Environment: j.target.Environment, Organization: org,
+			Project: p.ID, App: j.app}); err != nil {
+			return err
+		}
+		if err := s.cluster.Apply(ctx, j.target, desired); err != nil {
+			return err
+		}
+		// The cluster has been told (a refusal above never gets here). From now
+		// on the app is protected as these settings say, whatever happens to
+		// this deployment: a config deployment that fails afterwards does NOT
+		// reopen the app by itself, and the sign-in keeps asking for this mode.
+		// The console compares the latest settings with this revision.
+		return s.repo.SetAppliedSettings(ctx, org, j.target.Environment, j.deployment.Revision, settings)
+	})
+	if err == nil && stopped {
+		return workflow.Fail(errSuperseded) // cancelled: the run ends quietly
+	}
+	return err
 }
 
 // resolveSettings is the environment's settings this deployment applies. They
@@ -449,7 +492,10 @@ func (s *Service) deployFailed(ctx context.Context, st *workflow.State, cause er
 	// what it ran and there is nothing to restore. A restore would only apply
 	// the serving release under the same settings, to be refused the same way.
 	neverReached := d.Step == release.StepBuild || d.Step == release.StepApply
-	if state.Current != nil && !neverReached && d.Reason != release.ReasonAutoRollback &&
+	// An archived project gets nothing back: its app is being retired. The
+	// project is read unlocked: a restore created as the archive commits is
+	// stopped at handOver, the real guard; this only saves the work.
+	if state.Current != nil && !neverReached && d.Reason != release.ReasonAutoRollback && !p.Archived() &&
 		(d.Release == nil || *state.Current != *d.Release) {
 		id := release.NewDeploymentID()
 		restore = &id
@@ -489,7 +535,9 @@ func coded(err error, code string) bool {
 // settings, or of a build that never reached the cluster, calls it: a config
 // deployment that fails does not start another (no loops; a new PUT retries).
 func (s *Service) applyNewerSettings(ctx context.Context, state release.EnvironmentState, p project.Project, e project.Environment) error {
-	if state.Current == nil {
+	// An archived project's app is being retired (read unlocked: handOver is
+	// the real guard, this only saves the work).
+	if state.Current == nil || p.Archived() {
 		return nil
 	}
 	latest, err := s.repo.FindSettings(ctx, p.Organization, e.ID)

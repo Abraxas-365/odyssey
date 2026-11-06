@@ -304,7 +304,7 @@ func TestDesiredApps(t *testing.T) {
 	}
 	report := func(org identity.OrganizationID, cluster fleet.ClusterID, session fleet.Session, rev int64, phase fleet.Phase) bool {
 		t.Helper()
-		live, err := repo.ObserveApps(ctx, org, cluster, session, fleet.Report{Apps: []fleet.AppStatus{{Environment: environment, Name: "web",
+		live, _, err := repo.ObserveApps(ctx, org, cluster, session, fleet.Report{Apps: []fleet.AppStatus{{Environment: environment, Name: "web",
 			ObservedRevision: rev, Phase: phase, ReadyReplicas: 1, URL: "http://web.apps.local"}}})
 		if err != nil {
 			t.Fatal(err)

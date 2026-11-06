@@ -50,6 +50,13 @@ type Dispatch interface {
 	// the environment on the organization's default cluster the first time.
 	// It is idempotent; a revision older than the stored one changes nothing.
 	Apply(ctx context.Context, app App) error
+	// Retire marks the environment's app retired (App.Deleted) at r.Revision
+	// and has its cluster remove it; the sealed values still waiting for it
+	// are dropped. It joins the caller's transaction, never places an
+	// environment (one never placed has nothing to remove: false) and keeps
+	// the retirement for a cluster that is revoked or cannot retire yet. A
+	// revision not above the stored one changes nothing (false).
+	Retire(ctx context.Context, r Retirement) (bool, error)
 	// Status is what the agent last reported of the app (ObservedRevision 0
 	// when it has reported nothing yet).
 	Status(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (AppStatus, error)
@@ -154,7 +161,9 @@ type Agents interface {
 	// Report stores what the agent observed, from the tunnel session (it
 	// fails with Rejected when the tunnel is no longer the cluster's). Only
 	// apps desired on the agent's own cluster are taken, at most at their
-	// desired revision; the rest is ignored.
+	// desired revision; the rest is ignored. A retired app reported gone
+	// (phase deleted) at its revision is forgotten and published as
+	// cluster.app_removed.
 	Report(ctx context.Context, agent AgentRef, session Session, report Report) error
 
 	// DesiredResources are the cluster's desired resources (the gateway
@@ -270,8 +279,9 @@ type Repository interface {
 	ObservePolicy(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, ack PolicyAck) (bool, error)
 	ObserveDisconnect(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session) error
 	// ObserveApps stores a report in one statement if session is still the
-	// cluster's tunnel (false otherwise).
-	ObserveApps(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, report Report) (bool, error)
+	// cluster's tunnel (false otherwise). A retired app reported "deleted"
+	// at its revision is removed (desired state and status) and returned.
+	ObserveApps(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, session Session, report Report) (bool, []App, error)
 
 	// FindPlacement is the cluster an environment runs on (NotFound before
 	// its first app).
@@ -292,6 +302,11 @@ type Repository interface {
 	// or newer, and signals the gateways in the same transaction. It
 	// reports whether it changed anything.
 	PutApp(ctx context.Context, app App) (bool, error)
+	// RetireApp marks the stored app retired (App.Deleted) at r.Revision
+	// unless its revision is the same or newer, drops the sealed values still
+	// waiting for it and signals its cluster's gateway, in the caller's
+	// transaction. It returns the retired app (false: nothing changed).
+	RetireApp(ctx context.Context, r Retirement) (App, bool, error)
 	ListApps(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]App, error)
 	FindApp(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, environment project.EnvironmentID, name string) (App, error)
 	FindAppStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (AppStatus, error)

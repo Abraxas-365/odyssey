@@ -21,6 +21,8 @@ const (
 	EventRevoked            = "cluster.revoked"
 	EventAppsMoved          = "cluster.apps_moved"
 	EventAppApplied         = "cluster.app_applied"
+	EventAppRetired         = "cluster.app_retired"
+	EventAppRemoved         = "cluster.app_removed"
 	EventBuildSent          = "cluster.build_sent"
 	EventBuildReleased      = "cluster.build_released"
 	EventSecretSent         = "cluster.secret_sent"
@@ -124,6 +126,25 @@ type AppApplied struct {
 	Placed bool `json:"placed"`
 }
 
+// AppRetired v1: a retired app (its project archived) was stored for its
+// cluster to remove.
+type AppRetired struct {
+	Cluster     ClusterID `json:"cluster_id"`
+	Project     string    `json:"project_id"`
+	Environment string    `json:"environment_id"`
+	Name        string    `json:"name"`
+	Revision    int64     `json:"revision"`
+}
+
+// AppRemoved v1: the cluster reported a retired app gone; it is forgotten.
+type AppRemoved struct {
+	Cluster     ClusterID `json:"cluster_id"`
+	Project     string    `json:"project_id"`
+	Environment string    `json:"environment_id"`
+	Name        string    `json:"name"`
+	Revision    int64     `json:"revision"`
+}
+
 const timeLayout = "2006-01-02T15:04:05Z07:00"
 
 // BuildSent v1: a build went to the cluster of its environment.
@@ -223,6 +244,18 @@ func NewAppApplied(org identity.OrganizationID, c Cluster, a App, placed bool) e
 		"Envió la revisión "+strconv.FormatInt(a.Revision, 10)+" de "+a.Name+" al clúster "+c.Name,
 		AppApplied{Cluster: c.ID, Project: a.Project.String(), Environment: a.Environment.String(), Name: a.Name,
 			Revision: a.Revision, Image: a.Image, EnvKeys: keys, Placed: placed})
+}
+
+func NewAppRetired(org identity.OrganizationID, c Cluster, r Retirement) event.Event {
+	return event.New(EventAppRetired, 1, org, identity.UserID{}, event.Subject(SubjectKind, c.ID),
+		"Pidió al clúster "+c.Name+" retirar "+r.Name+" (app archivada)",
+		AppRetired{Cluster: c.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Revision: r.Revision})
+}
+
+func NewAppRemoved(org identity.OrganizationID, c Cluster, a App) event.Event {
+	return event.New(EventAppRemoved, 1, org, identity.UserID{}, event.Subject(SubjectKind, c.ID),
+		"El clúster "+c.Name+" retiró "+a.Name,
+		AppRemoved{Cluster: c.ID, Project: a.Project.String(), Environment: a.Environment.String(), Name: a.Name, Revision: a.Revision})
 }
 
 // SecretSent v1: a sealed managed value went to the cluster (never the

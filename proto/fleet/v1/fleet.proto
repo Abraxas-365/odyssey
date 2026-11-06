@@ -223,7 +223,9 @@ message Capabilities {
   // "odicea.ai" (2d): the agent wires App.ai into the app. An agent without
   // it must not be sent an app with ai. "odicea.egress" (2d): the agent
   // enforces ClusterPolicy.egress with NetworkPolicies (the cluster's
-  // network plugin must enforce them: TI's part).
+  // network plugin must enforce them: TI's part). "odicea.retire": the agent
+  // removes an app sent with App.deleted (and reports it "deleted"); an
+  // agent without it must not be sent one (it would run it again).
   repeated string apis = 2;
   repeated string ingress_classes = 3;
   repeated string storage_classes = 4;
@@ -378,6 +380,11 @@ message App {
   // ai connects the app to the organization's AI gateway (2d). Unset: the
   // app has no AI.
   AI ai = 15;
+  // deleted: the app was retired (its project archived). The agent removes
+  // it with everything it runs (not the environment's resources: their data
+  // stays) and reports it "deleted" at this revision. Only the ids, name and
+  // revision are set.
+  bool deleted = 16;
 }
 
 // AI is how an app reaches the AI gateway (freerouter): its key is a
@@ -433,7 +440,8 @@ message AppStatus {
   // observed_revision is the desired revision the status describes
   // (0: the agent has not acted on the app yet).
   int64 observed_revision = 3;
-  // phase is "progressing", "ready" or "failed".
+  // phase is "progressing", "ready", "failed" or "deleted" (an App.deleted
+  // was carried out: nothing of the app runs any more).
   string phase = 4;
   // reason explains a failed phase: "unhealthy", "image_pull", "crash", "config",
   // "resource" (a resource the app uses did not become ready in time).

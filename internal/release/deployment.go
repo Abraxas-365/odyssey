@@ -18,7 +18,8 @@ import (
 //	(waiting_approval →) (building →) pending → applying → verifying → ready
 //	   (build, apply or health check fails) ↘ failed
 //	(any unfinished) → cancelled: a newer deployment superseded it, or IT
-//	                   did not approve it (see CancelReason)
+//	                   did not approve it, or its project was archived
+//	                   (see the Cancel* reasons)
 //
 // The workflow's first step, authorize, asks IT's rules; a rule that wants
 // approval parks the deployment in waiting_approval until someone with the
@@ -173,6 +174,8 @@ const (
 	CancelApprovalRejected = "approval_rejected"
 	CancelApprovalExpired  = "approval_expired"
 	CancelApprovalCanceled = "approval_cancelled"
+	// CancelArchived: its project was archived while it was in progress.
+	CancelArchived = "archived"
 )
 
 // StepNames are the steps d goes through: an image deployment skips build.
@@ -290,6 +293,10 @@ type EnvironmentState struct {
 	// that deployment then goes live (nil: the cluster was never told one).
 	// It is what the app is protected with, and what the sign-in trusts.
 	AppliedSettings *int64 `json:"-" db:"applied_settings_revision"`
+	// RetiredAt is when the cluster was told to remove the app (its project
+	// was archived); nil while it runs, and again once a later deployment
+	// reaches the cluster.
+	RetiredAt *time.Time `json:"-" db:"retired_at"`
 }
 
 // AppliedRevision is the settings revision the cluster was last told; -1 when

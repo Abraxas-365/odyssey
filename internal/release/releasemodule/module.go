@@ -4,6 +4,7 @@
 package releasemodule
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 
@@ -123,3 +124,25 @@ func (m Module) UseAIStatus(a release.AIStatus) { m.svc.UseAIStatus(a) }
 // UseApprovals wires where release holds what a rule wants approved (the
 // approvalrelease adapter; the approval module is built after this one).
 func (m Module) UseApprovals(a release.Approvals) { m.svc.UseApprovals(a) }
+
+// RetireOnArchived is the subscription that retires an archived project's
+// apps from their clusters.
+const RetireOnArchived = "release.retire_on_archived"
+
+// Subscribe wires who the release domain reacts to. Only the composition
+// root calls it, before the bus is sealed.
+func (m Module) Subscribe(bus *event.Bus) {
+	bus.Add(event.Subscription{Name: RetireOnArchived, Types: []string{project.EventArchived}, Handle: m.archived})
+}
+
+// archived is the handler of project.archived.
+func (m Module) archived(ctx context.Context, e event.Event) error {
+	if e.Version != 1 {
+		return nil
+	}
+	p, err := event.Decode[project.Archived](e)
+	if err != nil {
+		return err
+	}
+	return m.svc.RetireArchived(ctx, e.Organization, p.Project, e.Actor)
+}

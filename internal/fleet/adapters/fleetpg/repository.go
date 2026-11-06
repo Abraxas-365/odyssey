@@ -57,7 +57,7 @@ var messages = pgerr.Messages{Unique: "a cluster with this name already exists"}
 var clusterColumns = `id, organization_id, name, status, token_expires_at, certificate_serial,
 	certificate_expires_at, agent, created_by, created_at, enrolled_at, last_seen_at, revoked_at,
 	(status = 'active' AND session_id IS NOT NULL AND last_seen_at > now() - make_interval(secs => ` + onlineSecs + `)) AS connected,
-	(SELECT count(*) FROM fleet.desired_apps d WHERE d.organization_id = clusters.organization_id AND d.cluster_id = clusters.id) AS apps`
+	(SELECT count(*) FROM fleet.desired_apps d WHERE d.organization_id = clusters.organization_id AND d.cluster_id = clusters.id AND NOT d.deleted) AS apps`
 
 var onlineSecs = strconv.Itoa(int(fleet.OnlineWithin.Seconds()))
 
@@ -309,8 +309,9 @@ func (r *Repository) ObserveDisconnect(ctx context.Context, organization identit
 // report of an app the cluster does not run is dropped (an agent cannot
 // write another cluster's, or another tenant's, status); so is one of a
 // revision beyond the desired one (it would hide every real report after
-// it). A status never goes back to an older revision.
-func (r *Repository) ObserveApps(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID, session fleet.Session, report fleet.Report) (bool, error) {
+// it). A status never goes back to an older revision. A retired app reported
+// "deleted" at (or past) its revision is removed, status first, and returned.
+func (r *Repository) ObserveApps(ctx context.Context, organization identity.OrganizationID, id fleet.ClusterID, session fleet.Session, report fleet.Report) (bool, []fleet.App, error) {
 	n := len(report.Apps)
 	envs, names, revs, phases, reasons, msgs, replicas, urls :=
 		make([]string, n), make([]string, n), make([]int64, n), make([]string, n), make([]string, n), make([]string, n), make([]int64, n), make([]string, n)
@@ -319,7 +320,8 @@ func (r *Repository) ObserveApps(ctx context.Context, organization identity.Orga
 		reasons[i], msgs[i], replicas[i], urls[i] = string(s.Reason), s.Message, int64(s.ReadyReplicas), s.URL
 	}
 	var live bool
-	err := txn.Q(ctx, r.db).GetContext(ctx, &live,
+	q := txn.Q(ctx, r.db)
+	err := q.GetContext(ctx, &live,
 		`WITH tunnel AS (
 		    SELECT 1 FROM fleet.clusters WHERE organization_id = $1 AND id = $2 AND status = 'active' AND session_id = $3
 		 ), reported AS (
@@ -328,7 +330,7 @@ func (r *Repository) ObserveApps(ctx context.Context, organization identity.Orga
 		    FROM unnest($4::uuid[], $5::text[], $6::bigint[], $7::text[], $8::text[], $9::text[], $10::int[], $11::text[])
 		         AS r(env, name, rev, phase, reason, message, replicas, url)
 		    JOIN fleet.desired_apps d ON d.environment_id = r.env AND d.name = r.name
-		    WHERE d.organization_id = $1 AND d.cluster_id = $2 AND r.rev <= d.revision
+		    WHERE d.organization_id = $1 AND d.cluster_id = $2 AND r.rev <= d.revision AND r.phase <> 'deleted'
 		    ORDER BY r.env, r.name, r.rev DESC
 		 ), upserted AS (
 		    INSERT INTO fleet.app_status (environment_id, name, organization_id, cluster_id, observed_revision, phase,
@@ -348,9 +350,52 @@ func (r *Repository) ObserveApps(ctx context.Context, organization identity.Orga
 		organization, id, session, pq.Array(envs), pq.Array(names), pq.Array(revs), pq.Array(phases), pq.Array(reasons),
 		pq.Array(msgs), pq.Array(replicas), pq.Array(urls))
 	if err != nil {
-		return false, pgerr.Map(err, "observe apps")
+		return false, nil, pgerr.Map(err, "observe apps")
 	}
-	return live, nil
+	if !live {
+		return false, nil, nil
+	}
+	// The status goes first (it references the desired app); both only for a
+	// retired app whose retirement the cluster carried out. The retired rows
+	// are locked first: a deployment reviving one (PutApp) meanwhile would
+	// otherwise lose its status while its desired app stays.
+	const gone = `d.organization_id = $1 AND d.cluster_id = $2 AND d.environment_id = r.env AND d.name = r.name
+		   AND d.deleted AND r.phase = 'deleted' AND r.rev >= d.revision`
+	reported := `unnest($3::uuid[], $4::text[], $5::bigint[], $6::text[]) AS r(env, name, rev, phase)`
+	args := []any{organization, id, pq.Array(envs), pq.Array(names), pq.Array(revs), pq.Array(phases)}
+	if _, err := q.ExecContext(ctx,
+		`SELECT 1 FROM fleet.desired_apps d, `+reported+` WHERE `+gone+` FOR UPDATE OF d`, args...); err != nil {
+		return false, nil, pgerr.Map(err, "forget retired apps")
+	}
+	if _, err := q.ExecContext(ctx,
+		`DELETE FROM fleet.app_status st USING fleet.desired_apps d, `+reported+`
+		 WHERE st.environment_id = d.environment_id AND st.name = d.name AND st.organization_id = $1 AND `+gone, args...); err != nil {
+		return false, nil, pgerr.Map(err, "forget retired apps")
+	}
+	var rows []appRow
+	if err := q.SelectContext(ctx, &rows,
+		`DELETE FROM fleet.desired_apps d USING `+reported+` WHERE `+gone+`
+		 RETURNING `+prefixed("d.", appColumns), args...); err != nil {
+		return false, nil, pgerr.Map(err, "forget retired apps")
+	}
+	removed := make([]fleet.App, 0, len(rows))
+	for _, row := range rows {
+		a, err := row.app()
+		if err != nil {
+			return false, nil, err
+		}
+		removed = append(removed, a)
+	}
+	return true, removed, nil
+}
+
+// prefixed qualifies a column list with a table alias.
+func prefixed(alias, columns string) string {
+	cols := strings.Split(columns, ",")
+	for i, c := range cols {
+		cols[i] = alias + strings.TrimSpace(c)
+	}
+	return strings.Join(cols, ", ")
 }
 
 func (r *Repository) FindPlacement(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (fleet.ClusterID, error) {
@@ -480,7 +525,7 @@ func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`INSERT INTO fleet.desired_apps (environment_id, name, organization_id, project_id, cluster_id, revision, spec)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (environment_id, name) DO UPDATE SET revision = EXCLUDED.revision, spec = EXCLUDED.spec, updated_at = now()
+		 ON CONFLICT (environment_id, name) DO UPDATE SET revision = EXCLUDED.revision, spec = EXCLUDED.spec, deleted = false, updated_at = now()
 		 WHERE fleet.desired_apps.organization_id = EXCLUDED.organization_id
 		   AND fleet.desired_apps.cluster_id = EXCLUDED.cluster_id
 		   AND fleet.desired_apps.revision < EXCLUDED.revision`,
@@ -494,7 +539,36 @@ func (r *Repository) PutApp(ctx context.Context, a fleet.App) (bool, error) {
 	return true, r.notify(ctx, fleet.Signal{Organization: a.Organization, Cluster: a.Cluster, Environment: a.Environment, Name: a.Name})
 }
 
-const appColumns = `environment_id, name, organization_id, project_id, cluster_id, revision, spec, updated_at`
+// RetireApp keeps the app's last spec (the agent needs only its name) and
+// raises its revision, so neither an older deployment nor an older
+// retirement wins late; a later deployment revives it (PutApp).
+func (r *Repository) RetireApp(ctx context.Context, ret fleet.Retirement) (fleet.App, bool, error) {
+	q := txn.Q(ctx, r.db)
+	var row appRow
+	err := q.GetContext(ctx, &row,
+		`UPDATE fleet.desired_apps SET deleted = true, revision = $5, updated_at = now()
+		 WHERE organization_id = $1 AND project_id = $2 AND environment_id = $3 AND name = $4 AND revision < $5
+		 RETURNING `+appColumns, ret.Organization, ret.Project, ret.Environment, ret.Name, ret.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fleet.App{}, false, nil
+	}
+	if err != nil {
+		return fleet.App{}, false, pgerr.Map(err, "retire app")
+	}
+	a, err := row.app()
+	if err != nil {
+		return fleet.App{}, false, err
+	}
+	// Values still on their way to it would only be stored for nothing.
+	if _, err := q.ExecContext(ctx,
+		`DELETE FROM fleet.secret_deliveries WHERE organization_id = $1 AND environment_id = $2 AND app = $3`,
+		ret.Organization, ret.Environment, ret.Name); err != nil {
+		return fleet.App{}, false, pgerr.Map(err, "retire app")
+	}
+	return a, true, r.notify(ctx, fleet.Signal{Organization: a.Organization, Cluster: a.Cluster, Environment: a.Environment, Name: a.Name})
+}
+
+const appColumns = `environment_id, name, organization_id, project_id, cluster_id, revision, spec, deleted, updated_at`
 
 type appRow struct {
 	fleet.App

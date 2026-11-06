@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,9 +48,44 @@ type App struct {
 	Resources []ResourceRef `json:"resources" db:"-"`
 	// AI connects the app to the organization's AI gateway (2d-ai); nil: no
 	// AI. Its key is one of Secrets.
-	AI        *AIRef    `json:"ai,omitempty" db:"-"`
+	AI *AIRef `json:"ai,omitempty" db:"-"`
+	// Deleted: the app was retired (its project archived). Only the ids, name
+	// and revision matter; the agent removes it and reports it PhaseDeleted,
+	// and then it is forgotten.
+	Deleted   bool      `json:"deleted" db:"deleted"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
+
+// Retirement is a retired app's desired state (App.Deleted): what Dispatch.
+// Retire stores. Revision is above every deployment of the environment.
+type Retirement struct {
+	Organization identity.OrganizationID
+	Project      project.ID
+	Environment  project.EnvironmentID
+	Name         string
+	Revision     int64
+}
+
+func (r Retirement) Validate() error {
+	switch {
+	case r.Organization.IsZero() || r.Project.IsZero() || r.Environment.IsZero():
+		return errx.Validation("retirement needs organization, project and environment")
+	case !ValidAppName(r.Name):
+		return errx.Validation("app name must be a DNS label")
+	case r.Revision < 1:
+		return errx.Validation("app revision must be positive")
+	}
+	return nil
+}
+
+// CapabilityRetire is listed in Capabilities.APIs when the agent removes an
+// app sent with App.Deleted. A cluster whose agent does not list it is not
+// sent a retirement (it would run the app again): it waits, stored, until
+// the agent is updated.
+const CapabilityRetire = "odicea.retire"
+
+// CanRetire reports whether the cluster lists CapabilityRetire.
+func (c Capabilities) CanRetire() bool { return slices.Contains(c.APIs, CapabilityRetire) }
 
 // MaxAppSecrets bounds an app's secret variables.
 const MaxAppSecrets = 100
@@ -126,9 +162,14 @@ const (
 	PhaseProgressing Phase = "progressing"
 	PhaseReady       Phase = "ready"
 	PhaseFailed      Phase = "failed"
+	// PhaseDeleted: a retired app (App.Deleted) is gone from the cluster.
+	// It is never stored: the report forgets the app.
+	PhaseDeleted Phase = "deleted"
 )
 
-func (p Phase) Valid() bool { return p == PhaseProgressing || p == PhaseReady || p == PhaseFailed }
+func (p Phase) Valid() bool {
+	return p == PhaseProgressing || p == PhaseReady || p == PhaseFailed || p == PhaseDeleted
+}
 
 // Reason explains a failed phase.
 type Reason string

@@ -89,6 +89,7 @@ rules:
   - odysseyapps
   verbs:
   - create
+  - delete
   - get
   - list
   - update
