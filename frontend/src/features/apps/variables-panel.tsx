@@ -163,8 +163,10 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
   return (
     <Panel ref={panel} id={anchors.secrets} tabIndex={-1} className="scroll-mt-20 outline-none">
       <PanelHeader icon={KeyRound} title="Secretos" description="Contraseñas, llaves y tokens. Se cifran en tu navegador: ni Odicea puede leerlos." />
+      {(settings.error || remove.error || data?.secrets_cluster_revoked || (data && !keyAvailable) || data?.secrets.length === 0) && (
       <PanelBody>
         <ErrorNotice error={settings.error} onRetry={() => settings.refetch()} />
+        <ErrorNotice error={remove.error} />
         {data?.secrets_cluster_revoked ? (
           <Callout tone="warn" title="El clúster de esta app fue desconectado.">
             No puede recibir secretos. Pídele a TI que mueva la app a otro clúster; luego vuelve a cargar los valores.
@@ -178,12 +180,15 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
           )
         )}
         {data && data.secrets.length === 0 && <p className="text-[13px] text-muted-foreground">Esta app no tiene secretos.</p>}
+      </PanelBody>
+      )}
+        {/* UX v4 §5.9: the list sits flush in the panel, split by separators. */}
         {data && data.secrets.length > 0 && (
-          <ul className="flex flex-col divide-y rounded-lg border" aria-label="Secretos de la app">
+          <ul className="flex flex-col divide-y" aria-label="Secretos de la app">
             {data.secrets.map(s => {
               const state = secretStateText[s.state]
               return (
-                <li key={s.name} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3">
+                <li key={s.name} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-3.5">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-[13px] font-medium">{s.name}</span>
@@ -219,8 +224,6 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
             })}
           </ul>
         )}
-        <ErrorNotice error={remove.error} />
-      </PanelBody>
       {canWrite && (
         <PanelFooter>
           <span>La app recibe cada secreto como una variable de entorno con su nombre.</span>

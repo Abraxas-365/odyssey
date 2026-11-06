@@ -146,7 +146,7 @@ const swatches: [string, string][] = [
 
 function Foundations() {
   return (
-    <Section id="fundamentos" title="Fundamentos" description="Paleta IAMKit, oscuro por defecto (también hay tema claro). Inter para el texto y JetBrains Mono para títulos, números y código.">
+    <Section id="fundamentos" title="Fundamentos" description="Paleta IAMKit, oscuro por defecto (también hay tema claro). Inter para títulos, texto y números; JetBrains Mono solo para código, direcciones, slugs y SHAs.">
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-7">
         {swatches.map(([name, cls]) => (
           <div key={name} className="flex flex-col gap-1.5">
@@ -159,7 +159,7 @@ function Foundations() {
         <PanelBody className="gap-4">
           <div className="font-heading text-display font-bold">Display 34 · ¿Qué quieres crear?</div>
           <div className="font-heading text-title font-bold">Título 28 · Visitas a clientes</div>
-          <div className="font-mono text-stat font-semibold">26 · $48.20</div>
+          <div className="text-stat font-semibold tabular-nums">26 · $48.20</div>
           <div className="font-heading text-section font-semibold">Sección 17 · Necesita tu atención</div>
           <div className="text-body">Cuerpo 14 · Tu app sigue funcionando. Nadie se vio afectado.</div>
           <div className="text-[13px] text-muted-foreground">Secundario 13 · Hace 2 horas · por Ana</div>

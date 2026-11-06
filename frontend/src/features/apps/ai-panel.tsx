@@ -23,14 +23,14 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
   const disable = useDisableAI(project, env)
   const [confirming, setConfirming] = useState(false)
   const a = ai.data
-  if (!a) return <ErrorNotice error={ai.error} onRetry={() => ai.refetch()} />
+  if (!a) return ai.error ? <li className="px-5 py-3.5"><ErrorNotice error={ai.error} onRetry={() => ai.refetch()} /></li> : null
   const state = aiState(a)
   const can = aiActions(a, canWrite, busy)
   const pending = enable.isPending || rotate.isPending || disable.isPending
   const why = aiUnavailable(a)
 
   return (
-    <div id={anchors.ai} tabIndex={-1} className="flex scroll-mt-20 flex-col gap-2 rounded-lg border px-4 py-3 outline-none" aria-label="IA de la app" role="group">
+    <li id={anchors.ai} tabIndex={-1} className="flex scroll-mt-20 flex-col gap-2 px-5 py-3.5 outline-none" aria-label="IA de la app">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <Sparkles className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0 flex-1">
@@ -74,12 +74,10 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
       {why && <p className="text-xs text-muted-foreground" role="status">{why}</p>}
       {a.status === 'enabled' && <p className="text-xs text-muted-foreground">La app ya puede usar los modelos de IA de la empresa sin configurar nada. La llave no se muestra en ningún lugar.</p>}
       {technical && a.status !== 'off' && (
-        <div className="rounded-md border">
-          <TechnicalDetails title="Variables de la IA" defaultOpen>
-            <p className="px-5 py-3 font-mono text-xs break-all text-muted-foreground">{aiVariablesText(a)}</p>
-            <p className="px-5 pb-3 font-mono text-xs break-all text-muted-foreground">{a.base_url}</p>
-          </TechnicalDetails>
-        </div>
+        <TechnicalDetails title="Variables de la IA" defaultOpen>
+          <p className="px-5 py-3 font-mono text-xs break-all text-muted-foreground">{aiVariablesText(a)}</p>
+          <p className="px-5 pb-3 font-mono text-xs break-all text-muted-foreground">{a.base_url}</p>
+        </TechnicalDetails>
       )}
       <ErrorNotice error={enable.error ?? rotate.error ?? disable.error} />
       {confirming && (
@@ -104,6 +102,6 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
           </AlertDialogContent>
         </AlertDialog>
       )}
-    </div>
+    </li>
   )
 }

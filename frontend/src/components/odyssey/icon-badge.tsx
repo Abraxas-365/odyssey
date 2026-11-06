@@ -36,7 +36,7 @@ export function StepNumber({ n, done, className }: { n: number; done?: boolean; 
   return (
     <span
       className={cn(
-        'grid size-[26px] shrink-0 place-items-center rounded-full border font-mono text-xs font-semibold',
+        'grid size-[26px] shrink-0 place-items-center rounded-full border text-xs font-semibold tabular-nums',
         done && 'border-success bg-success text-success-foreground',
         className,
       )}

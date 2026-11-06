@@ -115,3 +115,35 @@ describe('UX v4 §5.5: the company log', () => {
     expect(offenders(/['"`>]Registro íntegro/, ['features/audit/audit.ts', 'pages/design-system.tsx'])).toEqual([])
   })
 })
+
+describe('UX v4 §5.9: visual', () => {
+  const monoTitle = /<h[1-6][^>]*font-mono|font-heading[^"'`]*font-mono|font-mono[^"'`]*font-heading/
+  const monoFigure = /font-mono[^"'`]*text-(stat|title|display|section)\b|text-(stat|title|display|section)\b[^"'`]*font-mono/
+  const boxedList = /divide-y[^"'`]*\bborder\b|\bborder\b[^"'`]*divide-y/
+
+  it('the rules catch violations', () => {
+    expect(monoTitle.test('<h2 className="font-mono text-sm">')).toBe(true)
+    expect(monoFigure.test('className="font-mono text-stat font-semibold"')).toBe(true)
+    expect(boxedList.test('className="flex flex-col divide-y rounded-lg border"')).toBe(true)
+    expect(monoTitle.test('<span className="font-mono">{slug}</span>')).toBe(false)
+    expect(boxedList.test('className="flex flex-col divide-y"')).toBe(false)
+  })
+
+  // Inter for titles and text; JetBrains Mono only for code, URLs, slugs and SHAs.
+  it('the heading face is the body face', () => {
+    const css = readFileSync(join(src, 'index.css'), 'utf8')
+    expect(css).toMatch(/--font-heading:\s*var\(--font-body-family\)/)
+  })
+
+  it('no title or figure is set in mono', () => {
+    expect(offenders(monoTitle, [])).toEqual([])
+    expect(offenders(monoFigure, [])).toEqual([])
+  })
+
+  // Lists inside a panel sit flush and use separators; a bordered box inside
+  // a panel (the "panel in a panel" look) is not built in pages or features.
+  it('pages and features do not box their lists', () => {
+    const scoped = (f: string) => f.startsWith('pages/') || f.startsWith('features/')
+    expect(files(src).map(rel).filter(scoped).filter(f => boxedList.test(readFileSync(join(src, f), 'utf8')))).toEqual([])
+  })
+})

@@ -18,7 +18,7 @@ export function PageHeader({ title, description, status, actions, breadcrumb, cl
   )
 }
 
-/** Section title in the monospace heading face (mockup h2) with inline actions. */
+/** Section title in the heading face (Inter, mockup h2) with inline actions. */
 export function SectionHeader({ title, actions, className }: { title: ReactNode; actions?: ReactNode; className?: string }) {
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>

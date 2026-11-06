@@ -11,7 +11,8 @@
 @theme inline {
   --font-sans: var(--font-body-family);
   --font-mono: var(--font-code-family);
-  --font-heading: var(--font-code-family);
+  /* UX v4 §5.9: titles are Inter too; mono is only for code, URLs, slugs and SHAs. */
+  --font-heading: var(--font-body-family);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);

@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
-/** Big monospace number + caption (`.stat`), optionally with a budget bar. */
+/** Big number + caption (`.stat`), optionally with a budget bar. Inter with tabular figures. */
 export function Stat({ value, label, progress, className }: { value: ReactNode; label: ReactNode; progress?: number; className?: string }) {
   return (
     <div className={cn('flex flex-col gap-2', className)}>
       <div>
-        <div className="font-mono text-stat font-semibold tabular-nums">{value}</div>
+        <div className="text-stat font-semibold tabular-nums">{value}</div>
         <div className="text-xs text-muted-foreground">{label}</div>
       </div>
       {progress !== undefined && <UsageMeter value={progress} className="w-full" />}

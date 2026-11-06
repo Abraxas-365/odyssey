@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Callout, ChipGroup, EmptyState, ErrorNotice, Panel, PanelBody, PanelFooter, PanelHeader, TechnicalDetails } from '@/components/odyssey'
+import { Callout, ChipGroup, ErrorNotice, Panel, PanelBody, PanelFooter, PanelHeader, TechnicalDetails } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
 import { afterWrite } from '@/features/approvals/notice'
 import { permissions } from '@/lib/permissions'
@@ -46,69 +46,70 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
   return (
     <Panel id={anchors.data} tabIndex={-1} className="scroll-mt-20 outline-none">
       <PanelHeader icon={Database} title="Datos e IA" description="Bases de datos, cachés, archivos e IA de la app. La app los recibe como variables de entorno." />
-      <PanelBody>
-        <ErrorNotice error={list.error} onRetry={() => list.refetch()} />
+      {(list.error || connect.error || disconnect.error) && (
+        <PanelBody>
+          <ErrorNotice error={list.error} onRetry={() => list.refetch()} />
+          <ErrorNotice error={connect.error ?? disconnect.error} />
+        </PanelBody>
+      )}
+      {/* UX v4 §5.9: one list with separators, never boxes inside the panel. */}
+      <ul className="flex flex-col divide-y" aria-label="Recursos de la app">
         {list.data && items.length === 0 && (
-          <EmptyState icon={Database} level={2} title="Esta app no usa nada todavía">
-            {kinds.length > 0 ? 'Agrega una base de datos, una caché o un espacio de archivos.' : 'El clúster de esta app todavía no puede crear bases de datos, cachés ni archivos. Pídele a TI que lo habilite.'}
-          </EmptyState>
+          <li className="flex items-start gap-3 px-5 py-3.5">
+            <Database className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <div className="text-[13px]">
+              <div className="font-medium">Esta app no usa nada todavía</div>
+              <div className="text-muted-foreground">{kinds.length > 0 ? 'Agrega una base de datos, una caché o un espacio de archivos.' : 'El clúster de esta app todavía no puede crear bases de datos, cachés ni archivos. Pídele a TI que lo habilite.'}</div>
+            </div>
+          </li>
         )}
-        {items.length > 0 && (
-          <ul className="flex flex-col divide-y rounded-lg border" aria-label="Recursos de la app">
-            {items.map(r => {
-              const text = kindText[r.kind]
-              const state = stateOf(r)
-              const failure = failureOf(r)
-              const block = deleteBlock(r)
-              return (
-                <li key={r.id} className="flex flex-col gap-2 px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                    <text.icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-[13px] font-medium">{r.name}</span>
-                        <span className="text-xs text-muted-foreground">{text.label} · {sizeLabel(r.storage_gi)}</span>
-                        <Badge variant={state.tone}>{state.label}</Badge>
-                        {r.status === 'active' && <Badge variant={r.connected ? 'success' : 'secondary'}>{r.connected ? 'Conectada a la app' : 'Sin conectar'}</Badge>}
-                      </div>
-                    </div>
-                    {canWrite && isActive(r) && (
-                      <div className="flex items-center gap-1.5">
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => setSizing(r)}>Cambiar tamaño</Button>
-                        <Button size="sm" variant="outline" disabled={busy || connect.isPending || disconnect.isPending} onClick={() => change(r, !r.connected)}>
-                          {r.connected ? 'Desconectar' : 'Conectar'}
-                        </Button>
-                        {mayDelete && (
-                          <Button size="icon-sm" variant="ghost" aria-label={`Eliminar ${r.name}`} title={block} disabled={busy} onClick={() => setRemoving(r)}>
-                            <Trash2 />
-                          </Button>
-                        )}
-                      </div>
+        {items.map(r => {
+          const text = kindText[r.kind]
+          const state = stateOf(r)
+          const failure = failureOf(r)
+          const block = deleteBlock(r)
+          return (
+            <li key={r.id} className="flex flex-col gap-2 px-5 py-3.5">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <text.icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[13px] font-medium">{r.name}</span>
+                    <span className="text-xs text-muted-foreground">{text.label} · {sizeLabel(r.storage_gi)}</span>
+                    <Badge variant={state.tone}>{state.label}</Badge>
+                    {r.status === 'active' && <Badge variant={r.connected ? 'success' : 'secondary'}>{r.connected ? 'Conectada a la app' : 'Sin conectar'}</Badge>}
+                  </div>
+                </div>
+                {canWrite && isActive(r) && (
+                  <div className="flex items-center gap-1.5">
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setSizing(r)}>Cambiar tamaño</Button>
+                    <Button size="sm" variant="outline" disabled={busy || connect.isPending || disconnect.isPending} onClick={() => change(r, !r.connected)}>
+                      {r.connected ? 'Desconectar' : 'Conectar'}
+                    </Button>
+                    {mayDelete && (
+                      <Button size="icon-sm" variant="ghost" aria-label={`Eliminar ${r.name}`} title={block} disabled={busy} onClick={() => setRemoving(r)}>
+                        <Trash2 />
+                      </Button>
                     )}
                   </div>
-                  {failure && <p className="text-xs text-destructive" role="alert">{failure.text}</p>}
-                  {technical && failure?.detail && (
-                    <div className="rounded-md border">
-                      <TechnicalDetails title={`Qué dijo el clúster de ${r.name}`} defaultOpen>
-                        <p className="px-5 py-3 font-mono text-xs break-all text-muted-foreground">{failure.detail}</p>
-                      </TechnicalDetails>
-                    </div>
-                  )}
-                  {technical && r.variables.length > 0 && (
-                    <div className="rounded-md border">
-                      <TechnicalDetails title={`Variables de ${r.name}`} defaultOpen>
-                        <p className="px-5 py-3 font-mono text-xs break-all text-muted-foreground">{r.variables.join('  ')}</p>
-                      </TechnicalDetails>
-                    </div>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-        <ErrorNotice error={connect.error ?? disconnect.error} />
+                )}
+              </div>
+              {failure && <p className="text-xs text-destructive" role="alert">{failure.text}</p>}
+              {technical && failure?.detail && (
+                <TechnicalDetails title={`Qué dijo el clúster de ${r.name}`} defaultOpen>
+                  <p className="px-5 py-3 font-mono text-xs break-all text-muted-foreground">{failure.detail}</p>
+                </TechnicalDetails>
+              )}
+              {technical && r.variables.length > 0 && (
+                <TechnicalDetails title={`Variables de ${r.name}`} defaultOpen>
+                  <p className="px-5 py-3 font-mono text-xs break-all text-muted-foreground">{r.variables.join('  ')}</p>
+                </TechnicalDetails>
+              )}
+            </li>
+          )
+        })}
         <AIRow project={project} env={env} canWrite={canWrite} busy={busy} technical={technical} />
-      </PanelBody>
+      </ul>
       {canWrite && (
         <PanelFooter>
           <span>{full ? 'Llegaste al máximo de recursos de esta app.' : 'Al eliminar un recurso se borran sus datos para siempre.'}</span>

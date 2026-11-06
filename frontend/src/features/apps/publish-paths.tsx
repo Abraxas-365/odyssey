@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Bot, FolderUp, GitBranch, Rocket } from 'lucide-react'
 import { Button, ButtonLink } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { AssistantPrompt, IconBadge, Panel, PanelBody, PanelHeader } from '@/components/odyssey'
+import { AssistantPrompt, IconBadge, Panel, PanelHeader } from '@/components/odyssey'
 import type { Project } from '@/lib/types'
 import { ConnectRepoDialog } from '@/features/github/code-panel'
 import { assistantPrompt } from './overview'
@@ -41,21 +41,20 @@ export function FirstVersion({ project, canConnect, onUpload }: { project: Proje
   return (
     <Panel>
       <PanelHeader icon={Rocket} title="Publica la primera versión" description="Elige cómo llega tu código. Puedes cambiar de camino cuando quieras." />
-      <PanelBody>
-        <ul className="grid gap-3 md:grid-cols-3">
-          <Path icon={Bot} title="Pedir a mi asistente" body="Desde la carpeta de tu app, dile a Claude Code, Codex o Antigravity:">
-            <AssistantPrompt text={prompt} />
+      {/* UX v4 §5.9: three columns split by separators, not cards inside the panel. */}
+      <ul className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+        <Path icon={Bot} title="Pedir a mi asistente" body="Desde la carpeta de tu app, dile a Claude Code, Codex o Antigravity:">
+          <AssistantPrompt text={prompt} />
+        </Path>
+        {canConnect && (
+          <Path icon={GitBranch} title="Conectar GitHub" body="Cada cambio que subas a la rama se publica solo.">
+            <Button variant="outline" onClick={() => setConnect(true)}>Conectar un repositorio</Button>
           </Path>
-          {canConnect && (
-            <Path icon={GitBranch} title="Conectar GitHub" body="Cada cambio que subas a la rama se publica solo.">
-              <Button variant="outline" onClick={() => setConnect(true)}>Conectar un repositorio</Button>
-            </Path>
-          )}
-          <Path icon={FolderUp} title="Subir una carpeta" body="Arrastra la carpeta de tu app. La construimos y la publicamos por ti.">
-            <Button variant="outline" onClick={onUpload}>Subir una carpeta</Button>
-          </Path>
-        </ul>
-      </PanelBody>
+        )}
+        <Path icon={FolderUp} title="Subir una carpeta" body="Arrastra la carpeta de tu app. La construimos y la publicamos por ti.">
+          <Button variant="outline" onClick={onUpload}>Subir una carpeta</Button>
+        </Path>
+      </ul>
       {canConnect && <ConnectRepoDialog project={project} open={connect} onOpenChange={setConnect} />}
     </Panel>
   )
@@ -63,7 +62,7 @@ export function FirstVersion({ project, canConnect, onUpload }: { project: Proje
 
 function Path({ icon, title, body, children }: { icon: typeof Bot; title: string; body: string; children: React.ReactNode }) {
   return (
-    <li className="flex flex-col gap-3 rounded-lg border p-4">
+    <li className="flex min-w-0 flex-col gap-3 p-5">
       <div className="flex items-center gap-2.5">
         <IconBadge icon={icon} size="sm" />
         <h3 className="font-semibold">{title}</h3>

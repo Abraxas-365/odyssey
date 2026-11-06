@@ -25,7 +25,7 @@ export function Avatar({ name, color, muted, group, size = 'md', decorative, cla
     <span
       {...(decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': name })}
       className={cn(
-        'grid shrink-0 place-items-center rounded-full font-mono font-semibold text-primary-foreground',
+        'grid shrink-0 place-items-center rounded-full font-semibold text-primary-foreground',
         size === 'md' ? 'size-[22px] text-[10px]' : 'size-8 text-[11px]',
         (muted || group) && 'bg-muted text-muted-foreground',
         className,

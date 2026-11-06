@@ -17,7 +17,7 @@ const badgeVariants = cva(
         destructive: "bg-destructive/18 text-destructive",
         info: "bg-info/16 text-info",
         ai: "bg-ai/20 text-ai",
-        count: "h-auto rounded-full bg-warning px-1.5 py-px font-mono text-[10px] font-semibold text-warning-foreground",
+        count: "h-auto rounded-full bg-warning px-1.5 py-px text-[10px] font-semibold tabular-nums text-warning-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
