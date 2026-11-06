@@ -246,6 +246,104 @@ func (s *Service) deployFailed(d Deployment) error { return s.builder.Cancel(ctx
 	)
 }
 
+// Reuse by content digest (MS-3b, docs/build.md «Reutilización»): an image
+// made from the same files by the same builder is reused, so who decides it
+// is fixed. Each call has one owner function: the candidates are listed only
+// by buildsvc.reuse (which drops them all for a rebuild), the origin read
+// only by buildsvc.origin, written only by buildsvc.settle; a scan is copied
+// only by buildsvc.copiedScan (digest-checked, ≤ ScanReuseWithin); fleet
+// keeps a candidate only through DesiredBuild.ApplyReuse in DispatchBuild
+// (same builder identity, same repository). Registry access for it
+// (go-containerregistry) lives only in the agent's builder.
+var reuseOwners = map[string]struct{ dir, fn string }{
+	"ListCandidates": {"build/buildsvc", "reuse"},
+	"FindCandidate":  {"build/buildsvc", "origin"},
+	"SetOrigin":      {"build/buildsvc", "settle"},
+	"copiedScan":     {"build/buildsvc", "scan"},
+	"ApplyReuse":     {"fleet/fleetsvc", "DispatchBuild"},
+}
+
+const registryClient = "github.com/google/go-containerregistry"
+
+func reuseViolations(files []goFile) []string {
+	var out []string
+	for _, f := range files {
+		if strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		dir := path.Dir(f.rel)
+		for _, imp := range f.file.Imports {
+			if p := strings.Trim(imp.Path.Value, `"`); strings.HasPrefix(p, registryClient) && dir != "agent/builder" {
+				out = append(out, f.fset.Position(imp.Pos()).String()+": "+dir+" imports "+p+
+					"; only the agent's builder talks to the registry to reuse an image")
+			}
+		}
+		for _, d := range f.file.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				var name string
+				switch c := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					name = c.Sel.Name
+				case *ast.Ident:
+					name = c.Name
+				}
+				if owner, ok := reuseOwners[name]; ok && (dir != owner.dir || fn.Name.Name != owner.fn) {
+					out = append(out, f.fset.Position(call.Pos()).String()+": "+fn.Name.Name+" in "+dir+" calls "+name+
+						"; reuse is decided only by "+owner.dir+"."+owner.fn)
+				}
+				return true
+			})
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestReuseIsDecidedInOnePlace(t *testing.T) {
+	report(t, reuseViolations(append(sources(t, false), repoSources(t, "agent", "cmd")...)))
+}
+
+func TestReuseRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		// correct
+		"build/buildsvc/ok.go": `package buildsvc
+func (s *Service) reuse(b Build) { s.repo.ListCandidates(ctx, org, p, c, n) }
+func (s *Service) origin(b Build) { s.repo.FindCandidate(ctx, org, p, c, i, img) }
+func (s *Service) settle(b Build) { s.repo.SetOrigin(ctx, org, id, i, from) }
+func (s *Service) scan(b Build) { s.copiedScan(ctx, b) }`,
+		"fleet/fleetsvc/ok.go":                     `package fleetsvc; func (s *Service) DispatchBuild(b DesiredBuild) { b.ApplyReuse(bd) }`,
+		"build/adapters/buildpg/r.go":              `package buildpg; func (r *Repository) ListCandidates() { r.list() }`,
+		"build/adapters/buildpg/r_test.go":         `package buildpg_test; func T() { repo.SetOrigin(ctx, org, id, i, from) }`,
+		"agent/builder/reuse.go":                   "package builder\nimport \"github.com/google/go-containerregistry/pkg/v1/remote\"",
+		"agent/builder/reuse_test.go":              "package builder\nimport \"github.com/google/go-containerregistry/pkg/registry\"",
+		"fleet/adapters/fleetgrpc/convert_test.go": `package fleetgrpc; func T() { b.ApplyReuse(bd) }`,
+		// violations
+		"build/buildsvc/bad.go": `package buildsvc
+func (s *Service) dispatch(b Build) { s.repo.ListCandidates(ctx, org, p, c, n) }
+func (s *Service) finish(b Build) { s.repo.SetOrigin(ctx, org, id, i, from) }`,
+		"build/adapters/buildhttp/h.go":  `package buildhttp; func (h *H) f() { h.repo.FindCandidate(ctx, org, p, c, i, img) }`,
+		"fleet/adapters/fleetpg/b.go":    `package fleetpg; func (r *R) PutBuild(b DesiredBuild) { b.ApplyReuse(bd) }`,
+		"release/releasesvc/s.go":        `package releasesvc; func (s *Service) promote() { s.copiedScan(ctx, b) }`,
+		"build/adapters/buildfleet/r.go": "package buildfleet\nimport \"github.com/google/go-containerregistry/pkg/name\"",
+	})
+	expectViolations(t, reuseViolations(files),
+		"build/adapters/buildfleet/r.go: build/adapters/buildfleet imports",
+		"build/adapters/buildhttp/h.go: f in build/adapters/buildhttp calls FindCandidate",
+		"build/buildsvc/bad.go: dispatch in build/buildsvc calls ListCandidates",
+		"build/buildsvc/bad.go: finish in build/buildsvc calls SetOrigin",
+		"fleet/adapters/fleetpg/b.go: PutBuild in fleet/adapters/fleetpg calls ApplyReuse",
+		"release/releasesvc/s.go: promote in release/releasesvc calls copiedScan",
+	)
+}
+
 func TestWorkloadSelectorRuleCatchesViolations(t *testing.T) {
 	files := parseFixtures(t, map[string]string{
 		// correct

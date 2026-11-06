@@ -18,10 +18,11 @@ func TestEventContracts(t *testing.T) {
 	user := identity.MustParseUserID("00000000-0000-4000-8000-000000000002")
 	s := build.Source{ID: build.MustParseSourceID("00000000-0000-4000-8000-0000000000e1"), Organization: org,
 		Project: project.MustParseID("00000000-0000-4000-8000-0000000000aa"), Name: "visitas", Size: 48213,
-		SHA256: strings.Repeat("0f", 32), Files: 37, UnpackedSize: 190442}
+		SHA256: strings.Repeat("0f", 32), Files: 37, UnpackedSize: 190442, ContentDigest: "c1:" + strings.Repeat("ab", 32)}
+	from := build.MustParseID("00000000-0000-4000-8000-0000000000f0")
 	b := build.Build{ID: build.MustParseID("00000000-0000-4000-8000-0000000000f1"), Organization: org, Project: s.Project,
 		Environment: project.MustParseEnvironmentID("00000000-0000-4000-8000-0000000000bb"), Source: s.ID, RequestedBy: user,
-		Image: "registry.local/o/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+		Image: "registry.local/o/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ReusedFrom: &from}
 	n := build.Names{Project: "Visitas"}
 	f := build.Failure{Code: build.CodeUnsupported, Message: build.Message(build.CodeUnsupported), Detail: "railpack: no start command"}
 	derived := s

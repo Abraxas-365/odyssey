@@ -56,6 +56,10 @@ type Source struct {
 	// re-rooted. Derive makes it, once per parent and folder.
 	Parent *SourceID `json:"parent_id" db:"parent_id"`
 	Root   string    `json:"root" db:"root"`
+	// ContentDigest identifies its files whatever packed them
+	// (srcarchive.Summary.ContentDigest): builds of sources with the same one
+	// may share an image.
+	ContentDigest string `json:"content_digest" db:"content_digest"`
 }
 
 // Git providers a source can come from.
@@ -236,6 +240,45 @@ type Build struct {
 	// Scan is the vulnerability scan of the image; nil until it is recorded
 	// (and always for a build that did not succeed).
 	Scan *Scan `json:"scan" db:"-"`
+	// ContentDigest is its source's (what reuse matches on; "" for sources
+	// from before it was computed: never reused).
+	ContentDigest string `json:"-" db:"content_digest"`
+	// Rebuild: never reuse an earlier image, build again.
+	Rebuild bool `json:"rebuild" db:"rebuild"`
+	// BuilderIdentity names the builder that made the image (succeeded
+	// only; "" when it announced none: its image is never reused).
+	BuilderIdentity string `json:"-" db:"builder_identity"`
+	// ReusedFrom is the earlier build whose image this one reused instead
+	// of building (succeeded only).
+	ReusedFrom *ID `json:"reused_from" db:"reused_from"`
+}
+
+// Candidate is an earlier build whose image a build of the same code may
+// reuse: the latest successful one per builder identity.
+type Candidate struct {
+	Build    ID     `db:"id"`
+	Image    string `db:"image"`
+	Identity string `db:"builder_identity"`
+	// Scan is its scan (nil when none was recorded yet).
+	Scan *Scan `db:"-"`
+}
+
+// ScanReuseWithin: a reused image's scan is copied when it is known and at
+// most this old; otherwise the reused image is scanned again.
+const ScanReuseWithin = 7 * 24 * time.Hour
+
+// CopiesScan reports whether a build reusing c at now copies its scan.
+func (c Candidate) CopiesScan(now time.Time) bool {
+	return c.Scan != nil && c.Scan.Known() && now.Sub(c.Scan.ScannedAt) <= ScanReuseWithin
+}
+
+// Reuse is what the runner is told it may reuse: the candidates, one per
+// builder identity (it uses the one its cluster's builder made, if any).
+type Reuse struct {
+	Image    string
+	Identity string
+	// SkipScan: the build domain copies the candidate's scan.
+	SkipScan bool
 }
 
 // LogMark is a line of an archived log: its seq and the byte it starts at.
@@ -282,6 +325,9 @@ type Start struct {
 	Environment project.EnvironmentID
 	Source      SourceID
 	RequestedBy identity.UserID
+	// Rebuild builds even when an earlier build of the same code could be
+	// reused (a newer base image, a fix outside the code).
+	Rebuild bool
 }
 
 func (s Start) Validate() error {
@@ -380,13 +426,25 @@ type Observation struct {
 	Reason string
 	// Message is the runner's own words ("" when it said nothing).
 	Message string
+	// Reused is the image the runner reused instead of building (one of
+	// Job.Reuse's; succeeded only).
+	Reused string `json:",omitempty"`
+	// Builder is the identity of the builder that made the image ("" when
+	// unknown: then it is never reused).
+	Builder string `json:",omitempty"`
 }
 
 // Job is everything a runner needs to know of a build.
 type Job struct {
 	Build  Build
 	Source Source
+	// Reuse are images of earlier builds of the same code the runner may
+	// reuse instead of building (at most MaxReuse; none: it builds).
+	Reuse []Reuse
 }
+
+// MaxReuse bounds the candidates a build considers.
+const MaxReuse = 8
 
 // LogLine is one line a build printed. Seq orders the lines of a build and
 // is stable: a runner that resends lines resends the same numbers.

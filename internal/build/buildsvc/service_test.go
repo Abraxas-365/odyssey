@@ -902,3 +902,96 @@ func TestSweep(t *testing.T) {
 		t.Fatalf("after the build ended: %d %v", n, err)
 	}
 }
+
+// A build of code an earlier build already made, with the same builder,
+// reuses its image (and copies its recent scan); rebuild, another builder
+// or other code build again.
+func TestReuse(t *testing.T) {
+	scans := 0
+	e := setupWith(t, buildfake.Options{Scan: func(b build.Build) build.ScanObservation {
+		scans++
+		return build.ScanObservation{Phase: build.ScanDone, Scan: build.Scan{Digest: build.DigestOf(b.Image), High: 3, Tool: "trivy t"}}
+	}}, buildsvc.Options{})
+	ctx := context.Background()
+	upload := func(files map[string]string) build.Source {
+		t.Helper()
+		s, err := e.svc.Upload(ctx, e.org, e.project, build.Upload{Name: "app", UploadedBy: e.user}, bytes.NewReader(tgz(t, files)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	run := func(src build.Source, rebuild bool) build.Build {
+		t.Helper()
+		b, err := e.svc.Start(ctx, e.org, build.Start{ID: build.NewID(), Project: e.project, Environment: e.env,
+			Source: src.ID, RequestedBy: e.user, Rebuild: rebuild})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.steps(t, b.ID, build.StepDispatch, build.StepWait, build.StepFinish)
+		if err := e.step(t, build.WorkflowScan, b.ID, build.StepScan); err != nil {
+			t.Fatal(err)
+		}
+		return e.find(t, b.ID)
+	}
+	code := map[string]string{"go.mod": "module app\n", "main.go": "package main\n"}
+	first := upload(code)
+	if !strings.HasPrefix(first.ContentDigest, "c1:") {
+		t.Fatalf("source digest %q", first.ContentDigest)
+	}
+	built := run(first, false)
+	if built.ReusedFrom != nil || built.BuilderIdentity != buildfake.FakeIdentity || built.Scan == nil || scans != 1 {
+		t.Fatalf("first build %+v scans=%d", built, scans)
+	}
+
+	// The same code uploaded again: the image is reused, the scan copied.
+	again := upload(code)
+	if again.ID == first.ID || again.ContentDigest != first.ContentDigest {
+		t.Fatalf("same code, digest %q vs %q", again.ContentDigest, first.ContentDigest)
+	}
+	reused := run(again, false)
+	if reused.ReusedFrom == nil || *reused.ReusedFrom != built.ID || reused.Image != built.Image || reused.Status != build.StatusSucceeded {
+		t.Fatalf("reused %+v", reused)
+	}
+	if reused.Scan == nil || reused.Scan.High != 3 || scans != 1 {
+		t.Fatalf("scan not copied %+v scans=%d", reused.Scan, scans)
+	}
+	var ev build.Succeeded
+	for _, x := range e.events.Events() {
+		if x.Type == build.EventSucceeded {
+			if err := json.Unmarshal(x.Payload, &ev); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if ev.ReusedFrom == nil || *ev.ReusedFrom != built.ID {
+		t.Fatalf("succeeded event %+v", ev)
+	}
+
+	// An old scan is not copied: the reused image is scanned again.
+	if _, err := e.db.ExecContext(ctx, `UPDATE build.builds SET scan = jsonb_set(scan, '{scanned_at}',
+		to_jsonb(to_char((now() - interval '8 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))) WHERE scan IS NOT NULL`); err != nil {
+		t.Fatal(err)
+	}
+	stale := run(upload(code), false)
+	if stale.ReusedFrom == nil || stale.Scan == nil || scans != 2 {
+		t.Fatalf("stale scan: %+v scans=%d", stale, scans)
+	}
+
+	// Rebuild builds; so does other code; so does another builder.
+	if b := run(upload(code), true); b.ReusedFrom != nil || b.Image == built.Image {
+		t.Fatalf("rebuild reused %+v", b)
+	}
+	if b := run(upload(map[string]string{"go.mod": "module app\n", "main.go": "package main // v2\n"}), false); b.ReusedFrom != nil {
+		t.Fatalf("other code reused %+v", b)
+	}
+	e.runner.SetIdentity("b1:" + strings.Repeat("cd", 32))
+	upgraded := run(upload(code), false)
+	if upgraded.ReusedFrom != nil || upgraded.BuilderIdentity != "b1:"+strings.Repeat("cd", 32) {
+		t.Fatalf("another builder reused %+v", upgraded)
+	}
+	// ... and from then on its own image is the one reused.
+	if b := run(upload(code), false); b.ReusedFrom == nil || *b.ReusedFrom != upgraded.ID {
+		t.Fatalf("after the upgrade %+v", b)
+	}
+}

@@ -34,7 +34,12 @@ type Outcome struct {
 	Hold bool
 	// Lines adds that many build lines after the script (tests of big logs).
 	Lines int
+	// reused is the image of Job.Reuse the fake reuses ("" builds).
+	reused string
 }
+
+// FakeIdentity is the builder identity the fake reports by default.
+const FakeIdentity = "b1:0000000000000000000000000000000000000000000000000000000000000fa1"
 
 // Options configure the fake; zero values take the defaults.
 type Options struct {
@@ -42,6 +47,9 @@ type Options struct {
 	Duration time.Duration
 	// Registry names the fake images (default "registry.odyssey.localhost").
 	Registry string
+	// Identity is the builder identity the fake reports (default
+	// FakeIdentity): it reuses Job.Reuse's image made with the same one.
+	Identity string
 	// Behavior decides each build's outcome (default: success).
 	Behavior func(build.Job) Outcome
 	// Scan decides what ObserveScan answers for a succeeded build (default:
@@ -84,6 +92,9 @@ func New(opts Options) *Runner {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.Identity == "" {
+		opts.Identity = FakeIdentity
+	}
 	return &Runner{opts: opts, outcomes: map[build.ID]Outcome{}, cancelled: map[build.ID]bool{}, forgotten: map[build.ID]bool{}, scans: map[build.ID]build.ScanObservation{}}
 }
 
@@ -91,6 +102,14 @@ func New(opts Options) *Runner {
 func (r *Runner) SetDown(err error) {
 	r.mu.Lock()
 	r.down = err
+	r.mu.Unlock()
+}
+
+// SetIdentity changes the builder identity the fake reports from now on (a
+// cluster whose builder was upgraded).
+func (r *Runner) SetIdentity(identity string) {
+	r.mu.Lock()
+	r.opts.Identity = identity
 	r.mu.Unlock()
 }
 
@@ -118,6 +137,15 @@ func (r *Runner) Dispatch(_ context.Context, job build.Job) error {
 	if o.Refuse != "" {
 		return build.Refused(o.Refuse, "the fake builder refused the build")
 	}
+	// Like the cluster: the image its own builder made in the project's
+	// repository is reused at once (a failing outcome still fails: tests).
+	repo, _, _ := strings.Cut(r.Image(job.Build), "@")
+	for _, c := range job.Reuse {
+		if c.Identity == r.opts.Identity && strings.HasPrefix(c.Image, repo+"@") && o.Reason == "" {
+			o.reused = c.Image
+			break
+		}
+	}
 	r.outcomes[job.Build.ID] = o
 	return nil
 }
@@ -142,13 +170,16 @@ func (r *Runner) Observe(_ context.Context, b build.Build) (build.Observation, e
 	if !known { // dispatched before this process started: it succeeds
 		o = Outcome{}
 	}
+	if o.reused != "" { // nothing to build: done at once
+		return build.Observation{Phase: build.PhaseSucceeded, Image: o.reused, Reused: o.reused, Builder: r.opts.Identity}, nil
+	}
 	if o.Hold || r.elapsed(b) < r.opts.Duration {
 		return build.Observation{Phase: build.PhaseRunning}, nil
 	}
 	if o.Reason != "" {
 		return build.Observation{Phase: build.PhaseFailed, Reason: o.Reason, Message: o.Message}, nil
 	}
-	return build.Observation{Phase: build.PhaseSucceeded, Image: r.Image(b)}, nil
+	return build.Observation{Phase: build.PhaseSucceeded, Image: r.Image(b), Builder: r.opts.Identity}, nil
 }
 
 func (r *Runner) elapsed(b build.Build) time.Duration {
@@ -187,6 +218,16 @@ func (r *Runner) Logs(_ context.Context, b build.Build, after int64, limit int) 
 
 // lines are what b printed so far.
 func (r *Runner) lines(b build.Build) []build.LogLine {
+	if o := r.outcomes[b.ID]; o.reused != "" || b.ReusedFrom != nil {
+		image := o.reused
+		if image == "" {
+			image = b.Image
+		}
+		return []build.LogLine{
+			{Seq: 1, Stream: "prepare", Text: "Reusing the image of an earlier build: " + build.DigestOf(image)},
+			{Seq: 2, Stream: "system", Text: "imagen lista: " + image},
+		}
+	}
 	shown := len(script)
 	if b.Status.Finished() && b.StartedAt == nil {
 		shown = 0 // refused before it ran: only its end line

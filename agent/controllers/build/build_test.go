@@ -116,6 +116,81 @@ func TestJob(t *testing.T) {
 	}
 }
 
+func TestJobWithAReusableImage(t *testing.T) {
+	if got := Job(newBuild(), cfg).Spec.Template.Spec.InitContainers; len(got) != 1 {
+		t.Fatalf("no reuse image: %d init containers", len(got))
+	}
+	b := newBuild()
+	b.Spec.ReuseImage = "registry.test/o/p@sha256:" + strings.Repeat("a", 64)
+	p := Job(b, cfg).Spec.Template.Spec
+	if len(p.InitContainers) != 2 || p.InitContainers[1].Name != ContainerPrepare {
+		t.Fatalf("init containers: %+v", p.InitContainers)
+	}
+	r := p.InitContainers[0]
+	if r.Name != ContainerReuse || r.Image != cfg.AgentImage || strings.Join(r.Command, " ") != "odyssey-agent builder reuse" {
+		t.Fatalf("reuse: %+v", r)
+	}
+	if sc := r.SecurityContext; *sc.AllowPrivilegeEscalation || !*sc.ReadOnlyRootFilesystem || sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault ||
+		len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+		t.Fatalf("reuse must be restricted: %+v", sc)
+	}
+	e := env(r)
+	if e["ODYSSEY_REUSE_IMAGE"] != b.Spec.ReuseImage || e["ODYSSEY_IMAGE"] != "registry.test/o/p:"+id || e["ODYSSEY_REGISTRY_INSECURE"] != "true" ||
+		e["ODYSSEY_WORK"] != env(p.Containers[0])["ODYSSEY_WORK"] || e["DOCKER_CONFIG"] != "/var/run/odyssey/registry" {
+		t.Fatalf("reuse env: %v", e)
+	}
+	var reg, work, token bool
+	for _, m := range r.VolumeMounts {
+		switch m.Name {
+		case "registry":
+			reg = m.ReadOnly && m.MountPath == "/var/run/odyssey/registry"
+		case "work":
+			work = true
+		case "token":
+			token = true
+		}
+	}
+	if !reg || !work || token {
+		t.Fatalf("reuse mounts: %+v", r.VolumeMounts)
+	}
+	if l, pl := r.Resources.Limits, p.InitContainers[1].Resources.Limits; l.Memory().Cmp(*pl.Memory()) >= 0 {
+		t.Fatalf("reuse is small: %v", l)
+	}
+}
+
+func TestObserveReuse(t *testing.T) {
+	ok := terminated(ContainerReuse, 0, "Completed", &builder.Result{Digest: digest, Reused: true})
+	prep := terminated(ContainerPrepare, 0, "Completed", &builder.Result{})
+	init := []corev1.ContainerStatus{ok, prep}
+	cases := []struct {
+		name   string
+		pod    *corev1.Pod
+		phase  v1alpha1.BuildPhase
+		reused bool
+		reason v1alpha1.BuildReason
+	}{
+		{"reusing", podWith(corev1.PodPending, []corev1.ContainerStatus{running(ContainerReuse)}, nil), v1alpha1.BuildRunning, false, ""},
+		{"reused", podWith(corev1.PodSucceeded, init, []corev1.ContainerStatus{terminated(ContainerBuild, 0, "Completed", &builder.Result{Digest: digest, Reused: true})}),
+			v1alpha1.BuildSucceeded, true, ""},
+		{"image gone, built", podWith(corev1.PodSucceeded, []corev1.ContainerStatus{terminated(ContainerReuse, 0, "Completed", &builder.Result{}), prep},
+			[]corev1.ContainerStatus{terminated(ContainerBuild, 0, "Completed", &builder.Result{Digest: digest})}), v1alpha1.BuildSucceeded, false, ""},
+		{"reuse crashed", podWith(corev1.PodFailed, []corev1.ContainerStatus{terminated(ContainerReuse, 2, "Error", nil)}, nil), v1alpha1.BuildFailed, false, v1alpha1.BuildReasonFailed},
+		{"reuse failed", podWith(corev1.PodFailed, []corev1.ContainerStatus{terminated(ContainerReuse, 1, "Error", &builder.Result{Reason: builder.ReasonFailed, Message: "no marker"})}, nil),
+			v1alpha1.BuildFailed, false, v1alpha1.BuildReasonFailed},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Observe(jobWith(), c.pod)
+			if got.Phase != c.phase || got.Reused != c.reused || got.Reason != c.reason {
+				t.Fatalf("got %+v", got)
+			}
+			if c.phase == v1alpha1.BuildSucceeded && got.ImageDigest != digest {
+				t.Fatalf("digest %q", got.ImageDigest)
+			}
+		})
+	}
+}
+
 func terminated(name string, code int32, reason string, r *builder.Result) corev1.ContainerStatus {
 	msg := ""
 	if r != nil {

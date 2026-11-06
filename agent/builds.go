@@ -2,15 +2,20 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
+	odybuilder "github.com/Abraxas-365/odyssey/agent/builder"
 	"github.com/Abraxas-365/odyssey/agent/builds"
 	buildctl "github.com/Abraxas-365/odyssey/agent/controllers/build"
 	"github.com/Abraxas-365/odyssey/agent/source"
@@ -67,6 +72,30 @@ type BuildOptions struct {
 }
 
 func (b BuildOptions) enabled() bool { return b.Registry != "" }
+
+// identityVersion is the layout of BuilderIdentity's input (the prefix of
+// the identity names it): change both when the list below changes.
+const identityVersion = "b1"
+
+// BuilderIdentity names everything besides the code that shapes an image
+// this builder makes: the tools and their pins, the platform, where the
+// image goes and the agent itself. Two builds of the same code under the
+// same identity make the same app, so the control plane may reuse the first
+// one's image. b must have its defaults applied.
+func BuilderIdentity(b BuildOptions) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		identityVersion,
+		b.BuildKitImage,
+		b.Frontend,
+		odybuilder.RailpackVersion,
+		odybuilder.MiseVersion(),
+		b.Platform,
+		b.Registry,
+		strconv.FormatBool(b.InsecureRegistry),
+		Version,
+	}, "\n")))
+	return identityVersion + ":" + hex.EncodeToString(sum[:])
+}
 
 func (b *BuildOptions) defaults() {
 	if b.Platform == "" {
@@ -157,7 +186,7 @@ func addBuilds(cfg *rest.Config, mgr ctrl.Manager, o Options, t *tunnel.Options)
 			return cs.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: container, Follow: true}).Stream(ctx)
 		}}
 	t.Builds = m
-	t.Desired = capabilities{Desired: t.Desired, builder: &fleetv1.Builder{Registry: b.Registry, Platforms: []string{b.Platform}}, scan: b.ScanImage != ""}
+	t.Desired = capabilities{Desired: t.Desired, builder: &fleetv1.Builder{Registry: b.Registry, Platforms: []string{b.Platform}, Identity: BuilderIdentity(b)}, scan: b.ScanImage != ""}
 	return func(c *tunnel.Client) error {
 		srv := source.New(mgr.GetAPIReader(), func(ctx context.Context, id string) (io.ReadCloser, error) {
 			r, err := c.FetchSource(ctx, id)

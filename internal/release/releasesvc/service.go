@@ -188,7 +188,7 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 	if err != nil {
 		return release.Deployment{}, err
 	}
-	d, err := s.startSource(ctx, organization, id, e, src, input.Config, asked{by: input.RequestedBy, message: input.Message})
+	d, err := s.startSource(ctx, organization, id, e, src, input.Config, asked{by: input.RequestedBy, message: input.Message, rebuild: input.Rebuild})
 	if err != nil {
 		if derr := s.builder.Discard(context.WithoutCancel(ctx), organization, src.ID); derr != nil {
 			slog.Warn("could not discard the source of a deployment that did not start; the sweep will", "source", src.ID, "error", derr)
@@ -227,15 +227,16 @@ func (s *Service) DeployUploaded(ctx context.Context, organization identity.Orga
 	if src.Expired() {
 		return release.Deployment{}, errx.Business(build.Message(build.CodeSourceExpired)).WithCode(build.CodeSourceExpired)
 	}
-	return s.startSource(ctx, organization, id, e, src, input.Config, asked{by: input.RequestedBy, via: input.Via})
+	return s.startSource(ctx, organization, id, e, src, input.Config, asked{by: input.RequestedBy, via: input.Via, rebuild: input.Rebuild})
 }
 
 // asked is who asked for a deployment from source, through what ("" derives
-// it from the request) and in what words.
+// it from the request), in what words and whether to build everything again.
 type asked struct {
 	by      identity.UserID
 	via     string
 	message string
+	rebuild bool
 }
 
 // startSource writes the deployment that builds src with cfg, holding the
@@ -265,7 +266,7 @@ func (s *Service) startSource(ctx context.Context, organization identity.Organiz
 		}
 		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &builds[0].Build,
 			Builds: builds, Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size, Git: src.Git}, Config: &cfg,
-			Reason: release.ReasonDeploy, RequestedBy: a.by, RequestedVia: a.via, Message: a.message})
+			Reason: release.ReasonDeploy, RequestedBy: a.by, RequestedVia: a.via, Message: a.message, Rebuild: a.rebuild})
 		return err
 	})
 	if err != nil {

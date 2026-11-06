@@ -258,6 +258,8 @@ type Deployment struct {
 	// the first's), in the app's order; empty for an image and for
 	// deployments from source made before an app had services.
 	Builds []ServiceBuild `json:"builds" db:"-"`
+	// Rebuild: its builds never reuse an earlier image of the same code.
+	Rebuild bool `json:"rebuild" db:"rebuild"`
 	// Config is how a deployment from source runs once built; its release
 	// keeps it from then on (nil for an image: its release's).
 	Config *Config `json:"-" db:"-"`

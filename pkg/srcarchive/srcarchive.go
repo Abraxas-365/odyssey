@@ -51,6 +51,10 @@ type Summary struct {
 	SHA256       string // of the compressed bytes, hex
 	Files        int    // regular files
 	UnpackedSize int64  // bytes of the regular files
+	// ContentDigest identifies the files themselves ("c1:<sha256 hex>"; see
+	// contents): the same folder packed again, by any tool, at any time, has
+	// the same one, which SHA256 does not.
+	ContentDigest string
 }
 
 // Invalid is the refusal of an archive that breaks a rule. Message is for
@@ -187,13 +191,18 @@ func (v *Verifier) Close() error {
 // check reads a whole .tar.gz from r, applying the rules.
 func check(r io.Reader, limits Limits) (Summary, error) {
 	var s Summary
+	var c contents
 	err := walk(r, limits, func(hdr *tar.Header, name string, body io.Reader) error {
 		if hdr.Typeflag == tar.TypeReg {
 			s.Files++
 			s.UnpackedSize += hdr.Size
 		}
+		c.add(hdr, name, body)
 		return nil
 	})
+	if err == nil {
+		s.ContentDigest = c.digest()
+	}
 	return s, err
 }
 

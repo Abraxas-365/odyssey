@@ -309,7 +309,13 @@ func (h *Handler) publish(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.commands.Publish(c.UserContext(), org, id, source.Publish{RequestedBy: user})
+	var body source.Publish
+	if len(c.Body()) > 0 {
+		if err := httpx.DecodeJSON(c, &body); err != nil {
+			return err
+		}
+	}
+	out, err := h.commands.Publish(c.UserContext(), org, id, source.Publish{Rebuild: body.Rebuild, RequestedBy: user})
 	if err != nil {
 		return err
 	}

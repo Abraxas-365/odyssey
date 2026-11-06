@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +30,8 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefake"
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
+	"github.com/gofiber/fiber/v2"
+	"github.com/jmoiron/sqlx"
 )
 
 // monorepo is a tar.gz with one tiny app in each of folders (marker makes
@@ -59,14 +63,25 @@ func monorepo(t *testing.T, marker string, folders ...string) []byte {
 	return buf.Bytes()
 }
 
-// TestDeployServicesFromSource is MS-3a's exit criterion: an app of three
-// services (web, api, a worker), each in its own folder, deploys from one
-// upload as three builds — each of its own folder, all at once — and one
-// version with the three images; one build that fails fails the deployment
-// naming its service, cancels the others and publishes nothing; a folder
-// missing from the code fails with SOURCE_ROOT_MISSING; and the version is
-// made of the services as they were when it was asked for.
-func TestDeployServicesFromSource(t *testing.T) {
+// servicesApp is a platform (fake cluster and builder) with an app whose
+// environment's cluster runs several services.
+type servicesApp struct {
+	db       *sqlx.DB
+	platform *bootstrap.Platform
+	cluster  *releasefake.Cluster
+	runner   *buildfake.Runner
+	app      *fiber.App
+	org      identity.OrganizationID
+	user     identity.UserID
+	token    string
+	proj     project.Project
+	pbase    string // /api/v1/projects/:id
+	base     string // pbase + /environments/:env
+	target   release.Target
+}
+
+func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
+	t.Helper()
 	db := pgtest.DB(t)
 	ctx := context.Background()
 	if err := bootstrap.Migrate(ctx, db); err != nil {
@@ -81,17 +96,7 @@ func TestDeployServicesFromSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster := releasefake.New(releasefake.Options{Behavior: func(release.DesiredApp) releasefake.Outcome { return releasefake.Outcome{} }})
-	// "roto": the api's build fails and the others run until cancelled;
-	// "lento": every build runs until cancelled.
-	runner := buildfake.New(buildfake.Options{Behavior: func(j build.Job) buildfake.Outcome {
-		switch {
-		case j.Source.Name == "roto" && j.Source.Root == "apps/api":
-			return buildfake.Outcome{Reason: build.ReasonFailed, Message: "npm ERR! missing script: build"}
-		case j.Source.Name == "roto", j.Source.Name == "lento":
-			return buildfake.Outcome{Hold: true}
-		}
-		return buildfake.Outcome{}
-	}})
+	runner := buildfake.New(opts)
 	platform, err := bootstrap.Assemble(ctx, db, bootstrap.Options{
 		Workflow:  workflowpg.Options{PollInterval: 20 * time.Millisecond, Backoff: func(int) time.Duration { return 0 }},
 		Cluster:   cluster,
@@ -110,27 +115,27 @@ func TestDeployServicesFromSource(t *testing.T) {
 	go func() {
 		worked <- bootstrap.Work(wctx, platform, config.Worker{}, outboxpg.Options{PollInterval: 20 * time.Millisecond})
 	}()
-	defer func() {
+	t.Cleanup(func() {
 		stop()
 		if err := <-worked; err != nil {
 			t.Errorf("worker: %v", err)
 		}
-	}()
+	})
 
-	app := bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
-	org := identity.NewOrganizationID()
-	user := identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
-	token := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate)
-	res := checked(t, app, http.MethodPost, "/api/v1/projects", token, map[string]any{"name": "Portal"})
+	s := &servicesApp{db: db, platform: platform, cluster: cluster, runner: runner,
+		app: bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil), org: identity.NewOrganizationID(),
+		user: identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")}
+	s.token = httpxtest.Token(s.org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate)
+	res := checked(t, s.app, http.MethodPost, "/api/v1/projects", s.token, map[string]any{"name": "Portal"})
 	httpxtest.Want(t, res, http.StatusCreated)
-	proj := httpxtest.JSON[project.Project](t, res)
-	pbase := "/api/v1/projects/" + proj.ID.String()
-	env := httpxtest.JSON[query.Paginated[project.Environment]](t, checked(t, app, http.MethodGet, pbase+"/environments", token, nil)).Items[0]
-	base := pbase + "/environments/" + env.ID.String()
-	target := release.Target{Organization: org, Project: proj.ID, Environment: env.ID}
+	s.proj = httpxtest.JSON[project.Project](t, res)
+	s.pbase = "/api/v1/projects/" + s.proj.ID.String()
+	env := httpxtest.JSON[query.Paginated[project.Environment]](t, checked(t, s.app, http.MethodGet, s.pbase+"/environments", s.token, nil)).Items[0]
+	s.base = s.pbase + "/environments/" + env.ID.String()
+	s.target = release.Target{Organization: s.org, Project: s.proj.ID, Environment: env.ID}
 
-	// a cluster that runs several services, then the app's three
-	created, err := platform.Fleet.Commands.Create(ctx, org, fleet.Create{Name: "lima", CreatedBy: user})
+	// a cluster that runs several services
+	created, err := platform.Fleet.Commands.Create(ctx, s.org, fleet.Create{Name: "lima", CreatedBy: s.user})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,11 +143,63 @@ func TestDeployServicesFromSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := platform.Fleet.Agents.Connect(ctx, fleet.AgentRef{Organization: org, Cluster: en.Cluster, Serial: en.Certificate.Serial},
+	if err := platform.Fleet.Agents.Connect(ctx, fleet.AgentRef{Organization: s.org, Cluster: en.Cluster, Serial: en.Certificate.Serial},
 		fleet.NewSession(), fleet.Agent{Version: "test", Capabilities: fleet.Capabilities{APIs: []string{fleet.CapabilityAccess, fleet.CapabilityServices}}},
 		"10.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
+	return s
+}
+
+// publish uploads body (name.tar.gz) with config cfg.
+func (s *servicesApp) publish(t *testing.T, name string, body []byte, cfg map[string]any) release.Deployment {
+	t.Helper()
+	res := upload(t, s.app, s.base+"/deployments", s.token, configPart(t, cfg), part{name: "source", file: name + ".tar.gz", body: body})
+	httpxtest.Want(t, res, http.StatusAccepted)
+	return httpxtest.JSON[release.Deployment](t, res)
+}
+
+func (s *servicesApp) await(t *testing.T, id release.DeploymentID) release.Deployment {
+	t.Helper()
+	var d release.Deployment
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if d = httpxtest.JSON[release.Deployment](t, checked(t, s.app, http.MethodGet, s.base+"/deployments/"+id.String(), s.token, nil)); d.Status.Finished() {
+			return d
+		}
+	}
+	t.Fatalf("deployment %s is %s at %s", id, d.Status, d.Step)
+	return d
+}
+
+func (s *servicesApp) build(t *testing.T, id build.ID) build.Build {
+	t.Helper()
+	res := checked(t, s.app, http.MethodGet, s.pbase+"/builds/"+id.String(), s.token, nil)
+	httpxtest.Want(t, res, http.StatusOK)
+	return httpxtest.JSON[build.Build](t, res)
+}
+
+// TestDeployServicesFromSource is MS-3a's exit criterion: an app of three
+// services (web, api, a worker), each in its own folder, deploys from one
+// upload as three builds — each of its own folder, all at once — and one
+// version with the three images; one build that fails fails the deployment
+// naming its service, cancels the others and publishes nothing; a folder
+// missing from the code fails with SOURCE_ROOT_MISSING; and the version is
+// made of the services as they were when it was asked for.
+func TestDeployServicesFromSource(t *testing.T) {
+	ctx := context.Background()
+	// "roto": the api's build fails and the others run until cancelled;
+	// "lento": every build runs until cancelled.
+	s := newServicesApp(t, buildfake.Options{Behavior: func(j build.Job) buildfake.Outcome {
+		switch {
+		case j.Source.Name == "roto" && j.Source.Root == "apps/api":
+			return buildfake.Outcome{Reason: build.ReasonFailed, Message: "npm ERR! missing script: build"}
+		case j.Source.Name == "roto", j.Source.Name == "lento":
+			return buildfake.Outcome{Hold: true}
+		}
+		return buildfake.Outcome{}
+	}})
+	db, app, token, org, pbase, base, cluster, target := s.db, s.app, s.token, s.org, s.pbase, s.base, s.cluster, s.target
+	proj := s.proj
 	httpxtest.Want(t, checked(t, app, http.MethodPut, pbase+"/services", token, map[string]any{"items": []map[string]any{
 		{"name": "web", "root": "apps/web", "route": "/"},
 		{"name": "api", "root": "apps/api", "route": "/api", "strip_prefix": true},
@@ -152,26 +209,15 @@ func TestDeployServicesFromSource(t *testing.T) {
 	cfg := map[string]any{"port": 3000, "health_path": "/"}
 	publish := func(name string, body []byte) release.Deployment {
 		t.Helper()
-		res := upload(t, app, base+"/deployments", token, configPart(t, cfg), part{name: "source", file: name + ".tar.gz", body: body})
-		httpxtest.Want(t, res, http.StatusAccepted)
-		return httpxtest.JSON[release.Deployment](t, res)
+		return s.publish(t, name, body, cfg)
 	}
 	await := func(id release.DeploymentID) release.Deployment {
 		t.Helper()
-		var d release.Deployment
-		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-			if d = httpxtest.JSON[release.Deployment](t, checked(t, app, http.MethodGet, base+"/deployments/"+id.String(), token, nil)); d.Status.Finished() {
-				return d
-			}
-		}
-		t.Fatalf("deployment %s is %s at %s", id, d.Status, d.Step)
-		return d
+		return s.await(t, id)
 	}
 	buildOf := func(id build.ID) build.Build {
 		t.Helper()
-		res := checked(t, app, http.MethodGet, pbase+"/builds/"+id.String(), token, nil)
-		httpxtest.Want(t, res, http.StatusOK)
-		return httpxtest.JSON[build.Build](t, res)
+		return s.build(t, id)
 	}
 	var sources []struct {
 		Name string `db:"name"`
@@ -290,6 +336,163 @@ func TestDeployServicesFromSource(t *testing.T) {
 			if time.Now().After(deadline) {
 				t.Fatalf("the superseded %s build kept running", sb.Name)
 			}
+		}
+	}
+}
+
+// monorepoOf is a tar.gz with one tiny app per folder, each with its own
+// marker (a folder whose marker is unchanged has the same files).
+func monorepoOf(t *testing.T, markers map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, dir := range []string{"apps/web", "apps/api", "apps/jobs"} {
+		marker, ok := markers[dir]
+		if !ok {
+			continue
+		}
+		body := monorepo(t, marker, dir)
+		zr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr := tar.NewReader(zr)
+		for {
+			h, err := tr.Next()
+			if err != nil {
+				break
+			}
+			// another mtime than the first upload's: reuse must not care
+			h.ModTime = time.Now().Add(time.Duration(len(marker)) * time.Hour)
+			if err := tw.WriteHeader(h); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.Copy(tw, tr); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestReuseUnchangedServices is MS-3b's exit criterion: publishing again
+// with only the api changed builds only the api (web and jobs reuse their
+// images and scans, and the version is made of the three); a new builder
+// builds everything; "Reconstruir todo" (rebuild) builds everything.
+func TestReuseUnchangedServices(t *testing.T) {
+	var mu sync.Mutex
+	scanned := map[build.ID]bool{} // the builds the cluster scanned
+	s := newServicesApp(t, buildfake.Options{Scan: func(b build.Build) build.ScanObservation {
+		mu.Lock()
+		scanned[b.ID] = true
+		mu.Unlock()
+		return build.ScanObservation{Phase: build.ScanDone, Scan: build.Scan{Digest: build.DigestOf(b.Image), Low: 1, Tool: "trivy test"}}
+	}})
+	wasScanned := func(id build.ID) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return scanned[id]
+	}
+	// builtOf names the services of d that really built (did not reuse).
+	builtOf := func(d release.Deployment) map[string]int {
+		t.Helper()
+		out := map[string]int{}
+		for _, sb := range d.Builds {
+			if b := s.build(t, sb.Build); b.ReusedFrom == nil {
+				out[sb.Root]++
+			}
+		}
+		return out
+	}
+	httpxtest.Want(t, checked(t, s.app, http.MethodPut, s.pbase+"/services", s.token, map[string]any{"items": []map[string]any{
+		{"name": "web", "root": "apps/web", "route": "/"},
+		{"name": "api", "root": "apps/api", "route": "/api", "strip_prefix": true},
+		{"name": "jobs", "kind": "worker", "root": "apps/jobs"},
+	}}), http.StatusOK)
+	cfg := map[string]any{"port": 3000, "health_path": "/"}
+	ready := func(d release.Deployment) (release.Deployment, release.Release) {
+		t.Helper()
+		d = s.await(t, d.ID)
+		if d.Status != release.StatusReady || d.Release == nil {
+			t.Fatalf("deployment %+v %+v", d, d.Error)
+		}
+		return d, httpxtest.JSON[release.Release](t, checked(t, s.app, http.MethodGet, s.pbase+"/releases/"+d.Release.String(), s.token, nil))
+	}
+
+	// v1 builds the three.
+	v1, r1 := ready(s.publish(t, "portal", monorepoOf(t, map[string]string{"apps/web": "w1", "apps/api": "a1", "apps/jobs": "j1"}), cfg))
+	if got := builtOf(v1); got["apps/web"] != 1 || got["apps/api"] != 1 || got["apps/jobs"] != 1 {
+		t.Fatalf("first deployment built %v", got)
+	}
+	scanOf := func(id build.ID) *build.Scan {
+		t.Helper()
+		for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+			if sc := s.build(t, id).Scan; sc != nil {
+				return sc
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("build %s never got a scan", id)
+			}
+		}
+	}
+	for _, sb := range v1.Builds {
+		scanOf(sb.Build) // the reuse copies them
+	}
+
+	// v2 changes only the api: only the api builds.
+	v2, r2 := ready(s.publish(t, "portal", monorepoOf(t, map[string]string{"apps/web": "w1", "apps/api": "a2", "apps/jobs": "j1"}), cfg))
+	if got := builtOf(v2); got["apps/api"] != 1 || got["apps/web"] != 0 || got["apps/jobs"] != 0 {
+		t.Fatalf("only the api changed, built %v", got)
+	}
+	for i, sb := range v2.Builds {
+		b := s.build(t, sb.Build)
+		if sb.Name == "api" {
+			if b.ReusedFrom != nil || r2.Services[i].Image == r1.Services[i].Image {
+				t.Fatalf("the changed api reused %+v", b)
+			}
+			continue
+		}
+		if b.ReusedFrom == nil || *b.ReusedFrom != v1.Builds[i].Build || r2.Services[i].Image != r1.Services[i].Image {
+			t.Fatalf("%s did not reuse v1's image: %+v", sb.Name, b)
+		}
+		if sc := scanOf(b.ID); sc.Digest != build.DigestOf(b.Image) || sc.Low != 1 || wasScanned(b.ID) {
+			t.Fatalf("%s's scan was not copied: %+v (scanned again: %v)", sb.Name, sc, wasScanned(b.ID))
+		}
+	}
+	if len(r2.Services) != 3 {
+		t.Fatalf("v2's services %+v", r2.Services)
+	}
+
+	// The builder changes (a newer BuildKit, Railpack…): everything builds.
+	s.runner.SetIdentity("b1:" + strings.Repeat("cd", 32))
+	d, _ := ready(s.publish(t, "portal", monorepoOf(t, map[string]string{"apps/web": "w1", "apps/api": "a2", "apps/jobs": "j1"}), cfg))
+	if got := builtOf(d); got["apps/web"] != 1 || got["apps/api"] != 1 || got["apps/jobs"] != 1 {
+		t.Fatalf("a new builder built %v", got)
+	}
+	// Same code again: nothing builds.
+	d, _ = ready(s.publish(t, "portal", monorepoOf(t, map[string]string{"apps/web": "w1", "apps/api": "a2", "apps/jobs": "j1"}), cfg))
+	if got := builtOf(d); len(got) != 0 {
+		t.Fatalf("unchanged code built %v", got)
+	}
+	// "Reconstruir todo": everything builds, and the deployment says so.
+	rebuild := map[string]any{"port": 3000, "health_path": "/", "rebuild": true}
+	d, _ = ready(s.publish(t, "portal", monorepoOf(t, map[string]string{"apps/web": "w1", "apps/api": "a2", "apps/jobs": "j1"}), rebuild))
+	if got := builtOf(d); got["apps/web"] != 1 || got["apps/api"] != 1 || got["apps/jobs"] != 1 {
+		t.Fatalf("rebuild built %v", got)
+	}
+	if !d.Rebuild {
+		t.Fatalf("the deployment does not say rebuild: %+v", d)
+	}
+	for _, sb := range d.Builds {
+		if b := s.build(t, sb.Build); !b.Rebuild || b.ReusedFrom != nil {
+			t.Fatalf("rebuild of %s %+v", sb.Name, b)
 		}
 	}
 }

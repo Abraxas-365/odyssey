@@ -14,6 +14,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/pgerr"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -48,7 +49,7 @@ var messages = pgerr.Messages{
 // ---- sources ----
 
 const sourceColumns = `id, organization_id, project_id, name, size, sha256, files, unpacked_size, blob_key,
-	uploaded_by, created_at, expired_at, git, parent_id, root`
+	uploaded_by, created_at, expired_at, git, parent_id, root, content_digest`
 
 // sourceRow is a source with its git reference still JSON.
 type sourceRow struct {
@@ -89,9 +90,9 @@ func (r *Repository) CreateSource(ctx context.Context, s build.Source) error {
 		}
 	}
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO build.sources
-		(id, organization_id, project_id, name, size, sha256, files, unpacked_size, blob_key, uploaded_by, git, parent_id, root)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-		s.ID, s.Organization, s.Project, s.Name, s.Size, s.SHA256, s.Files, s.UnpackedSize, s.Key, s.UploadedBy, git, s.Parent, s.Root)
+		(id, organization_id, project_id, name, size, sha256, files, unpacked_size, blob_key, uploaded_by, git, parent_id, root, content_digest)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		s.ID, s.Organization, s.Project, s.Name, s.Size, s.SHA256, s.Files, s.UnpackedSize, s.Key, s.UploadedBy, git, s.Parent, s.Root, s.ContentDigest)
 	return pgerr.MapWith(err, "create source", messages)
 }
 
@@ -241,7 +242,8 @@ func (r *Repository) LockEvictable(ctx context.Context, organization identity.Or
 // ---- builds ----
 
 const buildColumns = `id, organization_id, project_id, environment_id, source_id, status, image, error_code, error_message,
-	error_detail, run_id, requested_by, logs_key, logs_index, scan, created_at, updated_at, started_at, finished_at`
+	error_detail, run_id, requested_by, logs_key, logs_index, scan, created_at, updated_at, started_at, finished_at,
+	content_digest, rebuild, builder_identity, reused_from`
 
 type buildRow struct {
 	build.Build
@@ -275,10 +277,67 @@ func (b buildRow) build() (build.Build, error) {
 
 func (r *Repository) CreateBuild(ctx context.Context, b build.Build) error {
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO build.builds
-		(id, organization_id, project_id, environment_id, source_id, status, run_id, requested_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		b.ID, b.Organization, b.Project, b.Environment, b.Source, b.Status, b.Run, b.RequestedBy)
+		(id, organization_id, project_id, environment_id, source_id, status, run_id, requested_by, content_digest, rebuild)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		b.ID, b.Organization, b.Project, b.Environment, b.Source, b.Status, b.Run, b.RequestedBy, b.ContentDigest, b.Rebuild)
 	return pgerr.MapWith(err, "create build", messages)
+}
+
+// ListCandidates is the latest successful build of the project's per
+// builder identity whose code has digest content (most recent first, at
+// most limit), with its scan.
+func (r *Repository) ListCandidates(ctx context.Context, organization identity.OrganizationID, project project.ID, content string, limit int) ([]build.Candidate, error) {
+	var rows []candidateRow
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT id, image, builder_identity, scan FROM (
+		    SELECT DISTINCT ON (builder_identity) id, image, builder_identity, scan, finished_at FROM build.builds
+		    WHERE organization_id = $1 AND project_id = $2 AND content_digest = $3 AND status = 'succeeded'
+		      AND content_digest <> '' AND builder_identity <> ''
+		    ORDER BY builder_identity, finished_at DESC, id
+		 ) latest ORDER BY finished_at DESC, id LIMIT $4`, organization, project, content, limit)
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list reuse candidates", messages)
+	}
+	out := make([]build.Candidate, len(rows))
+	for i, row := range rows {
+		c, err := row.candidate()
+		if err != nil {
+			return nil, err
+		}
+		out[i] = c
+	}
+	return out, nil
+}
+
+type candidateRow struct {
+	build.Candidate
+	RawScan []byte `db:"scan"`
+}
+
+func (row candidateRow) candidate() (build.Candidate, error) {
+	c := row.Candidate
+	if row.RawScan != nil {
+		var s build.Scan
+		if err := json.Unmarshal(row.RawScan, &s); err != nil {
+			return build.Candidate{}, errx.Wrap(err, "decode build scan", errx.TypeInternal)
+		}
+		c.Scan = &s
+	}
+	return c, nil
+}
+
+func (r *Repository) FindCandidate(ctx context.Context, organization identity.OrganizationID, project project.ID, content, identity, image string) (build.Candidate, error) {
+	var row candidateRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `SELECT id, image, builder_identity, scan FROM build.builds
+		WHERE organization_id = $1 AND project_id = $2 AND content_digest = $3 AND builder_identity = $4 AND image = $5
+		  AND status = 'succeeded' AND content_digest <> '' AND builder_identity <> ''
+		ORDER BY finished_at DESC, id LIMIT 1`, organization, project, content, identity, image)
+	if errors.Is(err, sql.ErrNoRows) {
+		return build.Candidate{}, errx.NotFound("no earlier build made this image")
+	}
+	if err != nil {
+		return build.Candidate{}, pgerr.MapWith(err, "find reuse candidate", messages)
+	}
+	return row.candidate()
 }
 
 func (r *Repository) FindBuild(ctx context.Context, organization identity.OrganizationID, id build.ID) (build.Build, error) {
@@ -342,6 +401,15 @@ func (r *Repository) Finish(ctx context.Context, organization identity.Organizat
 		SET status = $3, image = $4, error_code = $5, error_message = $6, error_detail = $7, finished_at = now(), updated_at = now()
 		WHERE organization_id = $1 AND id = $2 AND finished_at IS NULL`, organization, id, status, image, code, msg, detail)
 	return affected(res, err, "finish build", "build not found or finished")
+}
+
+// SetOrigin records, on a build that just succeeded, the builder that made
+// its image and the build whose image it reused (nil: it built).
+func (r *Repository) SetOrigin(ctx context.Context, organization identity.OrganizationID, id build.ID, builder string, reusedFrom *build.ID) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE build.builds SET builder_identity = $3, reused_from = $4, updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND status = 'succeeded' AND builder_identity = '' AND reused_from IS NULL`,
+		organization, id, builder, reusedFrom)
+	return affected(res, err, "set build origin", "build not found, not succeeded or its origin is set")
 }
 
 func (r *Repository) SetLogs(ctx context.Context, organization identity.OrganizationID, id build.ID, key string, index build.LogIndex) error {

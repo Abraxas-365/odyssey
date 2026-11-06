@@ -28,12 +28,12 @@ func runScanSummary() error {
 	return os.WriteFile(TerminationLog, b, 0o644)
 }
 
-// Run is `odyssey-agent builder prepare|build|scan-summary`: it does the
+// Run is `odyssey-agent builder reuse|prepare|build|scan-summary`: it does the
 // step, writes its Result to the termination message and exits non-zero on
 // failure.
 func Run(args []string) error {
-	if len(args) != 1 || (args[0] != "prepare" && args[0] != "build" && args[0] != "scan-summary") {
-		return errors.New("usage: odyssey-agent builder prepare|build|scan-summary")
+	if len(args) != 1 || (args[0] != "reuse" && args[0] != "prepare" && args[0] != "build" && args[0] != "scan-summary") {
+		return errors.New("usage: odyssey-agent builder reuse|prepare|build|scan-summary")
 	}
 	if args[0] == "scan-summary" {
 		return runScanSummary()
@@ -42,6 +42,8 @@ func Run(args []string) error {
 	defer stop()
 	var r Result
 	switch args[0] {
+	case "reuse":
+		r = runReuse(ctx)
 	case "prepare":
 		o, err := prepareFromEnv()
 		if err != nil {

@@ -117,6 +117,19 @@ type Repository interface {
 	MarkRunning(ctx context.Context, organization identity.OrganizationID, build ID) error
 	// Finish moves an unfinished build to a final status.
 	Finish(ctx context.Context, organization identity.OrganizationID, build ID, status Status, image string, failure *Failure) error
+	// SetOrigin records, once, on a build that just succeeded, the identity
+	// of the builder that made its image and the build whose image it reused
+	// (nil when it built). NotFound otherwise.
+	SetOrigin(ctx context.Context, organization identity.OrganizationID, build ID, builder string, reusedFrom *ID) error
+	// ListCandidates is the latest successful build of the project per
+	// builder identity whose source has the content digest (most recent
+	// first, at most limit), with its scan. Builds without a known builder
+	// or digest are never candidates.
+	ListCandidates(ctx context.Context, organization identity.OrganizationID, project project.ID, content string, limit int) ([]Candidate, error)
+	// FindCandidate is the latest successful build of the project with the
+	// content digest, builder identity and image (what a reuse reused), with
+	// its scan; NotFound when there is none.
+	FindCandidate(ctx context.Context, organization identity.OrganizationID, project project.ID, content, identity, image string) (Candidate, error)
 	// SetLogs records where a finished build's log is archived, with its
 	// index (where to start reading for a seq).
 	SetLogs(ctx context.Context, organization identity.OrganizationID, build ID, key string, index LogIndex) error

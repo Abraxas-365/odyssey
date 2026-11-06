@@ -27,6 +27,17 @@ type OdysseyBuildSpec struct {
 	// +kubebuilder:validation:Minimum=60
 	// +kubebuilder:validation:Maximum=7200
 	TimeoutSeconds int32 `json:"timeoutSeconds"`
+	// ReuseImage is the image of an earlier build of the same code under
+	// the same builder (<imageRepository>@sha256:<digest>): when it is still
+	// in the registry the build tags it and builds nothing.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$`
+	// +kubebuilder:validation:MaxLength=300
+	ReuseImage string `json:"reuseImage,omitempty"`
+	// SkipScan: the reused image's scan is recent and the control plane
+	// copies it, so a reused image is not scanned again.
+	// +optional
+	SkipScan bool `json:"skipScan,omitempty"`
 }
 
 // BuildSource identifies the uploaded archive the build fetches through
@@ -83,6 +94,10 @@ type OdysseyBuildStatus struct {
 	// deleted a while after (agent/controllers/build Config.Retention).
 	// +optional
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+	// Reused: the build succeeded by reusing spec.reuseImage (nothing was
+	// built; imageDigest is the reused image's).
+	// +optional
+	Reused bool `json:"reused,omitempty"`
 }
 
 // OdysseyBuild is one build of an app from uploaded source: the agent runs

@@ -117,7 +117,7 @@ func TestRepository(t *testing.T) {
 	first := begin(1)
 	// requested_via and message are stored with the deployment, and read back
 	// in lists too; a tenant that does not own it sees neither
-	if got, err := repo.FindDeployment(ctx, org, first.ID); err != nil || got.RequestedVia != "assistant:codex" || got.Message != "Versión 1 con ñ" {
+	if got, err := repo.FindDeployment(ctx, org, first.ID); err != nil || got.RequestedVia != "assistant:codex" || got.Message != "Versión 1 con ñ" || got.Rebuild {
 		t.Fatalf("requested_via/message %q %q %v", got.RequestedVia, got.Message, err)
 	}
 	// the column holds at most 200 characters, whatever the caller validated
@@ -263,13 +263,13 @@ func TestRepository(t *testing.T) {
 	cfg := release.Config{Port: 3000, HealthPath: "/", Replicas: 1, Env: map[string]string{"A": "1"}}
 	third := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env,
 		Build: &b, Source: &release.DeploymentSource{ID: src, Name: "visitas.tar.gz", Size: 1234}, Config: &cfg,
-		Status: release.StatusBuilding, Reason: release.ReasonDeploy, Step: release.StepBuild, Revision: 3, Run: workflow.NewRunID()}
+		Status: release.StatusBuilding, Reason: release.ReasonDeploy, Step: release.StepBuild, Revision: 3, Run: workflow.NewRunID(), Rebuild: true}
 	if err := tx.Do(ctx, func(ctx context.Context) error { return repo.CreateDeployment(ctx, third) }); err != nil {
 		t.Fatal(err)
 	}
 	got, err = repo.FindDeployment(ctx, org, third.ID)
 	if err != nil || got.Release != nil || got.Image != "" || got.Build == nil || *got.Build != b || got.Source == nil ||
-		*got.Source != *third.Source || got.Config == nil || got.Config.Env["A"] != "1" || got.Status != release.StatusBuilding {
+		*got.Source != *third.Source || got.Config == nil || got.Config.Env["A"] != "1" || got.Status != release.StatusBuilding || !got.Rebuild {
 		t.Fatalf("building deployment %+v %v", got, err)
 	}
 	// a building deployment cannot move on without its release

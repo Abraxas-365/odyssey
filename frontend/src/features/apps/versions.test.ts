@@ -33,6 +33,7 @@ function dep(over: Partial<Deployment>): Deployment {
     requested_by_name: '',
     requested_via: 'console',
     message: '',
+    rebuild: false,
     created_at: `2026-10-27T10:${String(n).padStart(2, '0')}:00Z`,
     updated_at: '2026-10-27T10:00:00Z',
     finished_at: `2026-10-27T10:${String(n).padStart(2, '0')}:30Z`,

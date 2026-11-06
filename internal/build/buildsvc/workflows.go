@@ -73,6 +73,11 @@ func (s *Service) scan(ctx context.Context, st *workflow.State) (any, error) {
 	if b.Status != build.StatusSucceeded || b.Scan != nil {
 		return nil, nil
 	}
+	if copied, ok, err := s.copiedScan(ctx, b); err != nil {
+		return nil, err
+	} else if ok {
+		return nil, s.record(ctx, b.Organization, b.ID, copied)
+	}
 	o, err := s.runner.ObserveScan(ctx, b)
 	if err != nil {
 		return nil, err
@@ -93,6 +98,24 @@ func (s *Service) scan(ctx context.Context, st *workflow.State) (any, error) {
 		scan.Critical, scan.High, scan.Medium, scan.Low = 0, 0, 0, 0
 	}
 	return nil, s.record(ctx, b.Organization, b.ID, scan)
+}
+
+// copiedScan is the scan of the build whose image b reused, when it is
+// known, of the same image and was recent when b was asked for (the
+// dispatch told the runner not to scan it again: reuse).
+func (s *Service) copiedScan(ctx context.Context, b build.Build) (build.Scan, bool, error) {
+	if b.ReusedFrom == nil {
+		return build.Scan{}, false, nil
+	}
+	from, err := s.repo.FindBuild(ctx, b.Organization, *b.ReusedFrom)
+	if err != nil {
+		return build.Scan{}, false, err
+	}
+	c := build.Candidate{Build: from.ID, Image: from.Image, Identity: from.BuilderIdentity, Scan: from.Scan}
+	if !c.CopiesScan(b.CreatedAt) || from.Image != b.Image || from.Scan.Digest != build.DigestOf(b.Image) {
+		return build.Scan{}, false, nil
+	}
+	return *from.Scan, true, nil
 }
 
 // scanFailed records the scan that never came (the step timed out or kept
@@ -158,13 +181,39 @@ func (s *Service) dispatch(ctx context.Context, st *workflow.State) (any, error)
 	if src.Expired() {
 		return nil, workflow.Fail(build.Refused(build.CodeSourceExpired, "the source was swept before it was built"))
 	}
-	if err := s.runner.Dispatch(ctx, build.Job{Build: b, Source: src}); err != nil {
+	reuse, err := s.reuse(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.runner.Dispatch(ctx, build.Job{Build: b, Source: src, Reuse: reuse}); err != nil {
 		if refused(err) {
 			return nil, workflow.Fail(err)
 		}
 		return nil, err // the runner is unreachable: retry
 	}
 	return nil, nil
+}
+
+// reuse are the images of earlier builds of the same code the runner may
+// reuse instead of building: the latest per builder that made one (the
+// runner keeps the one its builder made). None when the build asks to be
+// rebuilt or its code has no digest.
+func (s *Service) reuse(ctx context.Context, b build.Build) ([]build.Reuse, error) {
+	if b.Rebuild || b.ContentDigest == "" {
+		return nil, nil
+	}
+	cands, err := s.repo.ListCandidates(ctx, b.Organization, b.Project, b.ContentDigest, build.MaxReuse)
+	if err != nil {
+		return nil, err
+	}
+	now := b.CreatedAt // the scan step decides the same way (copiedScan)
+	out := make([]build.Reuse, 0, len(cands))
+	for _, c := range cands {
+		if c.Build != b.ID && build.PinnedImage(c.Image) {
+			out = append(out, build.Reuse{Image: c.Image, Identity: c.Identity, SkipScan: c.CopiesScan(now)})
+		}
+	}
+	return out, nil
 }
 
 // waited is the wait step's output.
@@ -217,7 +266,9 @@ func (s *Service) finish(ctx context.Context, st *workflow.State) (any, error) {
 			switch {
 			case o.Phase == build.PhaseSucceeded && build.PinnedImage(o.Image):
 				b.Image = o.Image
-				err = s.settle(ctx, b, build.StatusSucceeded, nil)
+				if b.BuilderIdentity, b.ReusedFrom, err = s.origin(ctx, b, o); err == nil {
+					err = s.settle(ctx, b, build.StatusSucceeded, nil)
+				}
 			case o.Phase == build.PhaseSucceeded:
 				f := build.Failure{Code: build.CodeInternal, Message: build.Message(build.CodeInternal),
 					Detail: "the builder reported an image not pinned by digest"}
@@ -232,6 +283,23 @@ func (s *Service) finish(ctx context.Context, st *workflow.State) (any, error) {
 		}
 		return s.startArchive(ctx, b)
 	})
+}
+
+// origin is the builder that made a succeeded build's image and, when the
+// runner reused an earlier build's image instead of building, that build
+// (the candidate with that image and builder; nil when it built).
+func (s *Service) origin(ctx context.Context, b build.Build, o build.Observation) (string, *build.ID, error) {
+	if o.Reused == "" || o.Reused != o.Image || b.ContentDigest == "" || o.Builder == "" {
+		return o.Builder, nil, nil
+	}
+	c, err := s.repo.FindCandidate(ctx, b.Organization, b.Project, b.ContentDigest, o.Builder, o.Image)
+	if errx.IsType(err, errx.TypeNotFound) {
+		return o.Builder, nil, nil // not one it was offered: counts as built
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return o.Builder, &c.Build, nil
 }
 
 // runFailed fails the build (unless something else finished it) and has its
@@ -267,6 +335,11 @@ func (s *Service) settle(ctx context.Context, b build.Build, status build.Status
 		return err
 	}
 	if status == build.StatusSucceeded {
+		if b.BuilderIdentity != "" || b.ReusedFrom != nil {
+			if err := s.repo.SetOrigin(ctx, b.Organization, b.ID, b.BuilderIdentity, b.ReusedFrom); err != nil {
+				return err
+			}
+		}
 		if err := s.events.Publish(ctx, build.NewSucceeded(b.Organization, b, n)); err != nil {
 			return err
 		}

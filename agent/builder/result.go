@@ -26,9 +26,11 @@ const (
 )
 
 // Result is what a builder container reports: Digest when it pushed the
-// image, Reason and Message when it failed.
+// image, Reason and Message when it failed. Reused: the Digest is an earlier
+// build's image, which this build only tagged.
 type Result struct {
 	Digest  string `json:"digest,omitempty"`
+	Reused  bool   `json:"reused,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
 }

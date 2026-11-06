@@ -1461,7 +1461,13 @@ type Builder struct {
 	// cluster's nodes reach it (host[:port][/path], e.g. "registry.example.com/odyssey").
 	Registry string `protobuf:"bytes,1,opt,name=registry,proto3" json:"registry,omitempty"`
 	// platforms it builds for (e.g. "linux/amd64").
-	Platforms     []string `protobuf:"bytes,2,rep,name=platforms,proto3" json:"platforms,omitempty"`
+	Platforms []string `protobuf:"bytes,2,rep,name=platforms,proto3" json:"platforms,omitempty"`
+	// identity names everything that shapes an image besides the code: the
+	// builder's pinned images and versions, the platform and the registry
+	// ("b1:<sha256 hex>"). Two builds of the same code with the same identity
+	// make the same app, so the control plane may reuse the first one's
+	// image (Build.reuse_image). Empty (agents older than MS-3b): never reused.
+	Identity      string `protobuf:"bytes,3,opt,name=identity,proto3" json:"identity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1510,6 +1516,13 @@ func (x *Builder) GetPlatforms() []string {
 	return nil
 }
 
+func (x *Builder) GetIdentity() string {
+	if x != nil {
+		return x.Identity
+	}
+	return ""
+}
+
 // Build asks the cluster to turn a source into an image.
 type Build struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -1526,8 +1539,18 @@ type Build struct {
 	CacheRef string `protobuf:"bytes,7,opt,name=cache_ref,json=cacheRef,proto3" json:"cache_ref,omitempty"`
 	// timeout_seconds bounds the build in the cluster.
 	TimeoutSeconds int32 `protobuf:"varint,8,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// reuse_image ("<image_repository>@sha256:<64 hex>") is an image an
+	// earlier build made of the same code with the same builder identity.
+	// When it is still in the registry the agent tags it as this build's and
+	// reports it succeeded with that digest and reused set, without building;
+	// when it is gone, it builds as usual. An agent that does not know the
+	// field builds as usual too.
+	ReuseImage string `protobuf:"bytes,9,opt,name=reuse_image,json=reuseImage,proto3" json:"reuse_image,omitempty"`
+	// skip_scan: the reused image's scan is recent and the control plane
+	// copies it, so a reused image is not scanned again (a built one is).
+	SkipScan      bool `protobuf:"varint,10,opt,name=skip_scan,json=skipScan,proto3" json:"skip_scan,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Build) Reset() {
@@ -1614,6 +1637,20 @@ func (x *Build) GetTimeoutSeconds() int32 {
 		return x.TimeoutSeconds
 	}
 	return 0
+}
+
+func (x *Build) GetReuseImage() string {
+	if x != nil {
+		return x.ReuseImage
+	}
+	return ""
+}
+
+func (x *Build) GetSkipScan() bool {
+	if x != nil {
+		return x.SkipScan
+	}
+	return false
 }
 
 // SourceRef is what FetchSource must return for a build.
@@ -1766,8 +1803,11 @@ type BuildStatus struct {
 	ImageDigest string `protobuf:"bytes,3,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
 	// reason explains a failed phase: "unsupported", "source", "push",
 	// "timeout" or "failed".
-	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
-	Message       string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	Reason  string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	Message string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	// reused: the build succeeded by reusing Build.reuse_image (nothing was
+	// built; image_digest is the reused image's).
+	Reused        bool `protobuf:"varint,6,opt,name=reused,proto3" json:"reused,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1835,6 +1875,13 @@ func (x *BuildStatus) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *BuildStatus) GetReused() bool {
+	if x != nil {
+		return x.Reused
+	}
+	return false
 }
 
 // ScanReport carries the scans that ended. A cluster whose agent lists the
@@ -3290,10 +3337,11 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x02 \x01(\fR\tpublicKey\x12\x14\n" +
-	"\x05suite\x18\x03 \x01(\tR\x05suite\"C\n" +
+	"\x05suite\x18\x03 \x01(\tR\x05suite\"_\n" +
 	"\aBuilder\x12\x1a\n" +
 	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1c\n" +
-	"\tplatforms\x18\x02 \x03(\tR\tplatforms\"\xaf\x02\n" +
+	"\tplatforms\x18\x02 \x03(\tR\tplatforms\x12\x1a\n" +
+	"\bidentity\x18\x03 \x01(\tR\bidentity\"\xed\x02\n" +
 	"\x05Build\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12'\n" +
 	"\x0forganization_id\x18\x02 \x01(\tR\x0eorganizationId\x12\x1d\n" +
@@ -3303,20 +3351,25 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x06source\x18\x05 \x01(\v2\x13.fleet.v1.SourceRefR\x06source\x12)\n" +
 	"\x10image_repository\x18\x06 \x01(\tR\x0fimageRepository\x12\x1b\n" +
 	"\tcache_ref\x18\a \x01(\tR\bcacheRef\x12'\n" +
-	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\"7\n" +
+	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\x12\x1f\n" +
+	"\vreuse_image\x18\t \x01(\tR\n" +
+	"reuseImage\x12\x1b\n" +
+	"\tskip_scan\x18\n" +
+	" \x01(\bR\bskipScan\"7\n" +
 	"\tSourceRef\x12\x16\n" +
 	"\x06sha256\x18\x01 \x01(\tR\x06sha256\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\"(\n" +
 	"\vCancelBuild\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\"<\n" +
 	"\vBuildReport\x12-\n" +
-	"\x06builds\x18\x01 \x03(\v2\x15.fleet.v1.BuildStatusR\x06builds\"\x93\x01\n" +
+	"\x06builds\x18\x01 \x03(\v2\x15.fleet.v1.BuildStatusR\x06builds\"\xab\x01\n" +
 	"\vBuildStatus\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12!\n" +
 	"\fimage_digest\x18\x03 \x01(\tR\vimageDigest\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x18\n" +
-	"\amessage\x18\x05 \x01(\tR\amessage\"8\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\x12\x16\n" +
+	"\x06reused\x18\x06 \x01(\bR\x06reused\"8\n" +
 	"\n" +
 	"ScanReport\x12*\n" +
 	"\x05scans\x18\x01 \x03(\v2\x14.fleet.v1.ScanStatusR\x05scans\"\xf2\x01\n" +

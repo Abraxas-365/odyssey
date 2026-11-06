@@ -116,6 +116,9 @@ type Push struct {
 	Error      *Failure              `json:"error" db:"-"`
 	// RequestedBy is zero for a webhook or the poll.
 	RequestedBy identity.UserID `json:"requested_by" db:"requested_by"`
+	// Rebuild: its deployment builds every service again (someone asked to
+	// publish it with "Reconstruir todo").
+	Rebuild bool `json:"rebuild" db:"rebuild"`
 	// RequestedClient is the client of the request that queued it ("mcp:<id>"
 	// for an assistant, the console's id, "" for a webhook or the poll). The
 	// deployment's requested_via says who asked, not where the code lives.
@@ -241,8 +244,11 @@ func ValidRoot(root string) error {
 	return nil
 }
 
-// Publish asks to publish the head of the connected branch now.
+// Publish asks to publish the head of the connected branch now. Rebuild
+// builds every service again even when the same code was built before (a
+// newer base image, a fix outside the code).
 type Publish struct {
+	Rebuild     bool            `json:"rebuild"`
 	RequestedBy identity.UserID `json:"-"`
 }
 

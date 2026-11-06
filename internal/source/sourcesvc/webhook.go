@@ -129,7 +129,7 @@ func (s *Service) queueMoved(ctx context.Context, c source.Connection, head sour
 	if err != nil || p.Archived() {
 		return err
 	}
-	push, err := s.queue(ctx, locked, head, trigger, identity.UserID{}, github(sender))
+	push, err := s.queue(ctx, locked, head, trigger, identity.UserID{}, github(sender), false)
 	if err != nil {
 		return err
 	}
@@ -289,7 +289,7 @@ func (s *Service) reconcile(ctx context.Context, c source.Connection, now time.T
 			case p.Archived():
 				observed = c.ETag // look at it again once the app is back
 			default:
-				push, err := s.queue(ctx, locked, head, source.TriggerReconcile, identity.UserID{}, github(""))
+				push, err := s.queue(ctx, locked, head, source.TriggerReconcile, identity.UserID{}, github(""), false)
 				if err != nil {
 					return err
 				}

@@ -96,6 +96,83 @@ func TestDispatchBuildWithoutCluster(t *testing.T) {
 	}
 }
 
+// A build carries earlier images of the same code: the cluster is told to
+// reuse only the one its own builder made in its own repository, and a
+// report of a reuse counts only for that image.
+func TestDispatchBuildReuse(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	agent := e.enrolled(t, "lima")
+	idA, idB := "b1:"+strings.Repeat("aa", 32), "b1:"+strings.Repeat("bb", 32)
+	builder := *zot
+	builder.Identity = idA
+	session := e.connect(t, agent, &builder)
+
+	b := e.desiredBuild(project.NewEnvironmentID())
+	repo := "zot.odyssey-system.svc:5000/" + e.org.String() + "/" + b.Project.String()
+	mine := repo + "@sha256:" + strings.Repeat("1", 64)
+	b.Reuse = []fleet.Reuse{
+		{Image: repo + "@sha256:" + strings.Repeat("2", 64), Identity: idB, SkipScan: true}, // another builder
+		{Image: "elsewhere.test/x@sha256:" + strings.Repeat("3", 64), Identity: idA},        // another registry
+		{Image: mine, Identity: idA, SkipScan: true},
+	}
+	if err := e.svc.DispatchBuild(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := e.svc.DesiredBuild(ctx, agent, b.ID)
+	if err != nil || got.ReuseImage != mine || !got.SkipScan || got.BuilderIdentity != idA {
+		t.Fatalf("desired %+v %v", got, err)
+	}
+	// A reuse claimed for another digest is not a reuse.
+	if err := e.svc.ReportBuilds(ctx, agent, session, []fleet.BuildStatus{{Build: b.ID, Phase: fleet.BuildSucceeded,
+		Digest: "sha256:" + strings.Repeat("9", 64), Reused: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := e.svc.BuildStatus(ctx, e.org, b.ID); s.Reused || s.Builder != idA {
+		t.Fatalf("status %+v", s)
+	}
+	b2 := e.desiredBuild(project.NewEnvironmentID())
+	b2.Project = b.Project
+	b2.Reuse = []fleet.Reuse{{Image: mine, Identity: idA}}
+	if err := e.svc.DispatchBuild(ctx, b2); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ReportBuilds(ctx, agent, session, []fleet.BuildStatus{{Build: b2.ID, Phase: fleet.BuildSucceeded,
+		Digest: "sha256:" + strings.Repeat("1", 64), Reused: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := e.svc.BuildStatus(ctx, e.org, b2.ID); !s.Reused || s.Image != mine {
+		t.Fatalf("reused status %+v", s)
+	}
+
+	// Nothing of another builder, and none for a builder without identity.
+	b3 := e.desiredBuild(project.NewEnvironmentID())
+	b3.Project = b.Project
+	b3.Reuse = []fleet.Reuse{{Image: repo + "@sha256:" + strings.Repeat("2", 64), Identity: idB}}
+	if err := e.svc.DispatchBuild(ctx, b3); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := e.svc.DesiredBuild(ctx, agent, b3.ID); got.ReuseImage != "" || got.SkipScan {
+		t.Fatalf("another builder's image %+v", got)
+	}
+	e.connect(t, agent, zot)
+	b4 := e.desiredBuild(project.NewEnvironmentID())
+	b4.Project = b.Project
+	b4.Reuse = []fleet.Reuse{{Image: mine, Identity: idA}}
+	if err := e.svc.DispatchBuild(ctx, b4); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := e.svc.DesiredBuild(ctx, agent, b4.ID); got.ReuseImage != "" || got.BuilderIdentity != "" {
+		t.Fatalf("builder without identity %+v", got)
+	}
+	// A malformed candidate is refused.
+	bad := e.desiredBuild(project.NewEnvironmentID())
+	bad.Reuse = []fleet.Reuse{{Image: repo + ":latest", Identity: idA}}
+	if err := e.svc.DispatchBuild(ctx, bad); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("reuse by tag: %v", err)
+	}
+}
+
 // The agent's reports move the status; a final phase never changes, and a
 // finished build's source is no longer served.
 func TestReportBuilds(t *testing.T) {

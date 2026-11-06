@@ -26,28 +26,30 @@ const (
 	SubjectKind       = "build"
 )
 
-// SourceUploaded v1.
+// SourceUploaded v1. ContentDigest identifies its files (additive, MS-3b).
 type SourceUploaded struct {
-	Source       SourceID `json:"source_id"`
-	Project      string   `json:"project_id"`
-	Name         string   `json:"name"`
-	Size         int64    `json:"size"`
-	SHA256       string   `json:"sha256"`
-	Files        int      `json:"files"`
-	UnpackedSize int64    `json:"unpacked_size"`
+	Source        SourceID `json:"source_id"`
+	Project       string   `json:"project_id"`
+	Name          string   `json:"name"`
+	Size          int64    `json:"size"`
+	SHA256        string   `json:"sha256"`
+	Files         int      `json:"files"`
+	UnpackedSize  int64    `json:"unpacked_size"`
+	ContentDigest string   `json:"content_digest"`
 }
 
 // SourceDerived v1: a service's folder was cut from an uploaded source
 // (Parent), to be built on its own.
 type SourceDerived struct {
-	Source       SourceID `json:"source_id"`
-	Parent       SourceID `json:"parent_id"`
-	Project      string   `json:"project_id"`
-	Root         string   `json:"root"`
-	Size         int64    `json:"size"`
-	SHA256       string   `json:"sha256"`
-	Files        int      `json:"files"`
-	UnpackedSize int64    `json:"unpacked_size"`
+	Source        SourceID `json:"source_id"`
+	Parent        SourceID `json:"parent_id"`
+	Project       string   `json:"project_id"`
+	Root          string   `json:"root"`
+	Size          int64    `json:"size"`
+	SHA256        string   `json:"sha256"`
+	Files         int      `json:"files"`
+	UnpackedSize  int64    `json:"unpacked_size"`
+	ContentDigest string   `json:"content_digest"`
 }
 
 // SourceExpired v1: its bytes were deleted (the images built from it stay).
@@ -56,20 +58,24 @@ type SourceExpired struct {
 	Project string   `json:"project_id"`
 }
 
-// Started v1.
+// Started v1. Rebuild: it asked never to reuse an earlier image (additive).
 type Started struct {
 	Build       ID       `json:"build_id"`
 	Project     string   `json:"project_id"`
 	Environment string   `json:"environment_id"`
 	Source      SourceID `json:"source_id"`
+	Rebuild     bool     `json:"rebuild"`
 }
 
-// Succeeded v1: Image is pinned by digest.
+// Succeeded v1: Image is pinned by digest. ReusedFrom is the earlier build
+// of the same code whose image it reused instead of building (null when it
+// built; additive).
 type Succeeded struct {
 	Build       ID     `json:"build_id"`
 	Project     string `json:"project_id"`
 	Environment string `json:"environment_id"`
 	Image       string `json:"image"`
+	ReusedFrom  *ID    `json:"reused_from"`
 }
 
 // Failed v1.
@@ -113,7 +119,7 @@ func NewSourceUploaded(org identity.OrganizationID, actor identity.UserID, s Sou
 	return event.New(EventSourceUploaded, 1, org, actor, event.Subject(SourceSubjectKind, s.ID),
 		"Subió el código de "+n.Project,
 		SourceUploaded{Source: s.ID, Project: s.Project.String(), Name: s.Name, Size: s.Size, SHA256: s.SHA256,
-			Files: s.Files, UnpackedSize: s.UnpackedSize})
+			Files: s.Files, UnpackedSize: s.UnpackedSize, ContentDigest: s.ContentDigest})
 }
 
 // NewSourceDerived is the event of s, cut from its parent (s.Parent set).
@@ -122,7 +128,7 @@ func NewSourceDerived(org identity.OrganizationID, actor identity.UserID, s Sour
 	return event.New(EventSourceDerived, 1, org, actor, event.Subject(SourceSubjectKind, s.ID),
 		"Preparó la carpeta "+s.Root+" de "+n.Project,
 		SourceDerived{Source: s.ID, Parent: *s.Parent, Project: s.Project.String(), Root: s.Root, Size: s.Size, SHA256: s.SHA256,
-			Files: s.Files, UnpackedSize: s.UnpackedSize})
+			Files: s.Files, UnpackedSize: s.UnpackedSize, ContentDigest: s.ContentDigest})
 }
 
 func NewSourceExpired(org identity.OrganizationID, s Source) event.Event {
@@ -134,13 +140,16 @@ func NewSourceExpired(org identity.OrganizationID, s Source) event.Event {
 func NewStarted(org identity.OrganizationID, actor identity.UserID, b Build, n Names) event.Event {
 	return event.New(EventStarted, 1, org, actor, event.Subject(SubjectKind, b.ID),
 		"Empezó a construir "+n.Project,
-		Started{Build: b.ID, Project: b.Project.String(), Environment: b.Environment.String(), Source: b.Source})
+		Started{Build: b.ID, Project: b.Project.String(), Environment: b.Environment.String(), Source: b.Source, Rebuild: b.Rebuild})
 }
 
 func NewSucceeded(org identity.OrganizationID, b Build, n Names) event.Event {
-	return event.New(EventSucceeded, 1, org, b.RequestedBy, event.Subject(SubjectKind, b.ID),
-		"Construyó "+n.Project,
-		Succeeded{Build: b.ID, Project: b.Project.String(), Environment: b.Environment.String(), Image: b.Image})
+	summary := "Construyó " + n.Project
+	if b.ReusedFrom != nil {
+		summary = "Reutilizó la imagen de " + n.Project + " (mismo código)"
+	}
+	return event.New(EventSucceeded, 1, org, b.RequestedBy, event.Subject(SubjectKind, b.ID), summary,
+		Succeeded{Build: b.ID, Project: b.Project.String(), Environment: b.Environment.String(), Image: b.Image, ReusedFrom: b.ReusedFrom})
 }
 
 func NewFailed(org identity.OrganizationID, b Build, f Failure, n Names) event.Event {

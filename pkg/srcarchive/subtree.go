@@ -42,6 +42,7 @@ func Subtree(r io.Reader, w io.Writer, root string, limits Limits) (Summary, err
 	tw := tar.NewWriter(zw)
 	prefix := root + "/"
 	var sum Summary
+	var c contents
 	entries := 0
 	err := walk(r, limits, func(hdr *tar.Header, name string, body io.Reader) error {
 		if !strings.HasPrefix(name, prefix) {
@@ -64,12 +65,17 @@ func Subtree(r io.Reader, w io.Writer, root string, limits Limits) (Summary, err
 			return out.failure(err)
 		}
 		entries++
-		if hdr.Typeflag == tar.TypeReg {
-			if _, err := io.Copy(tw, body); err != nil {
+		switch hdr.Typeflag {
+		case tar.TypeReg:
+			h := sha256.New()
+			if _, err := io.Copy(io.MultiWriter(tw, h), body); err != nil {
 				return out.failure(err)
 			}
+			c.file(hdr, rel, h.Sum(nil))
 			sum.Files++
 			sum.UnpackedSize += hdr.Size
+		case tar.TypeSymlink:
+			c.link(rel, hdr.Linkname)
 		}
 		return nil
 	})
@@ -86,6 +92,7 @@ func Subtree(r io.Reader, w io.Writer, root string, limits Limits) (Summary, err
 		return Summary{}, out.failure(err)
 	}
 	sum.Size, sum.SHA256 = out.size, hex.EncodeToString(out.hash.Sum(nil))
+	sum.ContentDigest = c.digest()
 	return sum, nil
 }
 

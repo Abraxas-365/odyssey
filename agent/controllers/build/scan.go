@@ -416,6 +416,9 @@ func (r *Reconciler) ensureScan(ctx context.Context, b *v1alpha1.OdysseyBuild) e
 	if _, gaveUp := ScanNotStarted(b); gaveUp {
 		return nil
 	}
+	if b.Spec.SkipScan && b.Status.Reused {
+		return nil // the control plane copies the earlier image's scan
+	}
 	var job batchv1.Job
 	err := r.Client.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: ScanJobName(b.Name)}, &job)
 	if err == nil {

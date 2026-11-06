@@ -168,6 +168,9 @@ func (d Deploy) Validate() error {
 type DeploySource struct {
 	Name    string `json:"name"`
 	Message string `json:"message"`
+	// Rebuild builds every service even when an earlier build of the same
+	// code could be reused (a newer base image, a fix outside the code).
+	Rebuild bool `json:"rebuild"`
 	Config
 	RequestedBy identity.UserID `json:"-"` // from the token
 }
@@ -197,6 +200,8 @@ const MaxSourceName = 200
 // deployment shows the source's name and commit.
 type DeployUploaded struct {
 	Source build.SourceID `json:"source_id"`
+	// Rebuild: as in DeploySource.
+	Rebuild bool `json:"rebuild"`
 	Config
 	RequestedBy identity.UserID `json:"-"`
 	// Via names the requester when it is not the caller's own client (the

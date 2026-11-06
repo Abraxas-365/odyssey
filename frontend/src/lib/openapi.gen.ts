@@ -1441,7 +1441,7 @@ export interface paths {
         put?: never;
         /**
          * Publish the branch head now
-         * @description Queues the head of the connected branch as a push (trigger `manual`); the commit is imported and deployed in the background. No body. It always queues, even the last commit published (publishing it again); older pushes still waiting are skipped. `PROJECT_ARCHIVED` (422); `GITHUB_NO_ACCESS` (404, the installation no longer reaches the repository or is suspended); `GITHUB_BRANCH_MISSING` (404); 409 when the connection changed meanwhile or on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
+         * @description Queues the head of the connected branch as a push (trigger `manual`); the commit is imported and deployed in the background. Optional body `{"rebuild": true}` ("Reconstruir todo"): every service is built again instead of reusing images of the same code. It always queues, even the last commit published (publishing it again); older pushes still waiting are skipped. `PROJECT_ARCHIVED` (422); `GITHUB_NO_ACCESS` (404, the installation no longer reaches the repository or is suspended); `GITHUB_BRANCH_MISSING` (404); 409 when the connection changed meanwhile or on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
          */
         post: operations["publishProjectRepository"];
         delete?: never;
@@ -1956,6 +1956,8 @@ export interface components {
             name?: string;
             /** @description What changed, in a short line for people (the version's name in the console). Optional. */
             message?: string;
+            /** @description "Reconstruir todo": build every service again even when an earlier build of the same code (same files, same builder) could be reused — for a newer base image or a fix outside the code. Default false: a service whose folder did not change reuses its image (and its scan, when it is under 7 days old). */
+            rebuild?: boolean;
             /** @description The port the app listens on (also set as `$PORT`). Default 8080. */
             port?: number;
             /** @description Answers 2xx when the app is healthy. Default `/`. */
@@ -2116,6 +2118,13 @@ export interface components {
             finished_at: string | null;
             /** @description The image's vulnerability scan (3c). null until the cluster reports it (the build never waits for it) and for a build that did not succeed; a succeeded build ends up with one, even when it could not be done (see `error`). */
             scan: null | components["schemas"]["BuildScan"];
+            /** @description It was asked never to reuse an earlier image ("Reconstruir todo"). */
+            rebuild: boolean;
+            /**
+             * Format: uuid
+             * @description The earlier build of the same code (same files, same builder) whose image this one reused instead of building: `image` is that image. Null when it built.
+             */
+            reused_from: string | null;
         };
         BuildScan: {
             /** @description The scanned image's digest (always the build's own). */
@@ -2488,6 +2497,8 @@ export interface components {
                 /** Format: uuid */
                 build_id: string;
             }[];
+            /** @description Its builds were asked never to reuse an earlier image ("Reconstruir todo"). */
+            rebuild: boolean;
             source: null | {
                 /** Format: uuid */
                 id: string;
@@ -3306,6 +3317,8 @@ export interface components {
             error: null | components["schemas"]["PushFailure"];
             /** @description "" for a webhook or the poll, else the user's id. */
             requested_by: string;
+            /** @description Published with "Reconstruir todo": its deployment builds every service again. */
+            rebuild: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -5702,7 +5715,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Build every service again (default false). */
+                    rebuild?: boolean;
+                };
+            };
+        };
         responses: {
             /** @description The push, queued. Poll `listProjectPushes` for its progress. */
             202: {

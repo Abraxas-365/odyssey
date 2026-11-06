@@ -74,6 +74,23 @@ func TestCheck(t *testing.T) {
 		"tag in repo": func(b *fleetv1.Build) { b.ImageRepository += ":x"; b.CacheRef = "" },
 		"cache":       func(b *fleetv1.Build) { b.CacheRef = "registry.test/odyssey/" + org + "/" + prj + ":other" },
 		"timeout":     func(b *fleetv1.Build) { b.TimeoutSeconds = 5 },
+		"reuse of another project": func(b *fleetv1.Build) {
+			b.ReuseImage = "registry.test/odyssey/" + org + "/" + env + "@sha256:" + strings.Repeat("a", 64)
+		},
+		"reuse of another registry": func(b *fleetv1.Build) {
+			b.ReuseImage = "evil.test/odyssey/" + org + "/" + prj + "@sha256:" + strings.Repeat("a", 64)
+		},
+		"reuse by tag":         func(b *fleetv1.Build) { b.ReuseImage = b.ImageRepository + ":latest" },
+		"reuse, short digest":  func(b *fleetv1.Build) { b.ReuseImage = b.ImageRepository + "@sha256:" + strings.Repeat("a", 63) },
+		"reuse, upper digest":  func(b *fleetv1.Build) { b.ReuseImage = b.ImageRepository + "@sha256:" + strings.Repeat("A", 64) },
+		"reuse, trailing text": func(b *fleetv1.Build) { b.ReuseImage = b.ImageRepository + "@sha256:" + strings.Repeat("a", 64) + "x" },
+		"reuse, bare digest":   func(b *fleetv1.Build) { b.ReuseImage = "sha256:" + strings.Repeat("a", 64) },
+	}
+	good := build()
+	good.ReuseImage = good.ImageRepository + "@sha256:" + strings.Repeat("a", 64)
+	good.SkipScan = true
+	if err := m.Check(good); err != nil {
+		t.Fatalf("reuse of its own project's image: %v", err)
 	}
 	for name, mutate := range bad {
 		b := build()
@@ -84,6 +101,48 @@ func TestCheck(t *testing.T) {
 	}
 	if err := (&Manager{}).Check(build()); err == nil {
 		t.Error("an agent without a registry builds nothing")
+	}
+}
+
+// A reused build carries its image to reuse and the scan hint into the
+// OdysseyBuild, and reports whether it was reused.
+func TestStartCopiesReuseAndStatusReportsIt(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+	m := &Manager{Client: c, Registry: "registry.test/odyssey"}
+	b := build()
+	b.ReuseImage = b.ImageRepository + "@sha256:" + strings.Repeat("a", 64)
+	b.SkipScan = true
+	if st, err := m.Start(ctx, b); err != nil || st != nil {
+		t.Fatalf("%v %v", st, err)
+	}
+	var got v1alpha1.OdysseyBuild
+	if err := c.Get(ctx, client.ObjectKey{Namespace: buildctl.Namespace, Name: id}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.ReuseImage != b.ReuseImage || !got.Spec.SkipScan {
+		t.Fatalf("spec %+v", got.Spec)
+	}
+	if st, _ := m.Status(ctx, id); st.GetReused() {
+		t.Fatal("reused before it ran")
+	}
+	got.Status = v1alpha1.OdysseyBuildStatus{Phase: v1alpha1.BuildSucceeded, ImageDigest: "sha256:" + strings.Repeat("a", 64), Reused: true}
+	if err := c.Status().Update(ctx, &got); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := m.Status(ctx, id); err != nil || !st.GetReused() || st.GetPhase() != "succeeded" {
+		t.Fatalf("%v %v", st, err)
+	}
+
+	// a refused reuse never reaches the cluster
+	other := build()
+	other.BuildId = "44444444-4444-4444-4444-444444444444"
+	other.ReuseImage = "registry.test/odyssey/" + org + "/" + env + "@sha256:" + strings.Repeat("a", 64)
+	if st, err := m.Start(ctx, other); err != nil || st.GetPhase() != "failed" {
+		t.Fatalf("refused: %v %v", st, err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: buildctl.Namespace, Name: other.BuildId}, &v1alpha1.OdysseyBuild{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("created: %v", err)
 	}
 }
 

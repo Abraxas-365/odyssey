@@ -238,6 +238,34 @@ func TestReconcileStartsTheScanOnceBuildSucceeds(t *testing.T) {
 	}
 }
 
+// A reused build whose scan the control plane copies (skip_scan) is not
+// scanned; a reused build without skip_scan is, like any other.
+func TestScanOfAReusedBuild(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		skip, reused, scanned bool
+	}{
+		"reused, skip_scan":        {skip: true, reused: true, scanned: false},
+		"reused":                   {reused: true, scanned: true},
+		"built, skip_scan is moot": {skip: true, scanned: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := succeeded()
+			b.Spec.SkipScan = tc.skip
+			b.Status.Reused = tc.reused
+			c := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(b).WithStatusSubresource(&v1alpha1.OdysseyBuild{}).Build()
+			r := &Reconciler{Client: c, API: c, Config: scanCfg()}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(b)}); err != nil {
+				t.Fatal(err)
+			}
+			err := c.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "scan-" + id}, &batchv1.Job{})
+			if tc.scanned != (err == nil) {
+				t.Fatalf("scanned=%v, want %v (%v)", err == nil, tc.scanned, err)
+			}
+		})
+	}
+}
+
 func TestNoScanWhenOffOrTheBuildDidNotSucceed(t *testing.T) {
 	ctx := context.Background()
 	failedB := newBuild()

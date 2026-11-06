@@ -2,6 +2,7 @@ package buildpg_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -351,4 +352,141 @@ func idsOf(sources []build.Source) map[build.SourceID]bool {
 		out[s.ID] = true
 	}
 	return out
+}
+
+// Reuse candidates: the latest successful build per builder identity of the
+// project's code with the digest; the origin is recorded once on a build
+// that succeeded.
+func TestReuseCandidates(t *testing.T) {
+	db := pgtest.DB(t, migrate.Set{Owner: buildpg.Schema, Files: buildpg.Migrations()})
+	repo := buildpg.New(db)
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	proj, env := project.NewID(), project.NewEnvironmentID()
+	content, otherContent := "c1:"+strings.Repeat("11", 32), "c1:"+strings.Repeat("22", 32)
+	idA, idB := "b1:"+strings.Repeat("aa", 32), "b1:"+strings.Repeat("bb", 32)
+
+	src := build.Source{ID: build.NewSourceID(), Organization: org, Project: proj, Name: "app", Size: 10,
+		SHA256: strings.Repeat("ab", 32), Files: 2, UnpackedSize: 20, ContentDigest: content}
+	src.Key = "organizations/" + org.String() + "/sources/" + src.ID.String()
+	if err := repo.CreateSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.FindSource(ctx, org, src.ID); err != nil || got.ContentDigest != content {
+		t.Fatalf("source digest %+v %v", got, err)
+	}
+	bad := src
+	bad.ID, bad.ContentDigest = build.NewSourceID(), "sha256:nope"
+	bad.Key += "x"
+	if err := repo.CreateSource(ctx, bad); err == nil {
+		t.Fatal("a malformed content digest was stored")
+	}
+
+	n := 0
+	made := func(o identity.OrganizationID, p project.ID, digest, builder string, status build.Status, rebuild bool) build.Build {
+		t.Helper()
+		n++
+		b := build.Build{ID: build.NewID(), Organization: o, Project: p, Environment: env, Source: src.ID,
+			Status: build.StatusQueued, Run: workflow.NewRunID(), ContentDigest: digest, Rebuild: rebuild}
+		if err := repo.CreateBuild(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		b.Image = fmt.Sprintf("r.local/o/p@sha256:%064x", n)
+		if status != build.StatusSucceeded {
+			b.Image = ""
+		}
+		if err := repo.Finish(ctx, o, b.ID, status, b.Image, failureOf(status)); err != nil {
+			t.Fatal(err)
+		}
+		if status == build.StatusSucceeded && builder != "" {
+			if err := repo.SetOrigin(ctx, o, b.ID, builder, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := repo.FindBuild(ctx, o, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	oldA := made(org, proj, content, idA, build.StatusSucceeded, false)
+	newA := made(org, proj, content, idA, build.StatusSucceeded, true)
+	onlyB := made(org, proj, content, idB, build.StatusSucceeded, false)
+	made(org, proj, content, idA, build.StatusFailed, false)               // failed: never
+	made(org, proj, content, "", build.StatusSucceeded, false)             // unknown builder: never
+	made(org, proj, otherContent, idA, build.StatusSucceeded, false)       // other code
+	made(org, project.NewID(), content, idA, build.StatusSucceeded, false) // other app
+	made(other, proj, content, idA, build.StatusSucceeded, false)          // other tenant
+	if newA.Rebuild != true || newA.ContentDigest != content || newA.BuilderIdentity != idA || newA.ReusedFrom != nil {
+		t.Fatalf("stored build %+v", newA)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE build.builds SET finished_at = now() - interval '1 hour' WHERE id = $1`, oldA.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cands, err := repo.ListCandidates(ctx, org, proj, content, build.MaxReuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]build.ID{}
+	for _, c := range cands {
+		got[c.Identity] = c.Build
+	}
+	if len(cands) != 2 || got[idA] != newA.ID || got[idB] != onlyB.ID {
+		t.Fatalf("candidates %+v", cands)
+	}
+	if one, err := repo.ListCandidates(ctx, org, proj, content, 1); err != nil || len(one) != 1 {
+		t.Fatalf("limited %+v %v", one, err)
+	}
+	if none, err := repo.ListCandidates(ctx, other, proj, otherContent, build.MaxReuse); err != nil || len(none) != 0 {
+		t.Fatalf("other tenant %+v %v", none, err)
+	}
+
+	// The scan comes with the candidate.
+	scan := build.Scan{Digest: build.DigestOf(newA.Image), High: 2, Tool: "trivy t", ScannedAt: time.Now().UTC().Truncate(time.Second)}
+	if ok, err := repo.SetScan(ctx, org, newA.ID, scan); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	c, err := repo.FindCandidate(ctx, org, proj, content, idA, newA.Image)
+	if err != nil || c.Build != newA.ID || c.Scan == nil || c.Scan.High != 2 {
+		t.Fatalf("find candidate %+v %v", c, err)
+	}
+	if _, err := repo.FindCandidate(ctx, org, proj, content, idB, newA.Image); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("another builder's image: %v", err)
+	}
+	if _, err := repo.FindCandidate(ctx, other, proj, content, idA, newA.Image); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("cross-tenant candidate: %v", err)
+	}
+
+	// The origin is set once, on a succeeded build, within the tenant.
+	reuser := build.Build{ID: build.NewID(), Organization: org, Project: proj, Environment: env, Source: src.ID,
+		Status: build.StatusQueued, Run: workflow.NewRunID(), ContentDigest: content}
+	if err := repo.CreateBuild(ctx, reuser); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetOrigin(ctx, org, reuser.ID, idA, &newA.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("origin of an unfinished build: %v", err)
+	}
+	if err := repo.Finish(ctx, org, reuser.ID, build.StatusSucceeded, newA.Image, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetOrigin(ctx, other, reuser.ID, idA, &newA.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("cross-tenant origin: %v", err)
+	}
+	if err := repo.SetOrigin(ctx, org, reuser.ID, idA, &newA.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetOrigin(ctx, org, reuser.ID, idB, nil); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("origin set twice: %v", err)
+	}
+	if got, _ := repo.FindBuild(ctx, org, reuser.ID); got.ReusedFrom == nil || *got.ReusedFrom != newA.ID || got.BuilderIdentity != idA {
+		t.Fatalf("origin %+v", got)
+	}
+}
+
+func failureOf(s build.Status) *build.Failure {
+	if s == build.StatusFailed {
+		return &build.Failure{Code: build.CodeFailed, Message: "x"}
+	}
+	return nil
 }

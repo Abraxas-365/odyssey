@@ -19,7 +19,14 @@ type Builder struct {
 	// Registry is host[:port][/path] (e.g. "registry.example.com/odyssey").
 	Registry  string   `json:"registry"`
 	Platforms []string `json:"platforms"`
+	// Identity names everything besides the code that shapes an image (the
+	// builder's pinned images and versions, platform, registry): "b1:<sha256
+	// hex>". Two builds of the same code with the same identity make the same
+	// image, so the second may reuse the first's. "" (older agents): never.
+	Identity string `json:"identity,omitempty"`
 }
+
+var identityPattern = regexp.MustCompile(`^b[0-9]+:[a-f0-9]{64}$`)
 
 // MaxRegistry bounds the announced registry.
 const MaxRegistry = 200
@@ -37,6 +44,9 @@ func (b Builder) Validate() error {
 		if utf8.RuneCountInString(p) > 40 || !platformPattern.MatchString(p) {
 			return errx.Validation("a builder platform is not valid")
 		}
+	}
+	if b.Identity != "" && !identityPattern.MatchString(b.Identity) {
+		return errx.Validation("the builder's identity is not valid")
 	}
 	return nil
 }
@@ -102,6 +112,53 @@ type DesiredBuild struct {
 	// Final: the agent reported it succeeded or failed (it is not sent again:
 	// an agent that already dropped it must not build it twice).
 	Final bool `db:"final"`
+	// Reuse are earlier builds' images of the same code, one per builder
+	// identity that made them (see Reuse): DispatchBuild sends the one the
+	// cluster's builder made, if any; none builds.
+	Reuse []Reuse `db:"-"`
+	// ReuseImage and SkipScan are what DispatchBuild kept of Reuse for this
+	// cluster ("": it builds).
+	ReuseImage string `db:"reuse_image"`
+	SkipScan   bool   `db:"skip_scan"`
+	// BuilderIdentity is the identity the cluster's builder announced when
+	// the build was sent ("" for builders that announce none).
+	BuilderIdentity string `db:"builder_identity"`
+}
+
+// MaxReuse bounds the candidates a build carries.
+const MaxReuse = 8
+
+// Reuse is an earlier build's image that may stand for a new build of the
+// same code: the cluster tags it as the new build's when it is still in its
+// registry, without building, and builds when it is gone.
+type Reuse struct {
+	// Image is "<repository>@sha256:<64 hex>".
+	Image string
+	// Identity is the builder identity that made it: reused only by a
+	// cluster whose builder announces the same one (and pushes to the same
+	// repository).
+	Identity string
+	// SkipScan: its scan is recent and the build domain copies it.
+	SkipScan bool
+}
+
+var pinnedPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$`)
+
+// ApplyReuse fills ReuseImage, SkipScan and BuilderIdentity for the cluster
+// with builder bd (after ImageRepository is set): the candidate its builder
+// made in this repository, if any.
+func (b *DesiredBuild) ApplyReuse(bd *Builder) {
+	b.ReuseImage, b.SkipScan, b.BuilderIdentity = "", false, ""
+	if bd == nil || bd.Identity == "" {
+		return
+	}
+	b.BuilderIdentity = bd.Identity
+	for _, r := range b.Reuse {
+		if repo, _, ok := strings.Cut(r.Image, "@"); ok && r.Identity == bd.Identity && repo == b.ImageRepository {
+			b.ReuseImage, b.SkipScan = r.Image, r.SkipScan
+			return
+		}
+	}
 }
 
 // Wanted reports whether the cluster should be (still) building it at now.
@@ -121,6 +178,13 @@ func (b DesiredBuild) Validate() error {
 		return errx.Validation("a build needs its source's sha256 and size")
 	case b.Timeout < time.Minute || b.Timeout > MaxBuildTimeout:
 		return errx.Validation("a build's timeout must be between 1 minute and 1 hour")
+	case len(b.Reuse) > MaxReuse:
+		return errx.Validation("a build carries too many images to reuse")
+	}
+	for _, r := range b.Reuse {
+		if len(r.Image) > 300 || !pinnedPattern.MatchString(r.Image) || !identityPattern.MatchString(r.Identity) {
+			return errx.Validation("a reused image must be pinned by digest and name its builder")
+		}
 	}
 	return nil
 }
@@ -155,6 +219,12 @@ type BuildStatus struct {
 	Digest  string `db:"image_digest"`
 	Reason  string `db:"reason"`
 	Message string `db:"message"`
+	// Reused: the cluster reused DesiredBuild.ReuseImage instead of building
+	// (succeeded only).
+	Reused bool `db:"reused"`
+	// Builder is the identity of the builder of the build's cluster when it
+	// was sent ("" when it announced none): what made the image.
+	Builder string `db:"builder_identity"`
 	// Image is ImageRepository@Digest (succeeded only; BuildStatus fills it).
 	Image      string    `db:"-"`
 	ObservedAt time.Time `db:"observed_at"`
@@ -191,6 +261,9 @@ func (s BuildStatus) Clean() BuildStatus {
 		s.Reason = ""
 	case s.Reason == "" || !buildReasons[s.Reason]:
 		s.Reason = "failed"
+	}
+	if s.Phase != BuildSucceeded {
+		s.Reused = false
 	}
 	return s
 }

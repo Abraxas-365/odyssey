@@ -132,6 +132,7 @@ func (s *Service) Upload(ctx context.Context, organization identity.Organization
 	}
 	sum := v.Summary()
 	src.Size, src.SHA256, src.Files, src.UnpackedSize = sum.Size, sum.SHA256, sum.Files, sum.UnpackedSize
+	src.ContentDigest = sum.ContentDigest
 	var evicted []build.Source
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if evicted, err = s.makeRoom(ctx, organization, src.Size, false); err != nil {
@@ -280,6 +281,7 @@ func (s *Service) Derive(ctx context.Context, organization identity.Organization
 		return build.Source{}, err
 	}
 	src.Size, src.SHA256, src.Files, src.UnpackedSize = sum.Size, sum.SHA256, sum.Files, sum.UnpackedSize
+	src.ContentDigest = sum.ContentDigest
 	var evicted []build.Source
 	raced := false
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
@@ -395,7 +397,8 @@ func (s *Service) Start(ctx context.Context, organization identity.OrganizationI
 			return build.Refused(build.CodeSourceExpired, "the source was swept before it was built")
 		}
 		b := build.Build{ID: input.ID, Organization: organization, Project: input.Project, Environment: input.Environment,
-			Source: src.ID, Status: build.StatusQueued, RequestedBy: input.RequestedBy}
+			Source: src.ID, Status: build.StatusQueued, RequestedBy: input.RequestedBy,
+			ContentDigest: src.ContentDigest, Rebuild: input.Rebuild}
 		run, err := s.engine.Start(ctx, workflow.Start{Workflow: build.WorkflowRun, Organization: organization,
 			Actor: input.RequestedBy, Subject: event.Subject(build.SubjectKind, b.ID),
 			Input: build.RunInput{Build: b.ID}, IdempotencyKey: b.ID.String()})

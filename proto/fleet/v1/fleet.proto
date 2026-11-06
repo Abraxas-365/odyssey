@@ -264,6 +264,12 @@ message Builder {
   string registry = 1;
   // platforms it builds for (e.g. "linux/amd64").
   repeated string platforms = 2;
+  // identity names everything that shapes an image besides the code: the
+  // builder's pinned images and versions, the platform and the registry
+  // ("b1:<sha256 hex>"). Two builds of the same code with the same identity
+  // make the same app, so the control plane may reuse the first one's
+  // image (Build.reuse_image). Empty (agents older than MS-3b): never reused.
+  string identity = 3;
 }
 
 // Build asks the cluster to turn a source into an image.
@@ -281,6 +287,16 @@ message Build {
   string cache_ref = 7;
   // timeout_seconds bounds the build in the cluster.
   int32 timeout_seconds = 8;
+  // reuse_image ("<image_repository>@sha256:<64 hex>") is an image an
+  // earlier build made of the same code with the same builder identity.
+  // When it is still in the registry the agent tags it as this build's and
+  // reports it succeeded with that digest and reused set, without building;
+  // when it is gone, it builds as usual. An agent that does not know the
+  // field builds as usual too.
+  string reuse_image = 9;
+  // skip_scan: the reused image's scan is recent and the control plane
+  // copies it, so a reused image is not scanned again (a built one is).
+  bool skip_scan = 10;
 }
 
 // SourceRef is what FetchSource must return for a build.
@@ -307,6 +323,9 @@ message BuildStatus {
   // "timeout" or "failed".
   string reason = 4;
   string message = 5;
+  // reused: the build succeeded by reusing Build.reuse_image (nothing was
+  // built; image_digest is the reused image's).
+  bool reused = 6;
 }
 
 // ScanReport carries the scans that ended. A cluster whose agent lists the

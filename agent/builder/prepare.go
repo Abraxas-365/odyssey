@@ -93,6 +93,10 @@ func Prepare(ctx context.Context, o PrepareOptions) Result {
 	if err := copyFile(o.Self, filepath.Join(o.Work, BinDir, "odyssey-agent"), 0o755); err != nil {
 		return Result{Reason: ReasonFailed, Message: "copy the builder: " + err.Error()}
 	}
+	if d := reusedDigest(o.Work); d != "" {
+		say("Reusing the image of an earlier build (%s): no source to fetch", d)
+		return Result{}
+	}
 
 	say("Fetching the source (%s)", srcarchive.MiB(o.Size))
 	sum, err := fetchRetrying(ctx, o, src, say)

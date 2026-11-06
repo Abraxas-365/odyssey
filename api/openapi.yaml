@@ -2246,11 +2246,21 @@ paths:
       summary: Publish the branch head now
       description: >-
         Queues the head of the connected branch as a push (trigger `manual`); the commit is imported and deployed
-        in the background. No body. It always queues, even the last commit published (publishing it again); older
+        in the background. Optional body `{"rebuild": true}` ("Reconstruir todo"): every service is built again
+        instead of reusing images of the same code. It always queues, even the last commit published (publishing it again); older
         pushes still waiting are skipped. `PROJECT_ARCHIVED` (422); `GITHUB_NO_ACCESS` (404, the installation no
         longer reaches the repository or is suspended); `GITHUB_BRANCH_MISSING` (404); 409 when the connection
         changed meanwhile or on a concurrent update (retry); `GITHUB_UNAVAILABLE` (502).
       x-permissions: [odyssey:deployments:create]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                rebuild: { type: boolean, description: Build every service again (default false). }
       responses:
         "202":
           description: The push, queued. Poll `listProjectPushes` for its progress.
@@ -3175,6 +3185,12 @@ components:
       properties:
         name: { type: string, maxLength: 200, description: "Names the source. Default: the uploaded file's name." }
         message: { type: string, maxLength: 200, description: "What changed, in a short line for people (the version's name in the console). Optional." }
+        rebuild:
+          type: boolean
+          description: >-
+            "Reconstruir todo": build every service again even when an earlier build of the same code (same files,
+            same builder) could be reused — for a newer base image or a fix outside the code. Default false: a
+            service whose folder did not change reuses its image (and its scan, when it is under 7 days old).
         port: { type: integer, minimum: 1, maximum: 65535, description: "The port the app listens on (also set as `$PORT`). Default 8080." }
         health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
         replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
@@ -3303,7 +3319,7 @@ components:
       additionalProperties: false
       description: The image built from an uploaded source. A finished one never changes.
       required: [id, organization_id, project_id, environment_id, source_id, status, image, error, run_id,
-                 requested_by, created_at, updated_at, started_at, finished_at, scan]
+                 requested_by, created_at, updated_at, started_at, finished_at, scan, rebuild, reused_from]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -3332,6 +3348,13 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/BuildScan"
+        rebuild: { type: boolean, description: It was asked never to reuse an earlier image ("Reconstruir todo"). }
+        reused_from:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            The earlier build of the same code (same files, same builder) whose image this one reused instead of
+            building: `image` is that image. Null when it built.
     BuildScan:
       type: object
       additionalProperties: false
@@ -3749,7 +3772,7 @@ components:
       type: object
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
-      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, builds, status, reason, step, steps,
+      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, builds, rebuild, status, reason, step, steps,
                  revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_by_name, requested_via, message, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
@@ -3783,6 +3806,9 @@ components:
               route: { type: string }
               strip_prefix: { type: boolean }
               build_id: { type: string, format: uuid }
+        rebuild:
+          type: boolean
+          description: Its builds were asked never to reuse an earlier image ("Reconstruir todo").
         source:
           oneOf:
             - type: "null"
@@ -4782,7 +4808,7 @@ components:
       type: object
       additionalProperties: false
       description: One commit of a connection to publish. A commit is published once per connection, whatever reported it.
-      required: [id, organization_id, project_id, connection_id, git, trigger, status, deployment_id, error, requested_by, created_at, updated_at]
+      required: [id, organization_id, project_id, connection_id, git, trigger, status, deployment_id, error, requested_by, rebuild, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -4805,6 +4831,7 @@ components:
             - type: "null"
             - $ref: "#/components/schemas/PushFailure"
         requested_by: { type: string, description: '"" for a webhook or the poll, else the user''s id.' }
+        rebuild: { type: boolean, description: 'Published with "Reconstruir todo": its deployment builds every service again.' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

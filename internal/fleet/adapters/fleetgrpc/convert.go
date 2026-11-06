@@ -119,7 +119,7 @@ func builderFromProto(b *fleetv1.Builder) *fleet.Builder {
 	if b == nil {
 		return nil
 	}
-	return &fleet.Builder{Registry: b.GetRegistry(), Platforms: nonNil(b.GetPlatforms())}
+	return &fleet.Builder{Registry: b.GetRegistry(), Platforms: nonNil(b.GetPlatforms()), Identity: b.GetIdentity()}
 }
 
 func buildToProto(b fleet.DesiredBuild) *fleetv1.ControlMessage {
@@ -130,6 +130,7 @@ func buildToProto(b fleet.DesiredBuild) *fleetv1.ControlMessage {
 		BuildId: b.ID.String(), OrganizationId: b.Organization.String(), ProjectId: b.Project.String(),
 		EnvironmentId: b.Environment.String(), Source: &fleetv1.SourceRef{Sha256: b.SourceSHA256, Size: b.SourceSize},
 		ImageRepository: b.ImageRepository, CacheRef: b.CacheRef, TimeoutSeconds: int32(b.Timeout.Seconds()),
+		ReuseImage: b.ReuseImage, SkipScan: b.SkipScan,
 	}}}
 }
 
@@ -142,7 +143,7 @@ func buildReportFromProto(r *fleetv1.BuildReport) []fleet.BuildStatus {
 			continue
 		}
 		out = append(out, fleet.BuildStatus{Build: id, Phase: fleet.BuildPhase(b.GetPhase()), Digest: b.GetImageDigest(),
-			Reason: b.GetReason(), Message: b.GetMessage()})
+			Reason: b.GetReason(), Message: b.GetMessage(), Reused: b.GetReused()})
 	}
 	return out
 }

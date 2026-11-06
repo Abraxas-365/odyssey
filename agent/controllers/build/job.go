@@ -24,6 +24,7 @@ const (
 	LabelBuild = "odyssey.dev/build"
 
 	// Containers of a build's pod.
+	ContainerReuse   = "reuse"
 	ContainerPrepare = "prepare"
 	ContainerBuild   = "build"
 
@@ -126,6 +127,58 @@ func Job(b *v1alpha1.OdysseyBuild, c Config) *batchv1.Job {
 		{Name: "DOCKER_CONFIG", Value: "/var/run/odyssey/registry"},
 	}
 	ttl := int32(c.TTL.Seconds())
+	// restricted: the same as prepare's
+	restricted := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		ReadOnlyRootFilesystem:   ptr.To(true),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	initContainers := []corev1.Container{{
+		Name:    ContainerPrepare,
+		Image:   c.AgentImage,
+		Command: []string{"odyssey-agent", "builder", "prepare"},
+		Env:     prepareEnv,
+		VolumeMounts: []corev1.VolumeMount{work,
+			{Name: "tmp", MountPath: "/tmp"},
+			{Name: "token", MountPath: "/var/run/odyssey/token", ReadOnly: true},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("256Mi")},
+			Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Gi"),
+				corev1.ResourceEphemeralStorage: resource.MustParse("2Gi")},
+		},
+		SecurityContext:          restricted.DeepCopy(),
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+	}}
+	if b.Spec.ReuseImage != "" {
+		// first: looks for the earlier image and, when it is there, tags it
+		// as this build's; prepare and build then do nothing (builder/reuse.go)
+		initContainers = append([]corev1.Container{{
+			Name:    ContainerReuse,
+			Image:   c.AgentImage,
+			Command: []string{"odyssey-agent", "builder", "reuse"},
+			Env: []corev1.EnvVar{
+				{Name: "ODYSSEY_REUSE_IMAGE", Value: b.Spec.ReuseImage},
+				{Name: "ODYSSEY_IMAGE", Value: image},
+				{Name: "ODYSSEY_REGISTRY_INSECURE", Value: strconv.FormatBool(c.InsecureRegistry)},
+				{Name: "ODYSSEY_WORK", Value: workDir},
+				{Name: "DOCKER_CONFIG", Value: "/var/run/odyssey/registry"},
+				{Name: "HOME", Value: "/tmp"},
+			},
+			VolumeMounts: []corev1.VolumeMount{work,
+				{Name: "tmp", MountPath: "/tmp"},
+				{Name: "registry", MountPath: "/var/run/odyssey/registry", ReadOnly: true},
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
+				Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("256Mi"),
+					corev1.ResourceEphemeralStorage: resource.MustParse("100Mi")},
+			},
+			SecurityContext:          restricted.DeepCopy(),
+			TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+		}}, initContainers...)
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: JobName(b), Namespace: Namespace, Labels: labels(b)},
 		Spec: batchv1.JobSpec{
@@ -145,28 +198,7 @@ func Job(b *v1alpha1.OdysseyBuild, c Config) *batchv1.Job {
 						RunAsGroup:   ptr.To[int64](builderUID),
 						FSGroup:      ptr.To[int64](builderUID),
 					},
-					InitContainers: []corev1.Container{{
-						Name:    ContainerPrepare,
-						Image:   c.AgentImage,
-						Command: []string{"odyssey-agent", "builder", "prepare"},
-						Env:     prepareEnv,
-						VolumeMounts: []corev1.VolumeMount{work,
-							{Name: "tmp", MountPath: "/tmp"},
-							{Name: "token", MountPath: "/var/run/odyssey/token", ReadOnly: true},
-						},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("256Mi")},
-							Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Gi"),
-								corev1.ResourceEphemeralStorage: resource.MustParse("2Gi")},
-						},
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: ptr.To(false),
-							ReadOnlyRootFilesystem:   ptr.To(true),
-							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-							SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-						},
-						TerminationMessagePolicy: corev1.TerminationMessageReadFile,
-					}},
+					InitContainers: initContainers,
 					Containers: []corev1.Container{{
 						Name:    ContainerBuild,
 						Image:   c.BuildKitImage,

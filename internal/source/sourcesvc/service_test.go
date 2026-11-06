@@ -1084,6 +1084,31 @@ func TestPublish(t *testing.T) {
 		if c, _ := e.svc.FindConnection(ctx, e.org, id); c.LastCommit != sha2 {
 			t.Errorf("last commit = %s", c.LastCommit)
 		}
+		if moved.Rebuild || e.find(t, moved).Rebuild {
+			t.Fatal("a plain publish rebuilds")
+		}
+	})
+
+	t.Run("rebuild reaches the deployment", func(t *testing.T) {
+		e := setup(t)
+		id, _ := e.connect(t, e.link(t, installExt, "code-1"), source.Connect{})
+		p, err := e.svc.Publish(ctx, e.org, id, source.Publish{Rebuild: true, RequestedBy: e.user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.Rebuild || !e.find(t, p).Rebuild {
+			t.Fatalf("push = %+v", p)
+		}
+		if err := e.step(t, p, source.StepImport); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.step(t, p, source.StepDeploy); err != nil {
+			t.Fatal(err)
+		}
+		calls := e.deployer.all()
+		if len(calls) != 1 || !calls[0].Input.Rebuild {
+			t.Fatalf("deploys = %+v", calls)
+		}
 	})
 
 	t.Run("refusals", func(t *testing.T) {

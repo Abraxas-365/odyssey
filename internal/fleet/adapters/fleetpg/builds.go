@@ -15,7 +15,7 @@ import (
 )
 
 const buildColumns = `id, organization_id, project_id, environment_id, cluster_id, source_key, source_sha256, source_size,
-	image_repository, cache_ref, timeout_seconds, cancelled, final, created_at`
+	image_repository, cache_ref, timeout_seconds, cancelled, final, builder_identity, reuse_image, skip_scan, created_at`
 
 type buildRow struct {
 	fleet.DesiredBuild
@@ -33,11 +33,11 @@ func (r buildRow) build() fleet.DesiredBuild {
 func (r *Repository) PutBuild(ctx context.Context, b fleet.DesiredBuild) (bool, error) {
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`INSERT INTO fleet.desired_builds (id, organization_id, project_id, environment_id, cluster_id, source_key,
-		     source_sha256, source_size, image_repository, cache_ref, timeout_seconds)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		     source_sha256, source_size, image_repository, cache_ref, timeout_seconds, builder_identity, reuse_image, skip_scan)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 ON CONFLICT (id) DO NOTHING`,
 		b.ID, b.Organization, b.Project, b.Environment, b.Cluster, b.SourceKey, b.SourceSHA256, b.SourceSize,
-		b.ImageRepository, b.CacheRef, int64(b.Timeout/time.Second))
+		b.ImageRepository, b.CacheRef, int64(b.Timeout/time.Second), b.BuilderIdentity, b.ReuseImage, b.SkipScan)
 	if err != nil {
 		return false, pgerr.Map(err, "put build")
 	}
@@ -106,7 +106,7 @@ func (r *Repository) FindBuildStatus(ctx context.Context, organization identity.
 		Repository string `db:"image_repository"`
 	}
 	err := txn.Q(ctx, r.db).GetContext(ctx, &row,
-		`SELECT s.build_id, s.phase, s.image_digest, s.reason, s.message, s.observed_at, d.image_repository
+		`SELECT s.build_id, s.phase, s.image_digest, s.reason, s.message, s.reused, s.observed_at, d.image_repository, d.builder_identity
 		 FROM fleet.build_status s JOIN fleet.desired_builds d ON d.organization_id = s.organization_id AND d.id = s.build_id
 		 WHERE s.organization_id = $1 AND s.build_id = $2`, organization, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -126,27 +126,31 @@ func (r *Repository) FindBuildStatus(ctx context.Context, organization identity.
 // cluster, in one statement, while session is the cluster's tunnel. A
 // report of another cluster's (or tenant's) build is dropped, and a final
 // phase never changes (an agent cannot turn a failure into a success).
+// Reused is kept only for the digest of the image the build was told to
+// reuse (an agent cannot claim a build it made was a reuse, or the reverse).
 func (r *Repository) ObserveBuilds(ctx context.Context, organization identity.OrganizationID, cluster fleet.ClusterID, session fleet.Session, statuses []fleet.BuildStatus) (bool, error) {
 	n := len(statuses)
 	ids, phases, digests, reasons, msgs := make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+	reused := make([]bool, n)
 	for i, s := range statuses {
-		ids[i], phases[i], digests[i], reasons[i], msgs[i] = s.Build.String(), string(s.Phase), s.Digest, s.Reason, s.Message
+		ids[i], phases[i], digests[i], reasons[i], msgs[i], reused[i] = s.Build.String(), string(s.Phase), s.Digest, s.Reason, s.Message, s.Reused
 	}
 	var live bool
 	err := txn.Q(ctx, r.db).GetContext(ctx, &live,
 		`WITH tunnel AS (
 		    SELECT 1 FROM fleet.clusters WHERE organization_id = $1 AND id = $2 AND status = 'active' AND session_id = $3
 		 ), reported AS (
-		    SELECT DISTINCT ON (r.id) d.id, r.phase, r.digest, r.reason, r.message
-		    FROM unnest($4::uuid[], $5::text[], $6::text[], $7::text[], $8::text[]) WITH ORDINALITY AS r(id, phase, digest, reason, message, ord)
+		    SELECT DISTINCT ON (r.id) d.id, r.phase, r.digest, r.reason, r.message,
+		           r.reused AND r.phase = 'succeeded' AND d.reuse_image <> '' AND split_part(d.reuse_image, '@', 2) = r.digest AS reused
+		    FROM unnest($4::uuid[], $5::text[], $6::text[], $7::text[], $8::text[], $9::bool[]) WITH ORDINALITY AS r(id, phase, digest, reason, message, reused, ord)
 		    JOIN fleet.desired_builds d ON d.organization_id = $1 AND d.cluster_id = $2 AND d.id = r.id
 		    WHERE EXISTS (SELECT 1 FROM tunnel)
 		    ORDER BY r.id, r.ord DESC
 		 ), upserted AS (
-		    INSERT INTO fleet.build_status (build_id, organization_id, phase, image_digest, reason, message, observed_at)
-		    SELECT id, $1, phase, digest, reason, message, now() FROM reported
+		    INSERT INTO fleet.build_status (build_id, organization_id, phase, image_digest, reason, message, reused, observed_at)
+		    SELECT id, $1, phase, digest, reason, message, reused, now() FROM reported
 		    ON CONFLICT (build_id) DO UPDATE SET phase = EXCLUDED.phase, image_digest = EXCLUDED.image_digest,
-		        reason = EXCLUDED.reason, message = EXCLUDED.message, observed_at = now()
+		        reason = EXCLUDED.reason, message = EXCLUDED.message, reused = EXCLUDED.reused, observed_at = now()
 		    WHERE fleet.build_status.organization_id = $1 AND fleet.build_status.phase NOT IN ('succeeded', 'failed')
 		    RETURNING build_id, phase
 		 ), finished AS (
@@ -155,7 +159,7 @@ func (r *Repository) ObserveBuilds(ctx context.Context, organization identity.Or
 		    RETURNING 1
 		 )
 		 SELECT EXISTS (SELECT 1 FROM tunnel)`,
-		organization, cluster, session, pq.Array(ids), pq.Array(phases), pq.Array(digests), pq.Array(reasons), pq.Array(msgs))
+		organization, cluster, session, pq.Array(ids), pq.Array(phases), pq.Array(digests), pq.Array(reasons), pq.Array(msgs), pq.Array(reused))
 	if err != nil {
 		return false, pgerr.Map(err, "observe builds")
 	}

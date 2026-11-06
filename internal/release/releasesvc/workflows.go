@@ -353,7 +353,7 @@ func (s *Service) startBuilds(ctx context.Context, j job, missing []release.Serv
 		for i, sb := range missing {
 			failed = sb
 			if err := s.builder.Start(ctx, org, build.Start{ID: sb.Build, Project: cur.Project, Environment: cur.Environment,
-				Source: sources[i], RequestedBy: cur.RequestedBy}); err != nil {
+				Source: sources[i], RequestedBy: cur.RequestedBy, Rebuild: cur.Rebuild}); err != nil {
 				return err
 			}
 		}

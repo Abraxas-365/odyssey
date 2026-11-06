@@ -109,6 +109,11 @@ func fromPod(pod *corev1.Pod) (v1alpha1.OdysseyBuildStatus, bool) {
 	if pod.Status.Reason == "Evicted" {
 		return failed(v1alpha1.BuildReasonFailed, "the cluster evicted the build: "+pod.Status.Message), true
 	}
+	if s := status(pod.Status.InitContainerStatuses, ContainerReuse); s != nil {
+		if out, ok := fromContainer(s, "reusing an earlier image", v1alpha1.BuildReasonFailed); ok {
+			return out, true
+		}
+	}
 	if s := status(pod.Status.InitContainerStatuses, ContainerPrepare); s != nil {
 		if out, ok := fromContainer(s, "preparing the source", v1alpha1.BuildReasonSource); ok {
 			return out, true
@@ -144,7 +149,7 @@ func fromContainer(s *corev1.ContainerStatus, step string, fallback v1alpha1.Bui
 			return v1alpha1.OdysseyBuildStatus{}, false // prepare done: build follows
 		}
 		if ok && r.Digest != "" && digestPattern(r.Digest) {
-			return v1alpha1.OdysseyBuildStatus{Phase: v1alpha1.BuildSucceeded, ImageDigest: r.Digest}, true
+			return v1alpha1.OdysseyBuildStatus{Phase: v1alpha1.BuildSucceeded, ImageDigest: r.Digest, Reused: r.Reused}, true
 		}
 		return failed(v1alpha1.BuildReasonFailed, "the builder ended without reporting the image it pushed"), true
 	}

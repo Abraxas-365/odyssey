@@ -68,7 +68,7 @@ func (s *Service) release(src build.SourceID, c source.Connection, push source.P
 	if !push.RequestedBy.IsZero() {
 		via = release.ViaFor(release.ReasonDeploy, push.RequestedClient, s.opts.Assistants)
 	}
-	return release.DeployUploaded{Source: src, Config: c.Config, RequestedBy: push.RequestedBy, Via: via}.Normalize()
+	return release.DeployUploaded{Source: src, Config: c.Config, Rebuild: push.Rebuild, RequestedBy: push.RequestedBy, Via: via}.Normalize()
 }
 
 // retryable sorts an import error: a refusal (the commit, the folder, the

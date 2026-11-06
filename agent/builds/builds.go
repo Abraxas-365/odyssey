@@ -34,6 +34,12 @@ var (
 	repoPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]*$`)
 )
 
+// reusePattern matches exactly <repo>@sha256:<64 hex>: only an image of the
+// build's own project can be reused.
+func reusePattern(repo string) *regexp.Regexp {
+	return regexp.MustCompile("^" + regexp.QuoteMeta(repo) + "@sha256:[a-f0-9]{64}$")
+}
+
 // Check refuses a build the agent will not run (the control plane never
 // sends one; a refused build is reported failed). Its image goes exactly
 // where the control plane names a project's images
@@ -52,6 +58,8 @@ func (m *Manager) Check(b *fleetv1.Build) error {
 		return fmt.Errorf("the build's image repository %q is not its project's in this cluster's registry (%q)", b.GetImageRepository(), repo)
 	case b.GetCacheRef() != "" && b.GetCacheRef() != repo+":buildcache":
 		return fmt.Errorf("the build's cache reference is not its project's")
+	case b.GetReuseImage() != "" && !reusePattern(repo).MatchString(b.GetReuseImage()):
+		return fmt.Errorf("the build's image to reuse is not an image of its project")
 	case b.GetTimeoutSeconds() < 60 || b.GetTimeoutSeconds() > 7200:
 		return fmt.Errorf("the build's timeout is out of range")
 	}
@@ -71,6 +79,7 @@ func (m *Manager) Start(ctx context.Context, b *fleetv1.Build) (*fleetv1.BuildSt
 			Organization: b.GetOrganizationId(), Project: b.GetProjectId(), Environment: b.GetEnvironmentId(),
 			Source:          v1alpha1.BuildSource{SHA256: b.GetSource().GetSha256(), Size: b.GetSource().GetSize()},
 			ImageRepository: b.GetImageRepository(), CacheRef: b.GetCacheRef(), TimeoutSeconds: b.GetTimeoutSeconds(),
+			ReuseImage: b.GetReuseImage(), SkipScan: b.GetSkipScan(),
 		},
 	}
 	switch err := m.Client.Create(ctx, ob); {
@@ -130,5 +139,5 @@ func ToProto(b *v1alpha1.OdysseyBuild) *fleetv1.BuildStatus {
 		phase = v1alpha1.BuildPending
 	}
 	return &fleetv1.BuildStatus{BuildId: b.Name, Phase: string(phase), ImageDigest: b.Status.ImageDigest,
-		Reason: string(b.Status.Reason), Message: b.Status.Message}
+		Reason: string(b.Status.Reason), Message: b.Status.Message, Reused: b.Status.Reused}
 }

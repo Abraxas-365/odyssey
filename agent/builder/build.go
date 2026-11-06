@@ -77,6 +77,10 @@ func Build(ctx context.Context, o BuildOptions) Result {
 	if o.Command == "" {
 		o.Command = "buildctl-daemonless.sh"
 	}
+	if d := reusedDigest(o.Work); d != "" {
+		fmt.Fprintf(o.Out, "Reusing the image of an earlier build: %s (nothing to build)\n", d)
+		return Result{Digest: d, Reused: true}
+	}
 	mode, err := os.ReadFile(filepath.Join(o.Work, ModeFile))
 	if err != nil {
 		return Result{Reason: ReasonFailed, Message: "the source was not prepared: " + err.Error()}

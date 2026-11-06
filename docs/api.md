@@ -447,7 +447,7 @@ agent says otherwise).
   values; `ODYSSEY_*` names are reserved. Its values never reach events or
   the audit trail (only the names do).
 - **Deploy from source** sends the same endpoint `multipart/form-data` (§6):
-  part `config` = `{port?, health_path?, replicas?, env?}` (no `image`), then
+  part `config` = `{name?, message?, rebuild?, port?, health_path?, replicas?, env?}` (no `image`), then
   part `source` = a `.tar.gz` of the app's folder. The archive is checked
   before anything starts: no absolute paths, `..`, links or devices, within
   the limits of §9; otherwise 400 `SOURCE_INVALID` (field `source`). The
@@ -457,6 +457,20 @@ agent says otherwise).
   whose agent fetches the source through the tunnel. Its log is readable
   while it runs (`/builds/:build/logs`, poll with `after`). Uploaded sources
   are deleted after 7 days (24 h if never built); the image outlives them.
+- **Reuse** (MS-3b): a build whose files are the same as an earlier
+  successful build of the app (`content_digest` of the folder — names, bodies
+  and the executable bit; not dates, owners or the tar's order), made by the
+  same builder (the agent announces an identity of BuildKit, Railpack, mise,
+  platform, registry and its own version), does not build: the cluster checks
+  the image is still in its registry and reuses it (`reused_from` = that
+  build, the same `image`; event `build.succeeded` says so). In an app of
+  several services only the services whose folder changed build. Its scan is
+  copied when the earlier one is known and under 7 days old; otherwise the
+  reused image is scanned again. A missing image or a registry error builds
+  normally. `rebuild: true` ("Reconstruir todo") in the `config` part, or in
+  the body of `POST /projects/:id/repository/publish`, builds every service
+  again (a newer base image, a fix outside the code); the deployment, its
+  builds and the push carry `rebuild`.
 - **Scan** (3c, `docs/scan.md`): the build carries `scan`, the vulnerability
   scan of its image (`{digest, critical, high, medium, low, tool,
   db_updated_at, error, scanned_at}`). It is `null` until the cluster reports it

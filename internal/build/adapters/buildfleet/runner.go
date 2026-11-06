@@ -41,9 +41,14 @@ func (r *Runner) Dispatch(ctx context.Context, job build.Job) error {
 	if err != nil {
 		return err
 	}
+	reuse := make([]fleet.Reuse, len(job.Reuse))
+	for i, r := range job.Reuse {
+		reuse[i] = fleet.Reuse{Image: r.Image, Identity: r.Identity, SkipScan: r.SkipScan}
+	}
 	err = r.fleet.DispatchBuild(ctx, fleet.DesiredBuild{
 		ID: id, Organization: job.Build.Organization, Project: job.Build.Project, Environment: job.Build.Environment,
 		SourceKey: job.Source.Key, SourceSHA256: job.Source.SHA256, SourceSize: job.Source.Size, Timeout: Deadline,
+		Reuse: reuse,
 	})
 	var e *errx.Error
 	if errors.As(err, &e) && e.Type == errx.TypeBusiness {
@@ -71,7 +76,10 @@ func (r *Runner) Observe(ctx context.Context, b build.Build) (build.Observation,
 	case fleet.BuildRunning:
 		o.Phase = build.PhaseRunning
 	case fleet.BuildSucceeded:
-		o.Phase, o.Image = build.PhaseSucceeded, s.Image
+		o.Phase, o.Image, o.Builder = build.PhaseSucceeded, s.Image, s.Builder
+		if s.Reused {
+			o.Reused = s.Image
+		}
 	case fleet.BuildFailed:
 		o.Phase, o.Reason = build.PhaseFailed, s.Reason
 		if o.Reason == "" {

@@ -297,7 +297,7 @@ func (s *Service) Connect(ctx context.Context, organization identity.Organizatio
 		if err != nil {
 			return err
 		}
-		push, err := s.queue(ctx, locked, head, source.TriggerManual, input.ConnectedBy, requester(ctx, input.ConnectedBy))
+		push, err := s.queue(ctx, locked, head, source.TriggerManual, input.ConnectedBy, requester(ctx, input.ConnectedBy), false)
 		if err != nil {
 			return err
 		}
@@ -365,7 +365,7 @@ func (s *Service) Publish(ctx context.Context, organization identity.Organizatio
 		if locked.ID != c.ID || locked.RepositoryID != c.RepositoryID || locked.Branch != c.Branch {
 			return errx.Conflict("the repository connection changed meanwhile; try again")
 		}
-		if push, err = s.queue(ctx, locked, head, source.TriggerManual, input.RequestedBy, requester(ctx, input.RequestedBy)); err != nil {
+		if push, err = s.queue(ctx, locked, head, source.TriggerManual, input.RequestedBy, requester(ctx, input.RequestedBy), input.Rebuild); err != nil {
 			return err
 		}
 		return s.events.Publish(ctx, source.NewPushReceived(push))
@@ -377,11 +377,11 @@ func (s *Service) Publish(ctx context.Context, organization identity.Organizatio
 // the last commit), drops the older pushes still waiting (only the newest
 // commit matters) and starts its import, in the caller's transaction. The
 // caller publishes NewPushReceived.
-func (s *Service) queue(ctx context.Context, c source.Connection, head source.Commit, trigger source.Trigger, by identity.UserID, who actor.Actor) (source.Push, error) {
+func (s *Service) queue(ctx context.Context, c source.Connection, head source.Commit, trigger source.Trigger, by identity.UserID, who actor.Actor, rebuild bool) (source.Push, error) {
 	push := source.Push{ID: source.NewPushID(), Organization: c.Organization, Project: c.Project, Connection: c.ID,
 		Git: build.GitRef{Provider: build.ProviderGitHub, Repository: c.Repository, Branch: c.Branch, Commit: head.SHA,
 			Title: head.Title, Author: head.Author}.Normalize(),
-		Trigger: trigger, Status: source.StatusQueued, RequestedBy: by}
+		Trigger: trigger, Status: source.StatusQueued, RequestedBy: by, Rebuild: rebuild}
 	if !by.IsZero() { // a webhook or the poll has no requester, so no client
 		push.RequestedClient = event.MetaFrom(ctx).Client
 	}

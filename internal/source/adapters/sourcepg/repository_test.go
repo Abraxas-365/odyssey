@@ -66,7 +66,7 @@ func (e *env) push(c source.Connection, commit string, trigger source.Trigger) s
 		Git:     build.GitRef{Provider: build.ProviderGitHub, Repository: c.Repository, Branch: c.Branch, Commit: commit, Title: "fix", Author: "ana"},
 		Trigger: trigger, Status: source.StatusQueued}
 	if trigger == source.TriggerManual { // someone asked, through an assistant
-		p.RequestedBy, p.RequestedClient = identity.MustParseUserID(uuid.NewString()), "mcp:client-1"
+		p.RequestedBy, p.RequestedClient, p.Rebuild = identity.MustParseUserID(uuid.NewString()), "mcp:client-1", true
 	}
 	if err := e.repo.CreatePush(e.ctx, p); err != nil {
 		e.t.Fatal(err)
@@ -235,10 +235,10 @@ func TestPushes(t *testing.T) {
 	_, err = repo.FindPush(ctx, other, a.ID)
 	notFound(t, "cross-tenant find", err)
 	// the requesting client is stored with the push; a webhook has none
-	if got.RequestedClient != "" {
-		t.Fatalf("webhook push client %q", got.RequestedClient)
+	if got.RequestedClient != "" || got.Rebuild {
+		t.Fatalf("webhook push client %q rebuild %v", got.RequestedClient, got.Rebuild)
 	}
-	if got, err := repo.FindPush(ctx, org, m.ID); err != nil || got.RequestedClient != "mcp:client-1" || got.RequestedBy != m.RequestedBy {
+	if got, err := repo.FindPush(ctx, org, m.ID); err != nil || got.RequestedClient != "mcp:client-1" || got.RequestedBy != m.RequestedBy || !got.Rebuild {
 		t.Fatalf("manual push client %+v %v", got, err)
 	}
 	if _, err := repo.LockPush(ctx, org, a.ID); err == nil {

@@ -35,6 +35,7 @@ func (s *Service) DispatchBuild(ctx context.Context, b fleet.DesiredBuild) error
 		}
 		repo := c.Agent.Capabilities.Builder.Repository(b.Organization, b.Project)
 		b.Cluster, b.ImageRepository, b.CacheRef = c.ID, repo, repo+":buildcache"
+		b.ApplyReuse(c.Agent.Capabilities.Builder)
 		changed, err := s.repo.PutBuild(ctx, b)
 		if err != nil || !changed {
 			return err

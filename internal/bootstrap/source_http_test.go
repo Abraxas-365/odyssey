@@ -274,10 +274,10 @@ func TestGitHubHTTP(t *testing.T) {
 
 	// -- publish again (the same commit still queues) and a moved branch
 	httpxtest.Want(t, checked(t, app, http.MethodPost, projPath+"/repository/publish", reader, nil), http.StatusForbidden)
-	res = checked(t, app, http.MethodPost, projPath+"/repository/publish", token, nil)
+	res = checked(t, app, http.MethodPost, projPath+"/repository/publish", token, map[string]any{"rebuild": true})
 	httpxtest.Want(t, res, http.StatusAccepted)
 	again := httpxtest.JSON[source.Push](t, res)
-	if again.ID == first.ID || again.Status != source.StatusQueued || again.Git.Commit != sha1 {
+	if again.ID == first.ID || again.Status != source.StatusQueued || again.Git.Commit != sha1 || !again.Rebuild {
 		t.Fatalf("publish = %s", res.Body)
 	}
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
@@ -288,6 +288,9 @@ func TestGitHubHTTP(t *testing.T) {
 	}
 	if len(items) != 2 || items[0].Status != source.StatusDeployed || items[0].Deployment == nil || *items[0].Deployment == *first.Deployment {
 		t.Fatalf("pushes after publish = %+v", items)
+	}
+	if d := httpxtest.JSON[release.Deployment](t, checked(t, app, http.MethodGet, envPath+"/deployments/"+items[0].Deployment.String(), token, nil)); !d.Rebuild || !items[0].Rebuild {
+		t.Fatalf("a rebuild publish deployed %+v", d)
 	}
 	res = checked(t, app, http.MethodGet, projPath+"/repository/pushes?status=deployed&limit=1", token, nil)
 	if got := httpxtest.JSON[query.Paginated[source.Push]](t, res); len(got.Items) != 1 || got.Page.Total != 2 {
