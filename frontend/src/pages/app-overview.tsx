@@ -1,117 +1,39 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { Archive, Bot, ExternalLink, Pencil } from 'lucide-react'
-import { toast } from 'sonner'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Link } from 'react-router-dom'
+import { ArrowRight, RotateCcw } from 'lucide-react'
 import { Button, ButtonLink } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  AppStatus,
-  AppThumbnail,
-  Callout,
-  ErrorNotice,
-  KeyValue,
-  Loading,
-  PageHeader,
-  Panel,
-  PanelBody,
-  PanelFooter,
-  PanelHeader,
-  Term,
-  TechnicalDetails,
-} from '@/components/odyssey'
+import { Callout, ErrorNotice, Panel, PanelFooter, PanelHeader, PanelList, TechnicalDetails, VersionRow } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
-import { formatDateTime, formatRelative, safeAppUrl } from '@/lib/format'
+import { formatRelative } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
-import { usePreferences } from '@/lib/preferences'
-import { useArchiveProject, useProject, useUpdateProject } from '@/lib/projects'
-import { useBuild, useCurrent, useDeployments, useEnvironments } from '@/lib/releases'
-import type { Project } from '@/lib/types'
+import { useBuild } from '@/lib/releases'
 import { CodePanel } from '@/features/github/code-panel'
-import { BuildLog, PublishFolderPanel, PublishImagePanel, PublishingPanel, VersionsPanel } from '@/features/apps/release-panels'
-import { AccessPanel } from '@/features/apps/access-panel'
-import { ResourcesPanel } from '@/features/apps/resources-panel'
-import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
+import { useAppPage } from '@/features/apps/app-page'
+import { FirstVersion } from '@/features/apps/publish-paths'
+import { BuildLog, PublishingPanel, RestoreDialog, VersionsPanel } from '@/features/apps/release-panels'
 import { UsesCard } from '@/features/apps/uses-card'
-import { TierField } from '@/features/apps/tier-field'
-import { appStatus, configReachedApp, failureText, lastProblem, versions } from '@/features/apps/versions'
+import { configReachedApp, failureText, liveVersion, previousVersion, versions, type VersionItem } from '@/features/apps/versions'
 import { buildScanText, toneClass as scanTone } from '@/features/inventory/inventory'
 
-/** App → Resumen (UX v3 §8): what is online, what is being published, versions. Resources/sharing land with their APIs. */
+/**
+ * App → Resumen (UX v4 §5.3): the hero is what is online now, with "Volver a
+ * la anterior"; while publishing, the progress comes first and the version
+ * online stays visible; a failure is told by its consequence. With nothing
+ * online, the three ways to publish. Then how it is published, what it uses
+ * and the recent history.
+ */
 export function AppOverviewPage() {
-  const { id } = useParams()
-  const project = useProject(id)
-  if (project.isPending) return <Loading />
-  if (project.error) return <ErrorNotice error={project.error} onRetry={() => project.refetch()} />
-  return <Overview project={project.data} />
-}
-
-/** Copies the sentence to say to the assistant, then the link takes them to connect it. */
-function copyPublishPrompt(slug: string) {
-  navigator.clipboard.writeText(`Publica esta carpeta en la app ${slug} de Odicea`).then(
-    () => toast.success('Copiamos lo que debes decirle a tu asistente.'),
-    () => toast.error('No se pudo copiar. Dile: “Publica esta carpeta en la app ' + slug + ' de Odicea”.'),
-  )
-}
-
-function Overview({ project: p }: { project: Project }) {
-  const { technical } = usePreferences()
+  const page = useAppPage()
+  const { project: p, archived, canRead, canPublish, technical, production, current, live, publishing, deployments, history, problem, connected } = page
   const { can, user } = useAuth()
-  const archived = p.status === 'archived'
-  const canWrite = can(permissions.projectsWrite) && !archived
-  const canRead = can(permissions.deploymentsRead)
-  const [editing, setEditing] = useState(false)
-  const [confirmArchive, setConfirmArchive] = useState(false)
-  const archive = useArchiveProject(p.id)
+  const items = versions(history, current.data, user.id)
+  const canRestore = can(permissions.deploymentsRollback) && !archived
 
-  // Phase 1 publishes to production only (there is no notion of another
-  // environment in the console yet); staging/previews come with GitHub.
-  const environments = useEnvironments(p.id)
-  const production = canRead ? environments.data?.items.find(e => e.kind === 'production') : undefined
-  const current = useCurrent(p.id, production?.id)
-  const publishing = !!current.data?.active
-  const deployments = useDeployments(p.id, production?.id, publishing)
-  const history = deployments.data?.items ?? []
-  const problem = publishing ? undefined : lastProblem(history)
-  const status = appStatus(archived, current.data, problem)
-  const live = current.data?.release ? current.data : undefined
-  const liveUrl = safeAppUrl(live?.url)
-  // The scan of the version online (its build; an image published as it was has none).
-  const liveBuild = useBuild(p.id, live?.deployment?.build_id)
-  const scan = live ? buildScanText(live.deployment?.build_id ? liveBuild.data : null, !!live.deployment?.build_id && liveBuild.isPending) : undefined
-
+  if (!canRead) {
+    return <Callout tone="info" title="No tienes acceso a las versiones de esta app.">Pide a TI el permiso para verlas.</Callout>
+  }
   return (
     <>
-      <PageHeader
-        breadcrumb={<Link to="/" className="hover:text-foreground">Apps</Link>}
-        title={p.name}
-        status={<AppStatus status={status.status} label={status.label} />}
-        description={p.description || 'Sin descripción'}
-        actions={
-          canWrite && (
-            <>
-              <Button variant="outline" onClick={() => setEditing(true)}>
-                <Pencil />
-                Editar
-              </Button>
-              <ButtonLink render={<Link to="/asistente" />} onClick={() => copyPublishPrompt(p.slug)}>
-                <Bot />
-                Publicar con mi asistente
-              </ButtonLink>
-            </>
-          )
-        }
-      />
-
-      {archived && (
-        <Callout tone="warn" title="Esta app está archivada.">
-          Ya no se puede publicar ni editar. Su historial se conserva.
-        </Callout>
-      )}
-
-      {editing && <EditPanel project={p} onDone={() => setEditing(false)} />}
-
       {current.error && <ErrorNotice error={current.error} onRetry={() => current.refetch()} />}
       {current.data?.active && <PublishingPanel deployment={current.data.active} technical={technical} />}
       {problem && (
@@ -128,140 +50,73 @@ function Overview({ project: p }: { project: Project }) {
         </Panel>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <Panel>
-          <div className="p-4">
-            <AppThumbnail off={!live} className="aspect-[16/8]" />
-          </div>
-          <PanelFooter>
-            {live ? (
-              <span className="min-w-0 truncate">
-                En línea {live.deployment?.finished_at && <>desde {formatRelative(live.deployment.finished_at)}</>}
-                {technical && <> · <span className="font-mono text-xs">{live.url}</span></>}
-              </span>
-            ) : (
-              <span>Aún no tiene una versión publicada.</span>
-            )}
-            {live && liveUrl ? (
-              <ButtonLink variant="outline" size="sm" href={liveUrl} target="_blank" rel="noreferrer">
-                <ExternalLink />
-                Abrir app
-              </ButtonLink>
-            ) : (
-              <Button variant="outline" size="sm" disabled title="Disponible cuando la app esté publicada">
-                <ExternalLink />
-                Abrir app
-              </Button>
-            )}
-          </PanelFooter>
-        </Panel>
+      {live && production ? (
+        <LiveHero item={liveVersion(current.data, user.id)} previous={previousVersion(items)} publishing={publishing} canRestore={canRestore} />
+      ) : (
+        !publishing && !connected && current.isSuccess && canPublish && production && (
+          <FirstVersion project={p} canConnect={can(permissions.projectsWrite)} onUpload={page.uploadFolder} />
+        )
+      )}
 
-        <Panel>
-          <PanelHeader title="Detalles" />
-          <PanelBody>
-            <KeyValue
-              items={[
-                [<Term help="El nombre corto que se usa en la dirección de la app. No cambia.">Dirección</Term>, <span className="font-mono">{p.slug}</span>],
-                ['Creada', formatDateTime(p.created_at)],
-                [<Term help="Qué tan importante es la app. Las reglas de TI se apoyan en él: por ejemplo, publicar en producción pide aprobación. Solo TI lo cambia.">Nivel</Term>, <TierField project={p} canChange={can(permissions.projectsTier)} />],
-                ['Último cambio', formatRelative(p.updated_at)],
-                ...(scan ? ([[<Term help="Revisamos la imagen de la versión en línea en busca de vulnerabilidades conocidas. Una imagen publicada tal cual no se revisa.">Seguridad</Term>, <span><span className={scanTone[scan.tone]}>{scan.label}</span>{scan.detail && <span className="block text-xs text-muted-foreground">{scan.detail}</span>}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
-                ...(technical ? ([['ID', <span className="font-mono text-xs break-all">{p.id}</span>], ['Organización', <span className="font-mono text-xs break-all">{p.organization_id}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
-                ...(technical && live?.release ? ([['Imagen', <span className="font-mono text-xs break-all">{live.release.image}</span>], ['Puerto', live.release.config.port], ['Ruta de salud', <span className="font-mono text-xs">{live.release.config.health_path}</span>]] as [React.ReactNode, React.ReactNode][]) : []),
-              ]}
-            />
-          </PanelBody>
-        </Panel>
-      </div>
+      {(live || connected || !canPublish) && <CodePanel project={p} archived={archived} />}
 
-      {canRead && production && <UsesCard project={p.id} env={production.id} technical={technical} />}
+      {production && <UsesCard project={p.id} env={production.id} technical={technical} />}
 
-      <CodePanel project={p} archived={archived} />
-
-      {production && can(permissions.deploymentsCreate) && !archived && <PublishFolderPanel project={p.id} env={production.id} busy={publishing} technical={technical} />}
-
-      {canRead && production && (
+      {production && (
         <VersionsPanel
-          items={versions(history, current.data, user.id)}
+          items={items}
           loading={deployments.isPending}
           error={deployments.error}
           onRetry={() => deployments.refetch()}
           technical={technical}
           project={p.id}
           env={production.id}
-          canRestore={can(permissions.deploymentsRollback) && !archived}
+          canRestore={canRestore}
+          recent={3}
+          more={items.length > 3 ? 'historial' : undefined}
         />
       )}
-      {environments.error && <ErrorNotice error={environments.error} onRetry={() => environments.refetch()} />}
-
-      {technical && production && can(permissions.deploymentsCreate) && !archived && <PublishImagePanel project={p.id} env={production.id} busy={publishing} />}
-
-      {canRead && production && <AccessPanel project={p.id} env={production.id} current={current.data} canWrite={canWrite} busy={publishing} />}
-
-      {canRead && production && <VariablesPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
-
-      {canRead && production && <SecretsPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
-
-      {canRead && production && <ResourcesPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} technical={technical} />}
-
-      {canWrite && (
-        <Panel className="border-destructive/35">
-          <PanelHeader icon={Archive} title="Archivar app" description="La app deja de estar disponible. Su historial se conserva y TI puede consultarlo." actions={<Button variant="destructive" onClick={() => setConfirmArchive(true)}>Archivar</Button>} />
-        </Panel>
-      )}
-
-      <AlertDialog open={confirmArchive} onOpenChange={setConfirmArchive}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Archivar “{p.name}”?</AlertDialogTitle>
-            <AlertDialogDescription>No podrás publicarla ni editarla. Esta acción no se puede deshacer desde aquí.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <ErrorNotice error={archive.error} />
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={archive.isPending}
-              onClick={() => archive.mutate(undefined, { onSuccess: () => { setConfirmArchive(false); toast.success('App archivada') } })}
-            >
-              {archive.isPending ? 'Archivando…' : 'Archivar'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   )
 }
 
-function EditPanel({ project: p, onDone }: { project: Project; onDone: () => void }) {
-  const update = useUpdateProject(p.id)
-  const [name, setName] = useState(p.name)
-  const [description, setDescription] = useState(p.description)
+/** "En línea ahora": the live version, who published it and through what, its scan, and the way back. */
+function LiveHero({ item, previous, publishing, canRestore }: { item: VersionItem | undefined; previous: VersionItem | undefined; publishing: boolean; canRestore: boolean }) {
+  const { project: p, production, live, technical } = useAppPage()
+  const [target, setTarget] = useState<VersionItem>()
+  const buildId = live?.deployment?.build_id
+  const build = useBuild(p.id, buildId)
+  const scan = buildScanText(buildId ? build.data : null, !!buildId && build.isPending)
+  if (!item || !production) return null
   return (
-    <Panel>
-      <form
-        onSubmit={e => {
-          e.preventDefault()
-          update.mutate({ name: name.trim(), description: description.trim() }, { onSuccess: () => { toast.success('Cambios guardados'); onDone() } })
-        }}
-      >
-        <PanelHeader title="Editar app" />
-        <PanelBody>
-          <label className="flex flex-col gap-1.5 text-sm font-medium">
-            Nombre
-            <Input required maxLength={200} value={name} onChange={e => setName(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1.5 text-sm font-medium">
-            Para qué sirve
-            <Textarea maxLength={2000} value={description} onChange={e => setDescription(e.target.value)} />
-          </label>
-          <ErrorNotice error={update.error} />
-        </PanelBody>
-        <PanelFooter className="justify-end">
-          <Button type="button" variant="outline" onClick={onDone}>Cancelar</Button>
-          <Button type="submit" disabled={update.isPending || !name.trim()}>{update.isPending ? 'Guardando…' : 'Guardar'}</Button>
-        </PanelFooter>
-      </form>
+    <Panel className="border-success/40">
+      <PanelHeader
+        title={publishing ? 'Sigue en línea mientras tanto' : 'En línea ahora'}
+        meta={live?.deployment?.finished_at && <span>desde {formatRelative(live.deployment.finished_at)}</span>}
+      />
+      <PanelList>
+        <VersionRow version={item} technical={technical} />
+      </PanelList>
+      <PanelFooter>
+        <span className="flex flex-wrap items-center gap-2">
+          {canRestore && previous && !publishing && (
+            <Button variant="outline" size="sm" onClick={() => setTarget(previous)}>
+              <RotateCcw />
+              Volver a la anterior
+            </Button>
+          )}
+          {scan && (
+            <span className="text-xs">
+              Seguridad: <span className={scanTone[scan.tone]}>{scan.label}</span>
+            </span>
+          )}
+        </span>
+        <ButtonLink variant="ghost" size="sm" render={<Link to="historial" />}>
+          Ver historial
+          <ArrowRight />
+        </ButtonLink>
+      </PanelFooter>
+      <RestoreDialog project={p.id} env={production.id} target={target} onClose={() => setTarget(undefined)} />
     </Panel>
   )
 }

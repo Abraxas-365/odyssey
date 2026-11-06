@@ -9,6 +9,18 @@ import { permissions } from '@/lib/permissions'
 import { PreferencesProvider, usePreferences } from '@/lib/preferences'
 import { useProject, useProjects } from '@/lib/projects'
 
+/**
+ * An app's tabs (UX v4 §5.1): Resumen · Historial · Compartir ·
+ * Configuración. Who cannot read deployments has no history nor sharing to
+ * see: Resumen and Configuración only.
+ */
+export function appTabs(id: string, canRead: boolean): NavTab[] {
+  const base = `/apps/${id}`
+  const resumen = { to: base, label: 'Resumen', end: true }
+  if (!canRead) return [resumen, { to: `${base}/configuracion`, label: 'Configuración' }]
+  return [resumen, { to: `${base}/historial`, label: 'Historial' }, { to: `${base}/compartir`, label: 'Compartir' }, { to: `${base}/configuracion`, label: 'Configuración' }]
+}
+
 export function ConsoleLayout() {
   const { user } = useAuth()
   return (
@@ -43,7 +55,7 @@ function Chrome() {
   ]
 
   const tabs: NavTab[] = appId
-    ? [{ to: `/apps/${appId}`, label: 'Resumen', end: true }]
+    ? appTabs(appId, auth.can(permissions.deploymentsRead))
     : [
         { to: '/', label: 'Inicio', end: true },
         { to: '/asistente', label: 'Asistente' },

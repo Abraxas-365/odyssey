@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { Check, ChevronRight, Copy, Terminal } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Terminal } from 'lucide-react'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
+import { Button, ButtonLink } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
@@ -38,6 +38,27 @@ export function CodeLine({ code, className }: { code: string; className?: string
         {copied ? <Check className="text-success" /> : <Copy />}
       </Button>
     </div>
+  )
+}
+
+/**
+ * The app's address, always visible (UX v4 §5.3): the host in mono, copy
+ * and open. The whole URL is what gets copied.
+ */
+export function AppUrl({ url, className }: { url: string; className?: string }) {
+  const { copied, onCopy } = useCopy(url)
+  let host = url
+  try { host = new URL(url).host } catch { /* shown as given */ }
+  return (
+    <span className={cn('inline-flex min-w-0 items-center gap-0.5', className)}>
+      <a href={url} target="_blank" rel="noreferrer" className="min-w-0 truncate rounded-sm font-mono text-[13px] underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50">{host}</a>
+      <Button variant="ghost" size="icon-sm" onClick={onCopy} aria-label={copied ? 'Dirección copiada' : 'Copiar la dirección'}>
+        {copied ? <Check className="text-success" /> : <Copy />}
+      </Button>
+      <ButtonLink variant="ghost" size="icon-sm" href={url} target="_blank" rel="noreferrer" aria-label="Abrir la app">
+        <ExternalLink />
+      </ButtonLink>
+    </span>
   )
 }
 

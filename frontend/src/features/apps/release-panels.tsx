@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
-import { FolderUp, GitBranch, RotateCcw, ShieldAlert, Upload } from 'lucide-react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowRight, FolderUp, GitBranch, RotateCcw, ShieldAlert, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
+import { Button, ButtonLink } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { Callout, EmptyState, ErrorNotice, ListSkeleton, LogViewer, Panel, PanelBody, PanelFooter, PanelHeader, PanelList, ProgressSteps, TechnicalDetails, VersionRow, type LogSegment, type LogTone } from '@/components/odyssey'
+import { dropEntries, readDrop } from '@/lib/drop'
 import { formatBytes } from '@/lib/format'
 import { useBuildLog, useDeploy, useDeploySource, useRollback } from '@/lib/releases'
 import { packSource, planProblem, planSource, SOURCE_LIMITS, type SourcePlan } from '@/lib/tarball'
@@ -71,8 +76,8 @@ export function BuildLog({ project, build }: { project: string; build: string })
   )
 }
 
-/** Versiones with "Volver a esta" (UX v3 §8). */
-export function VersionsPanel({ items, loading, error, onRetry, technical, project, env, canRestore }: {
+/** Versiones with "Volver a esta" (UX v3 §8); the Resumen shows the newest few ("Historial reciente") and links to the rest. */
+export function VersionsPanel({ items, loading, error, onRetry, technical, project, env, canRestore, recent, more }: {
   items: VersionItem[]
   loading: boolean
   error: unknown
@@ -81,42 +86,58 @@ export function VersionsPanel({ items, loading, error, onRetry, technical, proje
   project: string
   env: string
   canRestore: boolean
+  /** Show only this many, with a link to `more`. */
+  recent?: number
+  more?: string
 }) {
-  const rollback = useRollback(project, env)
   const [target, setTarget] = useState<VersionItem>()
-  if (loading) return <Panel><PanelHeader title="Versiones" /><ListSkeleton /></Panel>
+  const title = recent ? 'Historial reciente' : 'Historial'
+  if (loading) return <Panel><PanelHeader title={title} /><ListSkeleton /></Panel>
   if (error) return <ErrorNotice error={error} onRetry={onRetry} />
-  if (items.length === 0) return <EmptyState icon={GitBranch} title="Versiones">Cada vez que publiques aparecerá aquí, y podrás volver a cualquiera.</EmptyState>
+  if (items.length === 0) return <EmptyState icon={GitBranch} title="Historial">Cada vez que publiques aparecerá aquí, y podrás volver a cualquiera.</EmptyState>
+  const shown = recent ? items.slice(0, recent) : items
   return (
     <Panel>
-      <PanelHeader title="Versiones" description="Las que llegaron a estar en línea y las que no se publicaron." />
+      <PanelHeader
+        title={recent ? `${title} (${shown.length})` : title}
+        description={recent ? undefined : 'Las versiones que llegaron a estar en línea y las que no se publicaron.'}
+        actions={more && <ButtonLink variant="ghost" size="sm" render={<Link to={more} />}>Ver todo<ArrowRight /></ButtonLink>}
+      />
       <PanelList>
-        {items.map(v => (
+        {shown.map(v => (
           <VersionRow key={v.id} version={v} technical={technical} onRestore={canRestore && v.restorable ? () => setTarget(v) : undefined} />
         ))}
       </PanelList>
-      <AlertDialog open={!!target} onOpenChange={open => { if (!open) { setTarget(undefined); rollback.reset() } }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Volver a esta versión?</AlertDialogTitle>
-            <AlertDialogDescription>
-              La publicamos de nuevo y, cuando esté lista, reemplaza a la actual. Si algo falla, la actual sigue en línea.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <ErrorNotice error={rollback.error} />
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={rollback.isPending}
-              onClick={() => target && rollback.mutate(target.id, { onSuccess: () => { setTarget(undefined); toast.success('Volviendo a esa versión…') } })}
-            >
-              <RotateCcw />
-              {rollback.isPending ? 'Iniciando…' : 'Volver a esta'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RestoreDialog project={project} env={env} target={target} onClose={() => setTarget(undefined)} />
     </Panel>
+  )
+}
+
+/** "¿Volver a esta versión?": the confirmation before a rollback. */
+export function RestoreDialog({ project, env, target, onClose }: { project: string; env: string; target: VersionItem | undefined; onClose: () => void }) {
+  const rollback = useRollback(project, env)
+  return (
+    <AlertDialog open={!!target} onOpenChange={open => { if (!open) { onClose(); rollback.reset() } }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>¿Volver a “{target?.message}”?</AlertDialogTitle>
+          <AlertDialogDescription>
+            La publicamos de nuevo y, cuando esté lista, reemplaza a la actual. Si algo falla, la actual sigue en línea.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <ErrorNotice error={rollback.error} />
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={rollback.isPending}
+            onClick={() => target && rollback.mutate(target.id, { onSuccess: () => { onClose(); toast.success('Volviendo a esa versión…') } })}
+          >
+            <RotateCcw />
+            {rollback.isPending ? 'Iniciando…' : 'Volver a esta'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -124,25 +145,51 @@ export function VersionsPanel({ items, loading, error, onRetry, technical, proje
 const BUILD_PORT = '8080'
 
 /**
- * "Desde una carpeta": pick the app's folder, see what goes up (and that
- * .env files don't), publish. The browser packs it; the cluster builds it.
- * Port and health path are technical details.
+ * "Subir una carpeta" (UX v4 §5.3): a dialog where the app's folder is
+ * dropped or picked, with what goes up (and that .env files don't), and an
+ * optional "Qué cambió" that names the version. The browser packs it; the
+ * cluster builds it. Port and health path are technical details.
  */
-export function PublishFolderPanel({ project, env, busy, technical }: { project: string; env: string; busy: boolean; technical: boolean }) {
+export function UploadFolderDialog({ project, env, open, onOpenChange, busy, technical, first }: {
+  project: string
+  env: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  busy: boolean
+  technical: boolean
+  /** Nothing online yet: there is nothing to say "what changed" about. */
+  first: boolean
+}) {
   const deploy = useDeploySource(project, env)
   const input = useRef<HTMLInputElement>(null)
   const [plan, setPlan] = useState<SourcePlan>()
   const [packing, setPacking] = useState(false)
+  const [reading, setReading] = useState(false)
+  const [over, setOver] = useState(false)
   const [packError, setPackError] = useState<string>()
+  const [message, setMessage] = useState('')
   const [port, setPort] = useState(BUILD_PORT)
   const [health, setHealth] = useState('/')
   const problem = plan && planProblem(plan)
   const sending = packing || deploy.isPending
 
-  const pick = (files: FileList | null) => {
+  const reset = () => { setPlan(undefined); setPackError(undefined); setMessage(''); setOver(false); deploy.reset(); if (input.current) input.current.value = '' }
+  const close = (next: boolean) => { if (sending) return; onOpenChange(next); if (!next) reset() }
+
+  const pick = (files: File[]) => {
     deploy.reset()
     setPackError(undefined)
-    setPlan(files && files.length ? planSource(Array.from(files)) : undefined)
+    setPlan(files.length ? planSource(files) : undefined)
+  }
+  const drop = async (e: DragEvent) => {
+    e.preventDefault()
+    setOver(false)
+    if (sending) return
+    setReading(true)
+    const got = await readDrop(dropEntries(e.dataTransfer.items))
+    setReading(false)
+    if ('problem' in got) { setPlan(undefined); setPackError(got.problem); return }
+    pick(got.files)
   }
 
   const publish = async () => {
@@ -163,25 +210,36 @@ export function PublishFolderPanel({ project, env, busy, technical }: { project:
       return
     }
     deploy.mutate(
-      { name: plan.name, source, config: { port: Number(port), health_path: health.trim() || '/' } },
-      {
-        onSuccess: () => {
-          toast.success('Publicando…')
-          setPlan(undefined)
-          if (input.current) input.current.value = ''
-        },
-      },
+      { name: plan.name, source, config: { port: Number(port), health_path: health.trim() || '/', message: message.trim() || undefined } },
+      { onSuccess: () => { toast.success('Publicando…'); onOpenChange(false); reset() } },
     )
   }
 
   return (
-    <Panel>
-      <form onSubmit={e => { e.preventDefault(); void publish() }}>
-        <PanelHeader icon={FolderUp} title="Publicar desde una carpeta" description="Elige la carpeta de tu app. La construimos y la publicamos por ti." />
-        <PanelBody>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" variant="outline" onClick={() => input.current?.click()} disabled={sending}>
-              <FolderUp />
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <form onSubmit={e => { e.preventDefault(); void publish() }} className="flex flex-col gap-5">
+          <DialogHeader>
+            <DialogTitle>Subir una carpeta</DialogTitle>
+            <DialogDescription>La construimos y la publicamos por ti. {first ? '' : 'La versión actual sigue en línea hasta que la nueva esté lista.'}</DialogDescription>
+          </DialogHeader>
+          <div
+            data-over={over || undefined}
+            onDragOver={e => { e.preventDefault(); setOver(true) }}
+            onDragLeave={() => setOver(false)}
+            onDrop={e => void drop(e)}
+            className="flex flex-col items-center gap-3 rounded-xl border border-dashed bg-muted/30 px-4 py-6 text-center transition-colors data-over:border-primary data-over:bg-primary/5"
+          >
+            <FolderUp className="size-6 text-muted-foreground" aria-hidden />
+            {plan ? (
+              <span className="text-sm" aria-live="polite">
+                <span className="font-semibold">{plan.name}</span>
+                <span className="text-muted-foreground"> · {plan.files.length.toLocaleString('es-PE')} {plan.files.length === 1 ? 'archivo' : 'archivos'} · {formatBytes(plan.size)}</span>
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground" aria-live="polite">{reading ? 'Leyendo la carpeta…' : 'Arrastra aquí la carpeta de tu app'}</span>
+            )}
+            <Button type="button" variant="outline" size="sm" onClick={() => input.current?.click()} disabled={sending || reading}>
               {plan ? 'Elegir otra carpeta' : 'Elegir carpeta'}
             </Button>
             <input
@@ -191,14 +249,8 @@ export function PublishFolderPanel({ project, env, busy, technical }: { project:
               // webkitdirectory picks a whole folder (all current browsers)
               {...{ webkitdirectory: '', directory: '' }}
               multiple
-              onChange={e => pick(e.target.files)}
+              onChange={e => pick(Array.from(e.target.files ?? []))}
             />
-            {plan && (
-              <span className="text-sm" aria-live="polite">
-                <span className="font-semibold">{plan.name}</span>
-                <span className="text-muted-foreground"> · {plan.files.length.toLocaleString('es-PE')} {plan.files.length === 1 ? 'archivo' : 'archivos'} · {formatBytes(plan.size)}</span>
-              </span>
-            )}
           </div>
           {plan && plan.envFiles.length > 0 && (
             <Callout tone="warn" icon={ShieldAlert} title="No subimos tus archivos .env.">
@@ -211,6 +263,13 @@ export function PublishFolderPanel({ project, env, busy, technical }: { project:
             </p>
           )}
           {problem && <Callout tone="bad">{problem}</Callout>}
+          {!first && (
+            <Field>
+              <FieldLabel htmlFor="upload-message">Qué cambió <span className="font-normal text-muted-foreground">(opcional)</span></FieldLabel>
+              <Input id="upload-message" maxLength={MAX_MESSAGE} value={message} onChange={e => setMessage(e.target.value)} placeholder="Agrega el filtro por vendedor" />
+              <FieldDescription>Así se llamará esta versión en el historial.</FieldDescription>
+            </Field>
+          )}
           {technical && (
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="flex flex-col gap-1.5 text-sm font-medium">
@@ -225,16 +284,21 @@ export function PublishFolderPanel({ project, env, busy, technical }: { project:
           )}
           {packError && <Callout tone="bad">{packError}</Callout>}
           <ErrorNotice error={deploy.error} />
-        </PanelBody>
-        <PanelFooter className="justify-end">
-          <Button type="submit" disabled={sending || !plan || !!problem || !port}>
-            {packing ? 'Preparando la carpeta…' : deploy.isPending ? 'Subiendo…' : busy ? 'Publicar (reemplaza la que está en curso)' : 'Publicar'}
-          </Button>
-        </PanelFooter>
-      </form>
-    </Panel>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={sending} onClick={() => close(false)}>Cancelar</Button>
+            <Button type="submit" disabled={sending || reading || !plan || !!problem || !port}>
+              {sending && <Spinner />}
+              {packing ? 'Preparando la carpeta…' : deploy.isPending ? 'Subiendo…' : busy ? 'Publicar (reemplaza la que está en curso)' : 'Publicar'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
+
+/** The API's limit on a version's "Qué cambió" (release.MaxMessage). */
+const MAX_MESSAGE = 200
 
 const digestImage = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$/
 

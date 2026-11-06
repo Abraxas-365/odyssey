@@ -2,7 +2,11 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { Loading } from '@/components/odyssey'
 import { AuthGate } from '@/lib/auth'
+import { AppHistoryPage } from '@/pages/app-history'
+import { AppLayout } from '@/pages/app-layout'
 import { AppOverviewPage } from '@/pages/app-overview'
+import { AppSettingsPage } from '@/pages/app-settings'
+import { AppSharePage } from '@/pages/app-share'
 import { AssistantPage } from '@/pages/assistant'
 import { AuthCallbackPage } from '@/pages/auth-callback'
 import { BandejaPage } from '@/pages/bandeja'
@@ -28,7 +32,12 @@ export function App() {
           <Route path="asistente" element={<AssistantPage />} />
           <Route path="bandeja" element={<BandejaPage />} />
           <Route path="inventario" element={<InventoryPage />} />
-          <Route path="apps/:id" element={<AppOverviewPage />} />
+          <Route path="apps/:id" element={<AppLayout />}>
+            <Route index element={<AppOverviewPage />} />
+            <Route path="historial" element={<AppHistoryPage />} />
+            <Route path="compartir" element={<AppSharePage />} />
+            <Route path="configuracion" element={<AppSettingsPage />} />
+          </Route>
           <Route path="infraestructura/clusteres" element={<ClustersPage />} />
           <Route path="configuracion/github" element={<GitHubSettingsPage />} />
           <Route path="configuracion/reglas" element={<PolicyRulesPage />} />

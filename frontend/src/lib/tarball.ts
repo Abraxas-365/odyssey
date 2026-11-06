@@ -13,6 +13,8 @@ export const SOURCE_LIMITS = { compressed: 100 << 20, unpacked: 500 << 20, files
 
 /** Folders never uploaded: dependencies, VCS data, caches. Matched at any depth. */
 const skippedDirs = new Set(['node_modules', '.git', '.hg', '.svn', '.next', '.nuxt', '.svelte-kit', '.turbo', '.cache', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.idea', '.vscode'])
+/** Whether a folder is never uploaded (so a dropped folder's reader need not even open it). */
+export const isSkippedDir = (name: string) => skippedDirs.has(name)
 /** Build outputs, skipped at the top of a JavaScript app (they are rebuilt). */
 const jsOutputs = new Set(['dist', 'build', 'out', 'coverage'])
 const skippedFiles = new Set(['.DS_Store', 'Thumbs.db'])

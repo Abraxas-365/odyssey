@@ -64,11 +64,25 @@ const reasonText: Record<Deployment['reason'], string> = {
   config: 'Cambió quién puede abrirla',
 }
 
-/** What a version is called: one from GitHub, its commit title; one from a folder, which folder. */
+/**
+ * What a version is called (UX v4 §5.3): one from GitHub, its commit title;
+ * else what whoever asked said changed (`message`: the assistant says what it
+ * did); else a folder upload is "Subida desde una carpeta". Restores and
+ * access changes keep their own phrase. Which folder and its size are
+ * technical (`sourceDetail`).
+ */
 export function versionMessage(d: Deployment): string {
-  if (d.reason === 'deploy' && d.source?.git) return d.source.git.title.trim() || 'Cambios desde GitHub'
-  if (d.reason === 'deploy' && d.source) return `Desde la carpeta ${d.source.name} · ${formatBytes(d.source.size)}`
-  return reasonText[d.reason]
+  if (d.reason !== 'deploy') return reasonText[d.reason]
+  if (d.source?.git) return d.source.git.title.trim() || 'Cambios desde GitHub'
+  if (d.message.trim()) return d.message.trim()
+  if (d.source) return 'Subida desde una carpeta'
+  return reasonText.deploy
+}
+
+/** Technical mode: the uploaded folder and its size ("carpeta visitas · 4.2 KB"). */
+export function sourceDetail(d: Deployment): string | undefined {
+  if (d.reason !== 'deploy' || !d.source || d.source.git) return undefined
+  return `carpeta ${d.source.name} · ${formatBytes(d.source.size)}`
 }
 
 /** The commit a version came from (GitHub), for the row's `GitLine`. */
@@ -90,26 +104,37 @@ export interface VersionItem extends VersionData {
  * in-progress one that has not started anything yet.
  */
 export function versions(deployments: Deployment[], current: CurrentRelease | undefined, me: string, now = Date.now()): VersionItem[] {
-  const live = current?.deployment?.id
   return deployments
     .filter(d => d.status === 'ready' || d.status === 'failed' || d.status === 'waiting_approval')
-    .map(d => {
-      const kind = d.status === 'waiting_approval' ? 'waiting' : d.status === 'failed' ? 'failed' : d.id === live ? 'live' : 'previous'
-      const { by, channel } = attribution(d, me)
-      return {
-        id: d.id,
-        deployment: d,
-        kind,
-        message: versionMessage(d),
-        when: formatRelative(d.finished_at ?? d.created_at, now),
-        by,
-        channel,
-        sha: d.image.split('@sha256:')[1] || undefined,
-        git: gitOf(d),
-        restorable: kind === 'previous' && d.release_id !== current?.release?.id,
-      }
-    })
+    .map(d => versionItem(d, current, me, now))
 }
+
+/** The version online now, as the hero shows it (from the current release, not the history page). */
+export function liveVersion(current: CurrentRelease | undefined, me: string, now = Date.now()): VersionItem | undefined {
+  return current?.release && current.deployment ? versionItem(current.deployment, current, me, now) : undefined
+}
+
+function versionItem(d: Deployment, current: CurrentRelease | undefined, me: string, now: number): VersionItem {
+  const live = current?.deployment?.id
+  const kind = d.status === 'waiting_approval' ? 'waiting' : d.status === 'failed' ? 'failed' : d.id === live ? 'live' : 'previous'
+  const { by, channel } = attribution(d, me)
+  return {
+    id: d.id,
+    deployment: d,
+    kind,
+    message: versionMessage(d),
+    when: formatRelative(d.finished_at ?? d.created_at, now),
+    by,
+    channel,
+    sha: d.image.split('@sha256:')[1] || undefined,
+    source: sourceDetail(d),
+    git: gitOf(d),
+    restorable: kind === 'previous' && d.release_id !== current?.release?.id,
+  }
+}
+
+/** "Volver a la anterior": the newest other release that went live, if any. */
+export const previousVersion = (items: VersionItem[]) => items.find(v => v.restorable)
 
 /** One-line explanation of a failed deployment, for its callout. */
 export function failureText(d: Deployment): string {

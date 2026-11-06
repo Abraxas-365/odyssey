@@ -25,6 +25,8 @@ export interface VersionData {
   kind: VersionKind
   sha?: string
   branch?: string
+  /** Technical mode: the uploaded folder and its size. */
+  source?: string
   /** Published from a GitHub commit: `message` is its title. */
   git?: { branch: string; sha: string; author: string }
 }
@@ -74,6 +76,7 @@ export function VersionRow({ version: v, technical, onOpen, onRestore, onPublish
                 {v.branch && <> · <span className="font-mono">{v.branch}</span></>}
               </span>
             )}
+            {technical && v.source && <span>{v.source}</span>}
           </div>
         )}
       </div>

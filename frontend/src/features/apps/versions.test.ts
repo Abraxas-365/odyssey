@@ -31,6 +31,7 @@ function dep(over: Partial<Deployment>): Deployment {
     requested_by: 'me',
     requested_by_name: '',
     requested_via: 'console',
+    message: '',
     created_at: `2026-10-27T10:${String(n).padStart(2, '0')}:00Z`,
     updated_at: '2026-10-27T10:00:00Z',
     finished_at: `2026-10-27T10:${String(n).padStart(2, '0')}:30Z`,
@@ -126,13 +127,23 @@ describe('progressSteps', () => {
 })
 
 describe('folder versions', () => {
-  it('say which folder they came from, and building counts as in progress', () => {
+  it('are "Subida desde una carpeta"; which folder and its size are technical; building counts as in progress', () => {
     const built = dep({ build_id: 'b', source: { id: 's', name: 'visitas', size: 4300, git: null } })
     const [item] = versions([built], current(built), 'me')
-    expect(item.message).toBe('Desde la carpeta visitas · 4.2 KB')
+    expect(item.message).toBe('Subida desde una carpeta')
+    expect(item.source).toBe('carpeta visitas · 4.2 KB')
     const failed = dep({ status: 'failed', release_id: null, image: '', build_id: 'b2', source: { id: 's2', name: 'roto', size: 10, git: null } })
     expect(versions([failed], undefined, 'me')[0].sha).toBeUndefined()
     expect(lastProblem([dep({ status: 'building' }), failed])).toBe(failed)
+  })
+
+  it('are called by what whoever asked said changed', () => {
+    const said = dep({ build_id: 'b', message: ' Agrega el filtro por vendedor ', source: { id: 's', name: 'visitas', size: 1, git: null } })
+    expect(versionMessage(said)).toBe('Agrega el filtro por vendedor')
+    expect(versionMessage(dep({ message: 'Imagen nueva' }))).toBe('Imagen nueva')
+    expect(versionMessage(dep({}))).toBe('Nueva versión')
+    // a restore keeps its own phrase, whatever the version it restores said
+    expect(versionMessage(dep({ reason: 'rollback', message: 'x' }))).toBe('Volviste a una versión anterior')
   })
 })
 
@@ -141,7 +152,7 @@ describe('GitHub versions', () => {
   const fromGit = (over: Partial<Deployment> = {}) => dep({ build_id: 'b', source: { id: 's', name: 'acme-visitas', size: 4300, git }, ...over })
 
   it('are called by the commit title, with the commit in the GitLine data', () => {
-    const d = fromGit()
+    const d = fromGit({ message: 'ignored: the commit names it' })
     const [item] = versions([d], current(d), 'me')
     expect(item.message).toBe('Agrega fotos a la visita')
     expect(item.git).toEqual({ branch: 'main', sha: git.commit, author: 'ana-ruiz' })

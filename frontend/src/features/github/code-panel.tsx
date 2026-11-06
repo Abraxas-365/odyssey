@@ -3,6 +3,7 @@ import { Code2, GitBranch, Rocket, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { Callout, ErrorNotice, GitLine, ListSkeleton, Panel, PanelBody, PanelFooter, PanelHeader } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
@@ -126,9 +127,6 @@ function ConnectedPanel({ project, repo, branch, root, archived }: { project: Pr
 
 function ConnectPanel({ project, canConnect }: { project: Project; canConnect: boolean }) {
   const [open, setOpen] = useState(false)
-  const [choice, setChoice] = useState<RepoChoice>(noRepoChoice)
-  const connect = useConnectRepository()
-  const github = useGitHubReadiness(open)
 
   if (!canConnect) {
     return (
@@ -138,39 +136,50 @@ function ConnectPanel({ project, canConnect }: { project: Project; canConnect: b
       </Panel>
     )
   }
-  if (!open) {
-    return (
-      <Panel>
-        <PanelHeader icon={Code2} title="Código" description="Si tu código está en GitHub, cada cambio se publica solo." actions={<Button variant="outline" size="sm" onClick={() => setOpen(true)}>Conectar un repositorio</Button>} />
-      </Panel>
-    )
+  return (
+    <Panel>
+      <PanelHeader icon={Code2} title="Código" description="Si tu código está en GitHub, cada cambio se publica solo." actions={<Button variant="outline" size="sm" onClick={() => setOpen(true)}>Conectar un repositorio</Button>} />
+      <ConnectRepoDialog project={project} open={open} onOpenChange={setOpen} />
+    </Panel>
+  )
+}
+
+/** "Conectar un repositorio": pick the repository and branch; connecting publishes it. */
+export function ConnectRepoDialog({ project, open, onOpenChange }: { project: Project; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [choice, setChoice] = useState<RepoChoice>(noRepoChoice)
+  const connect = useConnectRepository()
+  const github = useGitHubReadiness(open)
+  const close = (next: boolean) => {
+    if (connect.isPending) return
+    onOpenChange(next)
+    if (!next) { setChoice(noRepoChoice); connect.reset() }
   }
   const submit = () => {
     if (!choice.repo) return
     connect.mutate(
       { project: project.id, body: connectBody(choice.repo, choice.branch, choice.root) },
-      { onSuccess: () => toast.success('Conectamos tu repositorio. Lo estamos publicando…') },
+      { onSuccess: () => { toast.success('Conectamos tu repositorio. Lo estamos publicando…'); close(false) } },
     )
   }
   return (
-    <Panel>
-      <form onSubmit={e => { e.preventDefault(); submit() }}>
-        <PanelHeader icon={Code2} title="Conectar un repositorio" description="Elige el repositorio y la rama que quieres publicar." />
-        <PanelBody>
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <form onSubmit={e => { e.preventDefault(); submit() }} className="flex flex-col gap-5">
+          <DialogHeader>
+            <DialogTitle>Conectar un repositorio</DialogTitle>
+            <DialogDescription>Elige el repositorio y la rama. Cada cambio que subas a esa rama se publica solo.</DialogDescription>
+          </DialogHeader>
           <RepoPicker value={choice} onChange={setChoice} idPrefix="code-repo" />
           <ErrorNotice error={connect.error} />
-        </PanelBody>
-        <PanelFooter>
-          <span />
-          <span className="flex items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" disabled={connect.isPending} onClick={() => { setOpen(false); setChoice(noRepoChoice); connect.reset() }}>Cancelar</Button>
-            <Button type="submit" size="sm" disabled={!choice.repo || github.state !== 'ready' || connect.isPending}>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={connect.isPending} onClick={() => close(false)}>Cancelar</Button>
+            <Button type="submit" disabled={!choice.repo || github.state !== 'ready' || connect.isPending}>
               {connect.isPending && <Spinner />}
               {connect.isPending ? 'Conectando…' : 'Conectar y publicar'}
             </Button>
-          </span>
-        </PanelFooter>
-      </form>
-    </Panel>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
