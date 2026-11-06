@@ -1,27 +1,35 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2 } from 'lucide-react'
+import { Bot } from 'lucide-react'
 import { ButtonLink, Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { AttentionItem, AttentionList, Callout, ErrorNotice, ListSkeleton, Panel, PanelHeader } from '@/components/odyssey'
+import { AttentionItem, AttentionList, Callout, ErrorNotice } from '@/components/odyssey'
 import { formatRelative } from '@/lib/format'
 import { useAttention } from '@/lib/inventory'
-import type { AttentionItem as Item } from '@/lib/types'
+import type { Attention, AttentionItem as Item } from '@/lib/types'
+import { fixPrompt } from '@/features/apps/overview'
+import { AssistantDialog } from '@/features/apps/publish-paths'
 import { kindView, severityTone, unavailableText } from './inventory'
 
 /** How many items show before "Ver N más": Inicio stays a glance, not a report. */
 export const VISIBLE = 6
 
 /**
- * "Necesita tu atención" (UX v3 §3): the caller's own things and, for IT, what
- * IT watches over, each with one action. Empty is "Todo en orden", but only
- * when every source answered: a source that failed is said, never hidden.
+ * "All in order": nothing to show and every source answered. A source that
+ * could not be read is never "in order" (UX v3 §3).
+ */
+export const allInOrder = (a: Attention | undefined) => !!a && a.items.length === 0 && a.unavailable.length === 0
+
+/**
+ * "Necesita tu atención" (UX v4 §5.2): it appears only when there are real
+ * signals, each with its action; a source that failed is said, never hidden.
+ * Nothing to say renders nothing (Inicio's greeting says "todo en orden").
  */
 export function AttentionSection() {
   const attention = useAttention()
   const [all, setAll] = useState(false)
+  const [fix, setFix] = useState<string>()
 
-  if (attention.isPending) return <Panel aria-busy aria-label="Necesita tu atención"><PanelHeader title="Necesita tu atención" /><ListSkeleton rows={2} /></Panel>
   if (attention.error && !attention.data) return <ErrorNotice error={attention.error} onRetry={() => attention.refetch()} />
   const data = attention.data
   if (!data) return null
@@ -31,18 +39,13 @@ export function AttentionSection() {
   const incomplete = data.unavailable.length > 0
   return (
     <>
-      {items.length === 0 && !incomplete && (
-        <Panel aria-label="Necesita tu atención">
-          <PanelHeader icon={CheckCircle2} title="Todo en orden" description="Nada necesita tu atención ahora." />
-        </Panel>
-      )}
       {incomplete && (
         <Callout tone="warn" title={items.length === 0 ? 'No pudimos revisar todo.' : 'La lista puede estar incompleta.'}>
           {unavailableText(data.unavailable)}
         </Callout>
       )}
       <AttentionList count={items.length}>
-        {shown.map(i => <Row key={`${i.kind}:${i.request_id ?? i.app_id ?? i.cluster_id ?? ''}:${i.environment_id ?? ''}:${i.detail ?? ''}`} item={i} />)}
+        {shown.map(i => <Row key={`${i.kind}:${i.request_id ?? i.app_id ?? i.cluster_id ?? ''}:${i.environment_id ?? ''}:${i.detail ?? ''}`} item={i} onFix={setFix} />)}
         {items.length > VISIBLE && (
           <li className="px-5 py-3">
             <Button variant="ghost" size="sm" onClick={() => setAll(v => !v)}>{all ? 'Ver menos' : `Ver ${items.length - VISIBLE} más`}</Button>
@@ -50,11 +53,15 @@ export function AttentionSection() {
         )}
       </AttentionList>
       {data.truncated && <p className="text-[13px] text-muted-foreground">Hay más de lo que cabe aquí: resuelve estos y vuelve a mirar.</p>}
+      <AssistantDialog open={!!fix} onOpenChange={o => !o && setFix(undefined)} prompt={fix ? fixPrompt(fix) : ''} />
     </>
   )
 }
 
-function Row({ item: i }: { item: Item }) {
+/** Your own version that did not go online: your assistant can fix it (UX v4 §5.2). */
+const fixable = (i: Item) => i.kind === 'deployment_failed' && i.scope === 'mine' && !!i.app_slug
+
+function Row({ item: i, onFix }: { item: Item; onFix: (slug: string) => void }) {
   const v = kindView[i.kind]
   return (
     <AttentionItem
@@ -66,7 +73,17 @@ function Row({ item: i }: { item: Item }) {
           {i.scope === 'it' && <Badge variant="outline">TI</Badge>}
         </span>
       }
-      action={<ButtonLink variant="outline" size="sm" render={<Link to={i.link} />}>{v.action}</ButtonLink>}
+      action={
+        <>
+          {fixable(i) && (
+            <Button variant="outline" size="sm" onClick={() => onFix(i.app_slug!)}>
+              <Bot />
+              Pedir a mi asistente que lo arregle
+            </Button>
+          )}
+          <ButtonLink variant="outline" size="sm" render={<Link to={i.link} />}>{v.action}</ButtonLink>
+        </>
+      }
     >
       {i.at ? formatRelative(i.at) : undefined}
     </AttentionItem>

@@ -215,8 +215,11 @@ type AppState struct {
 // AppChange is when an app last changed and who asked, as on that
 // deployment (release.Deployment's requested_*).
 type AppChange struct {
-	At              time.Time       `json:"at"`
-	Reason          release.Reason  `json:"reason"`
+	At     time.Time      `json:"at"`
+	Reason release.Reason `json:"reason"`
+	// Status is how it went (or goes): Inicio says "publicó", "está
+	// publicando" or "no se publicó" from it.
+	Status          release.Status  `json:"status"`
 	RequestedBy     identity.UserID `json:"requested_by"`
 	RequestedByName string          `json:"requested_by_name"`
 	RequestedVia    string          `json:"requested_via"`
@@ -237,7 +240,10 @@ const (
 	KindClusterDisconnected Kind = "cluster_disconnected" // TI: a cluster does not answer
 	KindClusterPolicy       Kind = "cluster_policy"       // TI: a cluster does not apply its network policy
 	KindDeploymentFailed    Kind = "deployment_failed"    // TI: an app's last publication failed (24 h)
+	KindGitHubNotConnected  Kind = "github_not_connected" // TI: GitHub is available but the organization linked no installation
+	KindGitHubSuspended     Kind = "github_suspended"     // TI: a GitHub installation is suspended (its apps do not publish from git)
 	KindAppAttention        Kind = "app_attention"        // mine: something an app needs from its people
+	KindPublishing          Kind = "publishing"           // mine: a publication of my app is under way
 	KindRequestPending      Kind = "request_pending"      // mine: my request waits for TI
 	KindRequestRejected     Kind = "request_rejected"     // mine: TI rejected my request
 	KindRequestFailed       Kind = "request_failed"       // mine: my request was approved but could not run
@@ -245,7 +251,7 @@ const (
 
 // Kinds are every kind, in the order the list shows them.
 var Kinds = []Kind{KindApprovalPending, KindAppVulnerable, KindClusterDisconnected, KindClusterPolicy, KindDeploymentFailed,
-	KindAppAttention, KindRequestPending, KindRequestRejected, KindRequestFailed}
+	KindGitHubNotConnected, KindGitHubSuspended, KindAppAttention, KindPublishing, KindRequestPending, KindRequestRejected, KindRequestFailed}
 
 // Scope says whose list an item is on.
 type Scope string
@@ -272,6 +278,7 @@ const (
 	SourceApps      Source = "apps"
 	SourceClusters  Source = "clusters"
 	SourceRequests  Source = "requests"
+	SourceGitHub    Source = "github"
 )
 
 // Item is one thing that needs attention.
@@ -284,8 +291,11 @@ type Item struct {
 	// Link is the console path where it is solved ("/apps/<id>").
 	Link string `json:"link"`
 	// Detail refines KindAppAttention: the release.AttentionKind.
-	Detail      string                 `json:"detail,omitempty"`
-	App         *project.ID            `json:"app_id"`
+	Detail string      `json:"detail,omitempty"`
+	App    *project.ID `json:"app_id"`
+	// AppSlug names the app as the assistant knows it (with App), so the
+	// console can prepare "fix it" for the person's assistant.
+	AppSlug     string                 `json:"app_slug,omitempty"`
 	Environment *project.EnvironmentID `json:"environment_id"`
 	Cluster     *fleet.ClusterID       `json:"cluster_id"`
 	Request     string                 `json:"request_id,omitempty"`

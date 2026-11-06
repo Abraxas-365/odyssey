@@ -28,9 +28,12 @@ import (
 //     critical vulnerabilities, the apps whose last publication failed in the
 //     last 24 hours, and the clusters that do not answer or do not apply
 //     their network policy.
+//   - Holders of integrations:manage see a GitHub that is available and not
+//     connected, and its installations that GitHub suspended.
 //   - Everyone sees their own apps (the ones they created) with what Uses
-//     lists for people, and their own requests to TI that wait, were
-//     rejected or could not run.
+//     lists for people, their failed publications and the ones under way,
+//     and their own requests to TI that wait, were rejected or could not
+//     run.
 func (s *Service) Attention(ctx context.Context, org identity.OrganizationID) (inventory.Attention, error) {
 	a := actor.From(ctx)
 	out := inventory.Attention{Items: []inventory.Item{}, Unavailable: []inventory.Source{}}
@@ -60,6 +63,13 @@ func (s *Service) Attention(ctx context.Context, org identity.OrganizationID) (i
 			down(inventory.SourceClusters, err)
 		}
 		add(items, truncated)
+	}
+	if a.Can(permission.IntegrationsManage) {
+		items, err := s.githubItems(ctx, org)
+		if err != nil {
+			down(inventory.SourceGitHub, err)
+		}
+		add(items, false)
 	}
 	if isIT || !a.User.IsZero() {
 		items, truncated, err := s.appItems(ctx, org, a, isIT, now)
@@ -166,6 +176,10 @@ func (s *Service) appItems(ctx context.Context, org identity.OrganizationID, a a
 			} else if failed && own {
 				items = append(items, failedItem(ap, e, inventory.ScopeMine))
 			}
+			if own && publishing(e.serving) {
+				items = append(items, appItem(ap, e, inventory.KindPublishing, inventory.ScopeMine, inventory.SeverityInfo,
+					label(ap, e)+": se está publicando una versión nueva.", ptr(e.serving.Last.CreatedAt)))
+			}
 			if own {
 				mine = append(mine, e.environment)
 				byEnv[e.environment.ID] = ap
@@ -187,7 +201,7 @@ func (s *Service) appItems(ctx context.Context, org identity.OrganizationID, a a
 			}
 			it := inventory.Item{Kind: inventory.KindAppAttention, Scope: inventory.ScopeMine, Severity: inventory.SeverityWarning,
 				Sentence: label(ap, env{environment: e}) + ": " + sentence(x.Message), Link: "/apps/" + ap.project.ID.String(),
-				Detail: string(x.Kind), App: ptr(ap.project.ID), Environment: ptr(e.ID)}
+				Detail: string(x.Kind), App: ptr(ap.project.ID), AppSlug: ap.project.Slug, Environment: ptr(e.ID)}
 			items = append(items, it)
 		}
 	}
@@ -204,7 +218,39 @@ func failedItem(ap app, e env, scope inventory.Scope) inventory.Item {
 
 func appItem(ap app, e env, kind inventory.Kind, scope inventory.Scope, sev inventory.Severity, sentence string, at *time.Time) inventory.Item {
 	return inventory.Item{Kind: kind, Scope: scope, Severity: sev, Sentence: sentence, Link: "/apps/" + ap.project.ID.String(),
-		App: ptr(ap.project.ID), Environment: ptr(e.environment.ID), At: at}
+		App: ptr(ap.project.ID), AppSlug: ap.project.Slug, Environment: ptr(e.environment.ID), At: at}
+}
+
+// publishing: a publication is under way there. One waiting for TI is not:
+// it is the requester's request_pending (and TI's approval_pending).
+func publishing(sv *release.Serving) bool {
+	return sv != nil && sv.Last != nil && !sv.Last.Status.Finished() && sv.Last.Status != release.StatusWaitingApproval
+}
+
+// githubItems are, for whoever manages the integrations, a GitHub that is
+// available here and that the organization has not connected, and its
+// installations that GitHub suspended (their apps stop publishing from git).
+func (s *Service) githubItems(ctx context.Context, org identity.OrganizationID) ([]inventory.Item, error) {
+	if !s.sources.Info(ctx).Enabled {
+		return nil, nil // not offered here: nothing to connect
+	}
+	list, err := s.sources.ListInstallations(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	const link = "/configuracion/github"
+	if len(list) == 0 {
+		return []inventory.Item{{Kind: inventory.KindGitHubNotConnected, Scope: inventory.ScopeIT, Severity: inventory.SeverityInfo, Link: link,
+			Sentence: "GitHub no está conectado: nadie puede importar un repositorio ni publicar desde sus cambios."}}, nil
+	}
+	var items []inventory.Item
+	for _, i := range list {
+		if i.Suspended {
+			items = append(items, inventory.Item{Kind: inventory.KindGitHubSuspended, Scope: inventory.ScopeIT, Severity: inventory.SeverityWarning, Link: link,
+				Sentence: fmt.Sprintf("GitHub suspendió la conexión con «%s»: sus apps no se publican desde sus cambios.", i.Account)})
+		}
+	}
+	return items, nil
 }
 
 // clusterItems are the clusters that do not answer and, among the ones that

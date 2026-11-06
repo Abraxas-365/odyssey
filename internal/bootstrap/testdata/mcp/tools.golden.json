@@ -1400,7 +1400,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "description": "app_attention, request_pending, request_rejected, request_failed (tuyo) o approval_pending, app_vulnerable, cluster_disconnected, cluster_policy, deployment_failed (de TI)",
+                  "description": "app_attention, publishing, request_pending, request_rejected, request_failed (tuyo) o approval_pending, app_vulnerable, cluster_disconnected, cluster_policy, deployment_failed, github_not_connected, github_suspended (de TI)",
                   "type": "string"
                 },
                 "request_id": {
@@ -1439,7 +1439,7 @@
             "type": "boolean"
           },
           "unavailable": {
-            "description": "fuentes que no se pudieron revisar ahora (approvals, apps, clusters, requests): la lista está incompleta",
+            "description": "fuentes que no se pudieron revisar ahora (approvals, apps, clusters, requests, github): la lista está incompleta",
             "items": {
               "type": "string"
             },

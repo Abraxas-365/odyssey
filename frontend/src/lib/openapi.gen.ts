@@ -2657,6 +2657,11 @@ export interface components {
             at: string;
             /** @enum {string} */
             reason: "deploy" | "rollback" | "auto_rollback" | "config";
+            /**
+             * @description How that publication went (or goes).
+             * @enum {string}
+             */
+            status: "building" | "waiting_approval" | "pending" | "applying" | "verifying" | "ready" | "failed" | "cancelled";
             /** @description "" when the platform started it. */
             requested_by: string;
             /** @description The directory's name of who asked; "" when unknown. */
@@ -2667,13 +2672,13 @@ export interface components {
         Attention: {
             items: components["schemas"]["AttentionItem"][];
             /** @description Sources that could not be read now; the list is then incomplete. */
-            unavailable: ("approvals" | "apps" | "clusters" | "requests")[];
+            unavailable: ("approvals" | "apps" | "clusters" | "requests" | "github")[];
             /** @description A source had more than 100 items. */
             truncated: boolean;
         };
         AttentionItem: {
             /** @enum {string} */
-            kind: "approval_pending" | "app_vulnerable" | "cluster_disconnected" | "cluster_policy" | "deployment_failed" | "app_attention" | "request_pending" | "request_rejected" | "request_failed";
+            kind: "approval_pending" | "app_vulnerable" | "cluster_disconnected" | "cluster_policy" | "deployment_failed" | "github_not_connected" | "github_suspended" | "app_attention" | "publishing" | "request_pending" | "request_rejected" | "request_failed";
             /** @enum {string} */
             scope: "it" | "mine";
             /** @enum {string} */
@@ -2686,6 +2691,8 @@ export interface components {
             detail?: string;
             /** Format: uuid */
             app_id: string | null;
+            /** @description With `app_id`: the app's slug, as the assistant names it. */
+            app_slug?: string;
             /** Format: uuid */
             environment_id: string | null;
             /** Format: uuid */

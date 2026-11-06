@@ -10,6 +10,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/source"
 )
 
 // Queries are what inventory answers, implemented by inventorysvc.Service.
@@ -77,4 +78,11 @@ type Fleet interface {
 // Approvals are the requests to TI, read as the viewer they are asked for.
 type Approvals interface {
 	List(ctx context.Context, organization identity.OrganizationID, viewer approval.Viewer, filter approval.Filter, page query.Pagination) (query.Paginated[approval.View], error)
+}
+
+// Sources are the organization's GitHub installations ("GitHub sin
+// conectar" and suspended installations, for whoever manages them).
+type Sources interface {
+	Info(ctx context.Context) source.Info
+	ListInstallations(ctx context.Context, organization identity.OrganizationID) ([]source.Installation, error)
 }

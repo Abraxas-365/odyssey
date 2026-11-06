@@ -50,3 +50,45 @@ export function assistantPrompt(slug: string, { live, github }: { live: boolean;
   if (github) return `Sube los cambios de esta carpeta a GitHub; la app ${slug} de Odicea se publica sola.`
   return live ? `Publica los cambios de esta carpeta en la app ${slug} de Odicea.` : `Publica esta carpeta en la app ${slug} de Odicea.`
 }
+
+/** A new app from an idea (UX v4 §5.6): build it here, then publish it to the app just created. */
+export function buildPrompt(slug: string, idea: string): string {
+  const what = idea.trim().replace(/[.\s]+$/, '')
+  return what
+    ? `Construye en esta carpeta: ${what}. Cuando funcione, publícala en la app ${slug} de Odicea.`
+    : `Construye en esta carpeta la app ${slug}. Cuando funcione, publícala en la app ${slug} de Odicea.`
+}
+
+/** "Pedir a mi asistente que lo arregle" for a version that did not go online. */
+export function fixPrompt(slug: string): string {
+  return `La última versión de la app ${slug} de Odicea no se publicó. Revisa qué pasó, corrígelo en esta carpeta y vuelve a publicarla.`
+}
+
+// Words that open an idea without naming it ("Quiero una app para que los…").
+const leading = new Set(['quiero', 'queremos', 'necesito', 'necesitamos', 'me', 'gustaría', 'gustaria', 'crear', 'hacer', 'construir', 'armar', 'tener',
+  'una', 'un', 'app', 'aplicación', 'aplicacion', 'sistema', 'herramienta', 'web', 'página', 'pagina', 'portal', 'para', 'que', 'donde', 'en',
+  'la', 'el', 'los', 'las', 'de', 'del', 'mi', 'mis', 'nuestro', 'nuestra', 'nuestros', 'nuestras', 'poder', 'se', 'pueda', 'puedan'])
+// Words a name never ends on ("Tablero de ventas por" → "Tablero de ventas").
+const trailing = new Set(['a', 'al', 'de', 'del', 'la', 'el', 'los', 'las', 'y', 'o', 'con', 'para', 'por', 'en', 'que', 'sus', 'su', 'mis', 'mi', 'un', 'una'])
+
+/**
+ * A name from "¿Qué quieres crear?" (UX v4 §5.6): the first words that say
+ * what it is, without the filler that opens a sentence, up to four words or
+ * the first punctuation. The person can always change it.
+ */
+export function deriveName(idea: string, maxWords = 4): string {
+  const words = idea.trim().split(/\s+/).filter(Boolean)
+  let i = 0
+  while (i < words.length && leading.has(words[i].toLowerCase().replace(/[^\p{L}]/gu, ''))) i++
+  const out: string[] = []
+  for (; i < words.length && out.length < maxWords; i++) {
+    const w = words[i]
+    const cut = w.search(/[.,;:!?()]/)
+    if (cut === 0) break
+    out.push(cut > 0 ? w.slice(0, cut) : w)
+    if (cut > 0) break
+  }
+  while (out.length > 0 && trailing.has(out[out.length - 1].toLowerCase())) out.pop()
+  const name = out.join(' ').slice(0, 60)
+  return name ? name[0].toLocaleUpperCase('es') + name.slice(1) : ''
+}

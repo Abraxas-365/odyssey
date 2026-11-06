@@ -4024,10 +4024,14 @@ components:
     AppChange:
       type: object
       additionalProperties: false
-      required: [at, reason, requested_by, requested_by_name, requested_via]
+      required: [at, reason, status, requested_by, requested_by_name, requested_via]
       properties:
         at: { type: string, format: date-time }
         reason: { type: string, enum: [deploy, rollback, auto_rollback, config] }
+        status:
+          type: string
+          enum: [building, waiting_approval, pending, applying, verifying, ready, failed, cancelled]
+          description: How that publication went (or goes).
         requested_by: { type: string, description: '"" when the platform started it.' }
         requested_by_name: { type: string, description: 'The directory''s name of who asked; "" when unknown.' }
         requested_via: { type: string, description: 'As on Deployment: console, assistant:<preset>, github, platform or "" (older).' }
@@ -4041,7 +4045,7 @@ components:
           items: { $ref: "#/components/schemas/AttentionItem" }
         unavailable:
           type: array
-          items: { type: string, enum: [approvals, apps, clusters, requests] }
+          items: { type: string, enum: [approvals, apps, clusters, requests, github] }
           description: Sources that could not be read now; the list is then incomplete.
         truncated: { type: boolean, description: A source had more than 100 items. }
     AttentionItem:
@@ -4052,7 +4056,8 @@ components:
         kind:
           type: string
           enum: [approval_pending, app_vulnerable, cluster_disconnected, cluster_policy, deployment_failed,
-                 app_attention, request_pending, request_rejected, request_failed]
+                 github_not_connected, github_suspended, app_attention, publishing,
+                 request_pending, request_rejected, request_failed]
         scope:
           type: string
           enum: [it, mine]
@@ -4063,6 +4068,7 @@ components:
         link: { type: string, description: The console path that solves it. }
         detail: { type: string, description: "With `app_attention`, the uses' attention kind." }
         app_id: { type: [string, "null"], format: uuid }
+        app_slug: { type: string, description: "With `app_id`: the app's slug, as the assistant names it." }
         environment_id: { type: [string, "null"], format: uuid }
         cluster_id: { type: [string, "null"], format: uuid }
         request_id: { type: string, format: uuid }

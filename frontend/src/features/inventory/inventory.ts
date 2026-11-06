@@ -1,4 +1,4 @@
-import { AlertTriangle, BellRing, Hourglass, Server, ShieldAlert, XCircle, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, BellRing, GitBranch, Hourglass, Loader, Server, ShieldAlert, XCircle, type LucideIcon } from 'lucide-react'
 import type { Tone } from '@/components/odyssey/tone'
 import { formatRelative } from '@/lib/format'
 import type { AttentionItem, AttentionKind, AttentionSource, Build, InventoryRow, InventoryScan, InventoryStatus } from '@/lib/types'
@@ -14,8 +14,11 @@ export const kindView: Record<AttentionKind, { icon: LucideIcon; action: string 
   app_vulnerable: { icon: ShieldAlert, action: 'Ver la app' },
   cluster_disconnected: { icon: Server, action: 'Ver clústeres' },
   cluster_policy: { icon: Server, action: 'Ver clústeres' },
-  deployment_failed: { icon: XCircle, action: 'Ver la app' },
+  deployment_failed: { icon: XCircle, action: 'Ver qué pasó' },
+  github_not_connected: { icon: GitBranch, action: 'Conectar GitHub' },
+  github_suspended: { icon: GitBranch, action: 'Ver GitHub' },
   app_attention: { icon: AlertTriangle, action: 'Resolver' },
+  publishing: { icon: Loader, action: 'Ver progreso' },
   request_pending: { icon: Hourglass, action: 'Ver solicitud' },
   request_rejected: { icon: XCircle, action: 'Ver solicitud' },
   request_failed: { icon: AlertTriangle, action: 'Ver solicitud' },
@@ -36,6 +39,7 @@ const sourceName: Record<AttentionSource, string> = {
   apps: 'las apps',
   clusters: 'los clústeres',
   requests: 'tus solicitudes',
+  github: 'la conexión con GitHub',
 }
 
 /** A source that could not be read: the list is incomplete, never "todo en orden". */

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link, Outlet, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, Outlet, useParams, useSearchParams } from 'react-router-dom'
 import { Bot, FolderUp, GitBranch, Server } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,7 @@ import type { Project } from '@/lib/types'
 import type { AppPage } from '@/features/apps/app-page'
 import { assistantPrompt, hasUnpublishedCommit, primaryAction } from '@/features/apps/overview'
 import { AssistantDialog } from '@/features/apps/publish-paths'
+import { UPLOAD_PARAM } from '@/features/apps/create-app-dialog'
 import { UploadFolderDialog } from '@/features/apps/release-panels'
 import { appStatus, lastProblem } from '@/features/apps/versions'
 
@@ -62,7 +63,12 @@ function AppFrame({ project: p }: { project: Project }) {
   const unpublished = connected && !publishNow.isPending && hasUnpublishedCommit(pushes.data?.items[0], current.data)
   const action = primaryAction({ archived, canPublish: canPublish && !!production, publishing, live: !!live, unpublishedCommit: unpublished })
 
-  const [upload, setUpload] = useState(false)
+  const [params, setParams] = useSearchParams()
+  // "Crear y subir" (UX v4 §5.6) lands here with ?subir=1: the dialog opens once the environment is read
+  const [upload, setUpload] = useState(() => params.get(UPLOAD_PARAM) === '1')
+  useEffect(() => {
+    if (params.has(UPLOAD_PARAM)) setParams(p => { p.delete(UPLOAD_PARAM); return p }, { replace: true })
+  }, [params, setParams])
   const [ask, setAsk] = useState(false)
   const prompt = assistantPrompt(p.slug, { live: !!live, github: connected })
 

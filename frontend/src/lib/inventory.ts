@@ -58,7 +58,8 @@ export function useAttention() {
   return useQuery({
     queryKey: inventoryKeys.attention,
     queryFn: ({ signal }) => api<Attention>('/attention', { signal }),
-    refetchInterval: ATTENTION_POLL_MS,
+    // a publication under way is on the list until it ends: look again sooner meanwhile
+    refetchInterval: q => (q.state.data?.items.some(i => i.kind === 'publishing') ? PUBLISHING_POLL_MS : ATTENTION_POLL_MS),
   })
 }
 

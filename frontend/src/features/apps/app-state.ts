@@ -53,13 +53,40 @@ export function cardHost(s: Pick<AppState, 'url'> | undefined): string | undefin
 }
 
 /**
- * The card's "hace 2 h · Ana" and channel, from the latest publication the
- * API read (`last_change`); without it the card keeps the project's own date
- * and names nobody.
+ * The row's second line (UX v4 §5.2): "Ana publicó hace 2 h" and through
+ * what, from the latest publication the API read (`last_change`): the verb
+ * says how it went. Without it, only when the app last changed; nobody named.
  */
-export function cardChange(s: Pick<AppState, 'last_change'> | undefined, me: string, now = Date.now()): { updated?: string; changedBy?: string; channel?: ChannelData } {
+export function changeLine(s: Pick<AppState, 'last_change'> | undefined, me: string, fallbackAt: string, now = Date.now()): { text: string; channel?: ChannelData } {
   const c = s?.last_change
-  if (!c) return {}
+  if (!c) return { text: `Actualizada ${formatRelative(fallbackAt, now)}` }
   const { by, channel } = attribution(c, me)
-  return { updated: formatRelative(c.at, now), changedBy: by, channel }
+  const [third, second] = verb(c.reason, c.status)
+  const when = formatRelative(c.at, now)
+  const text = by === 'ti' ? `${second[0].toUpperCase()}${second.slice(1)} ${when}` : `${by[0].toUpperCase()}${by.slice(1)} ${third} ${when}`
+  return { text, channel }
+}
+
+type Change = NonNullable<AppState['last_change']>
+
+/** [él/ella, tú]: what was done, as it went. */
+function verb(reason: Change['reason'], status: Change['status']): [string, string] {
+  switch (status) {
+    case 'waiting_approval':
+      return ['pidió publicar', 'pediste publicar']
+    case 'building':
+    case 'pending':
+    case 'applying':
+    case 'verifying':
+      return ['está publicando', 'estás publicando']
+    case 'failed':
+      return ['intentó publicar', 'intentaste publicar']
+    case 'cancelled':
+      return ['canceló una publicación', 'cancelaste una publicación']
+    case 'ready':
+      if (reason === 'rollback') return ['volvió a una versión anterior', 'volviste a una versión anterior']
+      if (reason === 'auto_rollback') return ['restauró la versión anterior', 'restauraste la versión anterior']
+      if (reason === 'config') return ['aplicó un cambio de configuración', 'aplicaste un cambio de configuración']
+      return ['publicó', 'publicaste']
+  }
 }

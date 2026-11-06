@@ -3,6 +3,7 @@ package inventorysvc_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/internal/source"
 	"github.com/google/uuid"
 )
 
@@ -32,7 +34,9 @@ type fakes struct {
 	uses       map[project.EnvironmentID]release.Uses
 	usesCalls  int
 	scansCalls int
-	down       map[string]bool // "scans", "clusters", "approvals", "placements"
+	down       map[string]bool // "scans", "clusters", "approvals", "placements", "github", "github off"
+	// installations are the organization's GitHub installations.
+	installations []source.Installation
 }
 
 var errDown = errors.New("down")
@@ -121,8 +125,21 @@ func (a approvalPort) List(context.Context, identity.OrganizationID, approval.Vi
 	return query.NewPaginated[approval.View](nil, 0, query.Pagination{Limit: 100}), nil
 }
 
+// sourcePort is GitHub: on unless github is "off"; installations as set.
+type sourcePort struct{ *fakes }
+
+func (s sourcePort) Info(context.Context) source.Info {
+	return source.Info{Enabled: !s.down["github off"]}
+}
+func (s sourcePort) ListInstallations(context.Context, identity.OrganizationID) ([]source.Installation, error) {
+	if s.down["github"] {
+		return nil, errDown
+	}
+	return s.installations, nil
+}
+
 func newService(f *fakes) *inventorysvc.Service {
-	return inventorysvc.New(f, f, f, clusterPort{f}, approvalPort{f}).WithClock(func() time.Time { return now })
+	return inventorysvc.New(f, f, f, clusterPort{f}, approvalPort{f}, sourcePort{f}).WithClock(func() time.Time { return now })
 }
 
 var now = time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
@@ -417,7 +434,7 @@ func TestStatesSayWhatTheAppPageSays(t *testing.T) {
 		t.Fatalf("online %+v", on)
 	}
 	if c := on.LastChange; c == nil || c.RequestedBy != owner || c.RequestedByName != "Ana Torres" || c.RequestedVia != "assistant:codex" ||
-		!c.At.Equal(since) || c.Reason != release.ReasonDeploy {
+		!c.At.Equal(since) || c.Reason != release.ReasonDeploy || c.Status != release.StatusReady {
 		t.Fatalf("last change %+v", on.LastChange)
 	}
 	if a := by[ids["archived"]]; a.URL != "" || a.Access != nil || a.Cluster != nil || a.LastChange != nil {
@@ -437,5 +454,92 @@ func TestStatesSayWhatTheAppPageSays(t *testing.T) {
 	too := make([]project.ID, inventory.MaxStates+1)
 	if _, err := newService(f).States(ctxOf(owner, permission.ProjectsRead), org, too); !errx.IsType(err, errx.TypeValidation) {
 		t.Fatalf("over the cap: %v", err)
+	}
+}
+
+// UX v4 §5.2: a publication under way is on its owner's list (not TI's, and
+// not one that waits for TI: that is the request), and every app item names
+// the app's slug so the console can prepare the assistant's prompt.
+func TestPublishingIsOnItsOwnersList(t *testing.T) {
+	org := identity.NewOrganizationID()
+	owner, other := userID(), userID()
+	f := &fakes{serving: map[project.EnvironmentID]release.Serving{}, down: map[string]bool{}}
+	add := func(name string, st release.Status) project.ID {
+		p := project.Project{ID: project.NewID(), Name: name, Slug: name, Tier: project.TierInternal, CreatedBy: owner}
+		e := project.Environment{ID: project.NewEnvironmentID(), Project: p.ID, Slug: "production", Kind: project.KindProduction}
+		f.projects, f.envs = append(f.projects, p), append(f.envs, e)
+		f.serving[e.ID] = release.Serving{Environment: e.ID, Project: p.ID, Last: &release.LastDeployment{Status: st, CreatedAt: now.Add(-time.Minute)}}
+		return p.ID
+	}
+	building := add("visitas", release.StatusBuilding)
+	add("cobros", release.StatusWaitingApproval)
+	add("listo", release.StatusReady)
+
+	got, err := newService(f).Attention(ctxOf(owner, permission.ProjectsRead), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pub []inventory.Item
+	for _, i := range got.Items {
+		if i.Kind == inventory.KindPublishing {
+			pub = append(pub, i)
+		}
+	}
+	if len(pub) != 1 || *pub[0].App != building || pub[0].AppSlug != "visitas" || pub[0].Scope != inventory.ScopeMine ||
+		pub[0].Severity != inventory.SeverityInfo || pub[0].At == nil || pub[0].Link != "/apps/"+building.String() {
+		t.Fatalf("publishing %+v (all %+v)", pub, got.Items)
+	}
+
+	// someone else's app under way is not on my list, and TI is not told
+	for _, ctx := range []context.Context{ctxOf(other, permission.ProjectsRead), ctxOf(other, permission.ProjectsRead, permission.InventoryRead)} {
+		got, _ := newService(f).Attention(ctx, org)
+		for _, i := range got.Items {
+			if i.Kind == inventory.KindPublishing {
+				t.Fatalf("publishing on someone else's list: %+v", i)
+			}
+		}
+	}
+}
+
+// GitHub on the list of whoever manages the integrations: available and not
+// connected, or an installation GitHub suspended. Not offered here: nothing.
+func TestGitHubItemsForWhoManagesIt(t *testing.T) {
+	org := identity.NewOrganizationID()
+	user := userID()
+	f := &fakes{down: map[string]bool{}}
+	manager := ctxOf(user, permission.ProjectsRead, permission.IntegrationsManage)
+	kinds := func(ctx context.Context) ([]inventory.Kind, inventory.Attention) {
+		got, err := newService(f).Attention(ctx, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []inventory.Kind
+		for _, i := range got.Items {
+			out = append(out, i.Kind)
+		}
+		return out, got
+	}
+
+	if k, got := kinds(manager); len(k) != 1 || k[0] != inventory.KindGitHubNotConnected || got.Items[0].Link != "/configuracion/github" || got.Items[0].Scope != inventory.ScopeIT {
+		t.Fatalf("not connected: %+v", got.Items)
+	}
+	if k, _ := kinds(ctxOf(user, permission.ProjectsRead)); len(k) != 0 {
+		t.Fatalf("a builder is not told about GitHub: %v", k)
+	}
+
+	f.installations = []source.Installation{{Account: "acme"}, {Account: "vieja", Suspended: true}}
+	if k, got := kinds(manager); len(k) != 1 || k[0] != inventory.KindGitHubSuspended || !strings.Contains(got.Items[0].Sentence, "vieja") {
+		t.Fatalf("suspended: %+v", got.Items)
+	}
+
+	f.installations = nil
+	f.down["github off"] = true
+	if k, _ := kinds(manager); len(k) != 0 {
+		t.Fatalf("GitHub not offered here: %v", k)
+	}
+
+	f.down["github off"], f.down["github"] = false, true
+	if k, got := kinds(manager); len(k) != 0 || len(got.Unavailable) != 1 || got.Unavailable[0] != inventory.SourceGitHub {
+		t.Fatalf("GitHub down is said, never \"todo en orden\": %+v", got)
 	}
 }

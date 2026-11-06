@@ -18,6 +18,7 @@ type Deps struct {
 	Builds    inventory.Builds
 	Fleet     inventory.Fleet
 	Approvals inventory.Approvals
+	Sources   inventory.Sources
 }
 
 type Module struct {
@@ -26,6 +27,6 @@ type Module struct {
 }
 
 func New(deps Deps) Module {
-	svc := inventorysvc.New(deps.Projects, deps.Releases, deps.Builds, deps.Fleet, deps.Approvals)
+	svc := inventorysvc.New(deps.Projects, deps.Releases, deps.Builds, deps.Fleet, deps.Approvals, deps.Sources)
 	return Module{Queries: svc, HTTP: inventoryhttp.New(svc)}
 }

@@ -29,11 +29,12 @@ type Service struct {
 	builds    inventory.Builds
 	fleet     inventory.Fleet
 	approvals inventory.Approvals
+	sources   inventory.Sources
 	now       func() time.Time
 }
 
-func New(projects inventory.Projects, releases inventory.Releases, builds inventory.Builds, fleet inventory.Fleet, approvals inventory.Approvals) *Service {
-	return &Service{projects: projects, releases: releases, builds: builds, fleet: fleet, approvals: approvals, now: time.Now}
+func New(projects inventory.Projects, releases inventory.Releases, builds inventory.Builds, fleet inventory.Fleet, approvals inventory.Approvals, sources inventory.Sources) *Service {
+	return &Service{projects: projects, releases: releases, builds: builds, fleet: fleet, approvals: approvals, sources: sources, now: time.Now}
 }
 
 // WithClock replaces the clock (tests).
@@ -257,7 +258,7 @@ func stateOf(a app) inventory.AppState {
 	}
 	if sv := e.serving; sv != nil && sv.Last != nil {
 		l := sv.Last
-		st.LastChange = &inventory.AppChange{At: l.CreatedAt, Reason: l.Reason, RequestedBy: l.RequestedBy,
+		st.LastChange = &inventory.AppChange{At: l.CreatedAt, Reason: l.Reason, Status: l.Status, RequestedBy: l.RequestedBy,
 			RequestedByName: l.RequestedByName, RequestedVia: l.RequestedVia}
 	}
 	return st

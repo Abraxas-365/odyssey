@@ -44,3 +44,29 @@ describe('UX v4 §5.3: app pages', () => {
     expect(offenders(/useArchiveProject\(/, ['pages/app-settings.tsx'])).toEqual([])
   })
 })
+
+describe('UX v4 §5.2: Inicio', () => {
+  // A drawing that is not the app is not shown as if it were (the fake thumbnail is gone).
+  it('no page draws a fake preview of an app', () => {
+    expect(offenders(/AppThumbnail|thumbnail\s*[:=]/, [])).toEqual([])
+  })
+
+  // Inicio reads as a list a person reads: rows of two lines, never a column table.
+  it('Inicio lists apps with AppList/AppRow, not a table', () => {
+    const body = readFileSync(join(src, 'pages/home.tsx'), 'utf8')
+    expect(body).toMatch(/<AppList\b/)
+    expect(body).toMatch(/<AppRow\b/)
+    expect(body).not.toMatch(/@\/components\/ui\/table/)
+  })
+
+  // One main link per row: the stretched link is the row's, and only the app list draws it.
+  it('only the app row and card stretch a link over the row', () => {
+    expect(offenders(/data-row-link/, ['components/odyssey/app-card.tsx'])).toEqual([])
+  })
+
+  // "Necesita tu atención" shows what the API said; the console invents no item
+  // (e.g. "No conectaste tu asistente" belongs to the header chip, UX v4 §5.7).
+  it('attention items come only from the API', () => {
+    expect(offenders(/<AttentionItem\s/, ['features/inventory/attention-section.tsx', 'pages/design-system.tsx', 'components/odyssey/attention.tsx'])).toEqual([])
+  })
+})

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { AppState } from '@/lib/types'
-import { cardAudience, cardChange, cardHost, cardStatus } from './app-state'
+import { cardAudience, cardHost, cardStatus, changeLine } from './app-state'
 
 const state = (over: Partial<AppState>): AppState => ({
   app_id: 'a', status: 'online', url: '', since: null, access: null, cluster: null, unavailable: [], last_change: null, ...over,
@@ -58,19 +58,27 @@ describe('no invented audience', () => {
   })
 })
 
-describe('cardChange', () => {
+describe('changeLine (UX v4 §5.2)', () => {
   const now = Date.parse('2026-11-05T12:00:00Z')
   const change = (over: Partial<NonNullable<AppState['last_change']>>) =>
-    state({ last_change: { at: '2026-11-05T10:00:00Z', reason: 'deploy', requested_by: 'ana', requested_by_name: 'Ana Torres', requested_via: 'assistant:claude_code', ...over } })
-  it('who changed it last and through what, as the API read it', () => {
-    expect(cardChange(change({}), 'me', now)).toEqual({ updated: 'hace 2 horas', changedBy: 'Ana Torres', channel: { kind: 'assistant', label: 'Claude Code' } })
-    expect(cardChange(change({ requested_by: 'me' }), 'me', now).changedBy).toBe('ti')
-    expect(cardChange(change({ requested_by_name: '' }), 'me', now).changedBy).toBe('tu equipo')
-    expect(cardChange(change({ requested_via: '' }), 'me', now).channel).toEqual({ kind: 'unrecorded', label: 'Canal no registrado' })
+    state({ last_change: { at: '2026-11-05T10:00:00Z', reason: 'deploy', status: 'ready', requested_by: 'ana', requested_by_name: 'Ana Torres', requested_via: 'assistant:claude_code', ...over } })
+  const at = '2026-11-01T12:00:00Z'
+  it('who did what and through what, as the API read it', () => {
+    expect(changeLine(change({}), 'me', at, now)).toEqual({ text: 'Ana Torres publicó hace 2 horas', channel: { kind: 'assistant', label: 'Claude Code' } })
+    expect(changeLine(change({ requested_by: 'me' }), 'me', at, now).text).toBe('Publicaste hace 2 horas')
+    expect(changeLine(change({ requested_by_name: '' }), 'me', at, now).text).toBe('Tu equipo publicó hace 2 horas')
+    expect(changeLine(change({ requested_via: '' }), 'me', at, now).channel).toEqual({ kind: 'unrecorded', label: 'Canal no registrado' })
+  })
+  it('the verb says how it went', () => {
+    expect(changeLine(change({ status: 'building' }), 'me', at, now).text).toBe('Ana Torres está publicando hace 2 horas')
+    expect(changeLine(change({ status: 'failed' }), 'me', at, now).text).toBe('Ana Torres intentó publicar hace 2 horas')
+    expect(changeLine(change({ status: 'waiting_approval', requested_by: 'me' }), 'me', at, now).text).toBe('Pediste publicar hace 2 horas')
+    expect(changeLine(change({ reason: 'rollback' }), 'me', at, now).text).toBe('Ana Torres volvió a una versión anterior hace 2 horas')
+    expect(changeLine(change({ reason: 'auto_rollback', requested_by: '', requested_via: 'platform' }), 'me', at, now).text).toBe('La plataforma restauró la versión anterior hace 2 horas')
   })
   it('names nobody without it', () => {
-    expect(cardChange(undefined, 'me', now)).toEqual({})
-    expect(cardChange(state({ last_change: null }), 'me', now)).toEqual({})
+    expect(changeLine(undefined, 'me', at, now)).toEqual({ text: 'Actualizada hace 4 días' })
+    expect(changeLine(state({ last_change: null }), 'me', at, now).channel).toBeUndefined()
   })
 })
 

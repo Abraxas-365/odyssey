@@ -10,9 +10,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AppCard,
+  AppList,
+  AppRow,
   AppStatus,
   appStatuses,
-  AppThumbnail,
   ApprovalDetail,
   ApprovalItem,
   ApprovalRow,
@@ -266,12 +267,16 @@ function AppsAndVersions({ technical }: { technical: boolean }) {
     <Section id="apps" title="Apps y versiones" description="“App” y “Versión”, nunca proyecto o deployment. Lo técnico aparece solo con el interruptor.">
       <PageHeader title="Visitas a clientes" status={<AppStatus status="live" />} description="Los vendedores registran visitas con fotos y ubicación" actions={<><Button variant="outline">Compartir</Button><Button>Abrir app</Button></>} />
       <SectionHeader title="Tus apps" />
+      <AppList>
+        <AppRow href="#apps" app={{ name: 'Visitas a clientes', status: 'live', url: 'https://visitas.apps.acme.com/', change: 'Ana Torres publicó hace 2 horas', channel: { kind: 'assistant', label: 'Claude Code' }, audience: 'Ventas', detail: technical ? 'visitas' : undefined }} />
+        <AppRow href="#apps" app={{ name: 'Inventario', status: 'building', change: 'Estás publicando hace 1 minuto', channel: { kind: 'console', label: 'Consola' } }} />
+        <AppRow href="#apps" app={{ name: 'Cobranzas', status: 'paused', statusLabel: 'Sin publicar', change: 'Actualizada hace 3 días' }} />
+      </AppList>
       <div className="grid gap-4 md:grid-cols-3">
-        <AppCard technical={technical} resources={<ResourceIcons resources={resources} />} app={{ name: 'Visitas a clientes', description: 'Registro de visitas de ventas', status: 'live', updated: 'hace 2 h', changedBy: 'Ana Torres', channel: { kind: 'assistant', label: 'Claude Code' }, audience: 'Ventas', people: 12, git: { sha: 'a1b2c3d4', message: 'Agrega fotos a la visita' } }} />
-        <AppCard technical={technical} app={{ name: 'Inventario', status: 'attention', updated: 'ayer', audience: 'Solo tú', people: 1, thumbnail: 'form', git: { sha: 'f00ba12', message: 'Filtro por almacén' } }} />
+        <AppCard technical={technical} resources={<ResourceIcons resources={resources} />} app={{ name: 'Visitas a clientes', description: 'Registro de visitas de ventas', status: 'live', url: 'https://visitas.apps.acme.com/', change: 'Ana Torres publicó hace 2 horas', channel: { kind: 'assistant', label: 'Claude Code' }, audience: 'Ventas', people: 12, git: { sha: 'a1b2c3d4', message: 'Agrega fotos a la visita' } }} />
+        <AppCard technical={technical} app={{ name: 'Inventario', status: 'attention', change: 'Intentaste publicar ayer', audience: 'Solo tú', people: 1, git: { sha: 'f00ba12', message: 'Filtro por almacén' } }} />
         <CreateAppTile />
       </div>
-      <Sample title="Miniaturas" className="flex items-end gap-3"><AppThumbnail mini /><AppThumbnail mini kind="form" /><AppThumbnail mini off /></Sample>
       <Panel>
         <PanelHeader title="Versiones" meta="5" />
         <PanelList>

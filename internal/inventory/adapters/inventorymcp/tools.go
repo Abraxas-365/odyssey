@@ -54,7 +54,7 @@ type noInput struct{}
 
 // Item is one thing that needs attention.
 type Item struct {
-	Kind     string `json:"kind" jsonschema:"app_attention, request_pending, request_rejected, request_failed (tuyo) o approval_pending, app_vulnerable, cluster_disconnected, cluster_policy, deployment_failed (de TI)"`
+	Kind     string `json:"kind" jsonschema:"app_attention, publishing, request_pending, request_rejected, request_failed (tuyo) o approval_pending, app_vulnerable, cluster_disconnected, cluster_policy, deployment_failed, github_not_connected, github_suspended (de TI)"`
 	Scope    string `json:"scope" jsonschema:"mine (lo tuyo) o it (lo que TI vigila)"`
 	Severity string `json:"severity" jsonschema:"critical, warning o info"`
 	Sentence string `json:"sentence" jsonschema:"qué pasa, en español"`
@@ -69,7 +69,7 @@ type Item struct {
 type Out struct {
 	Items       []Item   `json:"items"`
 	AllInOrder  bool     `json:"all_in_order" jsonschema:"true si no hay nada y todas las fuentes se pudieron revisar"`
-	Unavailable []string `json:"unavailable" jsonschema:"fuentes que no se pudieron revisar ahora (approvals, apps, clusters, requests): la lista está incompleta"`
+	Unavailable []string `json:"unavailable" jsonschema:"fuentes que no se pudieron revisar ahora (approvals, apps, clusters, requests, github): la lista está incompleta"`
 	Truncated   bool     `json:"truncated" jsonschema:"hay más elementos de los que caben; resuélvelos y vuelve a pedir"`
 }
 

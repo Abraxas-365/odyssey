@@ -18,7 +18,7 @@ vi.mock('@/lib/api', async orig => ({
   apiFile: (...a: unknown[]) => apiFile(...a),
 }))
 
-import { AttentionSection } from '@/features/inventory/attention-section'
+import { AttentionSection, allInOrder } from '@/features/inventory/attention-section'
 import { InventoryPage } from './inventory'
 
 function mount(ui: React.ReactElement, can: string[] = []) {
@@ -43,10 +43,44 @@ describe('AttentionSection', () => {
     api.mockReset()
   })
 
-  it('says "Todo en orden" only when nothing is pending and every source answered', async () => {
+  it('shows nothing when nothing needs attention: only real signals appear (UX v4 §5.2)', async () => {
     api.mockResolvedValue(attention({}))
+    const { container } = mount(<AttentionSection />)
+    await waitFor(() => expect(api).toHaveBeenCalled())
+    await waitFor(() => expect(container.textContent).toBe(''))
+    expect(allInOrder(attention({}))).toBe(true)
+    expect(allInOrder(attention({ unavailable: ['github'] }))).toBe(false)
+    expect(allInOrder(attention({ items: [item({})] }))).toBe(false)
+    expect(allInOrder(undefined)).toBe(false)
+  })
+
+  it('offers your assistant the fix for your own version that did not go online', async () => {
+    api.mockResolvedValue(attention({
+      items: [
+        item({ kind: 'deployment_failed', severity: 'critical', sentence: 'Visitas: la última versión no se publicó.', app_slug: 'visitas' }),
+        item({ kind: 'deployment_failed', scope: 'it', severity: 'critical', sentence: 'Cobros: la última versión no se publicó.', app_id: 'a2', app_slug: 'cobros', link: '/apps/a2' }),
+      ],
+    }))
     mount(<AttentionSection />)
-    expect(await screen.findByText('Todo en orden')).toBeTruthy()
+    await screen.findByText('Visitas: la última versión no se publicó.')
+    expect(screen.getAllByRole('link', { name: 'Ver qué pasó' })).toHaveLength(2)
+    // only the person's own: TI sees what happened, the owner's assistant fixes it
+    const fix = screen.getAllByRole('button', { name: /Pedir a mi asistente que lo arregle/ })
+    expect(fix).toHaveLength(1)
+    await userEvent.click(fix[0])
+    expect(await screen.findByText(/La última versión de la app visitas de Odicea no se publicó/)).toBeTruthy()
+  })
+
+  it('words the publications under way and GitHub for TI', async () => {
+    api.mockResolvedValue(attention({
+      items: [
+        item({ kind: 'publishing', severity: 'info', sentence: 'Visitas: se está publicando una versión nueva.' }),
+        item({ kind: 'github_not_connected', scope: 'it', severity: 'info', sentence: 'GitHub no está conectado.', link: '/configuracion/github', app_id: null }),
+      ],
+    }))
+    mount(<AttentionSection />)
+    expect((await screen.findByRole('link', { name: 'Ver progreso' })).getAttribute('href')).toBe('/apps/a1')
+    expect(screen.getByRole('link', { name: 'Conectar GitHub' }).getAttribute('href')).toBe('/configuracion/github')
   })
 
   it('never says "Todo en orden" when a source could not be read', async () => {

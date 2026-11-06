@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, Deployment, GitHubPush } from '@/lib/types'
-import { assistantPrompt, hasUnpublishedCommit, primaryAction, type OverviewState } from './overview'
+import { assistantPrompt, buildPrompt, deriveName, fixPrompt, hasUnpublishedCommit, primaryAction, type OverviewState } from './overview'
 
 const base: OverviewState = { archived: false, canPublish: true, publishing: false, live: false, unpublishedCommit: false }
 
@@ -45,5 +45,28 @@ describe('assistantPrompt', () => {
     expect(assistantPrompt('visitas', { live: false, github: false })).toBe('Publica esta carpeta en la app visitas de Odicea.')
     expect(assistantPrompt('visitas', { live: true, github: false })).toMatch(/^Publica los cambios/)
     expect(assistantPrompt('visitas', { live: true, github: true })).toMatch(/GitHub/)
+  })
+})
+
+describe('deriveName (UX v4 §5.6)', () => {
+  it('keeps what the idea is, without the words that open a sentence', () => {
+    expect(deriveName('Quiero una app para registrar las visitas a clientes')).toBe('Registrar las visitas')
+    expect(deriveName('Tablero de ventas por región, con filtros')).toBe('Tablero de ventas')
+    expect(deriveName('Reporte de cobros, semanal')).toBe('Reporte de cobros')
+    expect(deriveName('necesito un formulario de vacaciones')).toBe('Formulario de vacaciones')
+    expect(deriveName('Visitas a clientes')).toBe('Visitas a clientes')
+  })
+  it('never ends on a connector and says nothing for nothing', () => {
+    expect(deriveName('Control de stock de la bodega central')).toBe('Control de stock')
+    expect(deriveName('   ')).toBe('')
+    expect(deriveName('quiero una app')).toBe('')
+  })
+})
+
+describe('buildPrompt and fixPrompt', () => {
+  it('ask the assistant to build the idea and publish it in the app', () => {
+    expect(buildPrompt('visitas', 'Registrar visitas con fotos.')).toBe('Construye en esta carpeta: Registrar visitas con fotos. Cuando funcione, publícala en la app visitas de Odicea.')
+    expect(buildPrompt('visitas', '')).toMatch(/la app visitas\. Cuando funcione/)
+    expect(fixPrompt('visitas')).toMatch(/app visitas de Odicea no se publicó/)
   })
 })

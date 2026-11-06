@@ -8,6 +8,8 @@ import { AlertTriangle } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   AppCard,
+  AppList,
+  AppRow,
   AppShell,
   AppStatus,
   AttentionItem,
@@ -48,16 +50,49 @@ describe('status vocabulary', () => {
 
 describe('AppCard claims only what it was told', () => {
   it('no audience row and no status when unknown', () => {
-    wrap(<AppCard app={{ name: 'Visitas', updated: 'hace 2 h' }} />)
+    wrap(<AppCard app={{ name: 'Visitas', change: 'Actualizada hace 2 horas' }} />)
     expect(screen.queryByLabelText('Quién puede abrirla')).not.toBeInTheDocument()
     expect(screen.queryByText('En pausa')).not.toBeInTheDocument()
     expect(screen.queryByText('Solo tu equipo')).not.toBeInTheDocument()
   })
-  it('shows the host and the audience it was given', () => {
-    wrap(<AppCard app={{ name: 'Visitas', status: 'live', updated: 'hace 2 h', host: 'visitas.apps.acme.com', audience: 'Toda la empresa' }} />)
+  it('shows the address and the audience it was given', () => {
+    wrap(<AppCard app={{ name: 'Visitas', status: 'live', change: 'Publicaste hace 2 horas', url: 'https://visitas.apps.acme.com/', audience: 'Toda la empresa' }} />)
     expect(screen.getByText('visitas.apps.acme.com')).toBeInTheDocument()
     expect(screen.getByText('Toda la empresa')).toBeInTheDocument()
     expect(screen.getByText('En línea')).toBeInTheDocument()
+  })
+  it('draws no fake preview of the app', () => {
+    const { container } = wrap(<AppCard app={{ name: 'Visitas', status: 'live', change: 'x' }} />)
+    expect(container.querySelector('[class*="aspect-"]')).toBeNull()
+  })
+})
+
+describe('AppRow (UX v4 §5.2, §5.10)', () => {
+  const row = (app: Partial<React.ComponentProps<typeof AppRow>['app']>) =>
+    wrap(<AppList><AppRow href="/apps/a1" app={{ name: 'Visitas', change: 'Ana Torres publicó hace 2 horas', ...app }} /></AppList>)
+  it('two lines: name, state and address; who, through what and who can open it', () => {
+    row({ status: 'live', url: 'https://visitas.apps.acme.com/', channel: { kind: 'assistant', label: 'Claude Code' }, audience: 'Toda la empresa' })
+    expect(screen.getByRole('list', { name: 'Apps' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Visitas' })).toHaveAttribute('href', '/apps/a1')
+    expect(screen.getByText('En línea')).toBeInTheDocument()
+    expect(screen.getByText('visitas.apps.acme.com')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copiar la dirección' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Abrir la app' })).toHaveAttribute('href', 'https://visitas.apps.acme.com/')
+    expect(screen.getByText('Ana Torres publicó hace 2 horas')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Canal: Claude Code' })).toBeInTheDocument()
+    expect(screen.getByText('Toda la empresa')).toBeInTheDocument()
+  })
+  it('claims nothing it was not told', () => {
+    row({})
+    expect(screen.queryByRole('button', { name: 'Copiar la dirección' })).toBeNull()
+    expect(screen.queryByLabelText('Quién puede abrirla')).toBeNull()
+    expect(screen.queryByRole('img', { name: /^Canal/ })).toBeNull()
+    expect(screen.queryByText('En línea')).toBeNull()
+  })
+  it('is accessible, with one main link per row', async () => {
+    const { container } = row({ status: 'live', url: 'https://visitas.apps.acme.com/', audience: 'Ventas' })
+    await expectAccessible(container)
+    expect(container.querySelectorAll('a[data-row-link]')).toHaveLength(1)
   })
 })
 
@@ -90,7 +125,7 @@ describe('RequestTracker', () => {
 })
 
 describe('technical mode only adds detail', () => {
-  const app = { name: 'Visitas', status: 'live' as const, updated: 'hace 2 h', audience: 'Ventas', git: { sha: 'a1b2c3d4e5', message: 'fotos' } }
+  const app = { name: 'Visitas', status: 'live' as const, change: 'hace 2 h', audience: 'Ventas', git: { sha: 'a1b2c3d4e5', message: 'fotos' } }
   it('hides git info for builders', () => {
     wrap(<AppCard app={app} />)
     expect(screen.queryByText('a1b2c3d')).not.toBeInTheDocument()
@@ -170,11 +205,11 @@ describe('interactions', () => {
   })
 
   it('AppCard names who changed it last only when told', () => {
-    const { container, rerender } = render(<AppCard app={{ name: 'Visitas', status: 'live', updated: 'hace 2 h', changedBy: 'Ana Torres', channel: { kind: 'console', label: 'Consola' } }} />)
-    expect(container).toHaveTextContent('hace 2 h · Ana Torres')
+    const { container, rerender } = wrap(<AppCard app={{ name: 'Visitas', status: 'live', change: 'Ana Torres publicó hace 2 h', channel: { kind: 'console', label: 'Consola' } }} />)
+    expect(container).toHaveTextContent('Ana Torres publicó hace 2 h')
     expect(screen.getByRole('img', { name: 'Canal: Consola' })).toBeInTheDocument()
-    rerender(<AppCard app={{ name: 'Visitas', status: 'live', updated: 'hace 2 h' }} />)
-    expect(container).not.toHaveTextContent('·')
+    rerender(<MemoryRouter><TooltipProvider><AppCard app={{ name: 'Visitas', status: 'live', change: 'Actualizada hace 2 h' }} /></TooltipProvider></MemoryRouter>)
+    expect(container).not.toHaveTextContent('Ana')
     expect(screen.queryByRole('img', { name: /^Canal/ })).toBeNull()
   })
   it('locked rules cannot be toggled', () => {

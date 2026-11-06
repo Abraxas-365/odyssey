@@ -88,16 +88,21 @@ Any caller with `odyssey:projects:read`. The list depends on who asks:
 |---|---|---|
 | `it` | `approval_pending` (waits for you; needs `approvals:decide`) | deciders |
 | `it` | `app_vulnerable` (online image with critical vulnerabilities), `deployment_failed` (last publication failed in the last 24 h), `cluster_disconnected`, `cluster_policy` (network policy not applied) | holders of `inventory:read` |
-| `mine` | `app_attention` (what `Uses` lists for the app's people), `deployment_failed` | the app's creator |
+| `it` | `github_not_connected` (GitHub is offered here and no installation is linked), `github_suspended` (GitHub suspended an installation) | holders of `integrations:manage` |
+| `mine` | `app_attention` (what `Uses` lists for the app's people), `deployment_failed`, `publishing` (a publication under way, not one waiting for TI) | the app's creator |
 | `mine` | `request_pending`, `request_rejected` (7 days), `request_failed` (approved but could not run, 7 days) | the requester |
 
 Each item: `kind`, `scope`, `severity` (`critical` · `warning` · `info`), a
-plain-Spanish `sentence`, the console `link`, ids, `at`. Ordered by severity,
-then newest. Each source is bounded to 100 items (`truncated`).
+plain-Spanish `sentence`, the console `link`, ids (`app_slug` with `app_id`,
+so the console can prepare "fix it" for the person's assistant), `at`.
+Ordered by severity, then newest. Each source is bounded to 100 items
+(`truncated`).
 
 **An empty list is "Todo en orden" only when `unavailable` is empty.** Each
-source (`approvals`, `apps`, `clusters`, `requests`) degrades on its own and
-names itself in `unavailable`; the rest of the list is still answered.
+source (`approvals`, `apps`, `clusters`, `requests`, `github`) degrades on its
+own and names itself in `unavailable`; the rest of the list is still answered.
+"Your assistant is not connected" is never an item: it is the header's
+assistant chip (UX v4 §5.2).
 
 ## Console and MCP
 

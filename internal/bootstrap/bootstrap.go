@@ -461,7 +461,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		AI:        ais,
 		Audit:     auditmodule.New(auditmodule.Deps{DB: db}),
 		Inventory: inventorymodule.New(inventorymodule.Deps{Projects: projects.Queries, Releases: releases.Queries, Builds: builds.Queries,
-			Fleet: fleets.Queries, Approvals: approvals.Queries}),
+			Fleet: fleets.Queries, Approvals: approvals.Queries, Sources: sources.Queries}),
 	}
 	p.Audit.Subscribe(bus)
 	p.Sources.Subscribe(bus)

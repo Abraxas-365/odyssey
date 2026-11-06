@@ -45,17 +45,19 @@ export function CodeLine({ code, className }: { code: string; className?: string
  * The app's address, always visible (UX v4 §5.3): the host in mono, copy
  * and open. The whole URL is what gets copied.
  */
-export function AppUrl({ url, className }: { url: string; className?: string }) {
+export function AppUrl({ url, className, compact }: { url: string; className?: string; compact?: boolean }) {
   const { copied, onCopy } = useCopy(url)
   let host = url
   try { host = new URL(url).host } catch { /* shown as given */ }
+  // compact (a list row): under 640 px the host gives way to its two buttons, never hidden; 44 px to touch.
+  const touch = compact && 'max-sm:size-11'
   return (
     <span className={cn('inline-flex min-w-0 items-center gap-0.5', className)}>
-      <a href={url} target="_blank" rel="noreferrer" className="min-w-0 truncate rounded-sm font-mono text-[13px] underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50">{host}</a>
-      <Button variant="ghost" size="icon-sm" onClick={onCopy} aria-label={copied ? 'Dirección copiada' : 'Copiar la dirección'}>
+      <a href={url} target="_blank" rel="noreferrer" className={cn('min-w-0 truncate rounded-sm font-mono text-[13px] underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50', compact && 'max-sm:hidden')}>{host}</a>
+      <Button variant="ghost" size="icon-sm" className={cn(touch)} onClick={onCopy} aria-label={copied ? 'Dirección copiada' : 'Copiar la dirección'}>
         {copied ? <Check className="text-success" /> : <Copy />}
       </Button>
-      <ButtonLink variant="ghost" size="icon-sm" href={url} target="_blank" rel="noreferrer" aria-label="Abrir la app">
+      <ButtonLink variant="ghost" size="icon-sm" className={cn(touch)} href={url} target="_blank" rel="noreferrer" aria-label="Abrir la app">
         <ExternalLink />
       </ButtonLink>
     </span>

@@ -174,7 +174,7 @@ Read-only views composed from the other domains' own reads.
 |---|---|---|---|
 | `GET` | `/api/v1/inventory` | `inventory:read` (TI) | 200 `{items, page, truncated, unavailable}`, one row per app and environment; `?format=csv` downloads every match |
 | `GET` | `/api/v1/attention` | `projects:read` | 200 `{items, unavailable, truncated}` |
-| `GET` | `/api/v1/app-states?id=…` | `projects:read` + `deployments:read` | 200 `{items[{app_id, status, url, since, access:{mode, pending}\|null, cluster:{id, name}\|null, unavailable[], last_change:{at, reason, requested_by, requested_by_name, requested_via}\|null}]}` (`last_change`: the latest publication asked for in production and who asked, as on that deployment) |
+| `GET` | `/api/v1/app-states?id=…` | `projects:read` + `deployments:read` | 200 `{items[{app_id, status, url, since, access:{mode, pending}\|null, cluster:{id, name}\|null, unavailable[], last_change:{at, reason, status, requested_by, requested_by_name, requested_via}\|null}]}` (`last_change`: the latest publication asked for in production, how it went and who asked, as on that deployment) |
 
 - **App states** (the console's app lists): `id` repeatable, at most 100 (more
   is 400; a malformed id is 400); none answers `{items: []}`. One item per app
@@ -202,13 +202,16 @@ Read-only views composed from the other domains' own reads.
   `needs_attention` filter, the CSV) run 8 at a time.
 - **Degradation**: a row's `unavailable` names the parts that could not be read
   (the value is unknown, not fine); `/attention`'s `unavailable` names the
-  sources (`approvals`, `apps`, `clusters`, `requests`). An empty `items` with a
+  sources (`approvals`, `apps`, `clusters`, `requests`, `github`). An empty `items` with a
   non-empty `unavailable` is **not** "all in order". The rest is still answered.
 - **Who sees what** (`/attention`): `scope: mine` for everyone (their own apps'
-  needs and their own requests); `scope: it` adds the requests the caller may
-  decide (`approvals:decide`) and, with `inventory:read`, the org's critical
+  needs, failed publications and publications under way, and their own
+  requests); `scope: it` adds the requests the caller may
+  decide (`approvals:decide`); with `inventory:read`, the org's critical
   vulnerabilities, failed publications (24 h) and clusters that do not answer or
-  do not apply their network policy. The tenant is the token's, never a request
+  do not apply their network policy; and with `integrations:manage`, a GitHub
+  offered here and not connected, or an installation GitHub suspended. App
+  items carry `app_slug`. The tenant is the token's, never a request
   field.
 
 ### Projects (`odyssey:projects:read` / `odyssey:projects:write`)
