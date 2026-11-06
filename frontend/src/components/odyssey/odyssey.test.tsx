@@ -155,6 +155,28 @@ describe('interactions', () => {
     expect(container).toHaveTextContent('main')
   })
 
+  it('VersionRow says who and through what, the channel with icon, text and a label', () => {
+    const git = { branch: 'main', sha: 'a1b2c3d4e5', author: 'ana-ruiz' }
+    const { container } = render(<ul>
+      <VersionRow version={{ id: '1', kind: 'live', message: 'a', when: 'hace 2 h', by: 'Ana Torres', channel: { kind: 'assistant', label: 'Claude Code' } }} />
+      <VersionRow version={{ id: '2', kind: 'previous', message: 'b', when: 'ayer', by: 'tu equipo', channel: { kind: 'github', label: 'GitHub' }, git }} />
+      <VersionRow version={{ id: '3', kind: 'previous', message: 'c', when: 'el lunes', by: 'ti', channel: { kind: 'unrecorded', label: 'Canal no registrado' } }} />
+    </ul>)
+    expect(container).toHaveTextContent('hace 2 h · por Ana Torres')
+    expect(container).toHaveTextContent('ayer· por tu equipo')
+    const chips = screen.getAllByRole('img', { name: /^Canal: / })
+    expect(chips.map(c => c.getAttribute('aria-label'))).toEqual(['Canal: Claude Code', 'Canal: GitHub', 'Canal: Canal no registrado'])
+    chips.forEach(c => expect(c.querySelector('svg')).not.toBeNull())
+  })
+
+  it('AppCard names who changed it last only when told', () => {
+    const { container, rerender } = render(<AppCard app={{ name: 'Visitas', status: 'live', updated: 'hace 2 h', changedBy: 'Ana Torres', channel: { kind: 'console', label: 'Consola' } }} />)
+    expect(container).toHaveTextContent('hace 2 h · Ana Torres')
+    expect(screen.getByRole('img', { name: 'Canal: Consola' })).toBeInTheDocument()
+    rerender(<AppCard app={{ name: 'Visitas', status: 'live', updated: 'hace 2 h' }} />)
+    expect(container).not.toHaveTextContent('·')
+    expect(screen.queryByRole('img', { name: /^Canal/ })).toBeNull()
+  })
   it('locked rules cannot be toggled', () => {
     wrap(<RuleRow checked locked>Las apps <b>públicas</b> necesitan Seguridad</RuleRow>)
     expect(screen.getByRole('switch')).toHaveAttribute('aria-disabled', 'true')

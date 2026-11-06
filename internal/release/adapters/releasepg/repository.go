@@ -87,7 +87,7 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 
 const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name,
 	source_size, source_git, config, status, reason, step, revision, previous_release_id, rollback_of, settings_revision, error_code, error_message, error_detail,
-	run_id, requested_by, requested_via, created_at, updated_at, finished_at`
+	run_id, requested_by, requested_by_name, requested_via, created_at, updated_at, finished_at`
 
 type deploymentRow struct {
 	release.Deployment
@@ -210,6 +210,14 @@ func (r *Repository) ListDeployments(ctx context.Context, organization identity.
 	return query.NewPaginated(items, total, page), nil
 }
 
+// ObserveRequesterName records the name the directory gave who asked for the
+// deployment. It only fills an empty one: the snapshot taken first stays.
+func (r *Repository) ObserveRequesterName(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, name string) error {
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.deployments SET requested_by_name = $3
+		WHERE organization_id = $1 AND id = $2 AND requested_by_name = ''`, organization, id, name)
+	return pgerr.MapWith(err, "record who asked for the deployment", messages)
+}
+
 // SetSettingsRevision records the settings revision the apply step handed to
 // the cluster.
 func (r *Repository) SetSettingsRevision(ctx context.Context, organization identity.OrganizationID, id release.DeploymentID, revision int64) error {
@@ -279,6 +287,9 @@ type servingRow struct {
 	ErrorDetail *string               `db:"error_detail"`
 	LastCreated *time.Time            `db:"last_created_at"`
 	LastEnded   *time.Time            `db:"last_finished_at"`
+	LastBy      *identity.UserID      `db:"last_requested_by"`
+	LastByName  *string               `db:"last_requested_by_name"`
+	LastVia     *string               `db:"last_requested_via"`
 	Applied     *int64                `db:"applied_settings_revision"`
 	AppliedMode *release.AccessMode   `db:"applied_mode"`
 	Latest      *int64                `db:"latest_revision"`
@@ -300,12 +311,14 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 		       cd.finished_at AS since,
 		       l.id AS last_id, l.status AS last_status, l.reason AS last_reason, l.error_code, l.error_message, l.error_detail,
 		       l.created_at AS last_created_at, l.finished_at AS last_finished_at,
+		       l.requested_by AS last_requested_by, l.requested_by_name AS last_requested_by_name, l.requested_via AS last_requested_via,
 		       s.applied_settings_revision, ap.access_mode AS applied_mode,
 		       lt.revision AS latest_revision, lt.access_mode AS latest_mode
 		  FROM release.environment_states s
 		  LEFT JOIN release.releases rel ON rel.id = s.current_release_id
 		  LEFT JOIN release.deployments cd ON cd.id = s.current_deployment_id
-		  LEFT JOIN LATERAL (SELECT d.id, d.status, d.reason, d.error_code, d.error_message, d.error_detail, d.created_at, d.finished_at
+		  LEFT JOIN LATERAL (SELECT d.id, d.status, d.reason, d.error_code, d.error_message, d.error_detail, d.created_at, d.finished_at,
+		                            d.requested_by, d.requested_by_name, d.requested_via
 		                       FROM release.deployments d
 		                      WHERE d.organization_id = s.organization_id AND d.environment_id = s.environment_id
 		                      ORDER BY d.created_at DESC, d.revision DESC LIMIT 1) l ON true
@@ -325,6 +338,15 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 			Access: release.AccessInForce(row.Image != "", row.Applied, row.AppliedMode, row.Latest, row.LatestMode)}
 		if row.LastID != nil && row.LastStatus != nil && row.LastReason != nil && row.LastCreated != nil {
 			s.Last = &release.LastDeployment{ID: *row.LastID, Status: *row.LastStatus, Reason: *row.LastReason, CreatedAt: *row.LastCreated, FinishedAt: row.LastEnded}
+			if row.LastBy != nil {
+				s.Last.RequestedBy = *row.LastBy
+			}
+			if row.LastByName != nil {
+				s.Last.RequestedByName = *row.LastByName
+			}
+			if row.LastVia != nil {
+				s.Last.RequestedVia = *row.LastVia
+			}
 			if row.ErrorCode != nil {
 				s.Last.Error = &release.Failure{Code: *row.ErrorCode}
 				if row.ErrorMsg != nil {

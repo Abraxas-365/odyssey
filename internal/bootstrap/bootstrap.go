@@ -54,6 +54,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project/projectmodule"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releaseai"
+	"github.com/Abraxas-365/odyssey/internal/release/adapters/releaseiam"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasemcp"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releaseresource"
 	"github.com/Abraxas-365/odyssey/internal/release/releasemodule"
@@ -126,8 +127,14 @@ func RunWorker() error {
 		return err
 	}
 	defer blobs.Close()
+	var people release.People
+	if cfg.Directory.Enabled() {
+		people = releaseiam.New(cfg.Directory.URL, cfg.Directory.Environment, cfg.Directory.Secret, releaseiam.Options{})
+	} else {
+		slog.Warn("versions keep no requester name: set IAMKIT_SERVICE_ACCOUNT_SECRET (make seed provisions the service account)")
+	}
 	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster,
-		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub, AI: cfg.AI})
+		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub, AI: cfg.AI, People: people})
 	if err != nil {
 		return err
 	}
@@ -368,6 +375,10 @@ type Options struct {
 	AccessIssuer string
 	IAM          config.IAM
 	AccessLogin  access.Login
+	// People names who asked for each deployment (the worker builds it from
+	// config.Directory with releaseiam; tests pass a fake). Nil keeps no
+	// names.
+	People release.People
 }
 
 // Assemble builds the modules and wires who reacts to what. This is the only
@@ -402,7 +413,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	releases, err := releasemodule.New(releasemodule.Deps{DB: db, Events: events, Projects: projects.Queries,
 		Engine: engine, Cluster: opts.Cluster, ClusterConfig: opts.ClusterConfig, Fleet: fleets.Dispatch,
 		BuildCommands: builds.Commands, BuildQueries: builds.Queries, Options: opts.Release, Policy: policies.Release,
-		AccessLoginAvailable: opts.Access.Enabled() || opts.AccessLogin != nil})
+		AccessLoginAvailable: opts.Access.Enabled() || opts.AccessLogin != nil, People: opts.People})
 	if err != nil {
 		return nil, err
 	}

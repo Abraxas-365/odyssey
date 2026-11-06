@@ -261,6 +261,12 @@ type Deployment struct {
 	Run              workflow.RunID `json:"run_id" db:"run_id"`
 	// RequestedBy is zero when the platform started it (auto_rollback).
 	RequestedBy identity.UserID `json:"requested_by" db:"requested_by"`
+	// RequestedByName is RequestedBy's name in the organization's directory
+	// right after the deployment started (a snapshot, never an email): ""
+	// until it is resolved (People, asynchronously), when the directory is
+	// not wired or does not know them, and for deployments made before it
+	// was recorded.
+	RequestedByName string `json:"requested_by_name" db:"requested_by_name"`
 	// RequestedVia is where the request came from (see Via*), set by the
 	// service, never by the caller; "" for deployments made before it was
 	// recorded.

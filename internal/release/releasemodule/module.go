@@ -52,6 +52,9 @@ type Deps struct {
 	// AccessLoginAvailable: the API serves the access sign-in (/access/*),
 	// which the settings report so the console can warn when it does not.
 	AccessLoginAvailable bool
+	// People is the organization's directory (the releaseiam adapter), which
+	// names who asked for each deployment. Nil keeps no names.
+	People release.People
 }
 
 type Module struct {
@@ -80,6 +83,9 @@ func New(deps Deps) (Module, error) {
 		releasebuild.New(deps.BuildCommands, deps.BuildQueries), deps.Engine,
 		txn.Postgres{DB: deps.DB}, deps.Events, deps.Options)
 	svc.UsePolicy(deps.Policy)
+	if deps.People != nil {
+		svc.UsePeople(deps.People)
+	}
 	return Module{Commands: svc, Queries: svc, Access: svc, Usage: svc, AI: svc, svc: svc, HTTP: releasehttp.New(svc, svc, releasehttp.Options{AccessLoginAvailable: deps.AccessLoginAvailable}), workflows: svc}, nil
 }
 
@@ -133,6 +139,24 @@ const RetireOnArchived = "release.retire_on_archived"
 // root calls it, before the bus is sealed.
 func (m Module) Subscribe(bus *event.Bus) {
 	bus.Add(event.Subscription{Name: RetireOnArchived, Types: []string{project.EventArchived}, Handle: m.archived})
+	bus.Add(event.Subscription{Name: NameRequesters, Types: []string{release.EventDeploymentStarted}, Handle: m.started})
+}
+
+// NameRequesters is the subscription that records, after a deployment
+// started, the directory's name of who asked for it (outside the request:
+// the directory never slows down or fails a deployment).
+const NameRequesters = "release.name_requesters"
+
+// started is the handler of deployment.started.
+func (m Module) started(ctx context.Context, e event.Event) error {
+	if e.Version != 1 || e.Actor.IsZero() {
+		return nil
+	}
+	p, err := event.Decode[release.DeploymentStarted](e)
+	if err != nil {
+		return err
+	}
+	return m.svc.NameRequester(ctx, e.Organization, p.Deployment)
 }
 
 // archived is the handler of project.archived.

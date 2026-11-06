@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 )
 
@@ -73,6 +74,11 @@ type LastDeployment struct {
 	Error      *Failure     `json:"error"`
 	CreatedAt  time.Time    `json:"created_at"`
 	FinishedAt *time.Time   `json:"finished_at"`
+	// RequestedBy, RequestedByName and RequestedVia are the deployment's
+	// (Deployment): who asked, by name, and through what.
+	RequestedBy     identity.UserID `json:"requested_by"`
+	RequestedByName string          `json:"requested_by_name"`
+	RequestedVia    string          `json:"requested_via"`
 }
 
 // FailedWithin reports whether the latest deployment failed at or after

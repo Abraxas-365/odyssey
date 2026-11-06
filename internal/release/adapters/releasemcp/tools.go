@@ -243,21 +243,23 @@ type Failure struct {
 
 // Version is one publication of an app.
 type Version struct {
-	DeploymentID string     `json:"deployment_id"`
-	Status       string     `json:"status" jsonschema:"building, pending, applying, verifying, ready, failed o cancelled"`
-	Step         string     `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló): build, apply, wait_ready, promote"`
-	Reason       string     `json:"reason" jsonschema:"deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)"`
-	Image        string     `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
-	Repository   string     `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
-	Branch       string     `json:"branch,omitempty"`
-	Commit       string     `json:"commit,omitempty" jsonschema:"SHA completo del commit si vino de GitHub"`
-	Title        string     `json:"title,omitempty" jsonschema:"primera línea del mensaje del commit"`
-	Author       string     `json:"author,omitempty" jsonschema:"autor del commit"`
-	CreatedBy    string     `json:"created_by,omitempty" jsonschema:"usuario que la publicó; vacío si la inició la plataforma"`
-	Error        *Failure   `json:"error,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	IsCurrent    bool       `json:"is_current" jsonschema:"si es la versión que está en línea ahora"`
+	DeploymentID  string     `json:"deployment_id"`
+	Status        string     `json:"status" jsonschema:"building, pending, applying, verifying, ready, failed o cancelled"`
+	Step          string     `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló): build, apply, wait_ready, promote"`
+	Reason        string     `json:"reason" jsonschema:"deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)"`
+	Image         string     `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
+	Repository    string     `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
+	Branch        string     `json:"branch,omitempty"`
+	Commit        string     `json:"commit,omitempty" jsonschema:"SHA completo del commit si vino de GitHub"`
+	Title         string     `json:"title,omitempty" jsonschema:"primera línea del mensaje del commit"`
+	Author        string     `json:"author,omitempty" jsonschema:"autor del commit"`
+	CreatedBy     string     `json:"created_by,omitempty" jsonschema:"usuario que la publicó; vacío si la inició la plataforma"`
+	CreatedByName string     `json:"created_by_name,omitempty" jsonschema:"nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce"`
+	RequestedVia  string     `json:"requested_via,omitempty" jsonschema:"desde dónde se pidió: console, assistant:<preset>, github o platform; vacío en versiones antiguas"`
+	Error         *Failure   `json:"error,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	IsCurrent     bool       `json:"is_current" jsonschema:"si es la versión que está en línea ahora"`
 }
 
 func version(d release.Deployment, current *release.Deployment) Version {
@@ -270,9 +272,10 @@ func version(d release.Deployment, current *release.Deployment) Version {
 		CreatedAt:    d.CreatedAt,
 		FinishedAt:   d.FinishedAt,
 		IsCurrent:    current != nil && current.ID == d.ID,
+		RequestedVia: d.RequestedVia,
 	}
 	if !d.RequestedBy.IsZero() {
-		v.CreatedBy = d.RequestedBy.String()
+		v.CreatedBy, v.CreatedByName = d.RequestedBy.String(), d.RequestedByName
 	}
 	if d.Source != nil && d.Source.Git != nil {
 		g := d.Source.Git

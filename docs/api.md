@@ -174,7 +174,7 @@ Read-only views composed from the other domains' own reads.
 |---|---|---|---|
 | `GET` | `/api/v1/inventory` | `inventory:read` (TI) | 200 `{items, page, truncated, unavailable}`, one row per app and environment; `?format=csv` downloads every match |
 | `GET` | `/api/v1/attention` | `projects:read` | 200 `{items, unavailable, truncated}` |
-| `GET` | `/api/v1/app-states?id=…` | `projects:read` + `deployments:read` | 200 `{items[{app_id, status, url, since, access:{mode, pending}\|null, cluster:{id, name}\|null, unavailable[]}]}` |
+| `GET` | `/api/v1/app-states?id=…` | `projects:read` + `deployments:read` | 200 `{items[{app_id, status, url, since, access:{mode, pending}\|null, cluster:{id, name}\|null, unavailable[], last_change:{at, reason, requested_by, requested_by_name, requested_via}\|null}]}` (`last_change`: the latest publication asked for in production and who asked, as on that deployment) |
 
 - **App states** (the console's app lists): `id` repeatable, at most 100 (more
   is 400; a malformed id is 400); none answers `{items: []}`. One item per app
@@ -380,6 +380,13 @@ agent says otherwise).
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
 
+- **`requested_by_name`** (on every deployment) is who asked, by name, as
+  the organization's directory knew them right after it started (a
+  snapshot, never an email). The worker fills it from the `deployment.started`
+  event with the backend's IAMKit service account (`iam:members:read`,
+  `IAMKIT_SERVICE_ACCOUNT_SECRET`), so a request never waits on the
+  directory; `""` until then, without that secret, for `platform`/`github`
+  deployments and for older versions.
 - **`requested_via`** (on every deployment) says where the request came from.
   The server derives it; no request body can set it: `console`,
   `assistant:<preset>` (`claude_code`, `codex`, `vscode`, `antigravity`, or

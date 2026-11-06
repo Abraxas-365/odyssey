@@ -255,6 +255,11 @@ func stateOf(a app) inventory.AppState {
 	if sv := e.serving; sv != nil && sv.Image != "" {
 		st.URL, st.Since, st.Access = sv.URL, sv.Since, sv.Access
 	}
+	if sv := e.serving; sv != nil && sv.Last != nil {
+		l := sv.Last
+		st.LastChange = &inventory.AppChange{At: l.CreatedAt, Reason: l.Reason, RequestedBy: l.RequestedBy,
+			RequestedByName: l.RequestedByName, RequestedVia: l.RequestedVia}
+	}
 	return st
 }
 

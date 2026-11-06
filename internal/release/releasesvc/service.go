@@ -56,11 +56,14 @@ type Service struct {
 	// approvals holds what a rule wants approved (the approvalrelease
 	// adapter); nil fails an approval verdict closed.
 	approvals release.Approvals
-	engine    workflow.Engine
-	tx        txn.Runner
-	events    event.Publisher
-	opts      Options
-	now       func() time.Time // the clock (tests set it)
+	// people names who asked for a deployment (the releaseiam adapter); nil
+	// keeps no name.
+	people release.People
+	engine workflow.Engine
+	tx     txn.Runner
+	events event.Publisher
+	opts   Options
+	now    func() time.Time // the clock (tests set it)
 }
 
 func New(repo release.Repository, projects project.Queries, cluster release.Cluster, builder release.Builder, engine workflow.Engine,

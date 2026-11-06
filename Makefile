@@ -91,6 +91,7 @@ github-app:
 worker:
 	set -a && . ./.env && set +a && \
 	DATABASE_URL=postgres://postgres:$$POSTGRES_PASSWORD@localhost:$${DB_PORT:-5438}/odyssey?sslmode=disable \
+	IAMKIT_URL=http://localhost:$${IAMKIT_PORT:-8085} \
 	ODYSSEY_CLUSTER=$(or $(CLUSTER),fake) ODYSSEY_BUILDER='$(BUILDER)' \
 	ODYSSEY_BLOB_URL='$(BLOB_URL)' \
 	go run ./cmd/odyssey-worker

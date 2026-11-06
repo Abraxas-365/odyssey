@@ -66,6 +66,45 @@ func TestWorkerBuilder(t *testing.T) {
 	}
 }
 
+func TestWorkerDirectory(t *testing.T) {
+	secretFile := filepath.Join(t.TempDir(), "sa")
+	if err := os.WriteFile(secretFile, []byte("ik_svc_fromfile\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name                   string
+		url, env, secret, file string
+		wantErr, wantEnabled   bool
+		wantSecret             string
+	}{
+		{name: "absent: no names, no error"},
+		{name: "configured", url: "http://iam:8080/", env: "env", secret: "ik_svc_x", wantEnabled: true, wantSecret: "ik_svc_x"},
+		{name: "from a file", url: "http://iam", env: "env", file: secretFile, wantEnabled: true, wantSecret: "ik_svc_fromfile"},
+		{name: "both", url: "http://iam", env: "env", secret: "ik_svc_x", file: secretFile, wantErr: true},
+		{name: "not a service account", url: "http://iam", env: "env", secret: "ik_key_x", wantErr: true},
+		{name: "no environment", url: "http://iam", secret: "ik_svc_x", wantErr: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://x")
+			t.Setenv("ODYSSEY_BLOB_URL", "mem://")
+			t.Setenv("IAMKIT_URL", c.url)
+			t.Setenv("IAMKIT_ENVIRONMENT_ID", c.env)
+			t.Setenv("IAMKIT_SERVICE_ACCOUNT_SECRET", c.secret)
+			t.Setenv("IAMKIT_SERVICE_ACCOUNT_SECRET_FILE", c.file)
+			cfg, err := config.LoadWorker()
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err %v", err)
+			}
+			if err == nil && (cfg.Directory.Enabled() != c.wantEnabled || cfg.Directory.Secret != c.wantSecret) {
+				t.Fatalf("directory %+v", cfg.Directory)
+			}
+			if c.name == "configured" && cfg.Directory.URL != "http://iam:8080" {
+				t.Fatalf("url %q", cfg.Directory.URL)
+			}
+		})
+	}
+}
+
 func TestSourceQuota(t *testing.T) {
 	for raw, want := range map[string]int64{"": 0, "1": 1 << 30, "25": 25 << 30, "0": -1, "-3": -1, "1.5": -1, "10GiB": -1} {
 		t.Setenv("DATABASE_URL", "postgres://x")

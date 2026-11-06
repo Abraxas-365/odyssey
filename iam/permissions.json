@@ -22,5 +22,6 @@
     { "name": "TI", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:clusters:read", "odyssey:clusters:manage", "odyssey:integrations:manage", "odyssey:audit:read", "odyssey:access:public", "odyssey:secrets:external", "odyssey:resources:delete", "odyssey:projects:tier", "odyssey:policy:manage", "odyssey:approvals:decide", "odyssey:inventory:read"] },
     { "name": "Builder", "permissions": ["odyssey:projects:read", "odyssey:projects:write", "odyssey:deployments:read", "odyssey:deployments:create", "odyssey:deployments:rollback", "odyssey:resources:delete"] },
     { "name": "Lector", "permissions": ["odyssey:projects:read", "odyssey:deployments:read"] }
-  ]
+  ],
+  "service_account": { "name": "odicea-backend", "iam_permissions": ["iam:members:read"] }
 }

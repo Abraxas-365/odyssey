@@ -21,6 +21,10 @@ package bootstrap_test
 //     same transaction). That is what keeps an archive and a deployment from
 //     crossing: either the deployment reached the cluster first and the
 //     retirement is above it, or it sees the archive and stops.
+//  4. The organization's directory (release.People) is asked in one place:
+//     release/releasesvc's NameRequester, the deployment.started handler,
+//     outside any transaction. A deployment never waits on (or fails with)
+//     the directory, and the name is a snapshot the console only shows.
 
 import (
 	"go/ast"
@@ -307,5 +311,87 @@ func (s *S) found() { s.projects.Find(nil); s.cluster.Apply(nil) }`,
 		releaseSvc+"/find.go: found tells the cluster without holding",
 		releaseSvc+"/late.go: gone tells the cluster without holding",
 		releaseSvc+"/none.go: push tells the cluster without holding",
+	)
+}
+
+// peopleAsker is the only function that asks the directory.
+const peopleAsker = "NameRequester"
+
+// peopleViolations: a call to <x>.people.Name anywhere in release outside
+// NameRequester, or inside a transaction (tx.Do's function literal).
+func peopleViolations(files []goFile) []string {
+	var out []string
+	asks := func(n ast.Node) (ast.Node, bool) {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return nil, false
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Name" {
+			return nil, false
+		}
+		inner, ok := sel.X.(*ast.SelectorExpr)
+		return call, ok && inner.Sel.Name == "people"
+	}
+	for _, f := range files {
+		dir := path.Dir(f.rel)
+		if dir != "release" && !strings.HasPrefix(dir, "release/") || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		for _, decl := range f.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := asks(n); ok && (dir != releaseSvc || fn.Name.Name != peopleAsker) {
+					out = append(out, f.fset.Position(call.Pos()).String()+": "+fn.Name.Name+
+						" asks the directory; only releasesvc."+peopleAsker+" (the deployment.started handler) may")
+				}
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Do" {
+					for _, arg := range call.Args {
+						if lit, ok := arg.(*ast.FuncLit); ok {
+							ast.Inspect(lit.Body, func(m ast.Node) bool {
+								if inner, ok := asks(m); ok {
+									out = append(out, f.fset.Position(inner.Pos()).String()+": "+fn.Name.Name+
+										" asks the directory inside a transaction")
+								}
+								return true
+							})
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestTheDirectoryIsAskedOutsideTheRequest(t *testing.T) {
+	report(t, peopleViolations(sources(t, false)))
+}
+
+func TestDirectoryRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		// correct
+		releaseSvc + "/ok.go":      `package releasesvc; func (s *S) NameRequester() { n, _ := s.people.Name(ctx, o, u); s.repo.ObserveRequesterName(ctx, o, d, n) }`,
+		releaseSvc + "/ok_test.go": `package releasesvc; func T() { s.people.Name(nil, o, u) }`,
+		releaseSvc + "/user.go":    `package releasesvc; func (s *S) f() { s.user.Name(nil) }`,
+		// violations
+		releaseSvc + "/begin.go": `package releasesvc; func (s *S) begin() { s.people.Name(ctx, o, u) }`,
+		releaseSvc + "/tx.go": `package releasesvc
+func (s *S) NameRequester() { s.tx.Do(ctx, func(ctx C) error { s.people.Name(ctx, o, u); return nil }) }`,
+		"release/adapters/releasehttp/h.go": `package releasehttp; func (h *H) list() { h.people.Name(ctx, o, u) }`,
+	})
+	expectViolations(t, peopleViolations(files),
+		releaseSvc+"/begin.go: begin asks the directory; only releasesvc.NameRequester",
+		releaseSvc+"/tx.go: NameRequester asks the directory inside a transaction",
+		"release/adapters/releasehttp/h.go: list asks the directory; only releasesvc.NameRequester",
 	)
 }

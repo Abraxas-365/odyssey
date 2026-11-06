@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ChannelChip, type ChannelData } from './channel'
 import { GitLine } from './git-line'
 import { AppStatus, type AppStatusKind } from './status'
 
@@ -48,6 +49,10 @@ export interface AppCardData {
   /** Overrides the status word, e.g. "Sin publicar" before the first version. */
   statusLabel?: string
   updated: string
+  /** Who made the last change (UX v4 §2), only when the API said so. */
+  changedBy?: string
+  /** Through what, from the API's `requested_via` only. */
+  channel?: ChannelData
   /** Where it answers, e.g. "visitas.apps.empresa.com"; only when a version is online. */
   host?: string
   /** Who can open it, only when the API said so: never a default. */
@@ -86,7 +91,11 @@ export function AppCard({ app, technical, resources, href, linkAs: Link = 'a' }:
             <span aria-hidden className="h-4 w-20 animate-pulse rounded bg-muted" />
           ) : null}
           <span className="flex-1" />
-          <span className="text-xs text-muted-foreground">{app.updated}</span>
+          <span className="truncate text-xs text-muted-foreground">
+            {app.updated}
+            {app.changedBy && ` · ${app.changedBy}`}
+          </span>
+          {app.channel && <ChannelChip channel={app.channel} />}
         </div>
         {technical && app.git && <GitLine branch="main" {...app.git} />}
         {footer && (

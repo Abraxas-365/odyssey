@@ -180,6 +180,17 @@ type Resources interface {
 	Statuses(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, names []string) ([]ResourceState, error)
 }
 
+// People is the organization's directory (the releaseiam adapter on IAMKit;
+// release never imports the IAMKit SDK): what a person is called. release
+// asks it once a deployment has started, from the deployment.started
+// subscriber and never inside a transaction (architecture test), and keeps
+// the answer as the deployment's RequestedByName.
+type People interface {
+	// Name is the user's name in the organization ("" when the directory
+	// does not know them there).
+	Name(ctx context.Context, organization identity.OrganizationID, user identity.UserID) (string, error)
+}
+
 // AIStatus is what release asks the ai domain (its releaseai adapter) to
 // describe the app's AI in Uses. release never imports the ai domain
 // (architecture test).
@@ -257,6 +268,9 @@ type Repository interface {
 	SetAppliedSettings(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, deploymentRevision, settings int64) error
 	// Finish moves an unfinished deployment to a final status.
 	Finish(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, status Status, failure *Failure) error
+	// ObserveRequesterName records the directory's name for who asked for
+	// the deployment, when none is recorded yet (the first snapshot stays).
+	ObserveRequesterName(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID, name string) error
 
 	// FindState is the environment's release state (zero before its first deployment).
 	FindState(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (EnvironmentState, error)

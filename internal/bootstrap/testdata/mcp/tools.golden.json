@@ -497,6 +497,10 @@
             "description": "usuario que la publicó; vacío si la inició la plataforma",
             "type": "string"
           },
+          "created_by_name": {
+            "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+            "type": "string"
+          },
           "deployment_id": {
             "type": "string"
           },
@@ -548,6 +552,10 @@
           },
           "repository": {
             "description": "repo de GitHub de donde vino (owner/nombre)",
+            "type": "string"
+          },
+          "requested_via": {
+            "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
             "type": "string"
           },
           "status": {
@@ -722,6 +730,10 @@
                 "description": "usuario que la publicó; vacío si la inició la plataforma",
                 "type": "string"
               },
+              "created_by_name": {
+                "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+                "type": "string"
+              },
               "deployment_id": {
                 "type": "string"
               },
@@ -769,6 +781,10 @@
               },
               "repository": {
                 "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "requested_via": {
+                "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
                 "type": "string"
               },
               "status": {
@@ -822,6 +838,10 @@
                 "description": "usuario que la publicó; vacío si la inició la plataforma",
                 "type": "string"
               },
+              "created_by_name": {
+                "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+                "type": "string"
+              },
               "deployment_id": {
                 "type": "string"
               },
@@ -869,6 +889,10 @@
               },
               "repository": {
                 "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "requested_via": {
+                "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
                 "type": "string"
               },
               "status": {
@@ -924,6 +948,10 @@
                 "description": "usuario que la publicó; vacío si la inició la plataforma",
                 "type": "string"
               },
+              "created_by_name": {
+                "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+                "type": "string"
+              },
               "deployment_id": {
                 "type": "string"
               },
@@ -971,6 +999,10 @@
               },
               "repository": {
                 "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "requested_via": {
+                "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
                 "type": "string"
               },
               "status": {
@@ -2267,6 +2299,10 @@
                   "description": "usuario que la publicó; vacío si la inició la plataforma",
                   "type": "string"
                 },
+                "created_by_name": {
+                  "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+                  "type": "string"
+                },
                 "deployment_id": {
                   "type": "string"
                 },
@@ -2314,6 +2350,10 @@
                 },
                 "repository": {
                   "description": "repo de GitHub de donde vino (owner/nombre)",
+                  "type": "string"
+                },
+                "requested_via": {
+                  "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
                   "type": "string"
                 },
                 "status": {
@@ -2551,6 +2591,10 @@
             "description": "usuario que la publicó; vacío si la inició la plataforma",
             "type": "string"
           },
+          "created_by_name": {
+            "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+            "type": "string"
+          },
           "deployment_id": {
             "type": "string"
           },
@@ -2602,6 +2646,10 @@
           },
           "repository": {
             "description": "repo de GitHub de donde vino (owner/nombre)",
+            "type": "string"
+          },
+          "requested_via": {
+            "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
             "type": "string"
           },
           "status": {
@@ -2721,6 +2769,10 @@
                 "description": "usuario que la publicó; vacío si la inició la plataforma",
                 "type": "string"
               },
+              "created_by_name": {
+                "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+                "type": "string"
+              },
               "deployment_id": {
                 "type": "string"
               },
@@ -2768,6 +2820,10 @@
               },
               "repository": {
                 "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "requested_via": {
+                "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
                 "type": "string"
               },
               "status": {
@@ -2898,6 +2954,10 @@
                 "description": "usuario que la publicó; vacío si la inició la plataforma",
                 "type": "string"
               },
+              "created_by_name": {
+                "description": "nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce",
+                "type": "string"
+              },
               "deployment_id": {
                 "type": "string"
               },
@@ -2945,6 +3005,10 @@
               },
               "repository": {
                 "description": "repo de GitHub de donde vino (owner/nombre)",
+                "type": "string"
+              },
+              "requested_via": {
+                "description": "desde dónde se pidió: console, assistant:\u003cpreset\u003e, github o platform; vacío en versiones antiguas",
                 "type": "string"
               },
               "status": {

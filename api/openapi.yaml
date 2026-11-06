@@ -3513,7 +3513,7 @@ components:
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
       required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, status, reason, step, steps,
-                 revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_via, created_at, updated_at, finished_at]
+                 revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_by_name, requested_via, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -3581,6 +3581,13 @@ components:
                 detail: { type: string, description: "The cluster's own words (often English); \"\" when it said nothing. Show it as technical detail." }
         run_id: { type: string, format: uuid }
         requested_by: { type: string, description: '"" when the platform started it.' }
+        requested_by_name:
+          type: string
+          description: >-
+            requested_by's name in the organization's directory right after the deployment started (a snapshot: a
+            later rename does not rewrite it; never an email). `""` while it is being resolved (the worker asks the
+            directory after the deployment started), for the platform's own deployments, when the directory does
+            not know them and for versions published before this was recorded.
         requested_via:
           type: string
           description: >-
@@ -3961,7 +3968,7 @@ components:
       type: object
       additionalProperties: false
       description: How one app stands in its production environment.
-      required: [app_id, status, url, since, access, cluster, unavailable]
+      required: [app_id, status, url, since, access, cluster, unavailable, last_change]
       properties:
         app_id: { type: string, format: uuid }
         status:
@@ -3996,6 +4003,24 @@ components:
           type: array
           items: { type: string }
           description: The parts that could not be read now (`cluster`).
+        last_change:
+          description: >-
+            The latest publication asked for in production, however it ended (null before the first): when and
+            who asked, by name and channel, as on that deployment (`requested_by`, `requested_by_name`,
+            `requested_via`). Null for an archived app.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AppChange"
+    AppChange:
+      type: object
+      additionalProperties: false
+      required: [at, reason, requested_by, requested_by_name, requested_via]
+      properties:
+        at: { type: string, format: date-time }
+        reason: { type: string, enum: [deploy, rollback, auto_rollback, config] }
+        requested_by: { type: string, description: '"" when the platform started it.' }
+        requested_by_name: { type: string, description: 'The directory''s name of who asked; "" when unknown.' }
+        requested_via: { type: string, description: 'As on Deployment: console, assistant:<preset>, github, platform or "" (older).' }
     Attention:
       type: object
       additionalProperties: false

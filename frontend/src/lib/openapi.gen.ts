@@ -2337,6 +2337,8 @@ export interface components {
             run_id: string;
             /** @description "" when the platform started it. */
             requested_by: string;
+            /** @description requested_by's name in the organization's directory right after the deployment started (a snapshot: a later rename does not rewrite it; never an email). `""` while it is being resolved (the worker asks the directory after the deployment started), for the platform's own deployments, when the directory does not know them and for versions published before this was recorded. */
+            requested_by_name: string;
             /** @description Who asked, set by the server (never by the caller): `console`, `assistant:<preset>` (`claude_code`, `codex`, `vscode`, `antigravity`, or `other`), `github` (nobody did: a push or the poll of a connected repository) or `platform` (the automatic restore after a failure). It follows the requester, not where the code lives: "Publicar ahora" from the console is `console`, from an assistant `assistant:<preset>`. `""` for versions published before this was recorded. */
             requested_via: string;
             /** Format: date-time */
@@ -2641,6 +2643,20 @@ export interface components {
             };
             /** @description The parts that could not be read now (`cluster`). */
             unavailable: string[];
+            /** @description The latest publication asked for in production, however it ended (null before the first): when and who asked, by name and channel, as on that deployment (`requested_by`, `requested_by_name`, `requested_via`). Null for an archived app. */
+            last_change: null | components["schemas"]["AppChange"];
+        };
+        AppChange: {
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            reason: "deploy" | "rollback" | "auto_rollback" | "config";
+            /** @description "" when the platform started it. */
+            requested_by: string;
+            /** @description The directory's name of who asked; "" when unknown. */
+            requested_by_name: string;
+            /** @description As on Deployment: console, assistant:<preset>, github, platform or "" (older). */
+            requested_via: string;
         };
         Attention: {
             items: components["schemas"]["AttentionItem"][];

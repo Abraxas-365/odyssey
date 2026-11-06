@@ -181,6 +181,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	v1 := dep(1, release.StatusReady, func(d *release.Deployment) {
 		d.Source = &release.DeploymentSource{Name: "cotizador.tar.gz"}
+		d.RequestedByName, d.RequestedVia = "Ana Torres", release.ViaAssistantPrefix+"claude_code"
 	})
 	v2 := dep(2, release.StatusReady, func(d *release.Deployment) {
 		d.RequestedBy = other
@@ -380,7 +381,8 @@ func TestListVersions(t *testing.T) {
 	if out.Items[0].IsCurrent || !out.Items[1].IsCurrent || out.Items[2].IsCurrent {
 		t.Fatalf("is_current: %+v", out.Items)
 	}
-	if v := out.Items[2]; v.CreatedBy != user.String() || v.Commit != "" || v.Image != "cotizador:v1" || v.Reason != "deploy" || !v.CreatedAt.Equal(t0.Add(time.Hour)) {
+	if v := out.Items[2]; v.CreatedBy != user.String() || v.Commit != "" || v.Image != "cotizador:v1" || v.Reason != "deploy" || !v.CreatedAt.Equal(t0.Add(time.Hour)) ||
+		v.CreatedByName != "Ana Torres" || v.RequestedVia != "assistant:claude_code" {
 		t.Fatalf("folder version: %+v", v)
 	}
 

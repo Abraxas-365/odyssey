@@ -1,6 +1,8 @@
-import type { AppStatusKind } from '@/components/odyssey'
+import type { AppStatusKind, ChannelData } from '@/components/odyssey'
+import { formatRelative } from '@/lib/format'
 import type { AppState } from '@/lib/types'
 import { accessLabel } from './access'
+import { attribution } from './attribution'
 import { waitingLabel } from './versions'
 
 /**
@@ -48,4 +50,16 @@ export function cardHost(s: Pick<AppState, 'url'> | undefined): string | undefin
   } catch {
     return undefined
   }
+}
+
+/**
+ * The card's "hace 2 h · Ana" and channel, from the latest publication the
+ * API read (`last_change`); without it the card keeps the project's own date
+ * and names nobody.
+ */
+export function cardChange(s: Pick<AppState, 'last_change'> | undefined, me: string, now = Date.now()): { updated?: string; changedBy?: string; channel?: ChannelData } {
+  const c = s?.last_change
+  if (!c) return {}
+  const { by, channel } = attribution(c, me)
+  return { updated: formatRelative(c.at, now), changedBy: by, channel }
 }

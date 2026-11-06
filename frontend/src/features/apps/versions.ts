@@ -2,6 +2,7 @@ import { CloudUpload, Hammer, HeartPulse, Rocket } from 'lucide-react'
 import type { AppStatusKind, ProgressStepItem, VersionData } from '@/components/odyssey'
 import { formatBytes, formatRelative } from '@/lib/format'
 import type { CurrentRelease, Deployment, DeploymentStep } from '@/lib/types'
+import { attribution } from './attribution'
 
 /**
  * Plain-language view of releases (UX v3 §1, §7): builders see "versiones"
@@ -76,27 +77,6 @@ function gitOf(d: Deployment): VersionData['git'] {
   return g && d.reason === 'deploy' ? { branch: g.branch, sha: g.commit, author: g.author } : undefined
 }
 
-const assistantNames: Record<string, string> = {
-  claude_code: 'Claude Code',
-  codex: 'Codex',
-  vscode: 'VS Code',
-  antigravity: 'Antigravity',
-}
-
-/**
- * Who published a version and through what: "ti · con Claude Code", "tu equipo
- * · desde GitHub", "la plataforma". The server decides `requested_via`; the
- * console only words it. Versions from before it existed ('') have no suffix.
- */
-export function attribution(d: Pick<Deployment, 'requested_by' | 'requested_via'>, me: string): string {
-  const via = d.requested_via
-  if (via === 'platform' || (d.requested_by === '' && via !== 'github')) return 'la plataforma'
-  const who = d.requested_by === me && me !== '' ? 'ti' : 'tu equipo'
-  if (via === 'github') return `${who} · desde GitHub`
-  if (via.startsWith('assistant:')) return `${who} · con ${assistantNames[via.slice('assistant:'.length)] ?? 'un asistente'}`
-  return who
-}
-
 export interface VersionItem extends VersionData {
   /** Offer "Volver a esta" (a previous version that went live, not the one online now). */
   restorable: boolean
@@ -115,13 +95,15 @@ export function versions(deployments: Deployment[], current: CurrentRelease | un
     .filter(d => d.status === 'ready' || d.status === 'failed' || d.status === 'waiting_approval')
     .map(d => {
       const kind = d.status === 'waiting_approval' ? 'waiting' : d.status === 'failed' ? 'failed' : d.id === live ? 'live' : 'previous'
+      const { by, channel } = attribution(d, me)
       return {
         id: d.id,
         deployment: d,
         kind,
         message: versionMessage(d),
         when: formatRelative(d.finished_at ?? d.created_at, now),
-        by: attribution(d, me),
+        by,
+        channel,
         sha: d.image.split('@sha256:')[1] || undefined,
         git: gitOf(d),
         restorable: kind === 'previous' && d.release_id !== current?.release?.id,

@@ -362,7 +362,8 @@ func TestStatesSayWhatTheAppPageSays(t *testing.T) {
 		"never":    {},
 		"waiting":  {serving: &release.Serving{Last: &release.LastDeployment{Status: release.StatusWaitingApproval}}},
 		"building": {serving: &release.Serving{Image: "img", URL: "https://b", Last: &release.LastDeployment{Status: release.StatusBuilding}}},
-		"online": {serving: &release.Serving{Image: "img", URL: "https://o", Since: &since, Build: &built, Last: &release.LastDeployment{Status: release.StatusReady},
+		"online": {serving: &release.Serving{Image: "img", URL: "https://o", Since: &since, Build: &built, Last: &release.LastDeployment{Status: release.StatusReady,
+			Reason: release.ReasonDeploy, CreatedAt: since, RequestedBy: owner, RequestedByName: "Ana Torres", RequestedVia: "assistant:codex"},
 			Access: &release.ServingAccess{Mode: release.AccessOrganization, Pending: &public}}},
 		"failed over live": {serving: &release.Serving{Image: "img", URL: "https://f", Last: &release.LastDeployment{Status: release.StatusFailed}}},
 		"failed first":     {serving: &release.Serving{URL: "", Last: &release.LastDeployment{Status: release.StatusFailed}}},
@@ -415,10 +416,14 @@ func TestStatesSayWhatTheAppPageSays(t *testing.T) {
 		on.Access.Pending == nil || *on.Access.Pending != public || on.Cluster == nil || on.Cluster.Name != "Lima" {
 		t.Fatalf("online %+v", on)
 	}
-	if a := by[ids["archived"]]; a.URL != "" || a.Access != nil || a.Cluster != nil {
+	if c := on.LastChange; c == nil || c.RequestedBy != owner || c.RequestedByName != "Ana Torres" || c.RequestedVia != "assistant:codex" ||
+		!c.At.Equal(since) || c.Reason != release.ReasonDeploy {
+		t.Fatalf("last change %+v", on.LastChange)
+	}
+	if a := by[ids["archived"]]; a.URL != "" || a.Access != nil || a.Cluster != nil || a.LastChange != nil {
 		t.Fatalf("an archived app claims to answer: %+v", a)
 	}
-	if n := by[ids["never"]]; n.URL != "" || n.Access != nil {
+	if n := by[ids["never"]]; n.URL != "" || n.Access != nil || n.LastChange != nil {
 		t.Fatalf("never published: %+v", n)
 	}
 

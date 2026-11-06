@@ -95,3 +95,9 @@ var Roles = []Role{
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ResourcesDelete}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }
+
+// ServiceAccountName is the backend's IAMKit service account.
+const ServiceAccountName = "odicea-backend"
+
+// ServiceIAMPermissions are its permissions on the environment's IAM resource.
+var ServiceIAMPermissions = []string{"iam:members:read"}

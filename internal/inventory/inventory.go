@@ -207,6 +207,19 @@ type AppState struct {
 	// clusters could not be read: then Unavailable says "cluster").
 	Cluster     *ClusterRef `json:"cluster"`
 	Unavailable []string    `json:"unavailable"`
+	// LastChange is the latest publication asked for there, however it
+	// ended, and who asked (nil before the first and for an archived app).
+	LastChange *AppChange `json:"last_change"`
+}
+
+// AppChange is when an app last changed and who asked, as on that
+// deployment (release.Deployment's requested_*).
+type AppChange struct {
+	At              time.Time       `json:"at"`
+	Reason          release.Reason  `json:"reason"`
+	RequestedBy     identity.UserID `json:"requested_by"`
+	RequestedByName string          `json:"requested_by_name"`
+	RequestedVia    string          `json:"requested_via"`
 }
 
 // States are the states of the apps asked for that the organization has,

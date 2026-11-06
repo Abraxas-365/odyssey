@@ -12,7 +12,7 @@ import { usePreferences } from '@/lib/preferences'
 import { useProjects } from '@/lib/projects'
 import { useAppStates } from '@/lib/inventory'
 import type { ProjectStatus } from '@/lib/types'
-import { cardAudience, cardHost, cardStatus } from '@/features/apps/app-state'
+import { cardAudience, cardChange, cardHost, cardStatus } from '@/features/apps/app-state'
 import { CreateAppDialog } from '@/features/apps/create-app-dialog'
 import { AttentionSection } from '@/features/inventory/attention-section'
 
@@ -97,6 +97,7 @@ export function HomePage() {
             // state is not in yet (first load, or a new search still showing the previous one) waits.
             const st = cardStatus(state, archived)
             const waiting = !archived && !state && (states.isLoading || states.isPlaceholderData)
+            const change = archived ? {} : cardChange(state, user.id)
             return (
               <AppCard
                 key={p.id}
@@ -109,7 +110,9 @@ export function HomePage() {
                   status: st?.status,
                   statusLabel: st?.label,
                   loading: waiting,
-                  updated: formatRelative(p.updated_at),
+                  updated: change.updated ?? formatRelative(p.updated_at),
+                  changedBy: change.changedBy,
+                  channel: change.channel,
                   host: archived ? undefined : cardHost(state),
                   audience: archived ? undefined : cardAudience(state),
                 }}

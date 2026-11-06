@@ -2,6 +2,7 @@ import { Check, ChevronRight, Clock, FlaskConical, RotateCcw, X } from 'lucide-r
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { ChannelChip, type ChannelData } from './channel'
 import { GitLine } from './git-line'
 import { IconBadge } from './icon-badge'
 
@@ -17,7 +18,10 @@ export interface VersionData {
   id: string
   message: string
   when: string
+  /** Who asked: "ti", a name, "tu equipo", "la plataforma". */
   by: string
+  /** Through what (from the API's `requested_via`); absent in samples that do not say. */
+  channel?: ChannelData
   kind: VersionKind
   sha?: string
   branch?: string
@@ -52,19 +56,23 @@ export function VersionRow({ version: v, technical, onOpen, onRestore, onPublish
           {v.kind === 'waiting' && <Badge variant="info">Esperando aprobación de TI</Badge>}
         </div>
         {v.git ? (
-          <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{v.when}</span>
+            {v.channel && <span>· por {v.by}</span>}
+            {v.channel && <ChannelChip channel={v.channel} />}
             <GitLine branch={technical ? v.git.branch : undefined} sha={technical ? v.git.sha : undefined} author={v.git.author} className="w-auto" />
           </div>
         ) : (
-          <div className="text-xs text-muted-foreground">
-            {v.when} · por {v.by}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {v.when} · por {v.by}
+            </span>
+            {v.channel && <ChannelChip channel={v.channel} />}
             {technical && v.sha && (
-              <>
-                {' · '}
+              <span>
                 <span className="font-mono">{v.sha.slice(0, 7)}</span>
                 {v.branch && <> · <span className="font-mono">{v.branch}</span></>}
-              </>
+              </span>
             )}
           </div>
         )}

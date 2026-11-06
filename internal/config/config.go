@@ -417,6 +417,9 @@ type Worker struct {
 	GitHub GitHub
 	// AI is the AI gateway the ai workflows make and revoke keys at.
 	AI AI
+	// Directory names who asked for each deployment (the deployment.started
+	// subscriber runs here).
+	Directory Directory
 }
 
 // Cluster kinds.
@@ -452,6 +455,9 @@ func LoadWorker() (Worker, error) {
 		return Worker{}, err
 	}
 	if cfg.AI, err = loadAI(); err != nil {
+		return Worker{}, err
+	}
+	if cfg.Directory, err = loadDirectory(); err != nil {
 		return Worker{}, err
 	}
 	return cfg, nil
@@ -558,4 +564,42 @@ func loadAI() (AI, error) {
 		return AI{}, errx.Validation("ODYSSEY_FREEROUTER_URL and ODYSSEY_FREEROUTER_KEY go together")
 	}
 	return a, nil
+}
+
+// Directory is the organization's member list in IAMKit, read with the
+// backend's service account (iam:members:read, provisioned by make seed /
+// iam-provision). Without the secret deployments keep no requester name.
+type Directory struct {
+	// URL is IAMKIT_URL; Environment is IAMKIT_ENVIRONMENT_ID.
+	URL, Environment string
+	// Secret is IAMKIT_SERVICE_ACCOUNT_SECRET (or its _FILE): ik_svc_….
+	Secret string
+}
+
+// Enabled: the service account is configured.
+func (d Directory) Enabled() bool { return d.Secret != "" }
+
+func loadDirectory() (Directory, error) {
+	d := Directory{URL: strings.TrimRight(os.Getenv("IAMKIT_URL"), "/"), Environment: os.Getenv("IAMKIT_ENVIRONMENT_ID"),
+		Secret: strings.TrimSpace(os.Getenv("IAMKIT_SERVICE_ACCOUNT_SECRET"))}
+	if file := os.Getenv("IAMKIT_SERVICE_ACCOUNT_SECRET_FILE"); file != "" {
+		if d.Secret != "" {
+			return Directory{}, errx.Validation("set IAMKIT_SERVICE_ACCOUNT_SECRET or its _FILE, not both")
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return Directory{}, errx.Validation("IAMKIT_SERVICE_ACCOUNT_SECRET_FILE cannot be read")
+		}
+		d.Secret = strings.TrimSpace(string(raw))
+	}
+	if d.Secret == "" {
+		return d, nil
+	}
+	if !strings.HasPrefix(d.Secret, "ik_svc_") {
+		return Directory{}, errx.Validation("IAMKIT_SERVICE_ACCOUNT_SECRET is not a service account secret (ik_svc_…)")
+	}
+	if d.URL == "" || d.Environment == "" {
+		return Directory{}, errx.Validation("IAMKIT_SERVICE_ACCOUNT_SECRET needs IAMKIT_URL and IAMKIT_ENVIRONMENT_ID")
+	}
+	return d, nil
 }

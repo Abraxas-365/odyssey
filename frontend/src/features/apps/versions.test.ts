@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentRelease, Deployment } from '@/lib/types'
-import { appStatus, attribution, configReachedApp, lastProblem, progressSteps, versionMessage, versions } from './versions'
+import { appStatus, configReachedApp, lastProblem, progressSteps, versionMessage, versions } from './versions'
 
 let n = 0
 function dep(over: Partial<Deployment>): Deployment {
@@ -29,6 +29,7 @@ function dep(over: Partial<Deployment>): Deployment {
     error: null,
     run_id: 'run',
     requested_by: 'me',
+    requested_by_name: '',
     requested_via: 'console',
     created_at: `2026-10-27T10:${String(n).padStart(2, '0')}:00Z`,
     updated_at: '2026-10-27T10:00:00Z',
@@ -51,18 +52,18 @@ describe('versions', () => {
   // newest first, as the API returns them
   const v1 = dep({})
   const bad = dep({ status: 'failed', step: 'wait_ready', error: { code: 'HEALTH_CHECK_FAILED', message: 'No responde.', detail: 'GET /health 503' } })
-  const restore = dep({ reason: 'auto_rollback', release_id: v1.release_id, requested_by: '' })
+  const restore = dep({ reason: 'auto_rollback', release_id: v1.release_id, requested_by: '', requested_via: 'platform' })
   const replaced = dep({ status: 'cancelled' })
-  const v2 = dep({ requested_by: 'ana' })
+  const v2 = dep({ requested_by: 'ana', requested_by_name: 'Ana Torres', requested_via: 'assistant:codex' })
   const history = [v2, replaced, restore, bad, v1]
 
-  it('lists what went live or failed, marks the live one and who did it', () => {
+  it('lists what went live or failed, marks the live one and who did it, through what', () => {
     const items = versions(history, current(v2), 'me')
-    expect(items.map(i => [i.id, i.kind, i.by])).toEqual([
-      [v2.id, 'live', 'tu equipo'],
-      [restore.id, 'previous', 'la plataforma'],
-      [bad.id, 'failed', 'ti'],
-      [v1.id, 'previous', 'ti'],
+    expect(items.map(i => [i.id, i.kind, i.by, i.channel?.label])).toEqual([
+      [v2.id, 'live', 'Ana Torres', 'Codex'],
+      [restore.id, 'previous', 'la plataforma', 'Automático'],
+      [bad.id, 'failed', 'ti', 'Consola'],
+      [v1.id, 'previous', 'ti', 'Consola'],
     ])
     expect(items[1].message).toBe('Restaurada automáticamente')
   })
@@ -77,23 +78,6 @@ describe('versions', () => {
     const waiting = dep({ status: 'waiting_approval', finished_at: null })
     const items = versions([waiting, v1], current(v1, waiting), 'me')
     expect(items.map(i => [i.id, i.kind, i.restorable])).toEqual([[waiting.id, 'waiting', false], [v1.id, 'live', false]])
-  })
-})
-
-describe('attribution', () => {
-  it('words who published and through what, from the server\'s requested_via', () => {
-    const by = (requested_by: string, requested_via: string) => attribution({ requested_by, requested_via }, 'me')
-    expect(by('me', 'console')).toBe('ti')
-    expect(by('ana', 'console')).toBe('tu equipo')
-    expect(by('me', 'assistant:claude_code')).toBe('ti · con Claude Code')
-    expect(by('ana', 'assistant:codex')).toBe('tu equipo · con Codex')
-    expect(by('me', 'assistant:antigravity')).toBe('ti · con Antigravity')
-    expect(by('me', 'assistant:other')).toBe('ti · con un asistente')
-    expect(by('', 'github')).toBe('tu equipo · desde GitHub')
-    expect(by('me', 'github')).toBe('ti · desde GitHub')
-    expect(by('', 'platform')).toBe('la plataforma')
-    expect(by('', '')).toBe('la plataforma') // before requested_via existed
-    expect(by('me', '')).toBe('ti')
   })
 })
 

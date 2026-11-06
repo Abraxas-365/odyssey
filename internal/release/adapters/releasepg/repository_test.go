@@ -86,6 +86,39 @@ func TestRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// requested_by_name: '' at first; another tenant writes nothing; the
+	// first name recorded stays (a snapshot)
+	named := func(o identity.OrganizationID) string {
+		t.Helper()
+		got, err := repo.FindDeployment(ctx, o, first.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.RequestedByName
+	}
+	if n := named(org); n != "" {
+		t.Fatalf("fresh deployment named %q", n)
+	}
+	if err := repo.ObserveRequesterName(ctx, other, first.ID, "Intrusa"); err != nil {
+		t.Fatal(err)
+	}
+	if n := named(org); n != "" {
+		t.Fatalf("another organization named it %q", n)
+	}
+	if err := repo.ObserveRequesterName(ctx, org, first.ID, "Ana Torres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ObserveRequesterName(ctx, org, first.ID, "Ana T."); err != nil {
+		t.Fatal(err)
+	}
+	if n := named(org); n != "Ana Torres" {
+		t.Fatalf("named %q, want the first snapshot", n)
+	}
+	if page, err := repo.ListDeployments(ctx, org, env, release.DeploymentFilter{}, query.Pagination{Limit: 10}); err != nil ||
+		len(page.Items) != 1 || page.Items[0].RequestedByName != "Ana Torres" {
+		t.Fatalf("list %+v %v", page.Items, err)
+	}
+
 	// one unfinished deployment per environment
 	err := tx.Do(ctx, func(ctx context.Context) error {
 		return repo.CreateDeployment(ctx, release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj,
@@ -585,10 +618,17 @@ func TestListServingAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	// online publishes r to env with the cluster told revision applied (nil: never)
+	zero, one, two := int64(0), int64(1), int64(2)
+	defaults, inForce, pending, same, never, offline := project.NewEnvironmentID(), project.NewEnvironmentID(), project.NewEnvironmentID(),
+		project.NewEnvironmentID(), project.NewEnvironmentID(), project.NewEnvironmentID()
+	asker := identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
 	online := func(env project.EnvironmentID, applied *int64) {
 		t.Helper()
 		d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env, Release: &r.ID, Image: r.Image,
 			Status: release.StatusPending, Reason: release.ReasonDeploy, Step: release.StepApply, Revision: 1, Run: workflow.NewRunID()}
+		if env == defaults {
+			d.RequestedBy, d.RequestedVia = asker, release.ViaConsole
+		}
 		err := tx.Do(ctx, func(ctx context.Context) error {
 			if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"}); err != nil {
 				return err
@@ -624,9 +664,6 @@ func TestListServingAccess(t *testing.T) {
 			}
 		}
 	}
-	zero, one, two := int64(0), int64(1), int64(2)
-	defaults, inForce, pending, same, never, offline := project.NewEnvironmentID(), project.NewEnvironmentID(), project.NewEnvironmentID(),
-		project.NewEnvironmentID(), project.NewEnvironmentID(), project.NewEnvironmentID()
 	online(defaults, &zero) // never configured: the defaults are in force
 	settings(inForce, release.AccessOrganization, release.AccessPublic)
 	online(inForce, &two)
@@ -650,6 +687,13 @@ func TestListServingAccess(t *testing.T) {
 	by := map[project.EnvironmentID]release.Serving{}
 	for _, s := range list {
 		by[s.Environment] = s
+	}
+	// who asked for the latest deployment travels with it; none is zero
+	if l := by[defaults].Last; l == nil || l.RequestedBy != asker || l.RequestedVia != release.ViaConsole || l.RequestedByName != "" {
+		t.Fatalf("last %+v", by[defaults].Last)
+	}
+	if l := by[never].Last; l == nil || !l.RequestedBy.IsZero() || l.RequestedVia != "" {
+		t.Fatalf("platform last %+v", by[never].Last)
 	}
 	want := func(env project.EnvironmentID, mode release.AccessMode, next *release.AccessMode) {
 		t.Helper()

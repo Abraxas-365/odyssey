@@ -144,6 +144,9 @@ var eventSinks = map[string]string{
 var observers = map[string]string{
 	"fleet":  "heartbeats and app statuses reported by agents; deployment events carry their outcome",
 	"source": "webhook deliveries seen and branch heads polled; the push events carry the outcome",
+	// ObserveRequesterName: what the organization's directory calls who asked
+	// for a deployment; deployment.started already carried the request.
+	"release": "the directory's name of who asked for a deployment; deployment.started carried the request",
 }
 
 func isRead(name string) bool {

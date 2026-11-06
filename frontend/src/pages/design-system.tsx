@@ -267,7 +267,7 @@ function AppsAndVersions({ technical }: { technical: boolean }) {
       <PageHeader title="Visitas a clientes" status={<AppStatus status="live" />} description="Los vendedores registran visitas con fotos y ubicación" actions={<><Button variant="outline">Compartir</Button><Button>Abrir app</Button></>} />
       <SectionHeader title="Tus apps" />
       <div className="grid gap-4 md:grid-cols-3">
-        <AppCard technical={technical} resources={<ResourceIcons resources={resources} />} app={{ name: 'Visitas a clientes', description: 'Registro de visitas de ventas', status: 'live', updated: 'hace 2 h', audience: 'Ventas', people: 12, git: { sha: 'a1b2c3d4', message: 'Agrega fotos a la visita' } }} />
+        <AppCard technical={technical} resources={<ResourceIcons resources={resources} />} app={{ name: 'Visitas a clientes', description: 'Registro de visitas de ventas', status: 'live', updated: 'hace 2 h', changedBy: 'Ana Torres', channel: { kind: 'assistant', label: 'Claude Code' }, audience: 'Ventas', people: 12, git: { sha: 'a1b2c3d4', message: 'Agrega fotos a la visita' } }} />
         <AppCard technical={technical} app={{ name: 'Inventario', status: 'attention', updated: 'ayer', audience: 'Solo tú', people: 1, thumbnail: 'form', git: { sha: 'f00ba12', message: 'Filtro por almacén' } }} />
         <CreateAppTile />
       </div>
@@ -275,12 +275,13 @@ function AppsAndVersions({ technical }: { technical: boolean }) {
       <Panel>
         <PanelHeader title="Versiones" meta="5" />
         <PanelList>
-          <VersionRow technical={technical} version={{ id: '6', kind: 'waiting', message: 'Publicar en producción', when: 'hace 3 min', by: 'tu asistente' }} />
-          <VersionRow technical={technical} version={{ id: '4', kind: 'failed', message: 'Agrega exportar a Excel', when: 'hace 10 min', by: 'tu asistente', sha: '9e8d7c6b' }} onOpen={() => {}} />
+          <VersionRow technical={technical} version={{ id: '6', kind: 'waiting', message: 'Publicar en producción', when: 'hace 3 min', by: 'ti', channel: { kind: 'assistant', label: 'Claude Code' } }} />
+          <VersionRow technical={technical} version={{ id: '4', kind: 'failed', message: 'Agrega exportar a Excel', when: 'hace 10 min', by: 'Ana Torres', channel: { kind: 'assistant', label: 'Codex' }, sha: '9e8d7c6b' }} onOpen={() => {}} />
           <VersionRow technical={technical} version={{ id: '3', kind: 'preview', message: 'Nuevo diseño del formulario', when: 'hace 1 h', by: 'Ana', sha: '5d4c3b2a', branch: 'diseno' }} onPublish={() => {}} />
-          <VersionRow technical={technical} version={{ id: '2', kind: 'live', message: 'Agrega fotos a la visita', when: 'hace 2 h', by: 'Ana', sha: 'a1b2c3d4' }} />
-          <VersionRow technical={technical} version={{ id: '5', kind: 'previous', message: 'Filtro por almacén', when: 'ayer', by: 'tu equipo', git: { branch: 'main', sha: 'f00ba12c9', author: 'ana-ruiz' } }} onRestore={() => {}} />
-          <VersionRow technical={technical} version={{ id: '1', kind: 'previous', message: 'Primera versión', when: 'el lunes', by: 'Ana', sha: '1a2b3c4d' }} onRestore={() => {}} />
+          <VersionRow technical={technical} version={{ id: '2', kind: 'live', message: 'Agrega fotos a la visita', when: 'hace 2 h', by: 'Ana Torres', channel: { kind: 'console', label: 'Consola' }, sha: 'a1b2c3d4' }} />
+          <VersionRow technical={technical} version={{ id: '5', kind: 'previous', message: 'Filtro por almacén', when: 'ayer', by: 'tu equipo', channel: { kind: 'github', label: 'GitHub' }, git: { branch: 'main', sha: 'f00ba12c9', author: 'ana-ruiz' } }} onRestore={() => {}} />
+          <VersionRow technical={technical} version={{ id: '7', kind: 'previous', message: 'Restaurada automáticamente', when: 'el martes', by: 'la plataforma', channel: { kind: 'platform', label: 'Automático' } }} onRestore={() => {}} />
+          <VersionRow technical={technical} version={{ id: '1', kind: 'previous', message: 'Primera versión', when: 'el lunes', by: 'Ana', channel: { kind: 'unrecorded', label: 'Canal no registrado' }, sha: '1a2b3c4d' }} onRestore={() => {}} />
         </PanelList>
       </Panel>
       <Panel>
