@@ -18,6 +18,7 @@ Antes de `deploy_folder`, revisa esto en la carpeta del usuario. Odicea construy
 
 ## Qué pasar a `deploy_folder`
 
+- `message`: siempre. Qué cambió, en una frase corta en español para el usuario (hasta 200 caracteres; la primera vez, por ejemplo, "Primera versión"). Es el nombre de la versión en la consola.
 - `port`: solo si la app escucha en un puerto fijo distinto de 8080 (lo normal es leer `$PORT`).
 - `health_path`: solo si `/` no responde 200 (por ejemplo `/health`).
 - `replicas`: de 1 a 10; por defecto 1.

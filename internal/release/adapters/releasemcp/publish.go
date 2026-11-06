@@ -42,8 +42,9 @@ func (c ConfigIn) config() release.Config {
 
 // DeployFolderIn is deploy_folder's input.
 type DeployFolderIn struct {
-	App  string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
-	Name string `json:"name,omitempty" jsonschema:"nombre de esta versión (opcional)"`
+	App     string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
+	Message string `json:"message,omitempty" jsonschema:"qué cambió en esta versión, en una frase corta en español para el usuario (por ejemplo: Agrega el filtro por vendedor); hasta 200 caracteres. Es el nombre de la versión en la consola"`
+	Name    string `json:"name,omitempty" jsonschema:"nombre de la carpeta subida (opcional; solo se muestra en modo técnico)"`
 	ConfigIn
 }
 
@@ -78,7 +79,7 @@ func (t tools) deployFolder(ctx context.Context, caller mcpx.Principal, in Deplo
 		return DeployFolderOut{}, errx.Internal("the API's public URL is not configured: uploads have no address")
 	}
 	ticket, err := t.commands.IssueUpload(ctx, caller.Organization, p.ID, env.ID,
-		release.IssueUpload{Name: in.Name, Config: in.config(), RequestedBy: caller.User})
+		release.IssueUpload{Name: in.Name, Message: in.Message, Config: in.config(), RequestedBy: caller.User})
 	if err != nil {
 		return DeployFolderOut{}, err
 	}
@@ -95,8 +96,9 @@ func (t tools) deployFolder(ctx context.Context, caller mcpx.Principal, in Deplo
 
 // DeployImageIn is deploy_image's input.
 type DeployImageIn struct {
-	App   string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
-	Image string `json:"image" jsonschema:"imagen fijada por digest: registro/repositorio@sha256:<64 hex>"`
+	App     string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
+	Image   string `json:"image" jsonschema:"imagen fijada por digest: registro/repositorio@sha256:<64 hex>"`
+	Message string `json:"message,omitempty" jsonschema:"qué cambió en esta versión, en una frase corta en español para el usuario; hasta 200 caracteres. Es el nombre de la versión en la consola"`
 	ConfigIn
 }
 
@@ -114,7 +116,7 @@ func (t tools) deployImage(ctx context.Context, caller mcpx.Principal, in Deploy
 		return DeployOut{}, err
 	}
 	d, err := t.commands.Deploy(ctx, caller.Organization, p.ID, env.ID,
-		release.Deploy{Image: in.Image, Config: in.config(), RequestedBy: caller.User})
+		release.Deploy{Image: in.Image, Message: in.Message, Config: in.config(), RequestedBy: caller.User})
 	if err != nil {
 		return DeployOut{}, err
 	}

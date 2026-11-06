@@ -377,6 +377,89 @@ func TestTheDirectoryIsAskedOutsideTheRequest(t *testing.T) {
 	report(t, peopleViolations(sources(t, false)))
 }
 
+// messageWriters are the only functions that set a deployment's message: the
+// two that start a deployment from what someone asked for (UX v4 §5.3).
+var messageWriters = map[string]bool{"Deploy": true, "startSource": true}
+
+// messageViolations: a release.Deployment literal with a Message key outside
+// messageWriters (a rollback, a restore or an access change has no words of
+// its own), or whose Message is a string literal (the platform does not put
+// words in someone's mouth).
+func messageViolations(files []goFile) []string {
+	var out []string
+	for _, f := range files {
+		dir := path.Dir(f.rel)
+		if dir != "release" && !strings.HasPrefix(dir, "release/") || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		for _, decl := range f.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok || !isDeploymentType(lit.Type) {
+					return true
+				}
+				for _, el := range lit.Elts {
+					kv, ok := el.(*ast.KeyValueExpr)
+					if key, isID := kv.Key.(*ast.Ident); !ok || !isID || key.Name != "Message" {
+						continue
+					}
+					pos := f.fset.Position(kv.Pos()).String()
+					if dir != releaseSvc || !messageWriters[fn.Name.Name] {
+						out = append(out, pos+": "+fn.Name.Name+" sets a deployment's message; only releasesvc.Deploy and startSource may")
+					}
+					if _, isLit := kv.Value.(*ast.BasicLit); isLit {
+						out = append(out, pos+": "+fn.Name.Name+" writes a deployment's message itself; it is the requester's words")
+					}
+				}
+				return true
+			})
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isDeploymentType: release.Deployment, or Deployment inside package release.
+func isDeploymentType(e ast.Expr) bool {
+	switch t := e.(type) {
+	case *ast.SelectorExpr:
+		x, ok := t.X.(*ast.Ident)
+		return ok && x.Name == "release" && t.Sel.Name == "Deployment"
+	case *ast.Ident:
+		return t.Name == "Deployment"
+	}
+	return false
+}
+
+func TestOnlyTheRequesterNamesAVersion(t *testing.T) {
+	report(t, messageViolations(sources(t, false)))
+}
+
+func TestMessageRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		// correct
+		releaseSvc + "/ok.go":      `package releasesvc; func (s *S) Deploy() { _ = release.Deployment{Message: input.Message} }`,
+		releaseSvc + "/src.go":     `package releasesvc; func (s *S) startSource() { _ = release.Deployment{Reason: r, Message: a.message} }`,
+		releaseSvc + "/ok_test.go": `package releasesvc; func T() { _ = release.Deployment{Message: "x"} }`,
+		releaseSvc + "/other.go":   `package releasesvc; func (s *S) Rollback() { _ = release.Failure{Message: m} }`,
+		// violations
+		releaseSvc + "/back.go":   `package releasesvc; func (s *S) Rollback() { _ = release.Deployment{Message: old.Message} }`,
+		releaseSvc + "/invent.go": `package releasesvc; func (s *S) Deploy() { _ = release.Deployment{Message: "Nueva versión"} }`,
+		"release/adapters/x/h.go": `package x; func (h *H) f() { _ = release.Deployment{Message: m} }`,
+		"release/deployment_x.go": `package release; func g() { _ = Deployment{Message: m} }`,
+	})
+	expectViolations(t, messageViolations(files),
+		"release/adapters/x/h.go: f sets a deployment's message; only releasesvc.Deploy and startSource may",
+		"release/deployment_x.go: g sets a deployment's message; only releasesvc.Deploy and startSource may",
+		releaseSvc+"/back.go: Rollback sets a deployment's message; only releasesvc.Deploy and startSource may",
+		releaseSvc+"/invent.go: Deploy writes a deployment's message itself; it is the requester's words",
+	)
+}
+
 func TestDirectoryRuleCatchesViolations(t *testing.T) {
 	files := parseFixtures(t, map[string]string{
 		// correct

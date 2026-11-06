@@ -270,10 +270,14 @@ type Deployment struct {
 	// RequestedVia is where the request came from (see Via*), set by the
 	// service, never by the caller; "" for deployments made before it was
 	// recorded.
-	RequestedVia string     `json:"requested_via" db:"requested_via"`
-	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
-	FinishedAt   *time.Time `json:"finished_at" db:"finished_at"`
+	RequestedVia string `json:"requested_via" db:"requested_via"`
+	// Message is what changed, in the words of whoever asked (an assistant
+	// says what it did; a person may write it): "" when nobody said. A
+	// rollback, a restore or an access change carries none of its own.
+	Message    string     `json:"message" db:"message"`
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	FinishedAt *time.Time `json:"finished_at" db:"finished_at"`
 }
 
 // EnvironmentState is what an environment serves and what is changing it.

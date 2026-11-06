@@ -1760,6 +1760,8 @@ export interface components {
              * @example ghcr.io/inedge/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
              */
             image: string;
+            /** @description What changed, in a short line for people (the version's name in the console). Optional. */
+            message?: string;
             /** @description The port the app listens on (also set as `$PORT`). Default 8080. */
             port?: number;
             /** @description Answers 2xx when the app is healthy. Default `/`. */
@@ -1775,6 +1777,8 @@ export interface components {
         DeploySourceConfig: {
             /** @description Names the source. Default: the uploaded file's name. */
             name?: string;
+            /** @description What changed, in a short line for people (the version's name in the console). Optional. */
+            message?: string;
             /** @description The port the app listens on (also set as `$PORT`). Default 8080. */
             port?: number;
             /** @description Answers 2xx when the app is healthy. Default `/`. */
@@ -2341,6 +2345,8 @@ export interface components {
             requested_by_name: string;
             /** @description Who asked, set by the server (never by the caller): `console`, `assistant:<preset>` (`claude_code`, `codex`, `vscode`, `antigravity`, or `other`), `github` (nobody did: a push or the poll of a connected repository) or `platform` (the automatic restore after a failure). It follows the requester, not where the code lives: "Publicar ahora" from the console is `console`, from an assistant `assistant:<preset>`. `""` for versions published before this was recorded. */
             requested_via: string;
+            /** @description What changed, in the words of whoever asked (the `message` of the deploy, of the folder upload or of the MCP `deploy_folder`/`deploy_image`): one line, control characters and runs of spaces collapsed. `""` when nobody said, for rollbacks, restores and access changes, and for versions published before this was recorded. A version from GitHub is named by its commit (`source.git.title`) instead. */
+            message: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

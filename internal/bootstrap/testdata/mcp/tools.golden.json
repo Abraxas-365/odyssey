@@ -352,7 +352,7 @@
         "readOnlyHint": false,
         "title": "Publicar una carpeta"
       },
-      "description": "Publica la carpeta de código de la máquina del usuario como una versión nueva de la app. Esta herramienta NO recibe archivos: crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. app is the slug (see list_apps) or the id; env only takes non-secret values.",
+      "description": "Publica la carpeta de código de la máquina del usuario como una versión nueva de la app. Esta herramienta NO recibe archivos: crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. Pasa siempre `message`: qué cambió, en una frase corta para el usuario; es el nombre de la versión en la consola. Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. app is the slug (see list_apps) or the id; env only takes non-secret values.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -371,8 +371,12 @@
             "description": "ruta que responde 200 cuando la app está sana (por defecto /)",
             "type": "string"
           },
+          "message": {
+            "description": "qué cambió en esta versión, en una frase corta en español para el usuario (por ejemplo: Agrega el filtro por vendedor); hasta 200 caracteres. Es el nombre de la versión en la consola",
+            "type": "string"
+          },
           "name": {
-            "description": "nombre de esta versión (opcional)",
+            "description": "nombre de la carpeta subida (opcional; solo se muestra en modo técnico)",
             "type": "string"
           },
           "port": {
@@ -454,6 +458,10 @@
           },
           "image": {
             "description": "imagen fijada por digest: registro/repositorio@sha256:\u003c64 hex\u003e",
+            "type": "string"
+          },
+          "message": {
+            "description": "qué cambió en esta versión, en una frase corta en español para el usuario; hasta 200 caracteres. Es el nombre de la versión en la consola",
             "type": "string"
           },
           "port": {
@@ -541,6 +549,10 @@
           "is_current": {
             "description": "si es la versión que está en línea ahora",
             "type": "boolean"
+          },
+          "message": {
+            "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+            "type": "string"
           },
           "next_step": {
             "description": "qué hacer ahora",
@@ -775,6 +787,10 @@
                 "description": "si es la versión que está en línea ahora",
                 "type": "boolean"
               },
+              "message": {
+                "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+                "type": "string"
+              },
               "reason": {
                 "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
                 "type": "string"
@@ -882,6 +898,10 @@
               "is_current": {
                 "description": "si es la versión que está en línea ahora",
                 "type": "boolean"
+              },
+              "message": {
+                "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+                "type": "string"
               },
               "reason": {
                 "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
@@ -992,6 +1012,10 @@
               "is_current": {
                 "description": "si es la versión que está en línea ahora",
                 "type": "boolean"
+              },
+              "message": {
+                "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+                "type": "string"
               },
               "reason": {
                 "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
@@ -2344,6 +2368,10 @@
                   "description": "si es la versión que está en línea ahora",
                   "type": "boolean"
                 },
+                "message": {
+                  "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+                  "type": "string"
+                },
                 "reason": {
                   "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
                   "type": "string"
@@ -2636,6 +2664,10 @@
             "description": "si es la versión que está en línea ahora",
             "type": "boolean"
           },
+          "message": {
+            "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+            "type": "string"
+          },
           "next_step": {
             "description": "qué hacer ahora",
             "type": "string"
@@ -2813,6 +2845,10 @@
               "is_current": {
                 "description": "si es la versión que está en línea ahora",
                 "type": "boolean"
+              },
+              "message": {
+                "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+                "type": "string"
               },
               "reason": {
                 "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",
@@ -2998,6 +3034,10 @@
               "is_current": {
                 "description": "si es la versión que está en línea ahora",
                 "type": "boolean"
+              },
+              "message": {
+                "description": "qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)",
+                "type": "string"
               },
               "reason": {
                 "description": "deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)",

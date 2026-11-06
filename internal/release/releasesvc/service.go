@@ -148,7 +148,7 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 			return err
 		}
 		d, superseded, err = s.begin(ctx, state, p, e, release.Deployment{ID: release.NewDeploymentID(), Release: &r.ID,
-			Image: r.Image, Reason: release.ReasonDeploy, RequestedBy: input.RequestedBy})
+			Image: r.Image, Reason: release.ReasonDeploy, RequestedBy: input.RequestedBy, Message: input.Message})
 		return err
 	})
 	if err != nil {
@@ -183,7 +183,7 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 	if err != nil {
 		return release.Deployment{}, err
 	}
-	d, err := s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy, "")
+	d, err := s.startSource(ctx, organization, id, e, src, input.Config, asked{by: input.RequestedBy, message: input.Message})
 	if err != nil {
 		if derr := s.builder.Discard(context.WithoutCancel(ctx), organization, src.ID); derr != nil {
 			slog.Warn("could not discard the source of a deployment that did not start; the sweep will", "source", src.ID, "error", derr)
@@ -222,13 +222,21 @@ func (s *Service) DeployUploaded(ctx context.Context, organization identity.Orga
 	if src.Expired() {
 		return release.Deployment{}, errx.Business(build.Message(build.CodeSourceExpired)).WithCode(build.CodeSourceExpired)
 	}
-	return s.startSource(ctx, organization, id, e, src, input.Config, input.RequestedBy, input.Via)
+	return s.startSource(ctx, organization, id, e, src, input.Config, asked{by: input.RequestedBy, via: input.Via})
+}
+
+// asked is who asked for a deployment from source, through what ("" derives
+// it from the request) and in what words.
+type asked struct {
+	by      identity.UserID
+	via     string
+	message string
 }
 
 // startSource writes the deployment that builds src with cfg, holding the
 // project so it cannot have been archived meanwhile, and stops the one it
 // superseded.
-func (s *Service) startSource(ctx context.Context, organization identity.OrganizationID, id project.ID, e project.Environment, src build.Source, cfg release.Config, by identity.UserID, via string) (release.Deployment, error) {
+func (s *Service) startSource(ctx context.Context, organization identity.OrganizationID, id project.ID, e project.Environment, src build.Source, cfg release.Config, a asked) (release.Deployment, error) {
 	b := build.NewID()
 	var d release.Deployment
 	var superseded *release.Deployment
@@ -246,7 +254,7 @@ func (s *Service) startSource(ctx context.Context, organization identity.Organiz
 		}
 		d, superseded, err = s.begin(ctx, state, held, e, release.Deployment{ID: release.NewDeploymentID(), Build: &b,
 			Source: &release.DeploymentSource{ID: src.ID, Name: src.Name, Size: src.Size, Git: src.Git}, Config: &cfg,
-			Reason: release.ReasonDeploy, RequestedBy: by, RequestedVia: via})
+			Reason: release.ReasonDeploy, RequestedBy: a.by, RequestedVia: a.via, Message: a.message})
 		return err
 	})
 	if err != nil {
@@ -708,7 +716,7 @@ func (s *Service) IssueUpload(ctx context.Context, organization identity.Organiz
 	token, hash := release.NewUploadToken()
 	now := time.Now().UTC()
 	t := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: organization, Project: id, Environment: e.ID,
-		TokenHash: hash, Name: input.Name, Config: input.Config, Client: event.MetaFrom(ctx).Client,
+		TokenHash: hash, Name: input.Name, Message: input.Message, Config: input.Config, Client: event.MetaFrom(ctx).Client,
 		RequestedBy: input.RequestedBy, Permissions: askedWith(ctx, input.RequestedBy), CreatedAt: now, ExpiresAt: now.Add(release.UploadTicketTTL)}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.DeleteUploadTickets(ctx, organization, now.Add(-ticketRetention)); err != nil {
@@ -772,7 +780,7 @@ func (s *Service) RedeemUpload(ctx context.Context, token string, archive io.Rea
 	ctx = event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: t.Client})
 	ctx = actor.With(ctx, actor.Actor{User: t.RequestedBy, Permissions: t.Permissions})
 	d, err := s.DeploySource(ctx, t.Organization, t.Project, t.Environment,
-		release.DeploySource{Name: t.Name, Config: t.Config, RequestedBy: t.RequestedBy}, archive)
+		release.DeploySource{Name: t.Name, Message: t.Message, Config: t.Config, RequestedBy: t.RequestedBy}, archive)
 	if err != nil {
 		return release.Deployment{}, err
 	}

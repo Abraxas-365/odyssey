@@ -238,7 +238,7 @@ func TestDeployFromSource(t *testing.T) {
 	env := httpxtest.JSON[query.Paginated[project.Environment]](t, res).Items[0]
 	base := "/api/v1/projects/" + proj.ID.String() + "/environments/" + env.ID.String()
 	target := release.Target{Organization: org, Project: proj.ID, Environment: env.ID}
-	cfg := map[string]any{"port": 3000, "health_path": "/", "env": map[string]string{"TZ": "America/Lima"}}
+	cfg := map[string]any{"port": 3000, "health_path": "/", "env": map[string]string{"TZ": "America/Lima"}, "message": "Primera\tversión"}
 
 	publish := func(name, marker string) release.Deployment {
 		t.Helper()
@@ -246,7 +246,8 @@ func TestDeployFromSource(t *testing.T) {
 		httpxtest.Want(t, res, http.StatusAccepted)
 		d := httpxtest.JSON[release.Deployment](t, res)
 		if d.Status != release.StatusBuilding || d.Step != release.StepBuild || d.Release != nil || d.Build == nil ||
-			d.Source == nil || d.Source.Name+".tar.gz" != name || len(d.Steps) != 4 || d.Steps[0].Name != release.StepBuild {
+			d.Source == nil || d.Source.Name+".tar.gz" != name || len(d.Steps) != 4 || d.Steps[0].Name != release.StepBuild ||
+			d.Message != "Primera versión" {
 			t.Fatalf("accepted %+v", d)
 		}
 		return d
@@ -365,6 +366,10 @@ func TestDeployFromSource(t *testing.T) {
 	res = upload(t, app, base+"/deployments", token, configPart(t, map[string]any{"port": 70000}), part{name: "source", file: "a.tar.gz", body: folder(t, "x")})
 	if httpxtest.Want(t, res, http.StatusBadRequest); httpxtest.ErrorField(res) != "port" {
 		t.Fatalf("bad config: %s", res.Body)
+	}
+	res = upload(t, app, base+"/deployments", token, configPart(t, map[string]any{"message": strings.Repeat("a", release.MaxMessage+1)}), part{name: "source", file: "a.tar.gz", body: folder(t, "x")})
+	if httpxtest.Want(t, res, http.StatusBadRequest); httpxtest.ErrorField(res) != "message" {
+		t.Fatalf("long message: %s", res.Body)
 	}
 	res = upload(t, app, base+"/deployments", token, configPart(t, cfg), part{name: "source", file: "a.tar.gz", body: []byte("not a tarball")})
 	if httpxtest.Want(t, res, http.StatusBadRequest); httpxtest.ErrorCode(res) != build.CodeSourceInvalid || httpxtest.ErrorField(res) != "source" {

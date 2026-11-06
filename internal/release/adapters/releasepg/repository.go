@@ -87,7 +87,7 @@ func (r *Repository) FindRelease(ctx context.Context, organization identity.Orga
 
 const deploymentColumns = `id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name,
 	source_size, source_git, config, status, reason, step, revision, previous_release_id, rollback_of, settings_revision, error_code, error_message, error_detail,
-	run_id, requested_by, requested_by_name, requested_via, created_at, updated_at, finished_at`
+	run_id, requested_by, requested_by_name, requested_via, message, created_at, updated_at, finished_at`
 
 type deploymentRow struct {
 	release.Deployment
@@ -150,10 +150,10 @@ func (r *Repository) CreateDeployment(ctx context.Context, d release.Deployment)
 	}
 	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.deployments
 		(id, organization_id, project_id, environment_id, release_id, image, build_id, source_id, source_name, source_size, source_git, config,
-		 status, reason, step, revision, previous_release_id, rollback_of, run_id, requested_by, requested_via)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+		 status, reason, step, revision, previous_release_id, rollback_of, run_id, requested_by, requested_via, message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		d.ID, d.Organization, d.Project, d.Environment, d.Release, d.Image, d.Build, source, name, size, git, cfg,
-		d.Status, d.Reason, d.Step, d.Revision, d.Previous, d.RollbackOf, d.Run, d.RequestedBy, d.RequestedVia)
+		d.Status, d.Reason, d.Step, d.Revision, d.Previous, d.RollbackOf, d.Run, d.RequestedBy, d.RequestedVia, d.Message)
 	return pgerr.MapWith(err, "create deployment", messages)
 }
 
@@ -643,7 +643,7 @@ func (r *Repository) ListSecretVersions(ctx context.Context, organization identi
 
 // ---- upload tickets ----
 
-const ticketColumns = `id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by,
+const ticketColumns = `id, organization_id, project_id, environment_id, token_hash, name, message, config, client, requested_by,
 	permissions, created_at, expires_at, used_at, deployment_id`
 
 type ticketRow struct {
@@ -675,9 +675,9 @@ func (r *Repository) CreateUploadTicket(ctx context.Context, t release.UploadTic
 		t.Permissions = []string{}
 	}
 	_, err = txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.upload_tickets
-		(id, organization_id, project_id, environment_id, token_hash, name, config, client, requested_by, permissions, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		t.ID, t.Organization, t.Project, t.Environment, t.TokenHash, t.Name, cfg, t.Client, t.RequestedBy, pq.Array(t.Permissions), t.CreatedAt, t.ExpiresAt)
+		(id, organization_id, project_id, environment_id, token_hash, name, message, config, client, requested_by, permissions, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		t.ID, t.Organization, t.Project, t.Environment, t.TokenHash, t.Name, t.Message, cfg, t.Client, t.RequestedBy, pq.Array(t.Permissions), t.CreatedAt, t.ExpiresAt)
 	return pgerr.MapWith(err, "create upload ticket", pgerr.Messages{Unique: "this upload ticket already exists"})
 }
 

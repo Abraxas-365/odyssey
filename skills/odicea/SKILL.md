@@ -57,7 +57,7 @@ Solo ves las herramientas que tu rol permite (por ejemplo, un Lector solo lee). 
 
 1. `whoami` y `list_apps`: ¿existe ya la app? Si no, `create_app` con un nombre claro.
 2. **Prepara la app** (puerto, health, arranque, sin secretos): sigue [references/preparar-app.md](references/preparar-app.md).
-3. `deploy_folder` (app, y `port`, `health_path`, `replicas` o `env` solo si hace falta). Devuelve un `command`: **ejecútalo tú en una shell, dentro de la carpeta de la app**.
+3. `deploy_folder` con `app` y **`message`**: qué cambió, en una frase corta para el usuario ("Agrega el filtro por vendedor"); es el nombre de la versión que verá su equipo. `port`, `health_path`, `replicas` o `env` solo si hace falta. Devuelve un `command`: **ejecútalo tú en una shell, dentro de la carpeta de la app**.
 4. `get_deployment` con `wait_seconds` (30) y repítelo mientras `done` sea falso.
 5. Si queda en línea, comparte la URL. Si falla, sigue [references/diagnosticar.md](references/diagnosticar.md).
 

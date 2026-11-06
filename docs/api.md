@@ -380,6 +380,14 @@ agent says otherwise).
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
 
+- **`message`** (on every deployment) is what changed, in the words of
+  whoever asked: the optional `message` of `POST …/deployments` (image JSON
+  or the source's `config` part) and of the MCP `deploy_folder` (kept on the
+  upload ticket) and `deploy_image`. One line of up to 200 characters
+  (control characters and runs of spaces collapsed; longer is a 400 on
+  `message`). `""` when nobody said and for rollbacks, restores and access
+  changes. The console names a version by its commit title (GitHub), else
+  this message, else "Subida desde una carpeta".
 - **`requested_by_name`** (on every deployment) is who asked, by name, as
   the organization's directory knew them right after it started (a
   snapshot, never an email). The worker fills it from the `deployment.started`

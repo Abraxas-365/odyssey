@@ -53,7 +53,7 @@ func TestUploadTickets(t *testing.T) {
 	cfg := release.Config{Port: 3000, HealthPath: "/"}
 	issue := func(pid project.ID, env project.EnvironmentID) release.UploadTicket {
 		t.Helper()
-		tk, err := platform.Releases.Commands.IssueUpload(as("mcp:claude"), org, pid, env, release.IssueUpload{Name: "visitas", Config: cfg, RequestedBy: user})
+		tk, err := platform.Releases.Commands.IssueUpload(as("mcp:claude"), org, pid, env, release.IssueUpload{Name: "visitas", Message: " Agrega el\nfiltro ", Config: cfg, RequestedBy: user})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,13 +101,13 @@ func TestUploadTickets(t *testing.T) {
 		t.Fatalf("other organization: %v", err)
 	}
 
-	// redeem: a deployment of the ticket's user, config and client, whatever the redeeming request says
+	// redeem: a deployment of the ticket's user, config, message and client, whatever the redeeming request says
 	d, err := platform.Releases.Commands.RedeemUpload(as("none"), tk.Token, bytes.NewReader(folder(t, "one")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d.Organization != org || d.Project != pid || d.Environment != env || d.RequestedBy != user || d.Source == nil ||
-		d.Config == nil || d.Config.Port != 3000 || d.Source.Name != "visitas" {
+		d.Config == nil || d.Config.Port != 3000 || d.Source.Name != "visitas" || d.Message != "Agrega el filtro" {
 		t.Fatalf("deployment %+v", d)
 	}
 	if d.RequestedVia != "assistant:other" { // "mcp:claude" is no known preset

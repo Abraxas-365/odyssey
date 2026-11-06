@@ -2,6 +2,7 @@ package releasepg_test
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -58,7 +59,8 @@ func TestRepository(t *testing.T) {
 		t.Helper()
 		d := release.Deployment{ID: release.NewDeploymentID(), Organization: org, Project: proj, Environment: env,
 			Release: &r.ID, Image: r.Image, Status: release.StatusPending, Reason: release.ReasonDeploy,
-			Step: release.StepApply, Revision: revision, Run: workflow.NewRunID(), RequestedVia: release.ViaAssistantPrefix + "codex"}
+			Step: release.StepApply, Revision: revision, Run: workflow.NewRunID(), RequestedVia: release.ViaAssistantPrefix + "codex",
+			Message: fmt.Sprintf("Versión %d con ñ", revision)}
 		err := tx.Do(ctx, func(ctx context.Context) error {
 			if _, err := repo.LockState(ctx, release.EnvironmentState{Environment: env, Organization: org, Project: proj, App: "app"}); err != nil {
 				return err
@@ -74,10 +76,16 @@ func TestRepository(t *testing.T) {
 		return d
 	}
 	first := begin(1)
-	// requested_via is stored with the deployment, and read back in lists too;
-	// a tenant that does not own it sees neither
-	if got, err := repo.FindDeployment(ctx, org, first.ID); err != nil || got.RequestedVia != "assistant:codex" {
-		t.Fatalf("requested_via %+v %v", got.RequestedVia, err)
+	// requested_via and message are stored with the deployment, and read back
+	// in lists too; a tenant that does not own it sees neither
+	if got, err := repo.FindDeployment(ctx, org, first.ID); err != nil || got.RequestedVia != "assistant:codex" || got.Message != "Versión 1 con ñ" {
+		t.Fatalf("requested_via/message %q %q %v", got.RequestedVia, got.Message, err)
+	}
+	// the column holds at most 200 characters, whatever the caller validated
+	long := first
+	long.ID, long.Message = release.NewDeploymentID(), strings.Repeat("x", release.MaxMessage+1)
+	if err := repo.CreateDeployment(ctx, long); err == nil {
+		t.Fatal("a 201-character message was stored")
 	}
 	if _, err := repo.FindDeployment(ctx, other, first.ID); !errx.IsType(err, errx.TypeNotFound) {
 		t.Fatalf("cross-tenant deployment: %v", err)
@@ -115,7 +123,7 @@ func TestRepository(t *testing.T) {
 		t.Fatalf("named %q, want the first snapshot", n)
 	}
 	if page, err := repo.ListDeployments(ctx, org, env, release.DeploymentFilter{}, query.Pagination{Limit: 10}); err != nil ||
-		len(page.Items) != 1 || page.Items[0].RequestedByName != "Ana Torres" {
+		len(page.Items) != 1 || page.Items[0].RequestedByName != "Ana Torres" || page.Items[0].Message != "Versión 1 con ñ" {
 		t.Fatalf("list %+v %v", page.Items, err)
 	}
 
@@ -399,7 +407,7 @@ func TestUploadTickets(t *testing.T) {
 		t.Helper()
 		token, hash := release.NewUploadToken()
 		tk := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: org, Project: project.NewID(), Environment: project.NewEnvironmentID(),
-			TokenHash: hash, Name: "visitas", Config: release.Config{Port: 3000, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}},
+			TokenHash: hash, Name: "visitas", Message: "Agrega el filtro por vendedor", Config: release.Config{Port: 3000, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}},
 			Client: "mcp:claude", RequestedBy: user, Permissions: []string{"odyssey:deployments:create", "odyssey:projects:tier"}, CreatedAt: now, ExpiresAt: now.Add(ttl)}
 		if err := repo.CreateUploadTicket(ctx, tk); err != nil {
 			t.Fatal(err)
@@ -423,7 +431,7 @@ func TestUploadTickets(t *testing.T) {
 
 	found, err := repo.FindUploadTicketByHash(ctx, tk.TokenHash)
 	if err != nil || found.ID != tk.ID || found.UsedAt != nil || found.Deployment != nil || found.Config.Env["TZ"] != "America/Lima" ||
-		found.Config.Port != 3000 || found.Client != "mcp:claude" || found.RequestedBy != user || found.Name != "visitas" || !found.ExpiresAt.Equal(tk.ExpiresAt) ||
+		found.Config.Port != 3000 || found.Client != "mcp:claude" || found.RequestedBy != user || found.Name != "visitas" || found.Message != "Agrega el filtro por vendedor" || !found.ExpiresAt.Equal(tk.ExpiresAt) ||
 		len(found.Permissions) != 2 || found.Permissions[1] != "odyssey:projects:tier" {
 		t.Fatalf("find %+v %v", found, err)
 	}

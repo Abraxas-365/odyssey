@@ -135,6 +135,41 @@ func TestDeployValidation(t *testing.T) {
 	}
 }
 
+func TestMessage(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                   "",
+		"  Agrega   filtro\tpor vendedor \n": "Agrega filtro por vendedor",
+		"línea uno\nlínea dos":               "línea uno línea dos",
+		"\x00\x1b[31mrojo":                   "[31mrojo",
+	} {
+		if got := release.CleanMessage(in); got != want {
+			t.Errorf("CleanMessage(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// 200 characters (not bytes) fit; 201 do not, on every input that takes one
+	ok, long := strings.Repeat("ñ", release.MaxMessage), strings.Repeat("ñ", release.MaxMessage+1)
+	img := "r.local/app@" + digest
+	field := func(err error) string {
+		var e *errx.Error
+		if !errx.As(err, &e) {
+			return ""
+		}
+		return fmt.Sprint(e.Details["field"])
+	}
+	for name, c := range map[string]struct{ ok, long error }{
+		"deploy":       {release.Deploy{Image: img, Message: ok}.Normalize().Validate(), release.Deploy{Image: img, Message: long}.Normalize().Validate()},
+		"deploy_src":   {release.DeploySource{Message: ok}.Normalize().Validate(), release.DeploySource{Message: long}.Normalize().Validate()},
+		"issue_upload": {release.IssueUpload{Message: ok}.Normalize().Validate(), release.IssueUpload{Message: long}.Normalize().Validate()},
+	} {
+		if c.ok != nil || field(c.long) != "message" {
+			t.Errorf("%s: %v / %v", name, c.ok, c.long)
+		}
+	}
+	if d := (release.DeploySource{Message: " Primera\nversión "}).Normalize(); d.Message != "Primera versión" {
+		t.Fatalf("normalized %q", d.Message)
+	}
+}
+
 func TestProgress(t *testing.T) {
 	steps := func(d release.Deployment) string {
 		var out []string

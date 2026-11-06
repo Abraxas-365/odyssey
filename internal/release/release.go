@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
@@ -108,16 +109,41 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// MaxMessage bounds a version's message, in characters.
+const MaxMessage = 200
+
+// CleanMessage is what a version's message is stored as: one line, without
+// control characters, its runs of spaces collapsed ("" stays "").
+func CleanMessage(s string) string {
+	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)), " ")
+}
+
+// validMessage checks a cleaned message.
+func validMessage(s string) error {
+	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > MaxMessage {
+		return errx.InvalidField("message", "message must be one line of up to 200 characters")
+	}
+	return nil
+}
+
 // Deploy asks to run an image in an environment: it creates a release and a
-// deployment of it, superseding the deployment in progress there.
+// deployment of it, superseding the deployment in progress there. Message is
+// what changed, in the words of whoever asked (optional).
 type Deploy struct {
-	Image string `json:"image"`
+	Image   string `json:"image"`
+	Message string `json:"message"`
 	Config
 	RequestedBy identity.UserID `json:"-"` // from the token
 }
 
 func (d Deploy) Normalize() Deploy {
 	d.Image = strings.TrimSpace(d.Image)
+	d.Message = CleanMessage(d.Message)
 	d.Config = d.Config.Normalize()
 	return d
 }
@@ -126,20 +152,26 @@ func (d Deploy) Validate() error {
 	if !ValidImage(d.Image) {
 		return errx.InvalidField("image", ImageMessage)
 	}
+	if err := validMessage(d.Message); err != nil {
+		return err
+	}
 	return d.Config.Validate()
 }
 
 // DeploySource asks to publish an uploaded folder: the deployment first
 // builds it (in the environment's own cluster) and then runs the image like
-// Deploy does. Name names the source ("" takes the uploaded file's).
+// Deploy does. Name names the source ("" takes the uploaded file's); Message
+// is what changed, in the words of whoever asked (optional).
 type DeploySource struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
 	Config
 	RequestedBy identity.UserID `json:"-"` // from the token
 }
 
 func (d DeploySource) Normalize() DeploySource {
 	d.Name = strings.TrimSpace(d.Name)
+	d.Message = CleanMessage(d.Message)
 	d.Config = d.Config.Normalize()
 	return d
 }
@@ -147,6 +179,9 @@ func (d DeploySource) Normalize() DeploySource {
 func (d DeploySource) Validate() error {
 	if len(d.Name) > MaxSourceName || !utf8.ValidString(d.Name) {
 		return errx.InvalidField("name", "name must be up to 200 bytes of text")
+	}
+	if err := validMessage(d.Message); err != nil {
+		return err
 	}
 	return d.Config.Validate()
 }

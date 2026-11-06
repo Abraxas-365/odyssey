@@ -90,6 +90,7 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 				"crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, " +
 				"dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. " +
 				"No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. " +
+				"Pasa siempre `message`: qué cambió, en una frase corta para el usuario; es el nombre de la versión en la consola. " +
 				"Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: " +
 				"it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, " +
 				"inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. " +
@@ -248,6 +249,7 @@ type Version struct {
 	Step          string     `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló): build, apply, wait_ready, promote"`
 	Reason        string     `json:"reason" jsonschema:"deploy (nueva versión), rollback (volvió a una anterior), auto_rollback (la plataforma restauró la anterior tras un fallo) o config (la misma versión otra vez, por un cambio de quién puede abrirla)"`
 	Image         string     `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
+	Message       string     `json:"message,omitempty" jsonschema:"qué cambió, en palabras de quien la pidió (el message de deploy_folder o deploy_image)"`
 	Repository    string     `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
 	Branch        string     `json:"branch,omitempty"`
 	Commit        string     `json:"commit,omitempty" jsonschema:"SHA completo del commit si vino de GitHub"`
@@ -269,6 +271,7 @@ func version(d release.Deployment, current *release.Deployment) Version {
 		Step:         d.Step,
 		Reason:       string(d.Reason),
 		Image:        shortImage(d.Image),
+		Message:      d.Message,
 		CreatedAt:    d.CreatedAt,
 		FinishedAt:   d.FinishedAt,
 		IsCurrent:    current != nil && current.ID == d.ID,

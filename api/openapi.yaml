@@ -2923,6 +2923,7 @@ components:
           maxLength: 512
           description: "`registry/repository@sha256:<64 hex>`. Tags are refused: a release names one image forever."
           example: ghcr.io/inedge/visitas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        message: { type: string, maxLength: 200, description: "What changed, in a short line for people (the version's name in the console). Optional." }
         port: { type: integer, minimum: 1, maximum: 65535, description: "The port the app listens on (also set as `$PORT`). Default 8080." }
         health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
         replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
@@ -2938,6 +2939,7 @@ components:
       description: The `config` part of a deployment from source (at most 256 KiB).
       properties:
         name: { type: string, maxLength: 200, description: "Names the source. Default: the uploaded file's name." }
+        message: { type: string, maxLength: 200, description: "What changed, in a short line for people (the version's name in the console). Optional." }
         port: { type: integer, minimum: 1, maximum: 65535, description: "The port the app listens on (also set as `$PORT`). Default 8080." }
         health_path: { type: string, maxLength: 200, description: "Answers 2xx when the app is healthy. Default `/`." }
         replicas: { type: integer, minimum: 1, maximum: 10, description: Default 1. }
@@ -3513,7 +3515,7 @@ components:
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
       required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, status, reason, step, steps,
-                 revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_by_name, requested_via, created_at, updated_at, finished_at]
+                 revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_by_name, requested_via, message, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -3596,6 +3598,14 @@ components:
             repository) or `platform` (the automatic restore after a failure). It follows the requester, not where
             the code lives: "Publicar ahora" from the console is `console`, from an assistant `assistant:<preset>`.
             `""` for versions published before this was recorded.
+        message:
+          type: string
+          maxLength: 200
+          description: >-
+            What changed, in the words of whoever asked (the `message` of the deploy, of the folder upload or of
+            the MCP `deploy_folder`/`deploy_image`): one line, control characters and runs of spaces collapsed.
+            `""` when nobody said, for rollbacks, restores and access changes, and for versions published before
+            this was recorded. A version from GitHub is named by its commit (`source.git.title`) instead.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }

@@ -50,15 +50,18 @@ func MustParseUploadTicketID(raw string) UploadTicketID {
 
 // IssueUpload asks for a ticket to publish a folder to an environment with a
 // configuration. The client the ticket names comes from the request's
-// provenance (event.Meta), never from the input.
+// provenance (event.Meta), never from the input. Message is what changed, in
+// the words of whoever asked; the deployment the upload starts carries it.
 type IssueUpload struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
 	Config
 	RequestedBy identity.UserID `json:"-"`
 }
 
 func (i IssueUpload) Normalize() IssueUpload {
 	i.Name = strings.TrimSpace(i.Name)
+	i.Message = CleanMessage(i.Message)
 	i.Config = i.Config.Normalize()
 	return i
 }
@@ -66,6 +69,9 @@ func (i IssueUpload) Normalize() IssueUpload {
 func (i IssueUpload) Validate() error {
 	if len(i.Name) > MaxSourceName || !utf8.ValidString(i.Name) {
 		return errx.InvalidField("name", "name must be up to 200 bytes of text")
+	}
+	if err := validMessage(i.Message); err != nil {
+		return err
 	}
 	return i.Config.Validate()
 }
@@ -80,6 +86,7 @@ type UploadTicket struct {
 	Token        string                  `json:"-" db:"-"`
 	TokenHash    []byte                  `json:"-" db:"token_hash"`
 	Name         string                  `json:"name" db:"name"`
+	Message      string                  `json:"message" db:"message"`
 	Config       Config                  `json:"config" db:"-"`
 	// Client is the provenance of the request that issued it ("mcp:<client>"):
 	// the deployment the upload starts is attributed to it.
