@@ -107,6 +107,9 @@ export type AuditEntry = Schemas['AuditEntry']
 export type AuditEntryList = Schemas['AuditEntryList']
 export type AuditVerification = Schemas['AuditVerification']
 export type AuditQuery = NonNullable<operations['listAuditEntries']['parameters']['query']>
+export type AuditSummary = Schemas['AuditSummary']
+export type AuditPerson = Schemas['AuditPerson']
+export type AuditPersonList = Schemas['AuditPersonList']
 
 export type PublicConfig = Schemas['PublicConfig']
 

@@ -94,3 +94,24 @@ describe('UX v4 §6.1: the assistant', () => {
     expect(offenders(/['"`]\/(configuracion\/(github|reglas)|infraestructura\/clusteres)\b/, [])).toEqual([])
   })
 })
+
+describe('UX v4 §5.5: the company log', () => {
+  // The channel is the server's (`channel`, `requested_via`); its words and
+  // the "assistant:" prefix are spelled in one place, so a chip, a filter and
+  // the weekly sentence cannot disagree, and no surface guesses a channel
+  // from a raw OAuth client.
+  it('only attribution.ts spells the channel vocabulary', () => {
+    expect(offenders(/['"`]assistant:/, ['features/apps/attribution.ts'])).toEqual([])
+    expect(offenders(/\be\.client\b|entry\??\.client\b|\.client\s*===/, [])).toEqual([])
+  })
+
+  // Every read of /audit is in lib/audit.ts (one place asks only with the permission).
+  it('only lib/audit.ts calls the audit API', () => {
+    expect(offenders(/['"`]\/audit\b/, ['lib/audit.ts'])).toEqual([])
+  })
+
+  // The integrity seal reads /audit/verify, never a constant: "íntegro" only from sealOf.
+  it('only sealOf says the log is intact', () => {
+    expect(offenders(/['"`>]Registro íntegro/, ['features/audit/audit.ts', 'pages/design-system.tsx'])).toEqual([])
+  })
+})

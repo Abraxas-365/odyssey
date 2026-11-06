@@ -16,12 +16,31 @@ const assistantNames: Record<string, string> = {
   antigravity: 'Antigravity',
 }
 
+const ASSISTANT = 'assistant:'
+
+/** Whether a channel is one of the AI assistants (any of them). */
+export const isAssistant = (via: string) => via.startsWith(ASSISTANT)
+
+/**
+ * The channels one can filter the company log by (the API's `channel`
+ * values), in the order a person thinks of them.
+ */
+export const channelFilters: { value: string; label: string }[] = [
+  { value: 'console', label: 'Consola' },
+  { value: 'assistant', label: 'Cualquier asistente' },
+  ...Object.entries(assistantNames).map(([key, label]) => ({ value: ASSISTANT + key, label })),
+  { value: ASSISTANT + 'other', label: 'Otro asistente' },
+  { value: 'github', label: 'GitHub' },
+  { value: 'platform', label: 'Automático' },
+  { value: 'unrecorded', label: 'Canal no registrado' },
+]
+
 /** The channel chip of a `requested_via`. '' (versions before it was recorded) says so instead of guessing. */
 export function channelOf(via: string): ChannelData {
   if (via === 'console') return { kind: 'console', label: 'Consola' }
   if (via === 'github') return { kind: 'github', label: 'GitHub' }
   if (via === 'platform') return { kind: 'platform', label: 'Automático' }
-  if (via.startsWith('assistant:')) return { kind: 'assistant', label: assistantNames[via.slice('assistant:'.length)] ?? 'Asistente' }
+  if (isAssistant(via)) return { kind: 'assistant', label: assistantNames[via.slice(ASSISTANT.length)] ?? 'Asistente' }
   return { kind: 'unrecorded', label: 'Canal no registrado' }
 }
 

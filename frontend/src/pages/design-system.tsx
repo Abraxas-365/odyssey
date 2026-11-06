@@ -33,8 +33,10 @@ import {
   GitLine,
   Hero,
   IconBadge,
+  IntegritySeal,
   KeyValue,
   ListSkeleton,
+  LogEntry,
   Loading,
   LogViewer,
   OptionCards,
@@ -84,6 +86,7 @@ export function DesignSystemPage() {
     ['apps', 'Apps y versiones'],
     ['recursos', 'Recursos y uso'],
     ['aprobaciones', 'Aprobaciones y reglas'],
+    ['registro', 'Registro de la empresa'],
     ['tecnico', 'Detalles técnicos'],
   ] as const
 
@@ -106,6 +109,7 @@ export function DesignSystemPage() {
           <AppsAndVersions technical={technical} />
           <Resources technical={technical} />
           <Approvals />
+          <CompanyLog technical={technical} />
           <TechnicalSection technical={technical} />
         </main>
       </div>
@@ -418,6 +422,28 @@ function Approvals() {
         <RequestTracker steps={requestSteps('Carlos (TI)')} current={3} />
         <RequestTracker steps={requestSteps('Seguridad')} current={1} rejected />
       </Sample>
+    </Section>
+  )
+}
+
+function CompanyLog({ technical }: { technical: boolean }) {
+  const evidence = (seq: number) => (technical ? { seq, type: 'deployment.started', hash: 'a3f9c2e81b7d4f06', correlation: 'req-7f3a', payload: '{\n  "project_id": "…",\n  "version": 3\n}' } : undefined)
+  return (
+    <Section id="registro" title="Registro de la empresa" description="Solo TI. Quién hizo qué, por qué canal y cuándo; el sello dice si el registro sigue íntegro.">
+      <Sample title="Sello de integridad" className="flex flex-wrap items-center gap-2">
+        <IntegritySeal kind="ok">Registro íntegro · verificado hace 3 minutos</IntegritySeal>
+        <IntegritySeal kind="checking">Verificando…</IntegritySeal>
+        <IntegritySeal kind="unknown">No pudimos verificar el registro</IntegritySeal>
+        <IntegritySeal kind="broken">Registro alterado</IntegritySeal>
+      </Sample>
+      <Panel>
+        <PanelList aria-label="Registro de ejemplo">
+          <LogEntry entry={{ id: 'l1', summary: 'Publicó una versión de «Visitas a clientes»', who: 'Ana Ruiz', channel: { kind: 'assistant', label: 'Claude Code' }, when: 'hace 5 min', app: 'Visitas a clientes', technical: evidence(42), onChain: technical ? () => toast('Ver toda la cadena') : undefined }} />
+          <LogEntry entry={{ id: 'l2', summary: 'Publicó el commit «Corrige el total»', who: 'GitHub', channel: { kind: 'github', label: 'GitHub' }, when: 'hace 1 hora', technical: evidence(41) }} />
+          <LogEntry entry={{ id: 'l3', summary: 'Volvió a la versión anterior de «Pedidos»', who: 'La plataforma', channel: { kind: 'platform', label: 'Automático' }, when: 'ayer', technical: evidence(40) }} />
+          <LogEntry entry={{ id: 'l4', summary: 'Cambió quién puede abrir «Pedidos»', who: 'Luis Paz', channel: { kind: 'unrecorded', label: 'Canal no registrado' }, when: 'hace 3 semanas', technical: evidence(12) }} />
+        </PanelList>
+      </Panel>
     </Section>
   )
 }

@@ -305,6 +305,9 @@ func TestViaFor(t *testing.T) {
 		"unknown assistant": {release.ReasonDeploy, "mcp:other-client", "assistant:other"},
 		"auto rollback":     {release.ReasonAutoRollback, "", "platform"},
 		"auto rollback mcp": {release.ReasonAutoRollback, "mcp:" + agy, "platform"},
+		"github push":       {release.ReasonDeploy, "github", "github"},
+		"platform chain":    {release.ReasonConfig, "platform", "platform"},
+		"password token":    {release.ReasonDeploy, "api", "console"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := release.ViaFor(c.reason, c.client, registered); got != c.want {

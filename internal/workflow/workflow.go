@@ -80,9 +80,12 @@ type Run struct {
 	WaitUntil    *time.Time                 `json:"wait_until,omitempty" db:"wait_until"`
 	StartedBy    identity.UserID            `json:"started_by" db:"started_by"`
 	Correlation  string                     `json:"correlation_id" db:"correlation_id"`
-	CreatedAt    time.Time                  `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time                  `json:"updated_at" db:"updated_at"`
-	FinishedAt   *time.Time                 `json:"finished_at,omitempty" db:"finished_at"`
+	// Client is the event client of the request that started the run; its
+	// steps publish under it (event.Meta.Client).
+	Client     string     `json:"client,omitempty" db:"client"`
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty" db:"finished_at"`
 }
 
 // Start asks for a new run.

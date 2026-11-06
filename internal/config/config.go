@@ -42,6 +42,9 @@ type Config struct {
 	AI AI
 	// Access is the sign-in of apps protected with an Odicea login (optional).
 	Access Access
+	// Directory names the people of the activity trail (the IAMKit service
+	// account, as the worker's; optional: without it names stay empty).
+	Directory Directory
 	// ConsoleURL is ODYSSEY_CONSOLE_URL: the console's base URL, for links
 	// (MCP answers, the GitHub setup callback, commit statuses).
 	ConsoleURL string
@@ -333,6 +336,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.AI, err = loadAI(); err != nil {
+		return Config{}, err
+	}
+	if cfg.Directory, err = loadDirectory(); err != nil {
 		return Config{}, err
 	}
 	cfg.ConsoleURL = cfg.GitHub.ConsoleURL

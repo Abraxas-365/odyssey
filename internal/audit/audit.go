@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/channel"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -39,6 +40,12 @@ type Entry struct {
 	RecordedAt    time.Time       `json:"recorded_at" db:"recorded_at"`
 	PrevHash      string          `json:"prev_hash" db:"prev_hash"`
 	Hash          string          `json:"hash" db:"hash"`
+
+	// Read-time, outside the hash: where it came from (channel.Of of
+	// Client; "" when not recorded) and who did it, by name ("" for the
+	// platform or someone the directory does not know).
+	Channel   string `json:"channel" db:"-"`
+	ActorName string `json:"actor_name" db:"-"`
 }
 
 // Head is the tip of an organization's chain (zero before the first entry).
@@ -88,6 +95,15 @@ type Filter struct {
 	Types         []string
 	Actor         identity.UserID
 	CorrelationID string
+	// Project is everything about one app: the entries whose payload names it
+	// (project_id), whatever their subject.
+	Project uuid.UUID
+	// Channel is where the actions came from (a channel, channel.Assistant or
+	// channel.Unrecorded); the service resolves it into Clients.
+	Channel string
+	// Clients is the event clients Channel selects: set by the service, read
+	// by the repository (nil: any).
+	Clients *channel.Match `json:"-"`
 	// From and Before bound OccurredAt: [From, Before).
 	From, Before time.Time
 }
@@ -104,6 +120,9 @@ func (f Filter) Validate() error {
 	if len(f.CorrelationID) > 64 {
 		return errx.InvalidField("correlation_id", "correlation_id is too long")
 	}
+	if len(f.Channel) > 64 {
+		return errx.InvalidField("channel", "channel is too long")
+	}
 	return nil
 }
 
@@ -113,4 +132,46 @@ type Verification struct {
 	Entries int64 `json:"entries"`
 	// BrokenAt is the first entry whose hash or link does not match (nil when valid).
 	BrokenAt *int64 `json:"broken_at"`
+	// VerifiedAt is when the chain was re-hashed (this answer).
+	VerifiedAt time.Time `json:"verified_at"`
+}
+
+// SummaryDays is the window of Summary: the last week.
+const SummaryDays = 7
+
+// Summary is the organization's last week at a glance.
+type Summary struct {
+	// From is where the week starts (now minus SummaryDays).
+	From time.Time `json:"from"`
+	// Events is how many entries were recorded; People how many people acted.
+	Events int64 `json:"events"`
+	People int64 `json:"people"`
+	// Deployments are the publications (deployment.started): how many, and
+	// through which channel ("" for the ones whose channel was not recorded).
+	Deployments int64          `json:"deployments"`
+	ByChannel   []ChannelCount `json:"by_channel"`
+}
+
+// ChannelCount is how many publications came through one channel.
+type ChannelCount struct {
+	Channel string `json:"channel"`
+	Count   int64  `json:"count"`
+}
+
+// Tally is how many entries of one type came from one event client (what
+// the repository counts; the service turns clients into channels).
+type Tally struct {
+	Type    string `db:"type"`
+	Client  string `db:"client"`
+	Entries int64  `db:"entries"`
+}
+
+// Person is someone who appears in the trail.
+type Person struct {
+	Actor identity.UserID `json:"actor_id" db:"actor_id"`
+	// Name is their name in the organization's directory ("" when it does
+	// not know them, or is not configured).
+	Name    string    `json:"name" db:"-"`
+	Entries int64     `json:"entries" db:"entries"`
+	LastAt  time.Time `json:"last_at" db:"last_at"`
 }

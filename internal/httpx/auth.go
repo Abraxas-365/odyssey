@@ -191,7 +191,13 @@ func Provenance(c *fiber.Ctx) error {
 	meta := event.Meta{CorrelationID: ensureRequestID(c)}
 	ctx := c.UserContext()
 	if claims := fiberauth.Claims(c); claims != nil {
+		// the console's OAuth client (Authenticate admits no other), or
+		// ClientAPI for a token that names none: never empty, which would
+		// read as "not recorded"
 		meta.Client = claims.OAuthClientID
+		if meta.Client == "" {
+			meta.Client = event.ClientAPI
+		}
 		// who acts, for IT's rules (internal/actor): the token's permissions.
 		// A token without a valid user subject carries no actor.
 		if user, err := identity.ParseUserID(claims.Subject); err == nil {

@@ -28,15 +28,16 @@ export function appTabs(id: string, canRead: boolean): NavTab[] {
 
 /**
  * The console's tabs (UX v4 §6.1): everyday work — Inicio, Bandeja,
- * Inventario for who reads it — and Administración (clusters, GitHub,
- * rules) only for who can open one of its sections. The assistant is not a
- * tab: it is the header chip.
+ * Inventario and Registro for who reads them — and Administración
+ * (clusters, GitHub, rules) only for who can open one of its sections. The
+ * assistant is not a tab: it is the header chip.
  */
 export function consoleTabs(can: Parameters<typeof adminSections>[0], pending?: number): NavTab[] {
   return [
     { to: '/', label: 'Inicio', end: true },
     { to: '/bandeja', label: 'Bandeja', count: pending },
     ...(can(permissions.inventoryRead) ? [{ to: '/inventario', label: 'Inventario' }] : []),
+    ...(can(permissions.auditRead) ? [{ to: '/registro', label: 'Registro' }] : []),
     ...(adminSections(can).length > 0 ? [{ to: '/administracion', label: 'Administración' }] : []),
   ]
 }
@@ -68,6 +69,7 @@ function Chrome() {
   const commands = [
     ...useCoreCommands(),
     ...(auth.can(permissions.inventoryRead) ? [{ id: 'inventory', label: 'Inventario', group: 'Ir a', onSelect: () => navigate('/inventario') }] : []),
+    ...(auth.can(permissions.auditRead) ? [{ id: 'registro', label: 'Registro', group: 'Ir a', onSelect: () => navigate('/registro') }] : []),
     ...adminSections(auth.can).map(s => ({ id: s.to, label: s.label, group: 'Administración', onSelect: () => navigate(s.to) })),
     ...(apps.data?.items ?? []).map(p => ({ id: p.id, label: p.name, group: 'Apps', onSelect: () => navigate(`/apps/${p.id}`) })),
   ]

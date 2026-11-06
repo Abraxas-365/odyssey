@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { Callout } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
 import { permissions } from '@/lib/permissions'
@@ -26,7 +27,14 @@ export function AppHistoryPage() {
         env={production.id}
         canRestore={can(permissions.deploymentsRollback) && !archived}
       />
-      <p className="text-xs text-muted-foreground">TI ve el registro completo de la empresa: quién hizo cada cambio, por dónde y cuándo.</p>
+      {can(permissions.auditRead) ? (
+        <p className="text-xs text-muted-foreground">
+          Todo lo que se hizo con esta app — quién, por dónde y cuándo — está en el{' '}
+          <Link to={`/registro?app=${encodeURIComponent(p.id)}`} className="text-foreground underline-offset-4 hover:underline">Registro</Link>.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">TI ve el registro completo de la empresa: quién hizo cada cambio, por dónde y cuándo.</p>
+      )}
       {technical && canPublish && <PublishImagePanel project={p.id} env={production.id} busy={publishing} />}
     </>
   )

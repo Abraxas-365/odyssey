@@ -14,9 +14,9 @@ describe('consoleTabs (UX v4 §6.1)', () => {
     expect(labels(consoleTabs(builder))).toEqual(['Inicio', 'Bandeja'])
   })
 
-  it('IT gets Inventario and one Administración tab with its sections', () => {
+  it('IT gets Inventario, Registro and one Administración tab with its sections', () => {
     const ti = role(...Object.values(permissions))
-    expect(labels(consoleTabs(ti, 3))).toEqual(['Inicio', 'Bandeja', 'Inventario', 'Administración'])
+    expect(labels(consoleTabs(ti, 3))).toEqual(['Inicio', 'Bandeja', 'Inventario', 'Registro', 'Administración'])
     expect(consoleTabs(ti, 3)[1].count).toBe(3)
     expect(labels(adminSections(ti))).toEqual(['Clústeres', 'GitHub', 'Reglas'])
   })

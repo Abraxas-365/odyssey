@@ -915,6 +915,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The last week at a glance
+         * @description Entries, people and publications (`deployment.started`) by channel over the last 7 days.
+         */
+        get: operations["summarizeAuditTrail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Who appears in the trail
+         * @description Most recently active first (at most 200), named from the organization's directory (empty names when it is unavailable).
+         */
+        get: operations["listAuditPeople"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/policy/rules": {
         parameters: {
             query?: never;
@@ -2557,10 +2597,17 @@ export interface components {
             /** @example project.created */
             type: string;
             version: number;
-            /** @description The user who caused it; "" for the system. */
+            /** @description The user who caused it; "" for the platform or GitHub. */
             actor_id: string;
-            /** @description Channel: "web", "mcp:<client>", "cli", "" for the system. */
+            /** @description The raw event client: an OAuth client id (the console), "api", "mcp:<client>", "github", "platform"; "" when not recorded. */
             client: string;
+            /**
+             * @description Where it came from, derived on read (not hashed): console, github, platform, assistant:<key>; "" when not recorded.
+             * @example assistant:claude_code
+             */
+            channel: string;
+            /** @description The actor's name in the organization's directory, derived on read (not hashed); "" when unknown. */
+            actor_name: string;
             /** @example project/00000000-0000-4000-8000-000000000000 */
             subject: string;
             /** @description Plain Spanish, for people. */
@@ -2948,6 +2995,40 @@ export interface components {
             entries: number;
             /** @description The first entry whose hash or link does not match; null when valid. */
             broken_at: number | null;
+            /**
+             * Format: date-time
+             * @description When the chain was re-hashed (this answer).
+             */
+            verified_at: string;
+        };
+        AuditSummary: {
+            /**
+             * Format: date-time
+             * @description Start of the window (7 days ago).
+             */
+            from: string;
+            events: number;
+            /** @description Distinct people who acted. */
+            people: number;
+            /** @description Publications (deployment.started). */
+            deployments: number;
+            /** @description Publications per channel, most first ("" = not recorded). */
+            by_channel: {
+                channel: string;
+                count: number;
+            }[];
+        };
+        AuditPerson: {
+            /** Format: uuid */
+            actor_id: string;
+            /** @description "" when the directory does not know them or is unavailable. */
+            name: string;
+            entries: number;
+            /** Format: date-time */
+            last_at: string;
+        };
+        AuditPersonList: {
+            items: components["schemas"]["AuditPerson"][];
         };
         GitHubInfo: {
             /** @description The GitHub App is configured on this Odyssey. */
@@ -4671,6 +4752,10 @@ export interface operations {
                 actor_id?: string;
                 /** @description Everything one request or workflow caused. */
                 correlation_id?: string;
+                /** @description Everything about one app (the entries whose payload names it), whatever their subject. */
+                project_id?: string;
+                /** @description Where the actions came from: `console`, `github`, `platform`, `assistant` (any assistant), `assistant:<key>` (`claude_code`, `codex`, `cursor`, `vscode`, `antigravity`, `other`), or `unrecorded` (entries from before the channel was recorded). */
+                channel?: string;
                 /** @description Inclusive. A date (`YYYY-MM-DD`, UTC) or an RFC 3339 instant. */
                 from?: string;
                 /** @description A date includes the whole day; an instant is exclusive. */
@@ -4717,6 +4802,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditVerification"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    summarizeAuditTrail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The week's counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listAuditPeople: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The people. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPersonList"];
                 };
             };
             401: components["responses"]["Unauthorized"];

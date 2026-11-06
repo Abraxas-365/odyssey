@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/audit"
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -114,6 +115,23 @@ func (r *Repository) List(ctx context.Context, organization identity.Organizatio
 	if f.CorrelationID != "" {
 		add("correlation_id = ?", f.CorrelationID)
 	}
+	if f.Project != uuid.Nil {
+		add("payload->>'project_id' = ?", f.Project.String())
+	}
+	if m := f.Clients; m != nil {
+		if m.Clients != nil {
+			add("client = ANY(?)", pq.Array(m.Clients))
+		}
+		if m.Prefix != "" {
+			add("starts_with(client, ?)", m.Prefix)
+		}
+		if len(m.Except) > 0 {
+			add("NOT (client = ANY(?))", pq.Array(m.Except))
+		}
+		if m.ExceptPrefix != "" {
+			add("NOT starts_with(client, ?)", m.ExceptPrefix)
+		}
+	}
 	if !f.From.IsZero() {
 		add("occurred_at >= ?", f.From)
 	}
@@ -137,6 +155,29 @@ func (r *Repository) List(ctx context.Context, organization identity.Organizatio
 		return query.Paginated[audit.Entry]{}, pgerr.Map(err, "list audit entries")
 	}
 	return query.NewPaginated(items, total, page), nil
+}
+
+func (r *Repository) Tally(ctx context.Context, organization identity.OrganizationID, from time.Time) ([]audit.Tally, int64, error) {
+	q := txn.Q(ctx, r.db)
+	var tallies []audit.Tally
+	if err := q.SelectContext(ctx, &tallies, `SELECT type, client, count(*) AS entries FROM audit.entries
+		WHERE organization_id = $1 AND occurred_at >= $2 GROUP BY type, client ORDER BY type, client`, organization, from); err != nil {
+		return nil, 0, pgerr.Map(err, "tally audit entries")
+	}
+	var people int64
+	if err := q.GetContext(ctx, &people, `SELECT count(DISTINCT actor_id) FROM audit.entries
+		WHERE organization_id = $1 AND occurred_at >= $2 AND actor_id IS NOT NULL`, organization, from); err != nil {
+		return nil, 0, pgerr.Map(err, "count audit people")
+	}
+	return tallies, people, nil
+}
+
+func (r *Repository) People(ctx context.Context, organization identity.OrganizationID, limit int) ([]audit.Person, error) {
+	people := []audit.Person{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &people, `SELECT actor_id, count(*) AS entries, max(occurred_at) AS last_at
+		FROM audit.entries WHERE organization_id = $1 AND actor_id IS NOT NULL
+		GROUP BY actor_id ORDER BY last_at DESC, actor_id LIMIT $2`, organization, limit)
+	return people, pgerr.Map(err, "list audit people")
 }
 
 func (r *Repository) Walk(ctx context.Context, organization identity.OrganizationID, fn func(audit.Entry) error) error {

@@ -760,14 +760,27 @@ entry's `hash` covers its content and the previous entry's `hash`).
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `/api/v1/audit` | read | 200 `{items, page}`, newest first |
-| `GET` | `/api/v1/audit/verify` | read | 200 `{valid, entries, broken_at}` |
+| `GET` | `/api/v1/audit/verify` | read | 200 `{valid, entries, broken_at, verified_at}` |
+| `GET` | `/api/v1/audit/summary` | read | 200 `{from, events, people, deployments, by_channel}` (last 7 days) |
+| `GET` | `/api/v1/audit/people` | read | 200 `{items: [{actor_id, name, entries, last_at}]}` |
 
 - **List filters**: `subject` (`project/<id>`), `type` (repeatable),
-  `actor_id`, `correlation_id`, `from` / `to` (a `YYYY-MM-DD` date in UTC —
-  `to` includes that whole day — or an RFC 3339 instant, `to` exclusive) and
-  `search` (summary).
+  `actor_id`, `correlation_id`, `project_id` (every entry whose payload names
+  the app, whatever its subject), `channel` (`console`, `github`, `platform`,
+  `assistant`, `assistant:<key>`, `unrecorded`; anything else is `400`),
+  `from` / `to` (a `YYYY-MM-DD` date in UTC — `to` includes that whole day —
+  or an RFC 3339 instant, `to` exclusive) and `search` (summary).
+- **Channel**: each entry has the raw `client` (hashed) and, derived on read
+  and not hashed, `channel` and `actor_name` (from the IAMKit directory; `""`
+  when unknown or unavailable — the trail never fails for a name). `channel`
+  `""` means the entry predates channel recording. A GitHub push (webhook or
+  poll) is `github`, the platform's own actions (automatic restore, schedules,
+  a cluster's agent) `platform`, an MCP client `assistant:<key>`, any other
+  token the `console`.
+- **Summary** counts the last 7 days: entries, distinct people, and
+  publications (`deployment.started`) per channel, most first.
 - **Verify** re-hashes the whole chain; `broken_at` is the `seq` of the first
-  entry that does not match (`null` when `valid`).
+  entry that does not match (`null` when `valid`); `verified_at` is when.
 
 ### GitHub webhooks (public: `POST /webhooks/github`)
 

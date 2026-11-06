@@ -7,6 +7,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -518,6 +519,9 @@ func (s *Service) deployFailed(ctx context.Context, st *workflow.State, cause er
 		return err
 	}
 	state.Active = nil
+	// the restore is the platform's own: its run and events name it, not the
+	// channel the failed deployment came through (same correlation)
+	ctx = event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: event.ClientPlatform})
 	_, _, err = s.begin(ctx, state, p, e, release.Deployment{ID: *restore, Release: &r.ID, Image: r.Image,
 		Reason: release.ReasonAutoRollback, RollbackOf: &d.ID})
 	return err

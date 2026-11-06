@@ -72,6 +72,22 @@ func (r Registered) key(id string) string {
 
 func (r Registered) id(key string) string { return strings.TrimSpace(r[key]) }
 
+// Clients are the OAuth client ids PresetOf knows, with their assistant's
+// key: the metadata documents and the registered templates. Every other id
+// is Other.
+func Clients(registered Registered) map[string]string {
+	out := make(map[string]string, len(metadataClients)+len(registered))
+	for id, key := range metadataClients {
+		out[id] = key
+	}
+	for _, key := range Templates() {
+		if id := registered.id(key); id != "" {
+			out[id] = key
+		}
+	}
+	return out
+}
+
 // PresetOf names the assistant behind an OAuth client id: a metadata
 // document's URL, a registered template's client, else Other.
 func PresetOf(clientID string, registered Registered) string {

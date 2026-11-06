@@ -250,7 +250,8 @@ func (e *Engine) Start(ctx context.Context, s workflow.Start) (workflow.RunID, e
 	if err != nil {
 		return workflow.RunID{}, errx.Wrap(err, "workflow: marshal input", errx.TypeInternal)
 	}
-	correlation := event.MetaFrom(ctx).CorrelationID
+	meta := event.MetaFrom(ctx)
+	correlation := meta.CorrelationID
 	id := workflow.NewRunID()
 	if correlation == "" {
 		correlation = id.String()
@@ -258,11 +259,11 @@ func (e *Engine) Start(ctx context.Context, s workflow.Start) (workflow.RunID, e
 	q := txn.Q(ctx, e.db)
 	var got workflow.RunID
 	err = q.GetContext(ctx, &got, `INSERT INTO workflow.runs
-		(id, organization_id, workflow, subject, status, step_name, input, started_by, correlation_id, idempotency_key)
-		VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8, $9)
+		(id, organization_id, workflow, subject, status, step_name, input, started_by, correlation_id, idempotency_key, client)
+		VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (organization_id, workflow, idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		RETURNING id`,
-		id, s.Organization, s.Workflow, s.Subject, def.Steps[0].Name, input, s.Actor, correlation, s.IdempotencyKey)
+		id, s.Organization, s.Workflow, s.Subject, def.Steps[0].Name, input, s.Actor, correlation, s.IdempotencyKey, meta.Client)
 	if errors.Is(err, sql.ErrNoRows) { // the key was used: return that run
 		err = q.GetContext(ctx, &got, `SELECT id FROM workflow.runs
 			WHERE organization_id = $1 AND workflow = $2 AND idempotency_key = $3`, s.Organization, s.Workflow, s.IdempotencyKey)
@@ -336,7 +337,7 @@ func (e *Engine) Find(ctx context.Context, org identity.OrganizationID, run work
 // ---- run state ----
 
 const runColumns = `id, organization_id, workflow, subject, status, rev, step, step_name, attempt, step_started_at,
-	input, outputs, error, waiting_for, wait_until, started_by, correlation_id, created_at, updated_at, finished_at`
+	input, outputs, error, waiting_for, wait_until, started_by, correlation_id, client, created_at, updated_at, finished_at`
 
 type runRow struct {
 	workflow.Run
@@ -353,6 +354,13 @@ func (r runRow) run() (workflow.Run, error) {
 		return workflow.Run{}, errx.Wrap(err, "decode workflow outputs", errx.TypeInternal)
 	}
 	return out, nil
+}
+
+// meta is the provenance a step (or the failure hook) publishes under: the
+// run's correlation and the client of the request that started it (empty for
+// a run from before it was kept: not recorded, never guessed).
+func (r runRow) meta() event.Meta {
+	return event.Meta{CorrelationID: r.Correlation, Client: r.Client}
 }
 
 func (e *Engine) lock(ctx context.Context, id uuid.UUID) (runRow, error) {
@@ -390,6 +398,9 @@ type scheduleWorker struct {
 }
 
 func (w *scheduleWorker) Work(ctx context.Context, job *river.Job[scheduleArgs]) error {
+	// a recurring task is the platform acting on its own (its events and the
+	// runs it starts name it)
+	ctx = event.WithMeta(ctx, event.Meta{Client: event.ClientPlatform})
 	for _, s := range w.e.registry.Schedules() {
 		if s.Name == job.Args.Name {
 			return s.Run(ctx)
@@ -452,7 +463,7 @@ func (e *Engine) work(ctx context.Context, args stepArgs) error {
 		return err
 	}
 	state := &workflow.State{Run: run, Attempt: r.Attempt + 1}
-	stepCtx := event.WithMeta(ctx, event.Meta{CorrelationID: r.Correlation})
+	stepCtx := event.WithMeta(ctx, r.meta())
 	output, stepErr := e.execute(stepCtx, step, state)
 
 	// 3. record the outcome, unless the run moved on meanwhile (cancel)
@@ -622,7 +633,7 @@ func (e *Engine) fail(ctx context.Context, r runRow, def workflow.Definition, ca
 	if err != nil {
 		return err
 	}
-	hookErr := def.OnFailure(event.WithMeta(ctx, event.Meta{CorrelationID: r.Correlation}),
+	hookErr := def.OnFailure(event.WithMeta(ctx, r.meta()),
 		&workflow.State{Run: run, Attempt: r.Attempt + 1}, cause)
 	if hookErr == nil {
 		e.opts.Logger.Error("workflow run failed", "run", r.ID, "workflow", r.Workflow, "step", r.StepName, "error", cause)

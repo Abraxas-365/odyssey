@@ -203,6 +203,22 @@ func TestGitHubPushDeploys(t *testing.T) {
 		got[0].TargetURL != "http://console.test/apps/"+proj.ID.String() {
 		t.Fatalf("statuses = %+v", got)
 	}
+	// the trail names GitHub for the whole chain the push started: the
+	// deployment its steps published, and not the console nor "not recorded"
+	fromGitHub := map[string]bool{}
+	for deadline := time.Now().Add(10 * time.Second); !fromGitHub[release.EventDeploymentReady] && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		res = checked(t, app, http.MethodGet, "/api/v1/audit?channel=github&project_id="+proj.ID.String(), token, nil)
+		httpxtest.Want(t, res, http.StatusOK)
+		for _, e := range httpxtest.JSON[query.Paginated[audit.Entry]](t, res).Items {
+			if e.Channel != "github" {
+				t.Fatalf("channel filter returned %+v", e)
+			}
+			fromGitHub[e.Type] = true
+		}
+	}
+	if !fromGitHub[release.EventDeploymentStarted] || !fromGitHub[release.EventDeploymentReady] {
+		t.Fatalf("the push's deployment is not GitHub's in the trail: %v", fromGitHub)
+	}
 
 	// -- the same delivery again, the same commit in a new delivery, another branch
 	res = deliver("d-1", "push", body, fake.Sign(body))

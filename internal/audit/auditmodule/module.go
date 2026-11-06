@@ -7,6 +7,7 @@ import (
 	"context"
 	"io/fs"
 
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/audit"
 	"github.com/Abraxas-365/odyssey/internal/audit/adapters/audithttp"
 	"github.com/Abraxas-365/odyssey/internal/audit/adapters/auditpg"
@@ -21,6 +22,10 @@ const Subscription = "audit"
 
 type Deps struct {
 	DB *sqlx.DB
+	// Assistants name the assistants' channels (config MCP.TemplateClients).
+	Assistants assistant.Registered
+	// Directory names the people (IAMKit's members; nil: no names).
+	Directory audit.Directory
 }
 
 type Module struct {
@@ -30,7 +35,8 @@ type Module struct {
 }
 
 func New(deps Deps) Module {
-	svc := auditsvc.New(auditpg.New(deps.DB), txn.Postgres{DB: deps.DB})
+	svc := auditsvc.New(auditpg.New(deps.DB), txn.Postgres{DB: deps.DB},
+		auditsvc.Options{Assistants: deps.Assistants, Directory: deps.Directory})
 	return Module{Commands: svc, Queries: svc, HTTP: audithttp.New(svc)}
 }
 

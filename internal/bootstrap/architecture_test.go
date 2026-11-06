@@ -38,6 +38,9 @@ var foundation = map[string]bool{
 	// domains and the policy adapters share) import no domain.
 	"actor": true,
 	"gate":  true,
+	// channel: where an action came from (console, GitHub, an assistant…),
+	// shared by the deployments and the activity trail.
+	"channel": true,
 }
 
 // iamkitSDK may be imported only by adapters, httpx (authentication) and the

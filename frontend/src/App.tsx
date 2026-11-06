@@ -18,6 +18,7 @@ import { HomePage } from '@/pages/home'
 import { InventoryPage } from '@/pages/inventory'
 import { NotFoundPage } from '@/pages/not-found'
 import { PolicyRulesPage } from '@/pages/policy-rules'
+import { RegistroPage } from '@/pages/registro'
 
 // The showcase is dev/reference only: keep it out of the main bundle.
 const DesignSystemPage = lazy(() => import('@/pages/design-system').then(m => ({ default: m.DesignSystemPage })))
@@ -39,6 +40,7 @@ export function App() {
           <Route path="asistente" element={<AssistantPage />} />
           <Route path="bandeja" element={<BandejaPage />} />
           <Route path="inventario" element={<InventoryPage />} />
+          <Route path="registro" element={<RegistroPage />} />
           <Route path="apps/:id" element={<AppLayout />}>
             <Route index element={<AppOverviewPage />} />
             <Route path="historial" element={<AppHistoryPage />} />

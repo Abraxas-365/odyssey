@@ -55,9 +55,24 @@ type Meta struct {
 	// person (or the system) acted directly.
 	CausationID uuid.UUID `json:"causation_id"`
 	// Client is the OAuth client the actor acted through (the console, an MCP
-	// agent such as Claude Code); empty for system actions.
+	// agent such as Claude Code: "mcp:<client id>"), or what started the chain
+	// when nobody did: ClientGitHub, ClientPlatform. Only the edges set it
+	// (the HTTP and MCP middleware, the webhook and poll, the workflow
+	// engine, the gateway, the platform's own restore; architecture test):
+	// empty means it was not recorded.
 	Client string `json:"client,omitempty"`
 }
+
+// Clients that are not an OAuth client.
+const (
+	// ClientGitHub: a push nobody in Odicea asked for (the webhook, the poll).
+	ClientGitHub = "github"
+	// ClientPlatform: the platform on its own (a schedule, a cluster's agent
+	// reporting, the automatic restore).
+	ClientPlatform = "platform"
+	// ClientAPI: a REST token that names no OAuth client (a password grant).
+	ClientAPI = "api"
+)
 
 var typePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
 

@@ -105,11 +105,32 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Fatalf("trail %+v", trail)
 	}
 	res = checked(t, app, http.MethodGet, "/api/v1/audit/verify", token, nil)
-	if v := httpxtest.JSON[audit.Verification](t, res); !v.Valid || v.Entries != 3 { // + environment.created
+	if v := httpxtest.JSON[audit.Verification](t, res); !v.Valid || v.Entries != 3 || v.VerifiedAt.IsZero() { // + environment.created
 		t.Fatalf("verify %+v", v)
+	}
+	// the company log (UX-6): a REST token without a client is recorded as
+	// "api" and read as the console; summary and people are the same trail
+	res = checked(t, app, http.MethodGet, "/api/v1/audit?channel=console&project_id="+created.ID.String(), token, nil)
+	if page := httpxtest.JSON[query.Paginated[audit.Entry]](t, res); page.Page.Total != 3 || page.Items[0].Client != event.ClientAPI || page.Items[0].Channel != "console" {
+		t.Fatalf("console channel %+v", page)
+	}
+	res = checked(t, app, http.MethodGet, "/api/v1/audit?channel=unrecorded", token, nil)
+	if page := httpxtest.JSON[query.Paginated[audit.Entry]](t, res); page.Page.Total != 0 {
+		t.Fatalf("nothing new is unrecorded: %+v", page)
+	}
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/audit?channel=fax", token, nil), http.StatusBadRequest)
+	res = checked(t, app, http.MethodGet, "/api/v1/audit/summary", token, nil)
+	if s := httpxtest.JSON[audit.Summary](t, res); s.Events != 3 || s.People != 1 || s.Deployments != 0 {
+		t.Fatalf("summary %+v", s)
+	}
+	res = checked(t, app, http.MethodGet, "/api/v1/audit/people", token, nil)
+	if people := httpxtest.JSON[struct{ Items []audit.Person }](t, res).Items; len(people) != 1 || people[0].Actor.String() != httpxtest.User || people[0].Entries != 3 {
+		t.Fatalf("people %+v", people)
 	}
 	// the trail is its own permission, and per organization
 	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/audit", other, nil), http.StatusForbidden)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/audit/summary", other, nil), http.StatusForbidden)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/audit/people", other, nil), http.StatusForbidden)
 
 	// An upload ticket (what deploy_folder issues) is the only credential of
 	// PUT /uploads/:ticket: it publishes a folder once, attributed to the

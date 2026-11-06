@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -19,6 +20,10 @@ type Commands interface {
 type Queries interface {
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Entry], error)
 	Verify(ctx context.Context, organization identity.OrganizationID) (Verification, error)
+	// Summary is the last SummaryDays at a glance.
+	Summary(ctx context.Context, organization identity.OrganizationID) (Summary, error)
+	// People are who appear in the trail, most recently active first, named.
+	People(ctx context.Context, organization identity.OrganizationID) ([]Person, error)
 }
 
 // Repository persists the chain; only the service depends on it.
@@ -34,4 +39,17 @@ type Repository interface {
 	List(ctx context.Context, organization identity.OrganizationID, filter Filter, page query.Pagination) (query.Paginated[Entry], error)
 	// Walk calls fn with every entry of the organization in chain order.
 	Walk(ctx context.Context, organization identity.OrganizationID, fn func(Entry) error) error
+	// Tally counts the entries since from by type and client, and the
+	// distinct people who acted then.
+	Tally(ctx context.Context, organization identity.OrganizationID, from time.Time) (tallies []Tally, people int64, err error)
+	// People are the actors of the organization's entries, with how many
+	// and their latest, most recent first (at most limit).
+	People(ctx context.Context, organization identity.OrganizationID, limit int) ([]Person, error)
+}
+
+// Directory names the organization's people (IAMKit's member list, through
+// the adapter the composition root gives; audit never imports the SDK).
+type Directory interface {
+	// Name is the user's name in the organization ("" when unknown).
+	Name(ctx context.Context, organization identity.OrganizationID, user identity.UserID) (string, error)
 }

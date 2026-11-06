@@ -1444,6 +1444,17 @@ paths:
           in: query
           description: Everything one request or workflow caused.
           schema: { type: string }
+        - name: project_id
+          in: query
+          description: Everything about one app (the entries whose payload names it), whatever their subject.
+          schema: { type: string, format: uuid }
+        - name: channel
+          in: query
+          description: >-
+            Where the actions came from: `console`, `github`, `platform`, `assistant` (any assistant),
+            `assistant:<key>` (`claude_code`, `codex`, `cursor`, `vscode`, `antigravity`, `other`), or
+            `unrecorded` (entries from before the channel was recorded).
+          schema: { type: string, examples: [assistant:claude_code] }
         - name: from
           in: query
           description: Inclusive. A date (`YYYY-MM-DD`, UTC) or an RFC 3339 instant.
@@ -1478,6 +1489,40 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuditVerification" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/audit/summary:
+    get:
+      tags: [audit]
+      operationId: summarizeAuditTrail
+      summary: The last week at a glance
+      description: "Entries, people and publications (`deployment.started`) by channel over the last 7 days."
+      x-permissions: [odyssey:audit:read]
+      responses:
+        "200":
+          description: The week's counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/audit/people:
+    get:
+      tags: [audit]
+      operationId: listAuditPeople
+      summary: Who appears in the trail
+      description: "Most recently active first (at most 200), named from the organization's directory (empty names when it is unavailable)."
+      x-permissions: [odyssey:audit:read]
+      responses:
+        "200":
+          description: The people.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditPersonList" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/Internal" }
@@ -3875,15 +3920,20 @@ components:
       additionalProperties: false
       description: One domain event, hash-chained to the previous entry of the organization.
       required: [id, organization_id, seq, type, version, actor_id, client, subject, summary, payload,
-                 correlation_id, causation_id, occurred_at, recorded_at, prev_hash, hash]
+                 correlation_id, causation_id, occurred_at, recorded_at, prev_hash, hash, channel, actor_name]
       properties:
         id: { type: string, format: uuid, description: The event's id. }
         organization_id: { type: string, format: uuid }
         seq: { type: integer, minimum: 1, description: Position in the organization's chain. }
         type: { type: string, examples: [project.created] }
         version: { type: integer, minimum: 1 }
-        actor_id: { type: string, description: 'The user who caused it; "" for the system.' }
-        client: { type: string, description: 'Channel: "web", "mcp:<client>", "cli", "" for the system.' }
+        actor_id: { type: string, description: 'The user who caused it; "" for the platform or GitHub.' }
+        client: { type: string, description: 'The raw event client: an OAuth client id (the console), "api", "mcp:<client>", "github", "platform"; "" when not recorded.' }
+        channel:
+          type: string
+          description: 'Where it came from, derived on read (not hashed): console, github, platform, assistant:<key>; "" when not recorded.'
+          examples: [assistant:claude_code]
+        actor_name: { type: string, description: 'The actor''s name in the organization''s directory, derived on read (not hashed); "" when unknown.' }
         subject: { type: string, examples: ["project/00000000-0000-4000-8000-000000000000"] }
         summary: { type: string, description: "Plain Spanish, for people." }
         payload: { type: object, description: The event's versioned payload (golden contracts per type). }
@@ -4372,13 +4422,53 @@ components:
     AuditVerification:
       type: object
       additionalProperties: false
-      required: [valid, entries, broken_at]
+      required: [valid, entries, broken_at, verified_at]
       properties:
         valid: { type: boolean }
         entries: { type: integer, minimum: 0 }
         broken_at:
           type: [integer, "null"]
           description: The first entry whose hash or link does not match; null when valid.
+        verified_at: { type: string, format: date-time, description: When the chain was re-hashed (this answer). }
+
+    AuditSummary:
+      type: object
+      additionalProperties: false
+      required: [from, events, people, deployments, by_channel]
+      properties:
+        from: { type: string, format: date-time, description: Start of the window (7 days ago). }
+        events: { type: integer, minimum: 0 }
+        people: { type: integer, minimum: 0, description: Distinct people who acted. }
+        deployments: { type: integer, minimum: 0, description: "Publications (deployment.started)." }
+        by_channel:
+          type: array
+          description: Publications per channel, most first ("" = not recorded).
+          items:
+            type: object
+            additionalProperties: false
+            required: [channel, count]
+            properties:
+              channel: { type: string }
+              count: { type: integer, minimum: 0 }
+
+    AuditPerson:
+      type: object
+      additionalProperties: false
+      required: [actor_id, name, entries, last_at]
+      properties:
+        actor_id: { type: string, format: uuid }
+        name: { type: string, description: '"" when the directory does not know them or is unavailable.' }
+        entries: { type: integer, minimum: 1 }
+        last_at: { type: string, format: date-time }
+
+    AuditPersonList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditPerson" }
 
     GitHubInfo:
       type: object

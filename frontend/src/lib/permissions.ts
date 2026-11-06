@@ -16,6 +16,7 @@ export const permissions = {
   policyManage: 'odyssey:policy:manage',
   approvalsDecide: 'odyssey:approvals:decide',
   inventoryRead: 'odyssey:inventory:read',
+  auditRead: 'odyssey:audit:read',
 } as const
 
 export type Permission = (typeof permissions)[keyof typeof permissions]

@@ -22,6 +22,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
@@ -121,10 +122,13 @@ func New(agents fleet.Agents, signals fleet.Signals, sources blob.Store, opts Op
 func (s *Server) Register(g *grpc.Server) { fleetv1.RegisterFleetServer(g, s) }
 
 // ServerOptions are the interceptors that authenticate every call but
-// Enroll and Recover (rate limited per client address instead).
+// Enroll and Recover (rate limited per client address instead). What an
+// agent reports is the platform's own doing: every call publishes as
+// event.ClientPlatform.
 func (s *Server) ServerOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
+			ctx = fromAgent(ctx)
 			if info.FullMethod == fleetv1.Fleet_Enroll_FullMethodName || info.FullMethod == fleetv1.Fleet_Recover_FullMethodName {
 				if !s.public.allow(address(ctx), time.Now()) {
 					return nil, status.Error(codes.ResourceExhausted, "too many requests from this address; retry shortly")
@@ -142,9 +146,14 @@ func (s *Server) ServerOptions() []grpc.ServerOption {
 			if err != nil {
 				return err
 			}
-			return next(srv, &agentStream{ServerStream: ss, ctx: withAgent(ss.Context(), ref)})
+			return next(srv, &agentStream{ServerStream: ss, ctx: withAgent(fromAgent(ss.Context()), ref)})
 		}),
 	}
+}
+
+// fromAgent marks what a call causes as the platform's.
+func fromAgent(ctx context.Context) context.Context {
+	return event.WithMeta(ctx, event.Meta{Client: event.ClientPlatform})
 }
 
 // Run delivers committed changes to the tunnels until ctx ends.

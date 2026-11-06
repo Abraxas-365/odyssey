@@ -6,6 +6,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/build"
+	"github.com/Abraxas-365/odyssey/internal/channel"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -99,26 +100,27 @@ const (
 	CodePolicyDenied = gate.CodeDenied
 )
 
-// Where a deployment was requested from (Deployment.RequestedVia).
+// Where a deployment was requested from (Deployment.RequestedVia): the
+// channels (internal/channel), which the activity trail shares.
 const (
-	ViaConsole  = "console"  // someone in the console (or the API)
-	ViaGitHub   = "github"   // a push, the poll or "Publicar ahora" on a connected repository
-	ViaPlatform = "platform" // the platform itself (the automatic restore)
+	ViaConsole  = channel.Console  // someone in the console (or the API)
+	ViaGitHub   = channel.GitHub   // a push, the poll or "Publicar ahora" on a connected repository
+	ViaPlatform = channel.Platform // the platform itself (the automatic restore)
 	// ViaAssistantPrefix + an assistant key (claude_code, codex, cursor,
 	// vscode, antigravity, other): an AI assistant through the MCP endpoint.
-	ViaAssistantPrefix = "assistant:"
+	ViaAssistantPrefix = channel.AssistantPrefix
 )
 
 // ViaFor names where a request came from: the platform for an automatic
-// restore; an assistant when the event client is an MCP one ("mcp:<oauth
-// client id>", registered naming the clients IAMKit made for the template
-// assistants); the console otherwise.
+// restore, else the channel of the event client (channel.Of; registered
+// names the clients IAMKit made for the template assistants). A deployment
+// always has one: a client that was not recorded is the console's.
 func ViaFor(reason Reason, client string, registered assistant.Registered) string {
 	if reason == ReasonAutoRollback {
 		return ViaPlatform
 	}
-	if key, ok := assistant.Preset(client, registered); ok {
-		return ViaAssistantPrefix + key
+	if via := channel.Of(client, registered); via != "" {
+		return via
 	}
 	return ViaConsole
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/iamkit/sdk/resourceserver"
+	"github.com/Abraxas-365/odyssey/internal/assistant"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -112,7 +113,7 @@ func (a *MCPAuth) Protect(next http.Handler) fiber.Handler {
 			}
 			return adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, _ *http.Request) { a.server.Deny(w, err, nil) })(c)
 		}
-		meta := event.Meta{CorrelationID: requestID, Client: "mcp:" + caller.Client}
+		meta := event.Meta{CorrelationID: requestID, Client: assistant.MCPClientPrefix + caller.Client}
 		ctx = event.WithMeta(mcpx.WithPrincipal(c.UserContext(), caller), meta)
 		return adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// The agent's token is never passed on (tools see the request's

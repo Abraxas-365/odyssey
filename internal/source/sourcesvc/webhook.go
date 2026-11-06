@@ -35,6 +35,13 @@ const (
 
 // ---- webhooks ----
 
+// fromGitHub marks what a delivery or the poll causes as GitHub's: the
+// events it publishes (and the deployment it queues) name that channel,
+// keeping the request's correlation.
+func fromGitHub(ctx context.Context) context.Context {
+	return event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: event.ClientGitHub})
+}
+
 // Receive handles one delivery. Order: the provider is configured, the
 // signature holds, the delivery is well formed, then one transaction records
 // the delivery id (a repeated one stops there) and does everything the
@@ -50,6 +57,7 @@ func (s *Service) Receive(ctx context.Context, input source.Webhook) error {
 	if err := input.Validate(); err != nil {
 		return err
 	}
+	ctx = fromGitHub(ctx)
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		fresh, err := s.repo.ObserveDelivery(ctx, input.Delivery, s.opts.Now().Add(-deliveryMemory))
 		if err != nil || !fresh {
@@ -202,6 +210,7 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	if !s.provider.Enabled() {
 		return 0, nil
 	}
+	ctx = fromGitHub(ctx)
 	now := s.opts.Now()
 	conns, err := s.repo.ListConnectionsToReconcile(ctx, now.Add(-source.ReconcileEvery), reconcileBatch)
 	if err != nil {

@@ -283,8 +283,9 @@ func TestRevokeFailedLifecycle(t *testing.T) {
 }
 
 // within says whether d is the wait asked for, give or take the seconds the
-// test took.
-func within(d, want time.Duration) bool { return d > want-30*time.Second && d <= want }
+// test took and the database's clock running a little ahead of the test's
+// (Postgres in the Docker VM drifts by tens of milliseconds).
+func within(d, want time.Duration) bool { return d > want-30*time.Second && d <= want+5*time.Second }
 
 // The wait doubles from 5 minutes and stops at 6 hours.
 func TestRevokeBackoffGrowsAndIsCapped(t *testing.T) {

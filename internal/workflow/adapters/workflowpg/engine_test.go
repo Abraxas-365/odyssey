@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/migrate"
 	"github.com/Abraxas-365/odyssey/internal/pgtest"
@@ -60,9 +61,14 @@ func start(t *testing.T, reg *workflow.Registry) harness {
 
 func (h harness) start(t *testing.T, s workflow.Start) workflow.RunID {
 	t.Helper()
+	return h.startIn(t, context.Background(), s)
+}
+
+func (h harness) startIn(t *testing.T, ctx context.Context, s workflow.Start) workflow.RunID {
+	t.Helper()
 	s.Organization = h.org
 	var id workflow.RunID
-	err := txn.Postgres{DB: h.db}.Do(context.Background(), func(ctx context.Context) error {
+	err := txn.Postgres{DB: h.db}.Do(ctx, func(ctx context.Context) error {
 		var err error
 		id, err = h.eng.Start(ctx, s)
 		return err
@@ -71,6 +77,56 @@ func (h harness) start(t *testing.T, s workflow.Start) workflow.RunID {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// TestStepsKeepTheirRunsClient: a step and the failure hook publish under
+// the run's correlation and the client of the request that started it, so
+// what a deployment's steps cause names the channel the request came
+// through. A run started without one has none (not recorded, never guessed).
+func TestStepsKeepTheirRunsClient(t *testing.T) {
+	reg := workflow.NewRegistry()
+	var mu sync.Mutex
+	seen := map[string]event.Meta{}
+	record := func(name string) func(ctx context.Context) {
+		return func(ctx context.Context) {
+			mu.Lock()
+			seen[name] = event.MetaFrom(ctx)
+			mu.Unlock()
+		}
+	}
+	reg.Define(workflow.Definition{Name: "demo.attributed",
+		Steps: []workflow.Step{{Name: "step", Run: func(ctx context.Context, s *workflow.State) (any, error) {
+			var in input
+			_ = s.Input(&in)
+			record(in.Name)(ctx)
+			if in.Name == "fails" {
+				return nil, workflow.Fail(errors.New("no"))
+			}
+			return nil, nil
+		}}},
+		OnFailure: func(ctx context.Context, _ *workflow.State, _ error) error {
+			record("hook")(ctx)
+			return nil
+		},
+	})
+	h := start(t, reg)
+	claude := event.WithMeta(context.Background(), event.Meta{CorrelationID: "req-1", Client: "mcp:claude"})
+	r := h.await(t, h.startIn(t, claude, workflow.Start{Workflow: "demo.attributed", Input: input{Name: "ok"}}), workflow.StatusSucceeded)
+	if r.Client != "mcp:claude" || r.Correlation != "req-1" {
+		t.Fatalf("run %+v", r)
+	}
+	h.await(t, h.startIn(t, claude, workflow.Start{Workflow: "demo.attributed", Input: input{Name: "fails"}}), workflow.StatusFailed)
+	h.await(t, h.start(t, workflow.Start{Workflow: "demo.attributed", Input: input{Name: "none"}}), workflow.StatusSucceeded)
+	mu.Lock()
+	defer mu.Unlock()
+	for name, want := range map[string]string{"ok": "mcp:claude", "fails": "mcp:claude", "hook": "mcp:claude", "none": ""} {
+		if seen[name].Client != want {
+			t.Errorf("%s published as %q, want %q", name, seen[name].Client, want)
+		}
+	}
+	if seen["hook"].CorrelationID != "req-1" {
+		t.Errorf("hook correlation %q", seen["hook"].CorrelationID)
+	}
 }
 
 // await polls until the run reaches want (or any finished state).

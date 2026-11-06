@@ -31,6 +31,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalmcp"
 	"github.com/Abraxas-365/odyssey/internal/approval/approvalmodule"
 	"github.com/Abraxas-365/odyssey/internal/assistant"
+	"github.com/Abraxas-365/odyssey/internal/audit"
 	"github.com/Abraxas-365/odyssey/internal/audit/auditmodule"
 	"github.com/Abraxas-365/odyssey/internal/blob"
 	"github.com/Abraxas-365/odyssey/internal/blob/adapters/gocloudblob"
@@ -377,10 +378,20 @@ type Options struct {
 	AccessIssuer string
 	IAM          config.IAM
 	AccessLogin  access.Login
-	// People names who asked for each deployment (the worker builds it from
-	// config.Directory with releaseiam; tests pass a fake). Nil keeps no
-	// names.
+	// People is the organization's directory (releaseiam on IAMKit, from
+	// config.Directory; tests pass a fake): it names who asked for each
+	// deployment (the worker) and the people of the activity trail (the
+	// API). Nil keeps no names.
 	People release.People
+}
+
+// directory is the same IAMKit directory for the activity trail: nil stays
+// nil (a nil release.People must not become a non-nil audit.Directory).
+func directory(people release.People) audit.Directory {
+	if people == nil {
+		return nil
+	}
+	return people
 }
 
 // Assemble builds the modules and wires who reacts to what. This is the only
@@ -461,7 +472,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Fleet:     fleets,
 		Resources: resources,
 		AI:        ais,
-		Audit:     auditmodule.New(auditmodule.Deps{DB: db}),
+		Audit:     auditmodule.New(auditmodule.Deps{DB: db, Assistants: opts.Release.Assistants, Directory: directory(opts.People)}),
 		Inventory: inventorymodule.New(inventorymodule.Deps{Projects: projects.Queries, Releases: releases.Queries, Builds: builds.Queries,
 			Fleet: fleets.Queries, Approvals: approvals.Queries, Sources: sources.Queries}),
 	}
@@ -544,6 +555,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	opts := Options{Release: releasesvc.Options{Assistants: cfg.MCP.TemplateClients},
 		Source: sourcesvc.Options{Assistants: cfg.MCP.TemplateClients}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder, AI: cfg.AI,
 		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub, ClusterConfig: cfg.Cluster}
+	if cfg.Directory.Enabled() {
+		opts.People = releaseiam.New(cfg.Directory.URL, cfg.Directory.Environment, cfg.Directory.Secret, releaseiam.Options{})
+	} else {
+		slog.Warn("the activity trail shows no names: set IAMKIT_SERVICE_ACCOUNT_SECRET (make seed provisions the service account)")
+	}
 	if cfg.Fleet.Enabled() {
 		ca, err := fleetmodule.LoadAuthority(cfg.Fleet.CACert, "")
 		if err != nil {
