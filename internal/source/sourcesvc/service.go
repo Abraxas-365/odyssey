@@ -471,6 +471,45 @@ func (s *Service) ListBranches(ctx context.Context, organization identity.Organi
 	return s.provider.Branches(ctx, inst.ExternalID, repository)
 }
 
+func (s *Service) DetectServices(ctx context.Context, organization identity.OrganizationID, installation source.InstallationID, repository int64, branch, root string) (project.Detected, error) {
+	in := project.DetectServices{Root: root}.Normalize()
+	if err := in.Validate(); err != nil {
+		return project.Detected{}, err
+	}
+	branch = strings.TrimSpace(branch)
+	if err := source.ValidBranch(branch); err != nil {
+		return project.Detected{}, err
+	}
+	if err := s.enabled(); err != nil {
+		return project.Detected{}, err
+	}
+	inst, err := s.repo.FindInstallation(ctx, organization, installation)
+	if err != nil {
+		return project.Detected{}, err
+	}
+	if inst.Suspended {
+		return project.Detected{}, noAccess()
+	}
+	if branch == "" {
+		repo, err := s.provider.Repository(ctx, inst.ExternalID, repository)
+		if err != nil {
+			return project.Detected{}, err
+		}
+		branch = repo.DefaultBranch
+	}
+	paths, truncated, err := s.provider.Tree(ctx, inst.ExternalID, repository, branch)
+	if err != nil {
+		return project.Detected{}, err
+	}
+	in.Paths = paths
+	out := project.Detect(in)
+	if truncated {
+		out.Truncated = true
+		out.Notes = append(out.Notes, project.TruncatedNote)
+	}
+	return out, nil
+}
+
 func (s *Service) FindConnection(ctx context.Context, organization identity.OrganizationID, id project.ID) (source.Connection, error) {
 	return s.repo.FindConnection(ctx, organization, id)
 }

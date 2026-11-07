@@ -47,6 +47,7 @@ type Fake struct {
 	owners        map[string]map[int64]bool // OAuth code → installations its user owns or administers
 	repos         map[int64]*repoState
 	files         map[statusKey]map[string]string
+	truncated     map[int64]bool // repositories whose Tree is cut short
 	statuses      map[statusKey][]source.CommitStatus
 	failures      map[string]error
 }
@@ -66,6 +67,7 @@ func New(opts Options) *Fake {
 		owners:        map[string]map[int64]bool{},
 		repos:         map[int64]*repoState{},
 		files:         map[statusKey]map[string]string{},
+		truncated:     map[int64]bool{},
 		statuses:      map[statusKey][]source.CommitStatus{},
 		failures:      map[string]error{},
 	}
@@ -230,6 +232,42 @@ func (f *Fake) Branches(_ context.Context, installation, repository int64) ([]so
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// Tree lists the files of ref (a branch, resolved to its commit, or a
+// commit) as SetFiles stored them, sorted; a TreeTruncated repository says
+// it was cut short.
+func (f *Fake) Tree(_ context.Context, installation, repository int64, ref string) ([]string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failures["Tree"]; err != nil {
+		return nil, false, err
+	}
+	r, err := f.reach(installation, repository)
+	if err != nil {
+		return nil, false, err
+	}
+	commit := ref
+	if c, ok := r.branches[ref]; ok {
+		commit = c.SHA
+	}
+	files, ok := f.files[statusKey{repository, commit}]
+	if !ok {
+		return nil, false, errx.NotFound(source.Message(source.CodeBranchMissing)).WithCode(source.CodeBranchMissing)
+	}
+	out := make([]string, 0, len(files))
+	for p := range files {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, f.truncated[repository], nil
+}
+
+// TreeTruncated makes Tree of a repository say the listing was cut short.
+func (f *Fake) TreeTruncated(repoID int64, truncated bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.truncated[repoID] = truncated
 }
 
 func (f *Fake) Head(_ context.Context, installation, repository int64, branch, etag string) (source.Commit, string, bool, error) {

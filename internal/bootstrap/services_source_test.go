@@ -29,6 +29,8 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/release/adapters/releasefake"
 	"github.com/Abraxas-365/odyssey/internal/release/releasesvc"
+	"github.com/Abraxas-365/odyssey/internal/source"
+	"github.com/Abraxas-365/odyssey/internal/source/sourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
@@ -84,6 +86,11 @@ type servicesApp struct {
 }
 
 func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
+	return newServicesAppWith(t, opts, nil)
+}
+
+// newServicesAppWith also wires a git provider (nil: none).
+func newServicesAppWith(t *testing.T, opts buildfake.Options, git source.GitProvider) *servicesApp {
 	t.Helper()
 	db := pgtest.DB(t)
 	ctx := context.Background()
@@ -108,7 +115,7 @@ func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
 		return releasefake.Outcome{}
 	}})
 	runner := buildfake.New(opts)
-	platform, err := bootstrap.Assemble(ctx, db, bootstrap.Options{
+	o := bootstrap.Options{
 		Workflow:  workflowpg.Options{PollInterval: 20 * time.Millisecond, Backoff: func(int) time.Duration { return 0 }},
 		Cluster:   cluster,
 		Runner:    runner,
@@ -116,7 +123,12 @@ func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
 		Release:   releasesvc.Options{PollEvery: 20 * time.Millisecond},
 		Authority: ca,
 		Gateway:   "localhost:0",
-	})
+	}
+	if git != nil {
+		o.GitProvider, o.GitHub = git, config.GitHub{ConsoleURL: "http://console.test"}
+		o.Source = sourcesvc.Options{StateKey: []byte("0123456789abcdef0123456789abcdef")}
+	}
+	platform, err := bootstrap.Assemble(ctx, db, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +148,8 @@ func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
 	s.db, s.platform, s.cluster, s.runner = db, platform, cluster, runner
 	s.app = bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
 	s.org, s.user = identity.NewOrganizationID(), identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
-	s.token = httpxtest.Token(s.org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate)
+	s.token = httpxtest.Token(s.org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate,
+		permission.IntegrationsManage)
 	res := checked(t, s.app, http.MethodPost, "/api/v1/projects", s.token, map[string]any{"name": "Portal"})
 	httpxtest.Want(t, res, http.StatusCreated)
 	s.proj = httpxtest.JSON[project.Project](t, res)

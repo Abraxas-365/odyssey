@@ -214,13 +214,22 @@ func (c Connect) Validate() error {
 		return errx.InvalidField("installation_id", "installation_id is required")
 	case c.RepositoryID <= 0:
 		return errx.InvalidField("repository_id", "repository_id is required")
-	case len(c.Branch) > build.MaxBranch || !utf8.ValidString(c.Branch) || strings.ContainsAny(c.Branch, " ~^:?*[\\\x00"):
-		return errx.InvalidField("branch", "branch must be a git branch name")
+	}
+	if err := ValidBranch(c.Branch); err != nil {
+		return err
 	}
 	if err := ValidRoot(c.Root); err != nil {
 		return err
 	}
 	return c.Config.Validate()
+}
+
+// ValidBranch accepts "" (the default branch) or a git branch name.
+func ValidBranch(branch string) error {
+	if len(branch) > build.MaxBranch || !utf8.ValidString(branch) || strings.ContainsAny(branch, " ~^:?*[\\\x00") {
+		return errx.InvalidField("branch", "branch must be a git branch name")
+	}
+	return nil
 }
 
 // NormalizeRoot trims slashes and spaces ("/apps/web/" → "apps/web").

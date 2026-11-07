@@ -178,6 +178,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/services/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose services from a folder's file names
+         * @description For a folder the person has at hand (dropped on the console, picked
+         *     by an assistant): the paths of its files, never their contents. The
+         *     answer is a proposal (`DetectedServices`) to confirm with `PUT
+         *     /projects/{id}/services`; nothing is written and no app is needed.
+         */
+        post: operations["detectServices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments": {
         parameters: {
             query?: never;
@@ -1458,6 +1481,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/installations/{installation}/repositories/{repository}/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+                installation: components["parameters"]["Installation"];
+                /** @description GitHub's numeric repository id. */
+                repository: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * Propose a repository's services
+         * @description Reads the file names of a branch (the git tree; never contents) and proposes the app's services (see `DetectedServices`). Nothing is written. `GITHUB_BRANCH_MISSING` (404) for an unknown branch or an empty repository; `GITHUB_NO_ACCESS` (404) when the installation no longer reaches the repository or is suspended; `GITHUB_UNAVAILABLE` (502) when GitHub does not answer.
+         */
+        get: operations["detectGitHubServices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/repository": {
         parameters: {
             query?: never;
@@ -1897,6 +1945,39 @@ export interface components {
                 /** @description Only for a route other than `/`. */
                 strip_prefix?: boolean;
             }[];
+        };
+        DetectServicesRequest: {
+            /** @description The paths of the folder's files, relative and `/`-separated ("mi-app/apps/web/package.json"). Names only. */
+            paths?: string[];
+            /** @description The app's folder inside the paths (empty for all of them); the proposed folders are relative to it. */
+            root?: string;
+        };
+        /**
+         * @description A proposal of services from the code's file names, ready for `PUT
+         *     /projects/{id}/services` (in its order). Nothing is written: a person
+         *     or an assistant confirms it. A folder with `package.json`, `go.mod`,
+         *     `Dockerfile`, `pyproject.toml`… is an app; folders with apps make the
+         *     root a workspace (each one a service, the one that looks like the
+         *     site at `/`, the others at `/<name>` stripped, `worker`/`jobs`… as
+         *     workers); a marker only at the root is one `web` service at `/`.
+         *     Dependencies, outputs, hidden folders and library folders
+         *     (`packages/`, `libs/`…) are skipped; at most 3 levels deep and 8
+         *     services.
+         */
+        DetectedServices: {
+            items: {
+                name: string;
+                kind: components["schemas"]["ServiceKind"];
+                root: string;
+                route: string;
+                strip_prefix: boolean;
+                /** @description The file that made the folder an app ("apps/web/package.json"). */
+                evidence: string;
+            }[];
+            /** @description In plain Spanish, what the proposal left out or guessed. */
+            notes: string[];
+            /** @description The paths were not all of the code (GitHub cut a huge tree short). */
+            truncated: boolean;
         };
         /** @description A service as one version runs it (the app's services when the version was made). */
         ReleaseService: {
@@ -3833,6 +3914,36 @@ export interface operations {
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    detectServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DetectServicesRequest"];
+            };
+        };
+        responses: {
+            /** @description The proposal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetectedServices"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
             500: components["responses"]["Internal"];
         };
     };
@@ -5778,6 +5889,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitHubBranchList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
+        };
+    };
+    detectGitHubServices: {
+        parameters: {
+            query?: {
+                /** @description The branch to read (default the repository's default branch). */
+                branch?: string;
+                /** @description The app's folder in the repository (the connection's `root`); proposed folders are relative to it. */
+                root?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
+                installation: components["parameters"]["Installation"];
+                /** @description GitHub's numeric repository id. */
+                repository: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The proposal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetectedServices"];
                 };
             };
             400: components["responses"]["Validation"];

@@ -13,6 +13,7 @@ import (
 	"github.com/google/go-github/v93/github"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/source"
 )
 
@@ -255,6 +256,48 @@ func (p *Provider) Branches(ctx context.Context, installation, repository int64)
 		return resp.NextPage, nil
 	})
 	return branches, err
+}
+
+// treeEntry is the part of a git tree entry Tree reads.
+type treeEntry struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // blob, tree, commit (a submodule)
+}
+
+// Tree lists the files of the repository at ref with the git trees API
+// (recursive). GitHub cuts a huge tree short (truncated); so does the cap.
+func (p *Provider) Tree(ctx context.Context, installation, repository int64, ref string) ([]string, bool, error) {
+	token, err := p.installationToken(ctx, installation, repository, permsRead)
+	if err != nil {
+		return nil, false, err
+	}
+	var out struct {
+		Tree      []treeEntry `json:"tree"`
+		Truncated bool        `json:"truncated"`
+	}
+	path := fmt.Sprintf("repositories/%d/git/trees/%s?recursive=1", repository, url.PathEscape(ref))
+	if _, err := p.call(ctx, token, http.MethodGet, path, nil, &out); err != nil {
+		var re *github.ErrorResponse
+		if errors.As(err, &re) && re.Response != nil &&
+			(re.Response.StatusCode == http.StatusNotFound || re.Response.StatusCode == http.StatusUnprocessableEntity || re.Response.StatusCode == http.StatusConflict) {
+			// 409: an empty repository has no tree
+			return nil, false, errx.Wrap(err, source.Message(source.CodeBranchMissing), errx.TypeNotFound).WithCode(source.CodeBranchMissing)
+		}
+		return nil, false, p.fail(ctx, err, source.CodeNoAccess)
+	}
+	paths := make([]string, 0, min(len(out.Tree), project.MaxDetectPaths))
+	truncated := out.Truncated
+	for _, e := range out.Tree {
+		if e.Type != "blob" {
+			continue
+		}
+		if len(paths) == project.MaxDetectPaths {
+			truncated = true
+			break
+		}
+		paths = append(paths, e.Path)
+	}
+	return paths, truncated, nil
 }
 
 // Head is the newest commit of a branch; with etag, an unchanged branch

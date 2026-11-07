@@ -229,6 +229,28 @@ releases and resources. Projects are archived, never deleted.
 | `PUT` | `/api/v1/projects/:id/tier` | `odyssey:projects:tier` | 200 project (idempotent) |
 | `GET` | `/api/v1/projects/:id/services` | read | 200 `{items}` |
 | `PUT` | `/api/v1/projects/:id/services` | write | 200 `{items}` (idempotent); **202** `pending_approval` when IT's rules hold the change (`set_services`; nothing changed yet) |
+| `POST` | `/api/v1/services/detect` | write | 200 `{items[{name, kind, root, route, strip_prefix, evidence}], notes[], truncated}` (`{paths, root?}`: a folder's file names, ≤ 20 000; MS-5) |
+| `GET` | `/api/v1/github/installations/:installation/repositories/:repository/services` | write | 200 the same proposal, from the branch's git tree (`?branch=&root=`; `truncated` when GitHub cut a huge tree short) |
+
+Service detection (MS-5) proposes, it never writes: the platform holds an
+app's services and a person or an assistant confirms the proposal with `PUT
+…/services` (same order). Names only, never contents. A folder with a
+`Dockerfile`, `package.json`, `go.mod`, `pyproject.toml`, `requirements.txt`,
+`Gemfile`, `composer.json`, `pom.xml`, `build.gradle`, `Cargo.toml`,
+`deno.json` or `mix.exs` is an app. Folders with apps make the root a
+workspace: each one is a service named after its folder (made valid, unique).
+The one that looks like the site (`web`, `frontend`, `app`, `site`…; otherwise
+the first web) answers `/`, the others `/<name>` stripped, and `worker`,
+`jobs`, `queue`… are workers. A marker only at the root is one `web` service
+at `/`. A folder that is itself a workspace (a `pnpm-workspace.yaml`,
+`turbo.json`, `nx.json`, `lerna.json`, `go.work` or `rush.json`, or apps
+under its `apps/` or `services/`) gives its apps rather than being one.
+Dependencies, outputs, hidden folders and library folders
+(`packages/`, `libs/`, `internal/`, `sdk/`, `clients/`…) are skipped, at most 3 levels deep, at
+most 8 services; `notes` say what was left out. A monorepo connects with
+`root` `""` (the whole repository is imported; each version builds every
+service from its folder); a connection `root` is the app's folder in the
+repository and the services' folders are relative to it.
 
 The project resource:
 

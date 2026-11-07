@@ -60,6 +60,53 @@ func serviceWriteViolations(files []goFile) []string {
 
 func TestServicesHaveOneWriter(t *testing.T) { report(t, serviceWriteViolations(sources(t, false))) }
 
+// Detection (MS-5): pkg/detect is reached only through project.Detect (the
+// root project package), whose proposal is shaped as the app's services
+// (it passes SetServices.Validate) — so the console, GitHub and the MCP get
+// the same proposal, and detecting never writes: the proposal is saved only
+// by the person, through set services.
+const detectPkg = repoModule + "pkg/detect"
+
+func detectViolations(files []goFile) []string {
+	var out []string
+	for _, f := range files {
+		if strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		dir := path.Dir(f.rel)
+		for _, imp := range f.file.Imports {
+			if p := strings.Trim(imp.Path.Value, `"`); p == detectPkg && dir != "internal/project" {
+				out = append(out, f.fset.Position(imp.Pos()).String()+": "+dir+" imports pkg/detect; services are proposed only by project.Detect")
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestServicesAreProposedInOnePlace(t *testing.T) {
+	report(t, detectViolations(repoSources(t, "agent", "cmd", "internal", "pkg")))
+}
+
+func TestDetectRuleCatchesViolations(t *testing.T) {
+	m := repoModule
+	files := parseFixtures(t, map[string]string{
+		// correct
+		"internal/project/detect.go":     `package project; import _ "` + m + `pkg/detect"`,
+		"internal/source/sourcesvc/s.go": `package sourcesvc; import _ "` + m + `internal/project"`,
+		"internal/bootstrap/x_test.go":   `package bootstrap_test; import _ "` + m + `pkg/detect"`,
+		// violations
+		"internal/source/sourcesvc/bad.go":          `package sourcesvc; import _ "` + m + `pkg/detect"`,
+		"internal/project/projectsvc/p.go":          `package projectsvc; import _ "` + m + `pkg/detect"`,
+		"internal/project/adapters/projectmcp/t.go": `package projectmcp; import _ "` + m + `pkg/detect"`,
+	})
+	expectViolations(t, detectViolations(files),
+		"internal/source/sourcesvc/bad.go: internal/source/sourcesvc imports pkg/detect",
+		"internal/project/projectsvc/p.go: internal/project/projectsvc imports pkg/detect",
+		"internal/project/adapters/projectmcp/t.go: internal/project/adapters/projectmcp imports pkg/detect",
+	)
+}
+
 func TestServicesRuleCatchesViolations(t *testing.T) {
 	files := parseFixtures(t, map[string]string{
 		// correct

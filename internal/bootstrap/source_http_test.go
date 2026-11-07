@@ -53,6 +53,8 @@ func TestGitHubHTTP(t *testing.T) {
 		map[string]source.Commit{"main": {SHA: sha2, Title: "api", Author: "ana"}})
 	fake.SetFiles(42, sha1, map[string]string{"package.json": `{"name":"web"}`, "index.js": "1\n"})
 	fake.SetFiles(42, sha2, map[string]string{"package.json": `{"name":"web"}`, "index.js": "2\n"})
+	fake.SetFiles(43, sha2, map[string]string{"package.json": `{"workspaces":["apps/*"]}`, "apps/web/package.json": "{}",
+		"apps/api/go.mod": "module api\n", "apps/api/main.go": "package main\n", "packages/ui/package.json": "{}"})
 
 	cluster := releasefake.New(releasefake.Options{Behavior: func(release.DesiredApp) releasefake.Outcome { return releasefake.Outcome{} }})
 	platform, err := bootstrap.Assemble(ctx, db, bootstrap.Options{
@@ -205,6 +207,33 @@ func TestGitHubHTTP(t *testing.T) {
 	}](t, res).Items; len(bs) != 2 || bs[0].Name != "dev" || bs[1].Name != "main" {
 		t.Fatalf("branches = %s", res.Body)
 	}
+
+	// -- detection in the repository (MS-5): a proposal, nothing written
+	servicesPath := "/api/v1/github/installations/" + inst.ID.String() + "/repositories/43/services"
+	res = checked(t, app, http.MethodGet, servicesPath, token, nil)
+	httpxtest.Want(t, res, http.StatusOK)
+	detected := httpxtest.JSON[project.Detected](t, res)
+	if len(detected.Items) != 2 || detected.Items[0].Name != "web" || detected.Items[0].Root != "apps/web" ||
+		detected.Items[1].Route != "/api" || detected.Truncated || len(detected.Notes) != 0 {
+		t.Fatalf("detected = %s", res.Body)
+	}
+	res = checked(t, app, http.MethodGet, servicesPath+"?branch=main&root=apps", token, nil)
+	if d := httpxtest.JSON[project.Detected](t, res); len(d.Items) != 2 || d.Items[1].Root != "api" {
+		t.Fatalf("detected under root = %s", res.Body)
+	}
+	httpxtest.Want(t, checked(t, app, http.MethodGet, servicesPath, reader, nil), http.StatusForbidden)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, servicesPath+"?branch=a%20b", token, nil), http.StatusBadRequest)
+	httpxtest.Want(t, checked(t, app, http.MethodGet, servicesPath+"?root=../x", token, nil), http.StatusBadRequest)
+	res = checked(t, app, http.MethodGet, servicesPath+"?branch=nope", token, nil)
+	if httpxtest.ErrorCode(res) != source.CodeBranchMissing {
+		t.Fatalf("missing branch = %s", res.Body)
+	}
+	fake.TreeTruncated(43, true)
+	res = checked(t, app, http.MethodGet, servicesPath, token, nil)
+	if d := httpxtest.JSON[project.Detected](t, res); !d.Truncated || d.Notes[len(d.Notes)-1] != project.TruncatedNote {
+		t.Fatalf("truncated = %s", res.Body)
+	}
+	fake.TreeTruncated(43, false)
 
 	// -- connect a project: the import runs and deploys the commit
 	res = checked(t, app, http.MethodPost, "/api/v1/projects", token, map[string]any{"name": "Web"})

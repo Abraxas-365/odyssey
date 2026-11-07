@@ -124,3 +124,35 @@ func TestProjectRoutes(t *testing.T) {
 		t.Fatalf("archived list: %+v", page.Page)
 	}
 }
+
+func TestDetectServicesRoute(t *testing.T) {
+	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
+	app := httpxtest.App()
+	projecthttp.New(svc, svc).Register(app.Group("/api/v1"))
+	org := identity.NewOrganizationID()
+	writer := httpxtest.Token(org, permission.ProjectsRead, permission.ProjectsWrite)
+	reader := httpxtest.Token(org, permission.ProjectsRead)
+	const path = "/api/v1/services/detect"
+
+	body := map[string]any{"paths": []string{"monorepo/apps/web/package.json", "monorepo/apps/api/go.mod", "monorepo/README.md"}, "root": "monorepo"}
+	res := httpxtest.Do(t, app, http.MethodPost, path, writer, body)
+	httpxtest.Want(t, res, http.StatusOK)
+	got := httpxtest.JSON[project.Detected](t, res)
+	if len(got.Items) != 2 || got.Items[0].Name != "web" || got.Items[1].Route != "/api" || !got.Items[1].StripPrefix ||
+		got.Items[1].Evidence != "monorepo/apps/api/go.mod" || got.Items[1].Root != "apps/api" {
+		t.Fatalf("proposal %+v", got)
+	}
+	httpxtest.Want(t, httpxtest.Do(t, app, http.MethodPost, path, reader, body), http.StatusForbidden)
+	httpxtest.Want(t, httpxtest.Do(t, app, http.MethodPost, path, writer, `{"paths":[],"extra":1}`), http.StatusBadRequest)
+	res = httpxtest.Do(t, app, http.MethodPost, path, writer, map[string]any{"paths": []string{"a"}, "root": "../x"})
+	httpxtest.Want(t, res, http.StatusBadRequest)
+	if httpxtest.ErrorField(res) != "root" {
+		t.Fatalf("field %q", httpxtest.ErrorField(res))
+	}
+	// nothing found is an empty proposal with a note, never null
+	res = httpxtest.Do(t, app, http.MethodPost, path, writer, map[string]any{"paths": []string{"README.md"}})
+	httpxtest.Want(t, res, http.StatusOK)
+	if got := httpxtest.JSON[map[string]any](t, res); got["items"] == nil || len(got["notes"].([]any)) != 1 {
+		t.Fatalf("empty %+v", got)
+	}
+}

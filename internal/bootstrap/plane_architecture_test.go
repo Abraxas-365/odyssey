@@ -113,19 +113,29 @@ func secretstoreViolations(rel, p, pos string) []string {
 	return []string{pos + ": agent/secretstore takes only the standard library, Kubernetes and controller-runtime from outside this repository (" + p + ")"}
 }
 
-// odiceaauthViolations: pkg/odiceaauth is imported by the apps Odicea runs,
-// so it takes only the standard library; its tests may also import the
-// package itself (external test package).
-func odiceaauthViolations(rel, p, pos string) []string {
-	if !strings.HasPrefix(rel, "pkg/odiceaauth/") {
-		return nil
-	}
-	if p == repoModule+"pkg/odiceaauth" && strings.HasSuffix(rel, "_test.go") {
-		return nil
-	}
-	first, _, _ := strings.Cut(p, "/")
-	if strings.Contains(first, ".") {
-		return []string{pos + ": pkg/odiceaauth is imported by apps and takes only the standard library (" + p + ")"}
+// stdlibOnly are the pkg/ packages that take only the standard library (their
+// tests may also import the package itself), and why.
+var stdlibOnly = map[string]string{
+	"pkg/odiceaauth": "is imported by apps",
+	"pkg/detect":     "is a pure proposal from file paths (no I/O, no dependency)",
+}
+
+// stdlibOnlyViolations: pkg/odiceaauth is imported by the apps Odicea runs
+// and pkg/detect proposes an app's services from a list of paths, so both
+// take only the standard library; their tests may also import the package
+// itself (external test package).
+func stdlibOnlyViolations(rel, p, pos string) []string {
+	for pkg, why := range stdlibOnly {
+		if !strings.HasPrefix(rel, pkg+"/") {
+			continue
+		}
+		if p == repoModule+pkg && strings.HasSuffix(rel, "_test.go") {
+			return nil
+		}
+		first, _, _ := strings.Cut(p, "/")
+		if strings.Contains(first, ".") {
+			return []string{pos + ": " + pkg + " " + why + " and takes only the standard library (" + p + ")"}
+		}
 	}
 	return nil
 }
@@ -173,7 +183,7 @@ func planeViolations(files []goFile) []string {
 			out = append(out, builderViolations(f.rel, p, pos)...)
 			out = append(out, accessViolations(f.rel, p, pos)...)
 			out = append(out, secretstoreViolations(f.rel, p, pos)...)
-			out = append(out, odiceaauthViolations(f.rel, p, pos)...)
+			out = append(out, stdlibOnlyViolations(f.rel, p, pos)...)
 			if agentSide && (strings.HasPrefix(p, repoModule+"internal/") || strings.HasPrefix(p, repoModule+"cmd/")) {
 				out = append(out, pos+": the agent must not import the control plane ("+p+"); they talk through proto/")
 			}
@@ -234,6 +244,8 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"pkg/srcarchive/s.go":                              `package srcarchive; import _ "archive/tar"`,
 		"pkg/odiceaauth/a.go":                              `package odiceaauth; import (_ "crypto/ed25519"; _ "net/http")`,
 		"pkg/odiceaauth/a_test.go":                         `package odiceaauth_test; import (_ "testing"; _ "` + m + `pkg/odiceaauth")`,
+		"pkg/detect/d.go":                                  `package detect; import (_ "path"; _ "slices")`,
+		"pkg/detect/d_test.go":                             `package detect_test; import (_ "testing"; _ "` + m + `pkg/detect")`,
 		"agent/builder/b.go":                               `package builder; import (_ "` + m + `pkg/srcarchive"; _ "github.com/railwayapp/railpack/core")`,
 		"agent/builds/m.go":                                `package builds; import (_ "` + m + `agent/controllers/build"; _ "` + m + `pkg/srcarchive"; _ "` + m + `proto/fleet/v1"; _ "sigs.k8s.io/controller-runtime/pkg/client")`,
 		"agent/controllers/build/j.go":                     `package build; import (_ "` + m + `agent/builder"; _ "k8s.io/api/batch/v1")`,
@@ -249,6 +261,7 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"pkg/srcarchive/bad.go":                      `package srcarchive; import _ "` + m + `internal/errx"`,
 		"pkg/odiceaauth/bad.go":                      `package odiceaauth; import (_ "github.com/golang-jwt/jwt/v5"; _ "` + m + `pkg/secretbox")`,
 		"pkg/odiceaauth/bad_test.go":                 `package odiceaauth_test; import (_ "github.com/google/uuid"; _ "` + m + `pkg/secretbox")`,
+		"pkg/detect/bad.go":                          `package detect; import (_ "github.com/bmatcuk/doublestar/v4"; _ "` + m + `pkg/srcarchive")`,
 		"pkg/other/k.go":                             `package other; import (_ "` + m + `agent/api/v1alpha1"; _ "k8s.io/api/core/v1")`,
 		"agent/agent.go":                             `package agent; import _ "` + m + `internal/fleet"`,
 		"proto/fleet/v1/extra.go":                    `package fleetv1; import _ "` + m + `agent/api/v1alpha1"`,
@@ -275,6 +288,8 @@ func TestPlaneRulesCatchViolations(t *testing.T) {
 		"pkg/odiceaauth/bad.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/Abraxas-365/odyssey/pkg/secretbox",
 		"pkg/odiceaauth/bad_test.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/google/uuid",
 		"pkg/odiceaauth/bad_test.go: pkg/odiceaauth is imported by apps and takes only the standard library (github.com/Abraxas-365/odyssey/pkg/secretbox",
+		"pkg/detect/bad.go: pkg/detect is a pure proposal from file paths (no I/O, no dependency) and takes only the standard library (github.com/bmatcuk",
+		"pkg/detect/bad.go: pkg/detect is a pure proposal from file paths (no I/O, no dependency) and takes only the standard library (github.com/Abraxas-365/odyssey/pkg/srcarchive",
 		"pkg/other/k.go: pkg/ is shared by both planes and imports neither",
 		"pkg/other/k.go: pkg/ is shared by both planes and may not use Kubernetes",
 		"agent/builder/k.go: agent/builder runs in a build's pod and imports only pkg/",

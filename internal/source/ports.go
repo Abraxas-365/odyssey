@@ -66,6 +66,10 @@ type Queries interface {
 	// (Search filters by name).
 	ListRepositories(ctx context.Context, organization identity.OrganizationID, page query.Pagination) (query.Paginated[Repo], error)
 	ListBranches(ctx context.Context, organization identity.OrganizationID, installation InstallationID, repository int64) ([]Branch, error)
+	// DetectServices proposes the services of a repository's branch ("": its
+	// default branch) from its file names, under root (MS-5). It writes
+	// nothing.
+	DetectServices(ctx context.Context, organization identity.OrganizationID, installation InstallationID, repository int64, branch, root string) (project.Detected, error)
 	// FindConnection is the project's connection (NotFound when none).
 	FindConnection(ctx context.Context, organization identity.OrganizationID, project project.ID) (Connection, error)
 	ListPushes(ctx context.Context, organization identity.OrganizationID, project project.ID, filter PushFilter, page query.Pagination) (query.Paginated[Push], error)
@@ -100,6 +104,10 @@ type GitProvider interface {
 	Repositories(ctx context.Context, installation int64) ([]Repo, error)
 	Repository(ctx context.Context, installation int64, repository int64) (Repo, error)
 	Branches(ctx context.Context, installation int64, repository int64) ([]Branch, error)
+	// Tree lists the file paths of the repository at ref (a branch or a
+	// commit), at most detect.MaxPaths; truncated says the provider cut the
+	// listing short. Names only, never contents.
+	Tree(ctx context.Context, installation int64, repository int64, ref string) (paths []string, truncated bool, err error)
 	// Head is the newest commit of a branch. With etag (the one the last
 	// call returned) an unchanged branch answers changed=false without
 	// spending the rate limit; then, and on errors, newETag is etag.

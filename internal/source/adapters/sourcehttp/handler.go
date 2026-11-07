@@ -13,6 +13,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -46,6 +47,7 @@ func (h *Handler) Register(r fiber.Router) {
 	gh.Delete("/installations/:installation", httpx.RequirePermissions(permission.IntegrationsManage), h.unlink)
 	gh.Get("/repositories", httpx.RequirePermissions(permission.ProjectsWrite), h.repositories)
 	gh.Get("/installations/:installation/repositories/:repository/branches", httpx.RequirePermissions(permission.ProjectsWrite), h.branches)
+	gh.Get("/installations/:installation/repositories/:repository/services", httpx.RequirePermissions(permission.ProjectsWrite), h.services)
 
 	repo := r.Group("/projects/:id/repository")
 	repo.Get("", httpx.RequirePermissions(permission.DeploymentsRead), h.connection)
@@ -170,17 +172,9 @@ func (h *Handler) repositories(c *fiber.Ctx) error {
 }
 
 func (h *Handler) branches(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+	org, id, repo, err := repositoryParams(c)
 	if err != nil {
 		return err
-	}
-	id, err := source.ParseInstallationID(c.Params("installation"))
-	if err != nil {
-		return err
-	}
-	repo, err := strconv.ParseInt(c.Params("repository"), 10, 64)
-	if err != nil || repo <= 0 {
-		return errx.InvalidField("repository", "repository must be GitHub's numeric repository id")
 	}
 	items, err := h.queries.ListBranches(c.UserContext(), org, id, repo)
 	if err != nil {
@@ -190,6 +184,37 @@ func (h *Handler) branches(c *fiber.Ctx) error {
 		items = []source.Branch{}
 	}
 	return c.JSON(fiber.Map{"items": items})
+}
+
+// services proposes the services of a repository's branch (MS-5).
+func (h *Handler) services(c *fiber.Ctx) error {
+	org, id, repo, err := repositoryParams(c)
+	if err != nil {
+		return err
+	}
+	out, err := h.queries.DetectServices(c.UserContext(), org, id, repo, c.Query("branch"), c.Query("root"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
+}
+
+// repositoryParams are the organization (from the token) and the
+// installation and repository of a /github/installations/... path.
+func repositoryParams(c *fiber.Ctx) (identity.OrganizationID, source.InstallationID, int64, error) {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return identity.OrganizationID{}, source.InstallationID{}, 0, err
+	}
+	id, err := source.ParseInstallationID(c.Params("installation"))
+	if err != nil {
+		return identity.OrganizationID{}, source.InstallationID{}, 0, err
+	}
+	repo, err := strconv.ParseInt(c.Params("repository"), 10, 64)
+	if err != nil || repo <= 0 {
+		return identity.OrganizationID{}, source.InstallationID{}, 0, errx.InvalidField("repository", "repository must be GitHub's numeric repository id")
+	}
+	return org, id, repo, nil
 }
 
 // setup is where GitHub sends the browser after installing the App. It

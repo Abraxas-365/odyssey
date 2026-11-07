@@ -36,6 +36,9 @@ func (disabled) Repository(context.Context, int64, int64) (source.Repo, error) {
 func (disabled) Branches(context.Context, int64, int64) ([]source.Branch, error) {
 	return nil, notConfigured()
 }
+func (disabled) Tree(context.Context, int64, int64, string) ([]string, bool, error) {
+	return nil, false, notConfigured()
+}
 func (disabled) Head(context.Context, int64, int64, string, string) (source.Commit, string, bool, error) {
 	return source.Commit{}, "", false, notConfigured()
 }

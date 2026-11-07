@@ -203,6 +203,20 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 			"commit": map[string]any{"message": "x", "author": map[string]any{"name": "Ana Pérez"}}, "author": nil})
 	case path == fmt.Sprintf("/repositories/%d/commits/gone", repoID):
 		f.json(w, 422, map[string]string{"message": "No commit found for SHA: gone"})
+	case path == fmt.Sprintf("/repositories/%d/git/trees/main", repoID):
+		if r.URL.Query().Get("recursive") != "1" {
+			f.json(w, 400, map[string]string{"message": "want recursive"})
+			return
+		}
+		f.json(w, 200, map[string]any{"sha": sha, "truncated": false, "tree": []map[string]any{
+			{"path": "apps", "type": "tree"}, {"path": "apps/web/package.json", "type": "blob"},
+			{"path": "apps/api/go.mod", "type": "blob"}, {"path": "vendor/lib", "type": "commit"}}})
+	case path == fmt.Sprintf("/repositories/%d/git/trees/huge", repoID):
+		f.json(w, 200, map[string]any{"truncated": true, "tree": []map[string]any{{"path": "go.mod", "type": "blob"}}})
+	case path == fmt.Sprintf("/repositories/%d/git/trees/gone", repoID):
+		f.json(w, 404, map[string]string{"message": "Not Found"})
+	case path == fmt.Sprintf("/repositories/%d/git/trees/empty", repoID):
+		f.json(w, 409, map[string]string{"message": "Git Repository is empty."})
 	case path == fmt.Sprintf("/repositories/%d/tarball/%s", repoID, sha):
 		http.Redirect(w, r, f.codeload.URL+"/legacy.tar.gz/refs/heads/main?token=secret", http.StatusFound)
 	case path == fmt.Sprintf("/repositories/%d/tarball/missing", repoID):
@@ -480,6 +494,23 @@ func TestRepositoryAndBranches(t *testing.T) {
 	bs, err := e.p.Branches(ctx, installation, repoID)
 	if err != nil || len(bs) != 2 || bs[0] != (source.Branch{Name: "main", Commit: sha}) {
 		t.Fatalf("branches = %v, %v", bs, err)
+	}
+}
+
+func TestTree(t *testing.T) {
+	e := setup(t, false)
+	paths, truncated, err := e.p.Tree(ctx, installation, repoID, "main")
+	if err != nil || truncated || strings.Join(paths, ",") != "apps/web/package.json,apps/api/go.mod" {
+		t.Fatalf("tree = %v %v %v", paths, truncated, err)
+	}
+	if _, truncated, err := e.p.Tree(ctx, installation, repoID, "huge"); err != nil || !truncated {
+		t.Errorf("huge tree truncated=%v err=%v", truncated, err)
+	}
+	for _, ref := range []string{"gone", "empty"} {
+		_, _, err := e.p.Tree(ctx, installation, repoID, ref)
+		if !errx.IsType(err, errx.TypeNotFound) || code(t, err) != source.CodeBranchMissing {
+			t.Errorf("%s tree err = %v", ref, err)
+		}
 	}
 }
 

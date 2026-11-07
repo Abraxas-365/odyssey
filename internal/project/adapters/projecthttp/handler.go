@@ -30,6 +30,25 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Get("/:id/environments/:environment", httpx.RequirePermissions(permission.ProjectsRead), h.findEnvironment)
 	g.Get("/:id/services", httpx.RequirePermissions(permission.ProjectsRead), h.listServices)
 	g.Put("/:id/services", httpx.RequirePermissions(permission.ProjectsWrite), h.setServices)
+	// A proposal from a folder's file names (MS-5): no app needed (the
+	// console asks while creating one), nothing written.
+	r.Post("/services/detect", httpx.RequirePermissions(permission.ProjectsWrite), h.detectServices)
+}
+
+// detectServices proposes services from the paths of a folder's files.
+func (h *Handler) detectServices(c *fiber.Ctx) error {
+	if _, err := httpx.Organization(c); err != nil {
+		return err
+	}
+	var input project.DetectServices
+	if err := httpx.DecodeJSON(c, &input); err != nil {
+		return err
+	}
+	input = input.Normalize()
+	if err := input.Validate(); err != nil {
+		return err
+	}
+	return c.JSON(project.Detect(input))
 }
 
 // listEnvironments is not paginated: a project has a handful (production,
