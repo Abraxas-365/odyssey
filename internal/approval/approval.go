@@ -80,8 +80,10 @@ type Request struct {
 	ID           ID                      `json:"id"`
 	Organization identity.OrganizationID `json:"-"`
 	// Action is the gate action held (deploy, set_access, ...).
-	Action      string                `json:"action"`
-	Project     project.ID            `json:"project_id"`
+	Action  string     `json:"action"`
+	Project project.ID `json:"project_id"`
+	// Environment is where it happens; zero ("" in JSON) for an action about
+	// the whole app (set_services).
 	Environment project.EnvironmentID `json:"environment_id"`
 	// Summary is the action as one plain Spanish sentence.
 	Summary string `json:"summary"`
@@ -177,8 +179,8 @@ func (in Open) Validate() error {
 	switch {
 	case in.Action == "":
 		return errx.Internal("approval: an action is needed")
-	case in.Project.IsZero() || in.Environment.IsZero():
-		return errx.Internal("approval: a project and an environment are needed")
+	case in.Project.IsZero():
+		return errx.Internal("approval: a project is needed")
 	case strings.TrimSpace(in.Summary) == "":
 		return errx.Internal("approval: a summary is needed")
 	case in.Run != "" && in.RunStep == "":

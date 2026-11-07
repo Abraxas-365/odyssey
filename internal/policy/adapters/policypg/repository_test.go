@@ -86,34 +86,38 @@ func TestListPutsBuiltinsFirstThenOldestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules, err := repo.List(ctx, org)
-	if err != nil || len(rules) != 7 {
+	if err != nil || len(rules) != builtins+2 {
 		t.Fatalf("%d rules, %v", len(rules), err)
 	}
 	if rules[0].Name != "Publicar en producción requiere aprobación de TI" || rules[4].Name != "Producción exige revisión de vulnerabilidades" ||
-		rules[5].Name != "primera" || rules[6].Name != "segunda" {
-		t.Fatalf("order: %q %q %q %q", rules[0].Name, rules[4].Name, rules[5].Name, rules[6].Name)
+		rules[builtins].Name != "primera" || rules[builtins+1].Name != "segunda" {
+		t.Fatalf("order: %q %q %q %q", rules[0].Name, rules[4].Name, rules[builtins].Name, rules[builtins+1].Name)
 	}
 }
+
+// builtins is how many rules every organization is born with.
+var builtins = len(policy.Builtins(identity.NewOrganizationID(), time.Now()))
 
 func TestSeedBuiltinsIsIdempotentAndPerOrganization(t *testing.T) {
 	repo, ctx := setup(t)
 	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
-	if n, err := repo.SeedBuiltins(ctx, policy.Builtins(org, time.Now().UTC())); err != nil || n != 5 {
+	if n, err := repo.SeedBuiltins(ctx, policy.Builtins(org, time.Now().UTC())); err != nil || n != builtins {
 		t.Fatalf("first seed: %d %v", n, err)
 	}
 	if n, err := repo.SeedBuiltins(ctx, policy.Builtins(org, time.Now().UTC())); err != nil || n != 0 {
 		t.Fatalf("second seed: %d %v", n, err)
 	}
-	if n, err := repo.SeedBuiltins(ctx, policy.Builtins(other, time.Now().UTC())); err != nil || n != 5 {
+	if n, err := repo.SeedBuiltins(ctx, policy.Builtins(other, time.Now().UTC())); err != nil || n != builtins {
 		t.Fatalf("other org seed: %d %v", n, err)
 	}
 	rules, _ := repo.List(ctx, org)
-	if len(rules) != 5 {
+	if len(rules) != builtins {
 		t.Fatalf("%d rules", len(rules))
 	}
-	// production_requires_scan is stored disabled; the others enabled
+	// the builtins born off are stored disabled; the others enabled
 	for _, r := range rules {
-		if (*r.Builtin == policy.BuiltinRequiresScan) == r.Enabled {
+		off := *r.Builtin == policy.BuiltinRequiresScan || *r.Builtin == policy.BuiltinProductionServices
+		if off == r.Enabled {
 			t.Errorf("%s enabled=%v", *r.Builtin, r.Enabled)
 		}
 	}
@@ -164,7 +168,7 @@ func TestUpdateMovesTheVersionAndDeleteSparesBuiltins(t *testing.T) {
 	if err := repo.Delete(ctx, org, b[0].ID); errType(err) != errx.TypeNotFound {
 		t.Fatalf("deleted a built-in: %v", err)
 	}
-	if n, _ := repo.Count(ctx, org); n != 5 {
+	if n, _ := repo.Count(ctx, org); n != builtins {
 		t.Fatalf("count %d", n)
 	}
 }

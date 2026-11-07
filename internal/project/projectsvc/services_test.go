@@ -2,11 +2,13 @@ package projectsvc_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/event/eventtest"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/project/projectsvc"
@@ -25,6 +27,44 @@ func (r *runtime) CanRunServices(_ context.Context, _ identity.OrganizationID, e
 	return r.ok, nil
 }
 
+// rules answers a fixed effect (allow by default) and records the requests.
+type rules struct {
+	effect gate.Effect
+	asked  []gate.Request
+}
+
+func (r *rules) Check(_ context.Context, _ identity.OrganizationID, req gate.Request) (gate.Verdict, error) {
+	r.asked = append(r.asked, req)
+	v := gate.Verdict{Effect: r.effect}
+	if v.Effect == "" {
+		v.Effect = gate.Allow
+	}
+	if v.Effect != gate.Allow {
+		v.Rules = []gate.Rule{{ID: "r1", Name: "Servicios de producción se aprueban"}}
+		v.Approvers = []string{"odyssey:approvals:decide"}
+	}
+	return v, nil
+}
+
+// approvals records what is held and redeemed.
+type approvals struct {
+	held     []gate.Hold
+	redeemed []gate.Grant
+}
+
+func (a *approvals) Hold(_ context.Context, _ identity.OrganizationID, h gate.Hold) (gate.Pending, error) {
+	a.held = append(a.held, h)
+	return gate.NewPending("req-1"), nil
+}
+
+func (a *approvals) Redeem(_ context.Context, _ identity.OrganizationID, request string, g gate.Grant) error {
+	if request != "req-1" {
+		return errx.Forbidden("not usable")
+	}
+	a.redeemed = append(a.redeemed, g)
+	return nil
+}
+
 var monorepo = []project.ServiceSpec{
 	{Name: "web", Root: "apps/web", Route: "/"},
 	{Name: "api", Root: "apps/api", Route: "/api", StripPrefix: true},
@@ -33,17 +73,26 @@ var monorepo = []project.ServiceSpec{
 
 func newApp(t *testing.T, rt project.Runtime) (*projectsvc.Service, *eventtest.Recorder, identity.OrganizationID, project.ID) {
 	t.Helper()
+	svc, events, org, id, _ := newGovernedApp(t, rt, &rules{})
+	return svc, events, org, id
+}
+
+func newGovernedApp(t *testing.T, rt project.Runtime, r *rules) (*projectsvc.Service, *eventtest.Recorder, identity.OrganizationID, project.ID, *approvals) {
+	t.Helper()
 	events := &eventtest.Recorder{}
 	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, events)
 	if rt != nil {
 		svc.UseRuntime(rt)
 	}
+	a := &approvals{}
+	svc.UsePolicy(r)
+	svc.UseApprovals(a)
 	org := identity.NewOrganizationID()
 	id, err := svc.Create(context.Background(), org, project.Create{Name: "Portal", CreatedBy: user})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return svc, events, org, id
+	return svc, events, org, id, a
 }
 
 func TestEveryAppIsBornWithOneWebService(t *testing.T) {
@@ -94,11 +143,12 @@ func TestSetServicesReplacesTheList(t *testing.T) {
 	}
 	events.Reset()
 
-	got, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user})
+	out, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 || got[0].Name != "web" || got[1].Name != "api" || got[2].Name != "jobs" ||
+	got := out.Items
+	if out.Held() || len(got) != 3 || got[0].Name != "web" || got[1].Name != "api" || got[2].Name != "jobs" ||
 		got[1].Route != "/api" || !got[1].StripPrefix || got[2].Kind != project.ServiceWorker || got[0].Root != "apps/web" {
 		t.Fatalf("stored %+v", got)
 	}
@@ -146,5 +196,156 @@ func TestSetServicesGuards(t *testing.T) {
 	var e *errx.Error
 	if !errx.As(err, &e) || e.Code != project.CodeArchived {
 		t.Fatalf("archived app: %v", err)
+	}
+}
+
+// IT's rules judge a change of services (MS-3c): with the new list, what it
+// adds, removes or modifies, and a change of topology; never a no-op.
+func TestSetServicesIsJudgedByITsRules(t *testing.T) {
+	ctx := context.Background()
+	r := &rules{}
+	svc, events, org, id, _ := newGovernedApp(t, &runtime{ok: true}, r)
+	if _, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.asked) != 1 {
+		t.Fatalf("asked %d times", len(r.asked))
+	}
+	got := r.asked[0]
+	if got.Action != gate.ActionSetServices || got.Environment != "" || !got.TopologyChanged || got.ProjectSlug == "" ||
+		!slices.Equal(got.Changed, []string{"web", "api", "jobs"}) || len(got.Services) != 3 {
+		t.Fatalf("judged %+v", got)
+	}
+	if s := got.Services; s[0] != (gate.Service{Name: "web", Kind: "web", Route: "/", Public: true}) ||
+		s[1] != (gate.Service{Name: "api", Kind: "web", Route: "/api", Public: true}) ||
+		s[2] != (gate.Service{Name: "jobs", Kind: "worker"}) {
+		t.Fatalf("services as the rules see them %+v", s)
+	}
+
+	// The same list: a no-op, not judged.
+	if _, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user}); err != nil || len(r.asked) != 1 {
+		t.Fatalf("a no-op was judged (%d) %v", len(r.asked), err)
+	}
+
+	// Dropping jobs and moving api: changed names the moved and the removed.
+	events.Reset()
+	next := []project.ServiceSpec{monorepo[0], {Name: "api", Root: "apps/api", Route: "/v1"}}
+	if _, err := svc.SetServices(ctx, org, id, project.SetServices{Items: next, UpdatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.asked[1]; !slices.Equal(got.Changed, []string{"api", "jobs"}) || len(got.Services) != 2 {
+		t.Fatalf("second change judged %+v", got)
+	}
+}
+
+func TestSetServicesDeniedChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	svc, events, org, id, a := newGovernedApp(t, &runtime{ok: true}, &rules{effect: gate.Deny})
+	events.Reset()
+	_, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user})
+	var e *errx.Error
+	if !errx.As(err, &e) || !gate.Refusal(e) {
+		t.Fatalf("denied: %v", err)
+	}
+	if got, _ := svc.Services(ctx, org, id); len(got) != 1 || len(events.Events()) != 0 || len(a.held) != 0 {
+		t.Fatalf("a denied change stored %+v, published %v, held %v", got, events.Types(), a.held)
+	}
+}
+
+// Held for approval, nothing changes; the approved change re-runs as the
+// requester with the approval's mark and redeems exactly what was held.
+func TestSetServicesHeldAndRedeemed(t *testing.T) {
+	ctx := context.Background()
+	svc, events, org, id, a := newGovernedApp(t, &runtime{ok: true}, &rules{effect: gate.Approval})
+	events.Reset()
+	out, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Held() || out.Pending.RequestID != "req-1" || len(out.Items) != 1 || out.Items[0].Name != "web" {
+		t.Fatalf("held answer %+v", out)
+	}
+	if got, _ := svc.Services(ctx, org, id); len(got) != 1 || len(events.Events()) != 0 {
+		t.Fatalf("a held change stored %+v, published %v", got, events.Types())
+	}
+	if len(a.held) != 1 {
+		t.Fatalf("held %v", a.held)
+	}
+	h := a.held[0]
+	if h.Action != gate.ActionSetServices || h.Project != id.String() || h.Environment != "" || h.Summary == "" {
+		t.Fatalf("hold %+v", h)
+	}
+	payload, ok := h.Payload.(project.SetServicesApproval)
+	if !ok || payload.Op != project.OpSetServices || len(payload.Items) != 3 || payload.Items[2].Kind != project.ServiceWorker {
+		t.Fatalf("payload %#v", h.Payload)
+	}
+
+	// The executor's re-run: same items (as decoded from the stored payload).
+	approved := gate.WithApproval(ctx, "req-1")
+	out, err = svc.SetServices(approved, org, id, project.SetServices{Items: payload.Items, UpdatedBy: user})
+	if err != nil || out.Held() || len(out.Items) != 3 {
+		t.Fatalf("approved re-run %+v %v", out, err)
+	}
+	if len(a.redeemed) != 1 || a.redeemed[0].Action != gate.ActionSetServices || a.redeemed[0].Environment != "" {
+		t.Fatalf("redeemed %+v", a.redeemed)
+	}
+	if !slices.Equal(events.Types(), []string{project.EventServicesChanged}) {
+		t.Fatalf("published %v", events.Types())
+	}
+}
+
+// Without IT's rules wired, a change is refused (fail closed); a no-op is not.
+func TestSetServicesFailsClosedWithoutRules(t *testing.T) {
+	ctx := context.Background()
+	svc := projectsvc.New(projecttest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
+	svc.UseRuntime(&runtime{ok: true})
+	org := identity.NewOrganizationID()
+	id, err := svc.Create(ctx, org, project.Create{Name: "Portal", CreatedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user}); !errx.IsType(err, errx.TypeInternal) {
+		t.Fatalf("no rules wired: %v", err)
+	}
+	same := []project.ServiceSpec{{Name: "web", Route: "/"}}
+	if _, err := svc.SetServices(ctx, org, id, project.SetServices{Items: same, UpdatedBy: user}); err != nil {
+		t.Fatalf("a no-op needs no rules: %v", err)
+	}
+}
+
+// racer changes the services while the first change is being judged: the
+// judged change is not stored over a list nobody judged it against.
+type racer struct {
+	rules
+	race func()
+}
+
+func (r *racer) Check(ctx context.Context, org identity.OrganizationID, req gate.Request) (gate.Verdict, error) {
+	if r.race != nil {
+		race := r.race
+		r.race = nil
+		race()
+	}
+	return r.rules.Check(ctx, org, req)
+}
+
+func TestSetServicesRejudgesAChangeMadeMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	r := &racer{}
+	svc, _, org, id, _ := newGovernedApp(t, &runtime{ok: true}, &r.rules)
+	svc.UsePolicy(r)
+	r.race = func() {
+		if _, err := svc.SetServices(ctx, org, id, project.SetServices{Items: []project.ServiceSpec{{Name: "site", Route: "/"}}, UpdatedBy: user}); err != nil {
+			t.Error(err)
+		}
+	}
+	out, err := svc.SetServices(ctx, org, id, project.SetServices{Items: monorepo, UpdatedBy: user})
+	if err != nil || len(out.Items) != 3 {
+		t.Fatalf("change %+v %v", out, err)
+	}
+	// judged: the first change (from web), the racing one, then the first
+	// again from what the racer stored (site goes away)
+	if len(r.asked) != 3 || !slices.Contains(r.asked[2].Changed, "site") {
+		t.Fatalf("judged %+v", r.asked)
 	}
 }

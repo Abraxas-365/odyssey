@@ -13,9 +13,11 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/policy/adapters/policycel"
 	"github.com/Abraxas-365/odyssey/internal/policy/adapters/policyhttp"
 	"github.com/Abraxas-365/odyssey/internal/policy/adapters/policypg"
+	"github.com/Abraxas-365/odyssey/internal/policy/adapters/policyproject"
 	"github.com/Abraxas-365/odyssey/internal/policy/adapters/policyrelease"
 	"github.com/Abraxas-365/odyssey/internal/policy/adapters/policyresource"
 	"github.com/Abraxas-365/odyssey/internal/policy/policysvc"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/resource"
 	"github.com/Abraxas-365/odyssey/internal/txn"
@@ -39,6 +41,7 @@ type Module struct {
 	Release  release.Policy
 	Resource resource.Policy
 	AI       ai.Policy
+	Project  project.Policy
 }
 
 func New(deps Deps) Module {
@@ -49,6 +52,7 @@ func New(deps Deps) Module {
 		Release:  policyrelease.New(svc),
 		Resource: policyresource.New(svc),
 		AI:       policyai.New(svc),
+		Project:  policyproject.New(svc),
 	}
 }
 

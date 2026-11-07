@@ -17,9 +17,9 @@ func ViewerOf(ctx context.Context) Viewer {
 	return Viewer{User: a.User, Permissions: a.Permissions}
 }
 
-// The three governed domains hold and redeem through the same two functions;
-// each domain's adapter (approvalrelease, approvalresource, approvalai) only
-// fits them to the domain's own Approvals port.
+// The governed domains hold and redeem through the same two functions;
+// each domain's adapter (approvalrelease, approvalresource, approvalai,
+// approvalproject) only fits them to the domain's own Approvals port.
 
 // Hold opens the request for a held action as the actor on ctx.
 func Hold(ctx context.Context, c Commands, org identity.OrganizationID, h gate.Hold) (gate.Pending, error) {
@@ -27,7 +27,7 @@ func Hold(ctx context.Context, c Commands, org identity.OrganizationID, h gate.H
 	if err != nil {
 		return gate.Pending{}, err
 	}
-	eid, err := project.ParseEnvironmentID(h.Environment)
+	eid, err := environmentOf(h.Environment)
 	if err != nil {
 		return gate.Pending{}, err
 	}
@@ -56,11 +56,20 @@ func Redeem(ctx context.Context, c Commands, org identity.OrganizationID, reques
 	if err != nil {
 		return err
 	}
-	eid, err := project.ParseEnvironmentID(g.Environment)
+	eid, err := environmentOf(g.Environment)
 	if err != nil {
 		return err
 	}
 	return c.Redeem(ctx, org, id, Grant{Action: g.Action, Project: pid, Environment: eid, Payload: g.Payload})
+}
+
+// environmentOf parses where a held action happens: "" is the whole app (a
+// change of its services), the zero ID.
+func environmentOf(raw string) (project.EnvironmentID, error) {
+	if raw == "" {
+		return project.EnvironmentID{}, nil
+	}
+	return project.ParseEnvironmentID(raw)
 }
 
 // OpOf is the "op" the payload of r names ("" when it names none): which

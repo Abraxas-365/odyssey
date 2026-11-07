@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"slices"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/gate"
@@ -26,6 +27,15 @@ func FromRequest(a actor.Actor, r gate.Request) Input {
 	} else {
 		in.Scan.Checked = r.ScanChecked
 	}
+	in.Services = make([]ServiceInput, len(r.Services))
+	for i, s := range r.Services {
+		in.Services[i] = ServiceInput{Name: s.Name, Kind: s.Kind, Route: s.Route, Public: s.Public}
+	}
+	in.Changed = slices.Clone(r.Changed)
+	if in.Changed == nil {
+		in.Changed = []string{}
+	}
+	in.TopologyChanged = r.TopologyChanged
 	return in
 }
 

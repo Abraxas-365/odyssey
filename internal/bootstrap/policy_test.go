@@ -183,11 +183,14 @@ func TestITRulesGovernTheActions(t *testing.T) {
 	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/policy/rules", token, nil), http.StatusForbidden)
 	httpxtest.Want(t, checked(t, app, http.MethodPost, "/api/v1/policy/evaluate", token, map[string]any{"action": "deploy"}), http.StatusForbidden)
 	first := list(it)
-	if len(first) != 5 || first[0].Name != "Publicar en producción requiere aprobación de TI" {
-		t.Fatalf("the five built-ins from the first read: %+v", first)
+	if len(first) != 6 || first[0].Name != "Publicar en producción requiere aprobación de TI" {
+		t.Fatalf("the six built-ins from the first read: %+v", first)
 	}
-	if last := first[4]; last.Builtin == nil || *last.Builtin != policy.BuiltinRequiresScan || last.Enabled {
-		t.Fatalf("production_requires_scan must be born disabled: %+v", last)
+	if b := first[4]; b.Builtin == nil || *b.Builtin != policy.BuiltinRequiresScan || b.Enabled {
+		t.Fatalf("production_requires_scan must be born disabled: %+v", b)
+	}
+	if last := first[5]; last.Builtin == nil || *last.Builtin != policy.BuiltinProductionServices || last.Enabled {
+		t.Fatalf("production_services_approval must be born disabled: %+v", last)
 	}
 
 	// A new app is internal; the tier is IT's.
@@ -296,7 +299,7 @@ func TestITRulesGovernTheActions(t *testing.T) {
 			t.Fatalf("%q → %d %q: %s", expr, res.Status, c, res.Body)
 		}
 	}
-	if n := len(list(it)); n != 5 {
+	if n := len(list(it)); n != 6 {
 		t.Fatalf("an invalid rule was stored: %d rules", n)
 	}
 
@@ -305,16 +308,18 @@ func TestITRulesGovernTheActions(t *testing.T) {
 		"action": "deploy", "project": map[string]any{"tier": "production"}, "scan": map[string]any{"known": true, "critical": 2}})
 	httpxtest.Want(t, res, http.StatusOK)
 	eval := httpxtest.JSON[policy.Evaluation](t, res)
-	if eval.Effect != gate.Deny || len(eval.Rules) != 1 || eval.Rules[0].Name != "Producción no publica con vulnerabilidades críticas" || len(eval.Results) != 5 {
+	if eval.Effect != gate.Deny || len(eval.Rules) != 1 || eval.Rules[0].Name != "Producción no publica con vulnerabilidades críticas" || len(eval.Results) != 6 {
 		t.Fatalf("dry run %+v", eval)
 	}
 	httpxtest.Want(t, checked(t, app, http.MethodPost, "/api/v1/policy/evaluate", it, map[string]any{"action": "teleport"}), http.StatusBadRequest)
-	if n := len(list(it)); n != 5 {
+	if n := len(list(it)); n != 6 {
 		t.Fatalf("the dry run wrote: %d", n)
 	}
-	// The other organization has its own, untouched rulebook.
+	// The other organization has its own, untouched rulebook (the built-ins
+	// born off are off, the others on).
+	bornOff := map[string]bool{policy.BuiltinRequiresScan: true, policy.BuiltinProductionServices: true}
 	for _, r := range list(stranger) {
-		if r.Builtin == nil || (*r.Builtin != policy.BuiltinRequiresScan) == !r.Enabled {
+		if r.Builtin == nil || bornOff[*r.Builtin] == r.Enabled {
 			t.Fatalf("the other organization's rulebook was touched: %+v", r)
 		}
 	}

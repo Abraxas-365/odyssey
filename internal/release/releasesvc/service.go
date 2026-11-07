@@ -131,7 +131,15 @@ func (s *Service) Deploy(ctx context.Context, organization identity.Organization
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
-	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy); err != nil {
+	topology, err := s.projects.Services(ctx, organization, id)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	asked, err := release.ImageServices(topology, input.Image, input.Config)
+	if err != nil {
+		return release.Deployment{}, err
+	}
+	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy, brings{version: asked}); err != nil {
 		return release.Deployment{}, err
 	}
 	r := release.Release{ID: release.NewID(), Organization: organization, Project: id, Image: input.Image,
@@ -181,7 +189,7 @@ func (s *Service) DeploySource(ctx context.Context, organization identity.Organi
 		return release.Deployment{}, err
 	}
 	// Judged before the folder is stored: a refused deploy uploads nothing.
-	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy); err != nil {
+	if err := s.denyOnlySource(ctx, p, e); err != nil {
 		return release.Deployment{}, err
 	}
 	src, err := s.builder.Upload(ctx, organization, id, build.Upload{Name: input.Name, UploadedBy: input.RequestedBy}, archive)
@@ -214,7 +222,7 @@ func (s *Service) DeployUploaded(ctx context.Context, organization identity.Orga
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
-	if err := s.denyOnly(ctx, p, e, gate.ActionDeploy); err != nil {
+	if err := s.denyOnlySource(ctx, p, e); err != nil {
 		return release.Deployment{}, err
 	}
 	src, err := s.builder.Source(ctx, organization, input.Source)
@@ -287,10 +295,8 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 	if err := archived(p); err != nil {
 		return release.Deployment{}, err
 	}
-	// A rollback puts an older version online: IT's rules judge it like a deploy.
-	if err := s.denyOnly(ctx, p, e, gate.ActionRollback); err != nil {
-		return release.Deployment{}, err
-	}
+	// A rollback puts an older version online: IT's rules judge it like a
+	// deploy, with the services of that version.
 	old, err := s.deployment(ctx, organization, id, env, target)
 	if err != nil {
 		return release.Deployment{}, err
@@ -300,6 +306,9 @@ func (s *Service) Rollback(ctx context.Context, organization identity.Organizati
 	}
 	r, err := s.repo.FindRelease(ctx, organization, *old.Release)
 	if err != nil {
+		return release.Deployment{}, err
+	}
+	if err := s.denyOnly(ctx, p, e, gate.ActionRollback, brings{version: r.Services}); err != nil {
 		return release.Deployment{}, err
 	}
 	var d release.Deployment

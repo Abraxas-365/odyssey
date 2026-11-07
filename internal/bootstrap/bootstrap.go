@@ -409,6 +409,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	// policy is built first: release, resource and ai each get their own
 	// Policy port from it (adapters in policy/adapters), and none imports it.
 	policies := policymodule.New(policymodule.Deps{DB: db, Events: events})
+	// project is built before policy, so it learns of IT's rules after.
+	projects.UsePolicy(policies.Project)
 	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
 		CertificateTTL: opts.CertificateTTL})
 	// project is built before the fleet, so it learns of its clusters after.
@@ -455,10 +457,11 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	// approval is built last: it re-runs what the governed domains held
 	// through their commands, and gives each of them its own Approvals port.
 	approvals := approvalmodule.New(approvalmodule.Deps{DB: db, Events: events, Engine: engine,
-		Release: releases.Commands, Resource: resources.Commands, AI: ais.Commands})
+		Release: releases.Commands, Resource: resources.Commands, AI: ais.Commands, Project: projects.Commands})
 	releases.UseApprovals(approvals.ReleaseApprovals)
 	resources.UseApprovals(approvals.ResourceApprovals)
 	ais.UseApprovals(approvals.AIApprovals)
+	projects.UseApprovals(approvals.ProjectApprovals)
 	p := &Platform{
 		DB:        db,
 		Bus:       bus,

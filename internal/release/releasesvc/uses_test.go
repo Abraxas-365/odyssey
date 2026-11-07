@@ -31,6 +31,12 @@ func (f *usesProjects) FindEnvironment(context.Context, identity.OrganizationID,
 	return f.e, nil
 }
 
+// Services are the app's own (one web service at "/"), what IT's rules see of
+// a deployment recorded before services.
+func (f *usesProjects) Services(_ context.Context, org identity.OrganizationID, id project.ID) ([]project.Service, error) {
+	return project.DefaultServices(org, id), nil
+}
+
 type usesRepo struct {
 	release.Repository
 	settings      release.Settings

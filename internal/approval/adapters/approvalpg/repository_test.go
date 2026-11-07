@@ -64,6 +64,27 @@ func TestInsertFindAndTenantIsolation(t *testing.T) {
 	insert(t, repo, ctx, request(other, "k1"))
 }
 
+// A request about the whole app (set_services, MS-3c) has no environment:
+// stored as NULL, read back as the zero ID, only by its organization.
+func TestAppWideRequestHasNoEnvironment(t *testing.T) {
+	repo, _, ctx := setup(t)
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	r := request(org, "services")
+	r.Action, r.Environment = "set_services", project.EnvironmentID{}
+	insert(t, repo, ctx, r)
+	got, err := repo.FindOpen(ctx, org, "services")
+	if err != nil || got.ID != r.ID || !got.Environment.IsZero() || got.Action != "set_services" {
+		t.Fatalf("app-wide request %+v %v", got, err)
+	}
+	page, err := repo.List(ctx, org, approval.Viewer{User: alice}, approval.Filter{}, query.Pagination{Limit: 10})
+	if err != nil || len(page.Items) != 1 || !page.Items[0].Environment.IsZero() {
+		t.Fatalf("listed %+v %v", page.Items, err)
+	}
+	if _, err := repo.Find(ctx, other, r.ID); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("other org reads it: %v", err)
+	}
+}
+
 func TestInsertIsIdempotentWhileOpen(t *testing.T) {
 	repo, _, ctx := setup(t)
 	org := identity.NewOrganizationID()

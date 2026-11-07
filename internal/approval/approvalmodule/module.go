@@ -17,12 +17,14 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalai"
 	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalhttp"
 	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalpg"
+	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalproject"
 	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalrelease"
 	"github.com/Abraxas-365/odyssey/internal/approval/adapters/approvalresource"
 	"github.com/Abraxas-365/odyssey/internal/approval/approvalsvc"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/gate"
+	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/resource"
 	"github.com/Abraxas-365/odyssey/internal/txn"
@@ -52,6 +54,7 @@ type Deps struct {
 	Release  release.Commands
 	Resource resource.Commands
 	AI       ai.Commands
+	Project  project.Commands
 }
 
 type Module struct {
@@ -63,6 +66,7 @@ type Module struct {
 	ReleaseApprovals  release.Approvals
 	ResourceApprovals resource.Approvals
 	AIApprovals       ai.Approvals
+	ProjectApprovals  project.Approvals
 
 	engine    workflow.Engine
 	executors []approval.Executor
@@ -76,11 +80,13 @@ func New(deps Deps) Module {
 		ReleaseApprovals:  approvalrelease.New(svc),
 		ResourceApprovals: approvalresource.New(svc),
 		AIApprovals:       approvalai.New(svc),
+		ProjectApprovals:  approvalproject.New(svc),
 		engine:            deps.Engine,
 		executors: []approval.Executor{
 			approvalrelease.NewExecutor(deps.Release),
 			approvalresource.NewExecutor(deps.Resource),
 			approvalai.NewExecutor(deps.AI),
+			approvalproject.NewExecutor(deps.Project),
 		},
 	}
 }

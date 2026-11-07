@@ -163,6 +163,12 @@ export interface paths {
          *     an environment not deployed yet) to run several services: otherwise
          *     422 `SERVICES_UNAVAILABLE`. Archived apps refuse it
          *     (`PROJECT_ARCHIVED`).
+         *
+         *     A change of services is judged by IT's rules as `set_services` (for the
+         *     whole app: no environment): 403 `POLICY_DENIED`, or 202
+         *     `pending_approval` with nothing changed until IT approves (the built-in
+         *     "Cambiar los servicios de producción requiere aprobación de TI" is born
+         *     off).
          */
         put: operations["setServices"];
         post?: never;
@@ -2022,10 +2028,10 @@ export interface components {
              * @description The action held.
              * @enum {string}
              */
-            action: "deploy" | "rollback" | "set_access" | "connect_resource" | "delete_resource" | "enable_ai";
+            action: "deploy" | "rollback" | "set_access" | "connect_resource" | "delete_resource" | "enable_ai" | "set_services";
             /** Format: uuid */
             project_id: string;
-            /** Format: uuid */
+            /** @description Where it happens; empty for an action about the whole app (`set_services`). */
             environment_id: string;
             /** @description The action as one plain Spanish sentence. */
             summary: string;
@@ -3041,7 +3047,7 @@ export interface components {
             enabled?: boolean;
         };
         /** @enum {string} */
-        PolicyAction: "deploy" | "set_access" | "connect_resource" | "delete_resource" | "set_secret" | "enable_ai" | "rollback";
+        PolicyAction: "deploy" | "set_access" | "connect_resource" | "delete_resource" | "set_secret" | "enable_ai" | "rollback" | "set_services";
         /** @description What an action looks like to the rules. What is left out is zero (empty text, false, 0). */
         PolicyInput: {
             action: components["schemas"]["PolicyAction"];
@@ -3071,6 +3077,29 @@ export interface components {
                 critical?: number;
                 high?: number;
             };
+            /**
+             * @description The services the action brings: a deploy's or rollback's version (before
+             *     a build from source, the layout it will build), or the new list of
+             *     `set_services`. An app of one service has one.
+             */
+            services?: {
+                name?: string;
+                /** @enum {string} */
+                kind?: "web" | "worker";
+                /** @description Empty for an internal service or a worker. */
+                route?: string;
+                /** @description Answers on the app's address (a web service with a route). */
+                public?: boolean;
+            }[];
+            /**
+             * @description The services whose running image changes, that appear or that go away
+             *     against what the environment serves (for `set_services`: added, removed
+             *     or modified). A deployment from source names those whose code changed
+             *     only once built (`scan.checked`).
+             */
+            changed?: string[];
+            /** @description A service appears, goes away or changes kind, folder or route; always true for `set_services`. */
+            topology_changed?: boolean;
             /**
              * @description Only for the dry run (`evaluatePolicy`): an UNSAVED rule to try
              *     among the saved ones, as if it were enabled. Nothing is stored.
@@ -3707,6 +3736,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceList"];
+                };
+            };
+            /** @description IT's rules hold the change for approval; nothing changed yet. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingApproval"];
                 };
             };
             400: components["responses"]["Validation"];

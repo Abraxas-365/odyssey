@@ -30,6 +30,7 @@ export const actionOptions: { value: PolicyAction; label: string }[] = [
   { value: 'delete_resource', label: 'Borrar una base de datos o archivos' },
   { value: 'enable_ai', label: 'Activar la IA' },
   { value: 'rollback', label: 'Volver a una versión anterior' },
+  { value: 'set_services', label: 'Cambiar los servicios de una app' },
 ]
 
 export const accessModeOptions: { value: string; label: string }[] = [
@@ -134,7 +135,7 @@ export function candidateRule({ draft, replaces }: Candidate): NonNullable<Polic
 
 /** The variables a condition can read (docs/policy.md "The input"): shown under the editor. */
 export const expressionVariables: { name: string; description: string }[] = [
-  { name: 'action', description: "lo que se intenta: 'deploy', 'set_access', 'connect_resource', 'delete_resource', 'enable_ai' o 'rollback'" },
+  { name: 'action', description: "lo que se intenta: 'deploy', 'set_access', 'connect_resource', 'delete_resource', 'enable_ai', 'rollback' o 'set_services'" },
   { name: 'project.tier', description: "el nivel de la app: 'sandbox', 'internal' o 'production'" },
   { name: 'project.slug', description: 'el nombre corto de la app' },
   { name: 'env.name', description: 'el entorno' },
@@ -145,6 +146,9 @@ export const expressionVariables: { name: string; description: string }[] = [
   { name: 'scan.known', description: 'si hay un análisis de vulnerabilidades hecho de esta imagen (false mientras no lo hay o si falló)' },
   { name: 'scan.critical', description: 'vulnerabilidades críticas (también scan.high); úsalo junto con scan.known' },
   { name: 'scan.checked', description: 'si ya se revisó el análisis: false al pedir la publicación (antes de construir), true después, haya salido bien o no. «scan.checked && !scan.known» es una imagen que no se pudo analizar' },
+  { name: 'services', description: "los servicios que trae la versión (o la lista nueva al cambiar los servicios), cada uno con name, kind ('web' o 'worker'), route y public. Ej.: services.exists(s, s.kind == 'worker')" },
+  { name: 'changed', description: 'los nombres de los servicios que cambian frente a lo que está en línea (los que se agregan, quitan o actualizan)' },
+  { name: 'topology_changed', description: 'si cambian los servicios mismos: uno nuevo, uno que se va, o uno que cambia de carpeta, ruta o tipo' },
 ]
 
 /** What the dry-run answers, as one sentence. */

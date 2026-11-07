@@ -90,6 +90,18 @@ func requester(r Request) string {
 	return r.RequestedSystem
 }
 
+// envText is where the action happens: "" for one about the whole app (a
+// change of its services), additive within v1.
+func envText(id interface {
+	IsZero() bool
+	String() string
+}) string {
+	if id.IsZero() {
+		return ""
+	}
+	return id.String()
+}
+
 func NewRequested(r Request) event.Event {
 	rules := r.Rules
 	if rules == nil {
@@ -97,13 +109,13 @@ func NewRequested(r Request) event.Event {
 	}
 	return event.New(EventRequested, 1, r.Organization, r.RequestedBy, event.Subject(SubjectKind, r.ID),
 		"Pidió aprobación de TI: "+r.Summary,
-		Requested{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: r.Environment.String(),
+		Requested{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: envText(r.Environment),
 			Summary: r.Summary, RequestedBy: requester(r), Reason: r.Reason, Rules: rules, Approvers: r.Approvers,
 			ExpiresAt: r.ExpiresAt, Run: r.Run})
 }
 
 func decided(r Request, by identity.UserID, note string) Decided {
-	return Decided{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: r.Environment.String(),
+	return Decided{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: envText(r.Environment),
 		RequestedBy: requester(r), DecidedBy: userText(by), Note: note, Run: r.Run, RunStep: r.RunStep}
 }
 
@@ -136,11 +148,11 @@ func NewCancelled(r Request, by identity.UserID) event.Event {
 func NewConsumed(r Request) event.Event {
 	return event.New(EventConsumed, 1, r.Organization, identity.UserID{}, event.Subject(SubjectKind, r.ID),
 		"Se usó la aprobación: "+r.Summary,
-		Consumed{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: r.Environment.String(), Run: r.Run})
+		Consumed{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: envText(r.Environment), Run: r.Run})
 }
 
 func NewExecutionFailed(r Request, message string) event.Event {
 	return event.New(EventExecutionFailed, 1, r.Organization, identity.UserID{}, event.Subject(SubjectKind, r.ID),
 		"No se pudo hacer lo aprobado: "+r.Summary,
-		ExecutionFailed{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: r.Environment.String(), Error: message})
+		ExecutionFailed{Approval: r.ID.String(), Action: r.Action, Project: r.Project.String(), Environment: envText(r.Environment), Error: message})
 }

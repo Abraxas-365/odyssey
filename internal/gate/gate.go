@@ -22,11 +22,14 @@ const (
 	ActionSetSecret       = "set_secret"
 	ActionEnableAI        = "enable_ai"
 	ActionRollback        = "rollback"
+	// ActionSetServices changes the app's services (the whole app: it has no
+	// environment).
+	ActionSetServices = "set_services"
 )
 
 // Actions lists every action a rule can name.
 var Actions = []string{ActionDeploy, ActionSetAccess, ActionConnectResource, ActionDeleteResource,
-	ActionSetSecret, ActionEnableAI, ActionRollback}
+	ActionSetSecret, ActionEnableAI, ActionRollback, ActionSetServices}
 
 // Effect is what the rules decided.
 type Effect string
@@ -78,6 +81,31 @@ type Request struct {
 	// It is what lets a rule require a scan (`scan.checked && !scan.known`)
 	// without firing at the first judgment, where the scan never exists.
 	ScanChecked bool
+	// Services are the services the action brings (MS-3c): a deploy's or a
+	// rollback's version, the new list of set_services. Empty for the
+	// actions that are not about them.
+	Services []Service
+	// Changed names the services whose running image changes against what
+	// the environment serves (deploy, rollback; set_services: those added,
+	// removed or modified). A deployment from source knows it only after
+	// its build: empty at its first judgment, filled at the second
+	// (ScanChecked).
+	Changed []string
+	// TopologyChanged says the services themselves change (one added,
+	// removed, renamed, moved to another folder or route) against what the
+	// environment serves (always true for set_services and for an
+	// environment that serves nothing yet).
+	TopologyChanged bool
+}
+
+// Service is one service as IT's rules see it.
+type Service struct {
+	Name string
+	Kind string // web or worker
+	// Route is the path it answers on the app's address ("" internal).
+	Route string
+	// Public says it answers on the app's address.
+	Public bool
 }
 
 // Scan is the count of findings of an image scan.

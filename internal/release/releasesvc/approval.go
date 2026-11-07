@@ -78,7 +78,11 @@ func (s *Service) authorizeStep(ctx context.Context, st *workflow.State) (any, e
 		return nil, err
 	}
 	ctx = actor.With(ctx, in.Actor) // judged, and the request held, as who asked
-	verdict, err := s.policy.Check(ctx, org, gate.Request{Action: action, Tier: string(p.Tier), ProjectSlug: p.Slug, Environment: e.Slug})
+	request, err := s.judgedRequest(ctx, d, gate.Request{Action: action, Tier: string(p.Tier), ProjectSlug: p.Slug, Environment: e.Slug})
+	if err != nil {
+		return nil, err
+	}
+	verdict, err := s.policy.Check(ctx, org, request)
 	if err != nil {
 		return nil, err
 	}

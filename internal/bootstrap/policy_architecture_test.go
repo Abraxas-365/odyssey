@@ -3,8 +3,9 @@ package bootstrap_test
 // IT's rules (3a) rules (AGENTS.md "Rules"):
 //   - only the policycel adapter imports cel-go: the policy domain and its
 //     service know the Engine port, not the expression language;
-//   - release, resource and ai never import policy: each asks through its own
-//     Policy port, which an adapter in policy/adapters implements;
+//   - release, resource, ai and project never import policy: each asks
+//     through its own Policy port, which an adapter in policy/adapters
+//     implements;
 //   - those adapters (and the policy assembler) are wired only in bootstrap;
 //   - the governed services ask IT's rules before a transaction, never inside
 //     one (authorize / AuthorizeConnect in a `.Do(func…)` literal).
@@ -24,7 +25,12 @@ const (
 )
 
 // governed are the domains IT's rules judge: they must not know policy.
-var governed = []string{"release", "resource", "ai"}
+var governed = []string{"release", "resource", "ai", "project"}
+
+// governedServices are the services that ask IT's rules and hold approvals.
+var governedServices = map[string]bool{
+	"release/releasesvc": true, "resource/resourcesvc": true, "ai/aisvc": true, "project/projectsvc": true,
+}
 
 func TestCELIsOnlyInItsAdapter(t *testing.T) { report(t, celViolations(sources(t, true))) }
 
@@ -109,14 +115,17 @@ func TestPolicyRulesCatchViolations(t *testing.T) {
 		"resource/adapters/resourcehttp/h.go": `package resourcehttp; import _ "` + m + `policy/adapters/policyresource"`,
 		"ai/aisvc/s.go":                       `package aisvc; import _ "` + m + `gate"`,
 		"policy/adapters/policyai/p.go":       `package policyai; import _ "` + m + `policy"; import _ "` + m + `ai"`,
+		"project/projectsvc/p.go":             `package projectsvc; import _ "` + m + `policy/adapters/policyproject"`,
 		"bootstrap/bootstrap.go":              `package bootstrap; import _ "` + m + `policy/policymodule"; import _ "` + m + `policy/adapters/policyai"`,
 		"audit/auditsvc/s.go":                 `package auditsvc; import _ "` + m + `policy/policymodule"`,
 	})
 	expectViolations(t, celViolations(files), "policy/policysvc/s.go: policy/policysvc imports "+celSDK+"/cel")
 	expectViolations(t, governedViolations(files), "release/releasesvc/p.go: release/releasesvc imports policy",
-		"resource/adapters/resourcehttp/h.go: resource/adapters/resourcehttp imports policy/adapters/policyresource")
+		"resource/adapters/resourcehttp/h.go: resource/adapters/resourcehttp imports policy/adapters/policyresource",
+		"project/projectsvc/p.go: project/projectsvc imports policy/adapters/policyproject")
 	expectViolations(t, policyWiringViolations(files),
 		"resource/adapters/resourcehttp/h.go: resource/adapters/resourcehttp imports policy/adapters/policyresource",
+		"project/projectsvc/p.go: project/projectsvc imports policy/adapters/policyproject",
 		"audit/auditsvc/s.go: audit/auditsvc imports policy/policymodule")
 }
 
@@ -136,7 +145,7 @@ func authorizeInTxViolations(files []goFile) []string {
 	var out []string
 	for _, f := range files {
 		dir := path.Dir(f.rel)
-		if dir != "release/releasesvc" && dir != "resource/resourcesvc" && dir != "ai/aisvc" {
+		if !governedServices[dir] {
 			continue
 		}
 		ast.Inspect(f.file, func(n ast.Node) bool {
@@ -184,9 +193,11 @@ func TestITRulesInTxRuleCatchesViolations(t *testing.T) {
 		"release/releasesvc/bad.go":   `package releasesvc; func (s *S) B() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
 		"resource/resourcesvc/bad.go": `package resourcesvc; func (s *S) C() { s.tx.Do(nil, func(ctx C) error { return s.usage.AuthorizeConnect(ctx) }) }`,
 		"ai/aisvc/ok.go":              `package aisvc; func (s *S) D() { s.authorize(nil); s.tx.Do(nil, func(ctx C) error { return nil }) }`,
-		"project/projectsvc/other.go": `package projectsvc; func (s *S) E() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
+		"project/projectsvc/bad.go":   `package projectsvc; func (s *S) E() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
+		"fleet/fleetsvc/other.go":     `package fleetsvc; func (s *S) F() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
 	})
 	expectViolations(t, authorizeInTxViolations(files),
 		"release/releasesvc/bad.go: release/releasesvc/bad.go calls authorize inside a transaction",
-		"resource/resourcesvc/bad.go: resource/resourcesvc/bad.go calls AuthorizeConnect inside a transaction")
+		"resource/resourcesvc/bad.go: resource/resourcesvc/bad.go calls AuthorizeConnect inside a transaction",
+		"project/projectsvc/bad.go: project/projectsvc/bad.go calls authorize inside a transaction")
 }

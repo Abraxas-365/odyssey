@@ -14,12 +14,23 @@ import (
 // default rule does not stand in their way.
 func switchOff(t *testing.T, platform *bootstrap.Platform, org identity.OrganizationID, keys ...string) {
 	t.Helper()
+	switchBuiltins(t, platform, org, false, keys...)
+}
+
+// switchOn turns built-in rules that are born off on.
+func switchOn(t *testing.T, platform *bootstrap.Platform, org identity.OrganizationID, keys ...string) {
+	t.Helper()
+	switchBuiltins(t, platform, org, true, keys...)
+}
+
+func switchBuiltins(t *testing.T, platform *bootstrap.Platform, org identity.OrganizationID, on bool, keys ...string) {
+	t.Helper()
 	ctx := context.Background()
 	rules, err := platform.Policy.Queries.List(ctx, org)
 	if err != nil {
 		t.Fatal(err)
 	}
-	off := false
+	enabled := on
 	for _, key := range keys {
 		found := false
 		for _, r := range rules {
@@ -28,7 +39,7 @@ func switchOff(t *testing.T, platform *bootstrap.Platform, org identity.Organiza
 			}
 			found = true
 			draft := policy.Draft{Name: r.Name, Description: r.Description, Expression: r.Expression,
-				Effect: r.Effect, Approvers: r.Approvers, Enabled: &off}
+				Effect: r.Effect, Approvers: r.Approvers, Enabled: &enabled}
 			if _, err := platform.Policy.Commands.Replace(ctx, org, r.ID,
 				policy.Replace{Draft: draft, UpdatedBy: identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")}); err != nil {
 				t.Fatal(err)

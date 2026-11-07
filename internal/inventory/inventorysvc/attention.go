@@ -103,7 +103,7 @@ func (s *Service) pendingForMe(ctx context.Context, org identity.OrganizationID)
 		}
 		items = append(items, inventory.Item{Kind: inventory.KindApprovalPending, Scope: inventory.ScopeIT, Severity: inventory.SeverityWarning,
 			Sentence: "Espera tu decisión: " + sentence(v.Summary), Link: "/bandeja", Request: v.ID.String(),
-			App: ptr(v.Project), Environment: ptr(v.Environment), At: ptr(v.CreatedAt)})
+			App: ptr(v.Project), Environment: envOf(v.Environment), At: ptr(v.CreatedAt)})
 	}
 	return items, page.Page.Total > len(page.Items), nil
 }
@@ -120,7 +120,7 @@ func (s *Service) myRequests(ctx context.Context, org identity.OrganizationID, n
 	var items []inventory.Item
 	for _, v := range page.Items {
 		it := inventory.Item{Scope: inventory.ScopeMine, Link: "/bandeja", Request: v.ID.String(),
-			App: ptr(v.Project), Environment: ptr(v.Environment), At: ptr(v.CreatedAt)}
+			App: ptr(v.Project), Environment: envOf(v.Environment), At: ptr(v.CreatedAt)}
 		recent := v.DecidedAt != nil && now.Sub(*v.DecidedAt) <= inventory.RejectedWithin
 		switch {
 		case v.Status == approval.StatusPending:
@@ -353,3 +353,11 @@ func plural(n int, one, many string) string {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// envOf is a request's environment (nil for one about the whole app).
+func envOf(id project.EnvironmentID) *project.EnvironmentID {
+	if id.IsZero() {
+		return nil
+	}
+	return &id
+}

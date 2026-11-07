@@ -78,6 +78,9 @@ type servicesApp struct {
 	pbase    string // /api/v1/projects/:id
 	base     string // pbase + /environments/:env
 	target   release.Target
+	// unhealthy makes the cluster fail the health check of any app that runs
+	// a service of that name (MS-3c's auto-restore).
+	unhealthy sync.Map
 }
 
 func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
@@ -95,7 +98,15 @@ func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cluster := releasefake.New(releasefake.Options{Behavior: func(release.DesiredApp) releasefake.Outcome { return releasefake.Outcome{} }})
+	s := &servicesApp{}
+	cluster := releasefake.New(releasefake.Options{Behavior: func(d release.DesiredApp) releasefake.Outcome {
+		for _, svc := range d.Services {
+			if _, bad := s.unhealthy.Load(svc.Name); bad {
+				return releasefake.Outcome{Unhealthy: true}
+			}
+		}
+		return releasefake.Outcome{}
+	}})
 	runner := buildfake.New(opts)
 	platform, err := bootstrap.Assemble(ctx, db, bootstrap.Options{
 		Workflow:  workflowpg.Options{PollInterval: 20 * time.Millisecond, Backoff: func(int) time.Duration { return 0 }},
@@ -122,9 +133,9 @@ func newServicesApp(t *testing.T, opts buildfake.Options) *servicesApp {
 		}
 	})
 
-	s := &servicesApp{db: db, platform: platform, cluster: cluster, runner: runner,
-		app: bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil), org: identity.NewOrganizationID(),
-		user: identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")}
+	s.db, s.platform, s.cluster, s.runner = db, platform, cluster, runner
+	s.app = bootstrap.NewServer(platform, config.Config{}, httpxtest.Auth(), nil)
+	s.org, s.user = identity.NewOrganizationID(), identity.MustParseUserID("6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55")
 	s.token = httpxtest.Token(s.org, permission.ProjectsRead, permission.ProjectsWrite, permission.DeploymentsRead, permission.DeploymentsCreate)
 	res := checked(t, s.app, http.MethodPost, "/api/v1/projects", s.token, map[string]any{"name": "Portal"})
 	httpxtest.Want(t, res, http.StatusCreated)

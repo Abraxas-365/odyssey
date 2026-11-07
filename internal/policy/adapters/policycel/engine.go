@@ -62,6 +62,12 @@ type (
 		Critical int64 `cel:"critical"`
 		High     int64 `cel:"high"`
 	}
+	serviceVars struct {
+		Name   string `cel:"name"`
+		Kind   string `cel:"kind"`
+		Route  string `cel:"route"`
+		Public bool   `cel:"public"`
+	}
 )
 
 type Engine struct {
@@ -91,7 +97,7 @@ func New(opts Options) *Engine {
 	env, err := cel.NewEnv(
 		ext.NativeTypes(ext.ParseStructTags(true),
 			reflect.TypeOf(projectVars{}), reflect.TypeOf(envVars{}), reflect.TypeOf(accessVars{}),
-			reflect.TypeOf(actorVars{}), reflect.TypeOf(resourceVars{}), reflect.TypeOf(scanVars{})),
+			reflect.TypeOf(actorVars{}), reflect.TypeOf(resourceVars{}), reflect.TypeOf(scanVars{}), reflect.TypeOf(serviceVars{})),
 		cel.Variable("action", cel.StringType),
 		cel.Variable("project", cel.ObjectType("policycel.projectVars")),
 		cel.Variable("env", cel.ObjectType("policycel.envVars")),
@@ -99,6 +105,9 @@ func New(opts Options) *Engine {
 		cel.Variable("actor", cel.ObjectType("policycel.actorVars")),
 		cel.Variable("resource", cel.ObjectType("policycel.resourceVars")),
 		cel.Variable("scan", cel.ObjectType("policycel.scanVars")),
+		cel.Variable("services", cel.ListType(cel.ObjectType("policycel.serviceVars"))),
+		cel.Variable("changed", cel.ListType(cel.StringType)),
+		cel.Variable("topology_changed", cel.BoolType),
 		cel.ParserExpressionSizeLimit(policy.MaxExpression),
 		cel.ParserRecursionLimit(32),
 	)
@@ -184,6 +193,14 @@ func activation(in policy.Input) map[string]any {
 	if perms == nil {
 		perms = []string{}
 	}
+	services := make([]serviceVars, len(in.Services))
+	for i, s := range in.Services {
+		services[i] = serviceVars{Name: s.Name, Kind: s.Kind, Route: s.Route, Public: s.Public}
+	}
+	changed := in.Changed
+	if changed == nil {
+		changed = []string{}
+	}
 	return map[string]any{
 		"action":   in.Action,
 		"project":  projectVars{Tier: string(in.Project.Tier), Slug: in.Project.Slug},
@@ -192,6 +209,9 @@ func activation(in policy.Input) map[string]any {
 		"actor":    actorVars{ID: in.Actor.ID, Permissions: perms},
 		"resource": resourceVars{Kind: in.Resource.Kind},
 		// a known scan has been checked, whatever a dry-run input says
-		"scan": scanVars{Known: in.Scan.Known, Checked: in.Scan.Checked || in.Scan.Known, Critical: int64(in.Scan.Critical), High: int64(in.Scan.High)},
+		"scan":             scanVars{Known: in.Scan.Known, Checked: in.Scan.Checked || in.Scan.Known, Critical: int64(in.Scan.Critical), High: int64(in.Scan.High)},
+		"services":         services,
+		"changed":          changed,
+		"topology_changed": in.TopologyChanged,
 	}
 }

@@ -285,6 +285,12 @@ paths:
         an environment not deployed yet) to run several services: otherwise
         422 `SERVICES_UNAVAILABLE`. Archived apps refuse it
         (`PROJECT_ARCHIVED`).
+
+        A change of services is judged by IT's rules as `set_services` (for the
+        whole app: no environment): 403 `POLICY_DENIED`, or 202
+        `pending_approval` with nothing changed until IT approves (the built-in
+        "Cambiar los servicios de producción requiere aprobación de TI" is born
+        off).
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -297,6 +303,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ServiceList" }
+        "202":
+          description: IT's rules hold the change for approval; nothing changed yet.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingApproval" }
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -3267,9 +3278,12 @@ components:
                  decided_by, decided_at, decision_note, expires_at, consumed_at, created_at]
       properties:
         id: { type: string, format: uuid }
-        action: { type: string, enum: [deploy, rollback, set_access, connect_resource, delete_resource, enable_ai], description: The action held. }
+        action: { type: string, enum: [deploy, rollback, set_access, connect_resource, delete_resource, enable_ai, set_services], description: The action held. }
         project_id: { type: string, format: uuid }
-        environment_id: { type: string, format: uuid }
+        environment_id:
+          type: string
+          pattern: "^([0-9a-f-]{36})?$"
+          description: "Where it happens; empty for an action about the whole app (`set_services`)."
         summary: { type: string, description: The action as one plain Spanish sentence. }
         payload: { type: object, description: "The domain's own description of the action (what re-runs)." }
         requested_by: { type: string, pattern: "^([0-9a-f-]{36})?$", description: "Who asked; empty for the platform (a GitHub push)." }
@@ -4502,7 +4516,7 @@ components:
 
     PolicyAction:
       type: string
-      enum: [deploy, set_access, connect_resource, delete_resource, set_secret, enable_ai, rollback]
+      enum: [deploy, set_access, connect_resource, delete_resource, set_secret, enable_ai, rollback, set_services]
 
     PolicyInput:
       type: object
@@ -4548,6 +4562,33 @@ components:
             checked: { type: boolean, description: "Whether the scan was looked at: false at the first judgment of a deployment (before the build), true after it whatever came of the scan. `checked && !known` is a scan that failed, never came or does not exist (the built-in `production_requires_scan` reads it). `known` implies `checked`." }
             critical: { type: integer, minimum: 0 }
             high: { type: integer, minimum: 0 }
+        services:
+          type: array
+          maxItems: 8
+          description: |
+            The services the action brings: a deploy's or rollback's version (before
+            a build from source, the layout it will build), or the new list of
+            `set_services`. An app of one service has one.
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              name: { type: string }
+              kind: { type: string, enum: [web, worker] }
+              route: { type: string, description: "Empty for an internal service or a worker." }
+              public: { type: boolean, description: "Answers on the app's address (a web service with a route)." }
+        changed:
+          type: array
+          maxItems: 16
+          description: |
+            The services whose running image changes, that appear or that go away
+            against what the environment serves (for `set_services`: added, removed
+            or modified). A deployment from source names those whose code changed
+            only once built (`scan.checked`).
+          items: { type: string }
+        topology_changed:
+          type: boolean
+          description: "A service appears, goes away or changes kind, folder or route; always true for `set_services`."
         rule:
           type: object
           additionalProperties: false

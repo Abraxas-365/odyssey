@@ -105,6 +105,12 @@ describe('policy rules mapping', () => {
 
   it('lists what a condition can read', () => {
     const names = expressionVariables.map(v => v.name)
-    for (const n of ['action', 'project.tier', 'env.name', 'access.mode', 'actor.permissions', 'resource.kind', 'scan.known', 'scan.critical', 'scan.checked']) expect(names).toContain(n)
+    for (const n of ['action', 'project.tier', 'env.name', 'access.mode', 'actor.permissions', 'resource.kind', 'scan.known', 'scan.critical', 'scan.checked', 'services', 'changed', 'topology_changed']) expect(names).toContain(n)
+  })
+
+  it('offers rules on a change of services, in plain words', () => {
+    const o = actionOptions.find(a => a.value === 'set_services')
+    expect(o?.label).toBe('Cambiar los servicios de una app')
+    expect(o?.label).not.toMatch(/set_services/)
   })
 })

@@ -71,8 +71,22 @@ func (s *Service) authorizeScanStep(ctx context.Context, st *workflow.State) (an
 		return nil, err
 	}
 	ctx = actor.With(ctx, in.Actor) // judged, and the request held, as who asked
-	base := gate.Request{Action: action, Tier: string(p.Tier), ProjectSlug: p.Slug, Environment: e.Slug}
-	withScan := base
+	// before is what authorize judged (the layout: nothing was built yet);
+	// now the version exists, so `changed` also names the services whose
+	// code changed.
+	asked := gate.Request{Action: action, Tier: string(p.Tier), ProjectSlug: p.Slug, Environment: e.Slug}
+	unbuilt := d
+	if len(d.Builds) > 0 { // a deployment from source: authorize saw no version yet
+		unbuilt.Release = nil
+	}
+	base, err := s.judgedRequest(ctx, unbuilt, asked)
+	if err != nil {
+		return nil, err
+	}
+	withScan, err := s.judgedRequest(ctx, d, asked)
+	if err != nil {
+		return nil, err
+	}
 	withScan.Scan = scan
 	withScan.ScanChecked = true
 	verdict, err := s.policy.Check(ctx, org, withScan)

@@ -104,6 +104,43 @@ func TestMatches(t *testing.T) {
 	}
 }
 
+// services, changed and topology_changed (MS-3c): the same rule reads an app
+// of one service exactly like one of several, and absent means empty.
+func TestMatchesServices(t *testing.T) {
+	e := policycel.New(policycel.Options{})
+	two := policy.Input{Action: "deploy", Project: policy.ProjectInput{Tier: "production"},
+		Services: []policy.ServiceInput{{Name: "web", Kind: "web", Route: "/", Public: true}, {Name: "jobs", Kind: "worker"}},
+		Changed:  []string{"jobs"}, TopologyChanged: true}
+	one := policy.Input{Action: "deploy", Project: policy.ProjectInput{Tier: "production"},
+		Services: []policy.ServiceInput{{Name: "web", Kind: "web", Route: "/", Public: true}}, Changed: []string{"web"}}
+	for expr, want := range map[string][2]bool{ // {two, one}
+		`services.exists(s, s.kind == 'worker')`:                 {true, false},
+		`services.all(s, s.public)`:                              {false, true},
+		`size(services) > 1`:                                     {true, false},
+		`'web' in changed`:                                       {false, true},
+		`topology_changed`:                                       {true, false},
+		`services.exists(s, s.route == '/' && s.name == 'web')`:  {true, true},
+		`action == 'deploy' && changed.exists(c, c == 'jobs')`:   {true, false},
+		`services.filter(s, s.public).map(s, s.name) == ['web']`: {true, true},
+	} {
+		for i, in := range []policy.Input{two, one} {
+			got, err := e.Matches(context.Background(), rule(expr), in)
+			if err != nil || got != want[i] {
+				t.Errorf("%q on %d services: got %v, %v want %v", expr, len(in.Services), got, err, want[i])
+			}
+		}
+	}
+	// an action not about services sees empty lists, not an error
+	for _, expr := range []string{`size(services) == 0`, `size(changed) == 0`, `!topology_changed`} {
+		if got, err := e.Matches(context.Background(), rule(expr), policy.Input{Action: "set_access"}); err != nil || !got {
+			t.Errorf("%q with no services: %v %v", expr, got, err)
+		}
+	}
+	if err := e.Compile(`services.exists(s, s.colour == 'red')`); err == nil {
+		t.Error("an unknown field of a service compiled")
+	}
+}
+
 func TestCostIsBounded(t *testing.T) {
 	e := policycel.New(policycel.Options{CostLimit: 200, Timeout: time.Second})
 	// a comprehension over a big range costs far more than 200

@@ -38,11 +38,11 @@ func TestRulesRoutes(t *testing.T) {
 		httpxtest.Want(t, do(r[0], r[1], builder, map[string]any{}), http.StatusForbidden)
 	}
 
-	// the five built-ins are there from the first read
+	// the built-ins are there from the first read
 	res := do(http.MethodGet, "/api/v1/policy/rules", it, nil)
 	httpxtest.Want(t, res, http.StatusOK)
 	list := httpxtest.JSON[struct{ Items []policy.Rule }](t, res)
-	if len(list.Items) != 5 || list.Items[0].Builtin == nil {
+	if len(list.Items) != 6 || list.Items[0].Builtin == nil {
 		t.Fatalf("rules %+v", list.Items)
 	}
 	builtin := list.Items[0]
@@ -104,7 +104,7 @@ func TestEvaluateIsADryRun(t *testing.T) {
 		"action": "deploy", "project": map[string]any{"tier": "production"}, "scan": map[string]any{"known": true, "critical": 1}})
 	httpxtest.Want(t, res, http.StatusOK)
 	got := httpxtest.JSON[policy.Evaluation](t, res)
-	if got.Effect != policy.EffectDeny || len(got.Rules) != 1 || got.Rules[0].Name != "bloquea" || len(got.Results) != 6 {
+	if got.Effect != policy.EffectDeny || len(got.Rules) != 1 || got.Rules[0].Name != "bloquea" || len(got.Results) != 7 {
 		t.Fatalf("evaluation %+v", got)
 	}
 	before := len(events.Events())
@@ -129,9 +129,9 @@ func TestEvaluateIsADryRun(t *testing.T) {
 		rule(map[string]any{"expression": "approve-it", "effect": "approval"}))
 	httpxtest.Want(t, res, http.StatusOK)
 	got = httpxtest.JSON[policy.Evaluation](t, res)
-	// one more rule (7 results); the saved deny rule still wins over the candidate's approval
-	if got.Effect != policy.EffectDeny || len(got.Rules) != 1 || got.Rules[0].Name != "bloquea" || len(got.Results) != 7 ||
-		got.Results[6].Rule.Name != "Regla de prueba" || !got.Results[6].Matched {
+	// one more rule (8 results); the saved deny rule still wins over the candidate's approval
+	if got.Effect != policy.EffectDeny || len(got.Rules) != 1 || got.Rules[0].Name != "bloquea" || len(got.Results) != 8 ||
+		got.Results[7].Rule.Name != "Regla de prueba" || !got.Results[7].Matched {
 		t.Fatalf("candidate evaluation %+v", got)
 	}
 	// a candidate that does not compile is a 422, like saving it
@@ -155,7 +155,7 @@ func TestEvaluateIsADryRun(t *testing.T) {
 		"rule": map[string]any{"name": "bloquea", "expression": "never", "effect": "deny", "replaces": bloquea.ID.String()}})
 	httpxtest.Want(t, res, http.StatusOK)
 	got = httpxtest.JSON[policy.Evaluation](t, res)
-	if got.Effect != policy.EffectAllow || len(got.Results) != 6 {
+	if got.Effect != policy.EffectAllow || len(got.Results) != 7 {
 		t.Fatalf("replaced evaluation %+v", got)
 	}
 	if len(events.Events()) != before {

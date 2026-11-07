@@ -16,6 +16,7 @@ package policy
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,6 +210,27 @@ type Input struct {
 	Actor    ActorInput    `json:"actor"`
 	Resource ResourceInput `json:"resource"`
 	Scan     ScanInput     `json:"scan"`
+	// Services are the services the action brings: a deploy's or a
+	// rollback's version, the new list of set_services (MS-3c).
+	Services []ServiceInput `json:"services"`
+	// Changed names the services whose running image changes, appears or
+	// goes away against what the environment serves (set_services: those
+	// added, removed or modified). A deployment from source knows it only
+	// after the build (empty while scan.checked is false).
+	Changed []string `json:"changed"`
+	// TopologyChanged says the services themselves change (one added,
+	// removed, or moved to another folder, route or kind) against what the
+	// environment serves; always true for set_services.
+	TopologyChanged bool `json:"topology_changed"`
+}
+
+// ServiceInput is one service as a rule sees it.
+type ServiceInput struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	Route string `json:"route"`
+	// Public says it answers on the app's address (a web service with a route).
+	Public bool `json:"public"`
 }
 
 type ProjectInput struct {
@@ -263,6 +285,9 @@ func (in Input) Validate() error {
 	}
 	if in.Scan.Critical < 0 || in.Scan.High < 0 {
 		return errx.InvalidField("scan", "scan counts cannot be negative")
+	}
+	if len(in.Services) > project.MaxServices || len(in.Changed) > 2*project.MaxServices {
+		return errx.InvalidField("services", "an app has at most "+strconv.Itoa(project.MaxServices)+" services")
 	}
 	return nil
 }

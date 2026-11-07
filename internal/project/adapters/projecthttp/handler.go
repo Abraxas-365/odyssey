@@ -237,7 +237,8 @@ func (h *Handler) listServices(c *fiber.Ctx) error {
 }
 
 // setServices replaces the whole list (body {"items": [...]}); answers 200
-// with the stored list. The next version of the app takes it.
+// with the stored list, or 202 with the pending approval when IT's rules
+// hold the change (nothing changed). The next version of the app takes it.
 func (h *Handler) setServices(c *fiber.Ctx) error {
 	org, err := httpx.Organization(c)
 	if err != nil {
@@ -256,9 +257,12 @@ func (h *Handler) setServices(c *fiber.Ctx) error {
 		return err
 	}
 	input.UpdatedBy = user
-	items, err := h.commands.SetServices(c.UserContext(), org, id, input)
+	out, err := h.commands.SetServices(c.UserContext(), org, id, input)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"items": items})
+	if done, err := httpx.Held(c, out.Outcome); done {
+		return err
+	}
+	return c.JSON(fiber.Map{"items": out.Items})
 }

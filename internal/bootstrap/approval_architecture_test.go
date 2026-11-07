@@ -1,13 +1,14 @@
 package bootstrap_test
 
 // Approvals (3b) rules (AGENTS.md "Approvals"):
-//   - release, resource, ai and source never import approval: a rule that
-//     wants approval opens its request through the domain's own Approvals
-//     port, which an adapter in approval/adapters implements;
+//   - release, resource, ai, project and source never import approval: a
+//     rule that wants approval opens its request through the domain's own
+//     Approvals port, which an adapter in approval/adapters implements;
 //   - the approval domain itself (types, service, repository, HTTP, MCP) does
 //     not know the governed domains: only the per-domain bridges
-//     (approvalrelease, approvalresource, approvalai) and the assembler
-//     (approvalmodule) import them;
+//     (approvalrelease, approvalresource, approvalai, approvalproject) and the
+//     assembler (approvalmodule) import them (project's root package, the
+//     identifiers every domain shares, excepted);
 //   - approval's adapters and assembler are wired only in bootstrap.
 
 import (
@@ -26,6 +27,7 @@ var approvalBridges = map[string]bool{
 	"approval/adapters/approvalrelease":  true,
 	"approval/adapters/approvalresource": true,
 	"approval/adapters/approvalai":       true,
+	"approval/adapters/approvalproject":  true,
 	"approval/approvalmodule":            true,
 }
 
@@ -65,15 +67,24 @@ func approvalCouplingViolations(files []goFile) []string {
 		for _, imp := range f.file.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
 			for _, d := range governed {
+				if sharedKernel[d] && p == modulePath+d {
+					continue
+				}
 				if p == modulePath+d || strings.HasPrefix(p, modulePath+d+"/") {
 					out = append(out, f.fset.Position(imp.Pos()).String()+": "+dir+" imports "+
-						strings.TrimPrefix(p, modulePath)+"; only the bridges (approvalrelease, approvalresource, approvalai) and approvalmodule know a governed domain")
+						strings.TrimPrefix(p, modulePath)+"; only the bridges (approvalrelease, approvalresource, approvalai, approvalproject) and approvalmodule know a governed domain")
 				}
 			}
 		}
 	}
 	return out
 }
+
+// sharedKernel are governed domains whose root package every domain may
+// import for its identifiers (project.ID, project.EnvironmentID): approval
+// stores where an action happens. Their services and adapters stay out of
+// reach.
+var sharedKernel = map[string]bool{"project": true}
 
 func TestApprovalAdaptersAreWiredOnlyInBootstrap(t *testing.T) {
 	report(t, approvalWiringViolations(sources(t, true)))
@@ -114,15 +125,22 @@ func TestApprovalRulesCatchViolations(t *testing.T) {
 		"bootstrap/bootstrap.go":                  `package bootstrap; import _ "` + m + `approval/approvalmodule"; import _ "` + m + `approval/adapters/approvalmcp"`,
 		"resource/adapters/resourcehttp/h.go":     `package resourcehttp; import _ "` + m + `gate"`,
 		"approval/adapters/approvalresource/r.go": `package approvalresource; import _ "` + m + `resource"`,
+		"approval/approval.go":                    `package approval; import _ "` + m + `project"`,
+		"approval/approvalsvc/p.go":               `package approvalsvc; import _ "` + m + `project/projectsvc"`,
+		"approval/adapters/approvalproject/p.go":  `package approvalproject; import _ "` + m + `project"`,
+		"project/projectsvc/a.go":                 `package projectsvc; import _ "` + m + `approval/adapters/approvalproject"`,
 	})
 	expectViolations(t, governedApprovalViolations(files),
 		"release/releasesvc/a.go: release/releasesvc imports approval",
-		"source/sourcesvc/a.go: source/sourcesvc imports approval/adapters/approvalpg")
+		"source/sourcesvc/a.go: source/sourcesvc imports approval/adapters/approvalpg",
+		"project/projectsvc/a.go: project/projectsvc imports approval/adapters/approvalproject")
 	expectViolations(t, approvalCouplingViolations(files),
 		"approval/approvalsvc/s.go: approval/approvalsvc imports release",
-		"approval/adapters/approvalhttp/h.go: approval/adapters/approvalhttp imports resource/resourcesvc")
+		"approval/adapters/approvalhttp/h.go: approval/adapters/approvalhttp imports resource/resourcesvc",
+		"approval/approvalsvc/p.go: approval/approvalsvc imports project/projectsvc")
 	expectViolations(t, approvalWiringViolations(files),
 		"source/sourcesvc/a.go: source/sourcesvc imports approval/adapters/approvalpg",
+		"project/projectsvc/a.go: project/projectsvc imports approval/adapters/approvalproject",
 		"audit/auditsvc/s.go: audit/auditsvc imports approval/approvalmodule")
 }
 
@@ -142,7 +160,7 @@ func holdInTxViolations(files []goFile) []string {
 	var out []string
 	for _, f := range files {
 		dir := path.Dir(f.rel)
-		if (dir != "release/releasesvc" && dir != "resource/resourcesvc" && dir != "ai/aisvc") || f.rel == "release/releasesvc/approval.go" {
+		if !governedServices[dir] || f.rel == "release/releasesvc/approval.go" {
 			continue
 		}
 		ast.Inspect(f.file, func(n ast.Node) bool {
@@ -192,8 +210,10 @@ func TestApprovalHoldRuleCatchesViolations(t *testing.T) {
 	files := parseFixtures(t, map[string]string{
 		"release/releasesvc/ok.go":  `package releasesvc; func (s *S) A() { s.approvals.Hold(nil); s.tx.Do(nil, func(ctx C) error { return nil }) }`,
 		"release/releasesvc/bad.go": `package releasesvc; func (s *S) B() { s.tx.Do(nil, func(ctx C) error { return s.approvals.Hold(ctx) }) }`,
-		"project/projectsvc/o.go":   `package projectsvc; func (s *S) C() { s.tx.Do(nil, func(ctx C) error { return s.x.Hold(ctx) }) }`,
+		"project/projectsvc/bad.go": `package projectsvc; func (s *S) C() { s.tx.Do(nil, func(ctx C) error { return s.approvals.Hold(ctx) }) }`,
+		"fleet/fleetsvc/o.go":       `package fleetsvc; func (s *S) D() { s.tx.Do(nil, func(ctx C) error { return s.approvals.Hold(ctx) }) }`,
 	})
 	expectViolations(t, holdInTxViolations(files),
-		"release/releasesvc/bad.go: release/releasesvc/bad.go calls Hold inside a transaction")
+		"release/releasesvc/bad.go: release/releasesvc/bad.go calls Hold inside a transaction",
+		"project/projectsvc/bad.go: project/projectsvc/bad.go calls Hold inside a transaction")
 }

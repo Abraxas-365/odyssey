@@ -3,15 +3,15 @@
 An `approval` rule (`docs/policy.md`) does not refuse an action: it **holds**
 it until someone from IT decides. The `approval` domain owns that request: its
 lifecycle, who may decide, and the events. The governed domains (release,
-resource, ai) never import it; each opens requests through its own
+resource, ai, project) never import it; each opens requests through its own
 `Approvals` port, which an adapter in `approval/adapters/approval{release,
-resource,ai}` implements (the same pattern as `policy`).
+resource,ai,project}` implements (the same pattern as `policy`).
 
 ## The request
 
 | field | meaning |
 |---|---|
-| `action`, `project_id`, `environment_id` | what is held and where (`deploy`, `rollback`, `set_access`, `connect_resource`, `delete_resource`, `enable_ai`) |
+| `action`, `project_id`, `environment_id` | what is held and where (`deploy`, `rollback`, `set_access`, `connect_resource`, `delete_resource`, `enable_ai`, `set_services`); `environment_id` is empty for an action about the whole app (`set_services`) |
 | `summary` | the action in one plain Spanish sentence |
 | `payload` | the domain's own description of the action, as it re-runs |
 | `requested_by` (+ `requested_system`) and the requester's permissions | who asked, and what their token could do **when they asked** (a snapshot) |
@@ -40,7 +40,7 @@ action, same place) returns the request that exists.
 
 ## Direct actions
 
-`set_access`, `connect_resource`, `delete_resource`, `enable_ai` (and
+`set_access`, `connect_resource`, `delete_resource`, `enable_ai`, `set_services` (and
 `create_database` / create-with-connect, which connect): the service answers a
 typed **outcome** (`gate.Outcome`), not an error — HTTP **202**
 `{status:"pending_approval", request_id, message}`; MCP the same result with a

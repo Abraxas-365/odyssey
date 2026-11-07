@@ -228,7 +228,7 @@ releases and resources. Projects are archived, never deleted.
 | `POST` | `/api/v1/projects/:id/archive` | write | 200 project (idempotent) |
 | `PUT` | `/api/v1/projects/:id/tier` | `odyssey:projects:tier` | 200 project (idempotent) |
 | `GET` | `/api/v1/projects/:id/services` | read | 200 `{items}` |
-| `PUT` | `/api/v1/projects/:id/services` | write | 200 `{items}` (idempotent) |
+| `PUT` | `/api/v1/projects/:id/services` | write | 200 `{items}` (idempotent); **202** `pending_approval` when IT's rules hold the change (`set_services`; nothing changed yet) |
 
 The project resource:
 
@@ -261,6 +261,11 @@ Rules:
     version online keeps running as it was. The same list writes nothing;
     otherwise `project.services_changed`. Archived apps refuse it with 422
     `PROJECT_ARCHIVED`.
+  - A change (not the same list again) is judged by IT's rules as
+    `set_services`, about the whole app (no environment; `docs/policy.md`
+    "Services"): 403 `POLICY_DENIED`, or 202 `pending_approval` and nothing
+    changes until IT approves (then it runs as who asked). The built-in
+    `production_services_approval` is born off.
   - Anything but one `web` at `/` with all of the code needs every
     environment's cluster (or the default one, before a first deploy) to run
     several services (agent capability `odicea.services`): otherwise 422
@@ -716,9 +721,11 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
 ### IT's rules (`odyssey:policy:manage`; `docs/policy.md`)
 
 The organization's rules, in CEL, checked before an action happens. The first
-list or evaluate of an organization creates its five built-in rules (the fifth,
-`production_requires_scan`, disabled; an organization that predates a built-in
-gets it on its next read in its default state).
+list or evaluate of an organization creates its six built-in rules
+(`production_requires_scan` and `production_services_approval` disabled; an
+organization that predates a built-in gets it on its next read in its default
+state). The input carries the services an action brings (`services`,
+`changed`, `topology_changed`; `docs/policy.md` "Services").
 
 | Method | Path | Permission | Success |
 |---|---|---|---|

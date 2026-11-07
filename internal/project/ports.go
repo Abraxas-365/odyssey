@@ -7,6 +7,7 @@ package project
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/query"
 )
@@ -22,8 +23,24 @@ type Commands interface {
 	// SetServices replaces the app's services (the next version of the app
 	// takes them). The same list again is a no-op. A list that is not Simple
 	// is refused with Business CodeServicesUnavailable unless the cluster of
-	// every environment can run it (Runtime).
-	SetServices(ctx context.Context, organization identity.OrganizationID, project ID, input SetServices) ([]Service, error)
+	// every environment can run it (Runtime). IT's rules judge the change
+	// (gate.ActionSetServices, the whole app: no environment) before it is
+	// stored; held for approval, nothing changes (ServicesChange.Held).
+	SetServices(ctx context.Context, organization identity.OrganizationID, project ID, input SetServices) (ServicesChange, error)
+}
+
+// Policy is what project asks IT's rules (the policyproject adapter; project
+// never imports policy): may the app's services change like this?
+type Policy interface {
+	gate.Checker
+}
+
+// Approvals is where project holds a change of services IT's rules want
+// approved (the approvalproject adapter; project never imports approval).
+// The approved change re-runs as the requester with the approval's mark on
+// ctx and redeems it (gate.Approver).
+type Approvals interface {
+	gate.Approver
 }
 
 // Runtime is what the project asks of where its environments run (the

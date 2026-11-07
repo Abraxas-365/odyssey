@@ -49,10 +49,11 @@ A bad rule never gets stored.
 
 ### Built-in rules
 
-Every organization has five. They can be switched off (and on), **not edited or
+Every organization has six. They can be switched off (and on), **not edited or
 deleted** (422 `POLICY_BUILTIN`): to change one, switch it off and write
 another. Each has a stable key (`builtin`), unique per organization. Four are
-born **on**; `production_requires_scan` is born **off** (see below).
+born **on**; `production_requires_scan` and `production_services_approval` are
+born **off** (see below).
 
 | key | name | when | effect | born |
 |---|---|---|---|---|
@@ -61,6 +62,13 @@ born **on**; `production_requires_scan` is born **off** (see below).
 | `production_critical_vulnerabilities` | Producción no publica con vulnerabilidades críticas | `action == 'deploy' && project.tier == 'production' && scan.known && scan.critical > 0` | deny | on |
 | `sandbox_not_public` | Sandbox no puede ser pública | `action == 'set_access' && project.tier == 'sandbox' && access.mode == 'public'` | deny | on |
 | `production_requires_scan` | Producción exige revisión de vulnerabilidades | `action == 'deploy' && project.tier == 'production' && scan.checked && !scan.known` | approval | **off** |
+| `production_services_approval` | Cambiar los servicios de producción requiere aprobación de TI | `action == 'set_services' && project.tier == 'production'` | approval | **off** |
+
+`production_services_approval` is off by default because the next production
+deploy is already held by `production_deploy_approval`: a change of services
+reaches no one until a version with it is published. IT that wants to review
+the topology itself (a new public route, a worker) when it is decided, not
+only when it ships, switches it on.
 
 **`production_critical_vulnerabilities` alone can be bypassed, and
 `production_requires_scan` is what closes it.** Whoever builds the image
@@ -109,13 +117,55 @@ fails for a missing field.
 
 | variable | fields |
 |---|---|
-| `action` | `deploy` · `set_access` · `connect_resource` · `delete_resource` · `enable_ai` · `rollback` (`set_secret` is accepted but not enforced in 3a) |
+| `action` | `deploy` · `set_access` · `connect_resource` · `delete_resource` · `enable_ai` · `rollback` · `set_services` (`set_secret` is accepted but not enforced in 3a) |
 | `project` | `tier`, `slug` |
-| `env` | `name` |
+| `env` | `name` (empty for `set_services`: it is about the whole app) |
 | `access` | `mode` (`team` · `organization` · `public`; only for `set_access`) |
 | `actor` | `id`, `permissions` (list) — those of the **authenticated principal** (deferred work: see "Who asks, when the work is deferred") |
 | `resource` | `kind` (`postgres` · `redis` · `files`, for connect/delete) |
 | `scan` | `known`, `checked`, `critical`, `high` |
+| `services` | list of `{name, kind, route, public}` — what the action brings (deploy, rollback, set_services) |
+| `changed` | list of service names that change against what the environment serves |
+| `topology_changed` | `bool`: a service appears, goes away or is laid out differently |
+
+### Services
+
+An app is one or more services (`docs/services.md`); a version is the whole
+set. `deploy`, `rollback` and `set_services` carry them, so IT can write rules
+on the topology, not only on "a deploy":
+
+- **`services`** — what the action brings: the version a deploy or rollback
+  puts online, or the new list of `set_services`. `kind` is `web` or `worker`;
+  `route` is empty for an internal service or a worker; `public` is "answers
+  on the app's address" (a web service with a route). An app of **one** service
+  has one entry, `web` at `/`, so a rule reads the same for it as for an app
+  of several (`services.all(s, s.kind == 'web')` matches it).
+- **`changed`** — against the version the environment **serves**: the
+  services whose image changes, that appear and that go away (a deploy to an
+  environment that serves nothing names them all). For `set_services`, those
+  added, removed or modified in the list.
+- **`topology_changed`** — a service appears, goes away or changes kind,
+  folder, route or prefix stripping. Always `true` for `set_services` (the same
+  list again changes nothing and is not judged). A rollback to a version with a
+  different set of services is `true`: `action == 'rollback' &&
+  topology_changed` stops a restore from adding or retiring services.
+
+A deployment **from source** is judged twice (below). At `authorize` nothing is
+built yet, so `services` is the app's layout and `changed` only names services
+that appear, go away or are laid out differently; at `authorize_scan` the
+version exists and `changed` also names those whose **code** changed. A deploy
+of an image and a rollback know their version from the start.
+
+Example rules:
+
+```cel
+// no workers in sandbox
+action == 'deploy' && project.tier == 'sandbox' && services.exists(s, s.kind == 'worker')
+// a new public route in production waits for IT
+action in ['deploy', 'rollback'] && project.tier == 'production' && topology_changed && services.exists(s, s.public)
+// the api changes only with IT
+action == 'deploy' && 'api' in changed
+```
 
 `actor.permissions` is what the caller's token holds: for REST the token's
 claims; for MCP the **connection's** permissions (the ones the user consented
@@ -247,6 +297,17 @@ On purpose; for most of it TI can still add a rule:
   "Built-in rules"), or write your own `scan.checked && !scan.known` rule —
   not plain `!scan.known`, which also matches the first judgment, before the
   build.
+- **A version of several services is judged as one.** At `authorize_scan` the
+  scan is the sum of the findings of all of its images, and **unknown** if any
+  image has no usable scan: one unscanned service is not a clean version. When
+  some images are unscanned and the others have findings, the version is judged
+  both ways (unknown, and with the findings it has) and the stricter verdict
+  stands, so neither `production_requires_scan` nor a rule on the numbers is
+  hidden by the other.
+- **The platform's own restore is not judged.** When a deployment fails and
+  the platform puts back the version that was serving (`auto_rollback`), it
+  restores exactly that version's services (one the failed version added is
+  retired); no rule is asked, because it only returns to what was online.
 
 ## Who asks, when the work is deferred
 
@@ -279,7 +340,7 @@ the push creates is a system actor's, and it waits for IT at its own
 
 Each governed domain owns a small `Policy` port and one `authorize` method
 (the seam). A provider-side adapter under `policy/adapters/policy{release,
-resource,ai}` implements the port over `policy.Ask`; only `bootstrap` wires
+resource,ai,project}` implements the port over `policy.Ask`; only `bootstrap` wires
 it. The actor comes from the context (`internal/actor`), set from the
 authenticated principal by `httpx` (REST) and `mcpx` (MCP).
 
@@ -291,6 +352,7 @@ authenticated principal by `httpx` (REST) and `mcpx` (MCP).
 | `connect_resource` | release: connect an existing resource to an app | before connecting |
 | `delete_resource` | resource: delete | before deleting |
 | `enable_ai` | ai: turn the app's AI on | before turning on |
+| `set_services` | project: replace the app's services (the whole app, no environment) | before the list is stored; the same list again is not judged |
 
 A **deny** is an error, with the rule's own name in the message; an
 **approval** is not an error:
@@ -305,10 +367,10 @@ error whose `next_step` tells the assistant to show IT's message as it is and
 **not retry or look for a workaround**; an approval is a `pending_approval`
 result with `request_id` and a `next_step` (wait for IT; `get_request` follows it).
 
-**3b seam.** `authorize` in `releasesvc`/`resourcesvc`/`aisvc` is the only place
+**3b seam.** `authorize` in `releasesvc`/`resourcesvc`/`aisvc`/`projectsvc` is the only place
 the approval branch lives: an `approval` verdict is turned into a `gate.Hold`
 and handed to the domain's own `Approvals` port (implemented by
-`approval/adapters/approval{release,resource,ai}`), which opens the request
+`approval/adapters/approval{release,resource,ai,project}`), which opens the request
 and returns `gate.Pending`; the service answers it as a typed outcome
 (`gate.Outcome`), never an error. When someone with the `approvers` permission
 approves, the action runs again as the requester (see `docs/approvals.md`).
@@ -320,5 +382,5 @@ side in `approval_architecture_test.go`):
 
 - only `policy/adapters/policycel` imports cel-go: the domain and service know
   the `Engine` port, not the language;
-- release, resource and ai never import `policy` (they use their own port);
+- release, resource, ai and project never import `policy` (they use their own port);
 - `policy/adapters/*` and `policymodule` are imported only by `bootstrap`.

@@ -37,6 +37,14 @@ func New(deps Deps) Module {
 // this one): an app with several services needs clusters that run them.
 func (m Module) UseFleet(f fleet.Dispatch) { m.svc.UseRuntime(projectfleet.New(f)) }
 
+// UsePolicy wires IT's rules (the policy module is built after this one):
+// a change of the app's services is judged.
+func (m Module) UsePolicy(p project.Policy) { m.svc.UsePolicy(p) }
+
+// UseApprovals wires where a held change of services waits for IT (the
+// approval module is built last).
+func (m Module) UseApprovals(a project.Approvals) { m.svc.UseApprovals(a) }
+
 // Schema is the module's Postgres schema and migration owner.
 const Schema = projectpg.Schema
 
