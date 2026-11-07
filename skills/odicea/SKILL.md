@@ -29,16 +29,17 @@ Lo que **sí** ofrece: **bases de datos** (ver «Bases de datos») y **IA** (ver
 Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él **se pierde al reiniciar o publicar**.
 <!-- ODICEA:LIMITES-ACTUALES fin -->
 
-## Qué puedes hacer (las 22 herramientas)
+## Qué puedes hacer (las 25 herramientas)
 
 | Quiero… | Herramienta |
 |---|---|
 | Saber con qué cuenta y permisos estoy | `whoami` |
-| Ver las apps y su estado, y lo que usan y les falta | `list_apps` (con `needs_attention`), `get_app` (`uses` y `needs_attention`) |
+| Ver las apps y su estado, y lo que usan y les falta | `list_apps` (con `needs_attention`), `get_app` (`uses`, `services` y `needs_attention`) |
 | Saber qué necesita atención ahora (lo mío, y lo de TI si el usuario es de TI) | `get_attention` |
 | Crear una app vacía | `create_app` |
 | Publicar la carpeta del usuario | `deploy_folder` (+ ejecutar el comando que devuelve) |
 | Publicar un repositorio de GitHub | `list_repositories`, `connect_repository`, `publish_now` |
+| Una app con varias partes en un mismo código (frontend + API…) | `detect_services`, `set_services`, `list_services` |
 | Publicar una imagen ya construida (por digest) | `deploy_image` |
 | Seguir una publicación | `get_deployment` |
 | Ver por qué falló el build | `get_build_logs` |
@@ -56,8 +57,8 @@ Solo ves las herramientas que tu rol permite (por ejemplo, un Lector solo lee). 
 ## Flujo para publicar una carpeta
 
 1. `whoami` y `list_apps`: ¿existe ya la app? Si no, `create_app` con un nombre claro.
-2. **Prepara la app** (puerto, health, arranque, sin secretos): sigue [references/preparar-app.md](references/preparar-app.md).
-3. `deploy_folder` con `app` y **`message`**: qué cambió, en una frase corta para el usuario ("Agrega el filtro por vendedor"); es el nombre de la versión que verá su equipo. `port`, `health_path`, `replicas` o `env` solo si hace falta. Devuelve un `command`: **ejecútalo tú en una shell, dentro de la carpeta de la app**.
+2. **Prepara la app** (puerto, health, arranque, sin secretos): sigue [references/preparar-app.md](references/preparar-app.md). Si la carpeta tiene **varias apps** (por ejemplo `apps/web` y `apps/api`), sigue antes [references/varias-partes.md](references/varias-partes.md).
+3. `deploy_folder` con `app` y **`message`**: qué cambió, en una frase corta para el usuario ("Agrega el filtro por vendedor"); es el nombre de la versión que verá su equipo. `port`, `health_path`, `replicas` o `env` solo si hace falta. Devuelve un `command`: **ejecútalo tú en una shell, dentro de la carpeta de la app** (en una app de varias partes, en la carpeta que las contiene a todas).
 4. `get_deployment` con `wait_seconds` (30) y repítelo mientras `done` sea falso.
 5. Si queda en línea, comparte la URL. Si falla, sigue [references/diagnosticar.md](references/diagnosticar.md).
 
@@ -66,6 +67,10 @@ Si el comando de subida falla con un enlace vencido o usado, pide otro `deploy_f
 ## Publicar desde GitHub
 
 Para que cada push publique la app, sigue [references/github.md](references/github.md).
+
+## Apps de varias partes
+
+Una app puede tener varias partes en un mismo código (un frontend, una API, un worker): siguen siendo una app, con una dirección y un historial. Propón las partes con `detect_services`, confírmalas con el usuario, guárdalas con `set_services` y publica la carpeta (o el repositorio) que las contiene a todas. Solo se construyen las que cambiaron. Todo el detalle: [references/varias-partes.md](references/varias-partes.md).
 
 ## Volver atrás
 
@@ -101,7 +106,7 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 
 ## Reglas de TI (cuando algo «no se permite» o «necesita aprobación»)
 
-TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `create_database`, `enable_ai`) falla con `POLICY_DENIED`, o responde `pending_approval` (la solicitud quedó pendiente de TI y se hace sola cuando la aprueben), sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta). Con `get_request` ves cómo va. Antes de volver atrás en producción o hacer pública una app, pregunta al usuario y usa `confirm: true` solo si dijo que sí.
+TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `set_services`, `create_database`, `enable_ai`) falla con `POLICY_DENIED`, o responde `pending_approval` (la solicitud quedó pendiente de TI y se hace sola cuando la aprueben), sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta). Con `get_request` ves cómo va. Antes de volver atrás en producción o hacer pública una app, pregunta al usuario y usa `confirm: true` solo si dijo que sí.
 
 ## Cómo hablar con el usuario
 

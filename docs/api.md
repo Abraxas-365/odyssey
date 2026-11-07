@@ -920,9 +920,11 @@ MCP tool `deploy_folder` returns uploads the folder
 so the agent's own token never leaves its MCP client. The ticket in the path
 (`odu_` + 43 URL-safe base64 characters; only its SHA-256 is stored) is the
 only credential: it names the app, environment, user, MCP client and
-configuration, is good for **one** upload within **10 minutes**, and is spent
+configuration (and `deploy_folder`'s `rebuild`, so the deployment it starts
+reuses no image), is good for **one** upload within **10 minutes**, and is spent
 the moment the request arrives, even if the archive is then refused (ask for
-another).
+another). For an app of several services the folder is the one holding them
+all (each is built from its `root` inside it).
 
 The body is the folder as a raw `.tar.gz` (≤ 100 MiB; the same checks as
 deploy from source, §11 Deployments). It starts the same deployment from

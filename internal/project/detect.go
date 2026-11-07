@@ -64,6 +64,11 @@ type Detected struct {
 // TruncatedNote is the note of a proposal made from part of the code.
 const TruncatedNote = "El repositorio es muy grande y GitHub no listó todos sus archivos: puede faltar algún servicio."
 
+// DetectFiles are the only file names Detect reads (what makes a folder an
+// app or a workspace): an assistant that lists a big folder may send only the
+// paths ending in one of them and get the same proposal.
+func DetectFiles() []string { return detect.Files() }
+
 // Detect proposes the services of the code whose files are d.Paths. It is
 // pure: the same paths give the same proposal.
 func Detect(d DetectServices) Detected {

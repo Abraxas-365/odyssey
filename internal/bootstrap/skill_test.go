@@ -38,7 +38,9 @@ func TestSkillNamesRealTools(t *testing.T) {
 		// get_app's needs_attention and the closed list of uses.attention kinds
 		"needs_attention", "secret_missing", "secrets_unavailable", "resource_not_ready", "resource_failed", "ai_error", "ai_pending", "config_pending", "config_failed", "egress_not_applied",
 		// get_attention's result and the kinds the skill names
-		"all_in_order", "app_vulnerable", "deployment_failed"}
+		"all_in_order", "app_vulnerable", "deployment_failed",
+		// an app's parts: set_services' field and get_app's services[].state
+		"strip_prefix", "not_published"}
 	mentioned := map[string]bool{}
 	err := fs.WalkDir(skills.FS, "odicea", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

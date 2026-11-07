@@ -25,7 +25,7 @@ Una publicación pasa por: **build** (construir la carpeta) → **apply** (envia
 | Código | Qué significa | Qué hacer |
 |---|---|---|
 | `UNSUPPORTED_APP` | No reconoció el tipo de app o cómo arrancarla | Revisa [preparar-app.md](preparar-app.md): `package.json` con `start`, `requirements.txt`, `go.mod` o un `Dockerfile`. Corrige y vuelve a publicar |
-| `BUILD_FAILED` | Falló un paso del build | `get_build_logs`, encuentra la primera línea de error real, corrígela, vuelve a publicar |
+| `BUILD_FAILED` | Falló un paso del build | `get_build_logs`, encuentra la primera línea de error real, corrígela, vuelve a publicar. En una app de varias partes, `get_deployment` dice cuál falló: pásala en `service` |
 | `BUILD_TIMEOUT` | El build tardó demasiado | Reduce dependencias o pasos pesados; `get_build_logs` muestra dónde se va el tiempo |
 | `SOURCE_INVALID` | No se pudo leer la carpeta subida | Vuelve a pedir `deploy_folder` y sube de nuevo desde la raíz de la app |
 | `SOURCE_EXPIRED` | La carpeta subida ya no está disponible | Publica de nuevo |
@@ -34,6 +34,9 @@ Una publicación pasa por: **build** (construir la carpeta) → **apply** (envia
 | `APP_CRASHED` | La app se cierra al arrancar | Casi siempre falta configuración o una dependencia; reproduce el arranque y revisa errores |
 | `IMAGE_PULL_FAILED`, `PUSH_FAILED`, `NO_BUILDER`, `NO_CLUSTER`, `APPLY_FAILED`, `PROMOTE_FAILED`, `INTERNAL` | Problema de la plataforma, no del código | No cambies el código a ciegas: reintenta una vez y, si persiste, pide ayuda a TI con el `deployment_id` |
 | `PROJECT_ARCHIVED` | La app está archivada | Pide al usuario que la restaure en la consola |
+| `SOURCE_ROOT_MISSING` | La carpeta de una parte no está en lo subido | Publica desde la carpeta que contiene todas las partes, o corrige su `root` con `set_services` ([varias-partes.md](varias-partes.md)) |
+| `SERVICES_UNAVAILABLE` | El clúster de la app no puede correr varias partes | Es de TI (su agente es antiguo): díselo al usuario; no lo resuelvas creando otras apps sin su permiso |
+| `SERVICE_SETTINGS_UNAVAILABLE` | El clúster no puede dar algo solo a algunas partes | Es de TI; mientras tanto, dáselo a toda la app (sin `services`) si el usuario está de acuerdo |
 
 ## 3. Si falla por una dependencia que Odicea no ofrece
 

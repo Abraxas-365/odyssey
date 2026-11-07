@@ -141,3 +141,26 @@ func TestReadsAtMostMaxPaths(t *testing.T) {
 		t.Fatalf("got %+v", p)
 	}
 }
+
+// Files is everything a proposal reads: keeping only the paths that end in
+// one of them gives the same proposal (what an assistant sends for a big
+// folder).
+func TestFilesAreAllAProposalReads(t *testing.T) {
+	paths := []string{"pnpm-workspace.yaml", "package.json", "README.md", "apps/web/package.json", "apps/web/src/a.tsx", "apps/web/next.config.js",
+		"apps/api/go.mod", "apps/api/main.go", "apps/api/Dockerfile", "apps/jobs/pyproject.toml", "apps/jobs/worker.py", "packages/ui/package.json"}
+	var kept []string
+	for _, p := range paths {
+		for _, f := range detect.Files() {
+			if p == f || strings.HasSuffix(p, "/"+f) {
+				kept = append(kept, p)
+				break
+			}
+		}
+	}
+	if len(kept) >= len(paths) {
+		t.Fatalf("nothing filtered: %v", kept)
+	}
+	if all, some := detect.Services(paths, ""), detect.Services(kept, ""); !reflect.DeepEqual(all, some) {
+		t.Fatalf("filtered proposal differs:\n%+v\n%+v", all, some)
+	}
+}

@@ -108,7 +108,7 @@ func TestToolsAreListedOnlyWithProjectsRead(t *testing.T) {
 		slices.Sort(names)
 		return names
 	}
-	if got := list(permission.ProjectsRead); !slices.Equal(got, []string{"list_apps", "whoami"}) {
+	if got := list(permission.ProjectsRead); !slices.Equal(got, []string{"list_apps", "list_services", "whoami"}) {
 		t.Fatalf("with projects:read: %v", got)
 	}
 	if got := list(permission.DeploymentsRead); len(got) != 0 {
@@ -242,7 +242,7 @@ func TestCreateAppIsListedOnlyWithProjectsWrite(t *testing.T) {
 	if got := list(permission.ProjectsRead, permission.DeploymentsRead); slices.Contains(got, "create_app") {
 		t.Fatalf("a reader sees create_app: %v", got)
 	}
-	if got := list(permission.ProjectsRead, permission.ProjectsWrite); !slices.Equal(got, []string{"create_app", "list_apps", "whoami"}) {
+	if got := list(permission.ProjectsRead, permission.ProjectsWrite); !slices.Equal(got, []string{"create_app", "list_apps", "list_services", "set_services", "whoami"}) {
 		t.Fatalf("a writer lists %v", got)
 	}
 	// Calling it anyway is refused and creates nothing.

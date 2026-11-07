@@ -784,7 +784,7 @@ func (s *Service) IssueUpload(ctx context.Context, organization identity.Organiz
 	token, hash := release.NewUploadToken()
 	now := time.Now().UTC()
 	t := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: organization, Project: id, Environment: e.ID,
-		TokenHash: hash, Name: input.Name, Message: input.Message, Config: input.Config, Client: event.MetaFrom(ctx).Client,
+		TokenHash: hash, Name: input.Name, Message: input.Message, Rebuild: input.Rebuild, Config: input.Config, Client: event.MetaFrom(ctx).Client,
 		RequestedBy: input.RequestedBy, Permissions: askedWith(ctx, input.RequestedBy), CreatedAt: now, ExpiresAt: now.Add(release.UploadTicketTTL)}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.DeleteUploadTickets(ctx, organization, now.Add(-ticketRetention)); err != nil {
@@ -848,7 +848,7 @@ func (s *Service) RedeemUpload(ctx context.Context, token string, archive io.Rea
 	ctx = event.WithMeta(ctx, event.Meta{CorrelationID: event.MetaFrom(ctx).CorrelationID, Client: t.Client})
 	ctx = actor.With(ctx, actor.Actor{User: t.RequestedBy, Permissions: t.Permissions})
 	d, err := s.DeploySource(ctx, t.Organization, t.Project, t.Environment,
-		release.DeploySource{Name: t.Name, Message: t.Message, Config: t.Config, RequestedBy: t.RequestedBy}, archive)
+		release.DeploySource{Name: t.Name, Message: t.Message, Rebuild: t.Rebuild, Config: t.Config, RequestedBy: t.RequestedBy}, archive)
 	if err != nil {
 		return release.Deployment{}, err
 	}

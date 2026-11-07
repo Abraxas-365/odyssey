@@ -5,6 +5,7 @@ package aimcp
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/ai"
@@ -44,7 +45,9 @@ func Tools(projects project.Queries, commands ai.Commands, opts Options) []mcpx.
 				"and the app receives it as environment variables, in a new version of the app that starts by itself. " +
 				"App code uses the official OpenAI or Anthropic libraries unchanged: they read OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL by themselves. " +
 				"The key is never shown. Already on: nothing changes. " +
-				"app is the slug (see list_apps) or the id; environment defaults to production.",
+				"app is the slug (see list_apps) or the id; environment defaults to production. " +
+				"En una app de varias partes, services (nombres de list_services) limita qué partes reciben la IA; sin services la recibe toda la app y, si ya estaba activa, conserva las partes que tenía. " +
+				"For an app with several services (parts), services (names from list_services) limits which parts receive the AI; without it the whole app does (if it was already on, it keeps its parts).",
 			Toolset:     "resources",
 			Permissions: []string{permission.ProjectsRead, permission.ProjectsWrite},
 			Risk:        mcpx.RiskWrite,
@@ -89,10 +92,16 @@ func (t tools) resolve(ctx context.Context, org identity.OrganizationID, app, en
 	return p, env, nil
 }
 
+// scopeUnavailableCode is the 409 of a scope the app's cluster cannot honor
+// (the same code the release and fleet domains use).
+const scopeUnavailableCode = "SERVICE_SETTINGS_UNAVAILABLE"
+
 // EnableAIIn is enable_ai's input.
 type EnableAIIn struct {
 	App         string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
 	Environment string `json:"environment,omitempty" jsonschema:"entorno de la app; production por defecto"`
+	// Services: nil keeps the parts in force (the whole app when off).
+	Services []string `json:"services,omitempty" jsonschema:"partes de la app que reciben la IA (nombres de list_services); vacío = toda la app. Solo para apps de varias partes. Si lo omites, se conservan las partes que ya la tenían"`
 }
 
 // EnableAIOut is enable_ai's result.
@@ -115,9 +124,17 @@ func (t tools) enable(ctx context.Context, caller mcpx.Principal, in EnableAIIn)
 	if err != nil {
 		return EnableAIOut{}, err
 	}
-	v, err := t.commands.Enable(ctx, caller.Organization, p.ID, env.ID, ai.Enable{RequestedBy: caller.User})
+	enable := ai.Enable{RequestedBy: caller.User}
+	if in.Services != nil { // omitted keeps the parts in force; given (even empty) replaces them
+		services := slices.Clone(in.Services)
+		enable.Services = &services
+	}
+	v, err := t.commands.Enable(ctx, caller.Organization, p.ID, env.ID, enable)
 	if err != nil {
 		var ee *errx.Error
+		if errors.As(err, &ee) && ee.Code == scopeUnavailableCode {
+			return EnableAIOut{}, mcpx.NextStep(ee, "El clúster de esta app todavía no puede dar algo solo a algunas partes: hazlo para toda la app (sin services) o pide a TI que actualice su agente.")
+		}
 		if errors.As(err, &ee) && !errx.IsType(err, errx.TypeNotFound) && !errx.IsType(err, errx.TypeValidation) && !gate.Refusal(ee) {
 			return EnableAIOut{}, mcpx.NextStep(ee, "Muestra el mensaje al usuario tal cual; si habla de un nombre de variable, quítalo con set_env (unset) y vuelve a intentar.")
 		}

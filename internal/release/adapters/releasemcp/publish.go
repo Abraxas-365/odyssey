@@ -8,6 +8,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/query"
@@ -45,6 +46,7 @@ type DeployFolderIn struct {
 	App     string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
 	Message string `json:"message,omitempty" jsonschema:"qué cambió en esta versión, en una frase corta en español para el usuario (por ejemplo: Agrega el filtro por vendedor); hasta 200 caracteres. Es el nombre de la versión en la consola"`
 	Name    string `json:"name,omitempty" jsonschema:"nombre de la carpeta subida (opcional; solo se muestra en modo técnico)"`
+	Rebuild bool   `json:"rebuild,omitempty" jsonschema:"true para construir de nuevo todas las partes aunque su código no haya cambiado (imagen base nueva, un arreglo fuera del código); por defecto se reutiliza lo ya construido"`
 	ConfigIn
 }
 
@@ -53,8 +55,11 @@ type DeployFolderOut struct {
 	App       string    `json:"app" jsonschema:"slug de la app"`
 	UploadURL string    `json:"upload_url" jsonschema:"enlace de subida de un solo uso; no lo muestres ni lo guardes"`
 	ExpiresAt time.Time `json:"expires_at" jsonschema:"cuándo vence el enlace (10 minutos)"`
-	Command   string    `json:"command" jsonschema:"comando para ejecutar tú mismo en una shell, dentro de la carpeta de la app"`
-	NextStep  string    `json:"next_step" jsonschema:"qué hacer ahora"`
+	Command   string    `json:"command" jsonschema:"comando para ejecutar tú mismo en una shell, dentro de la carpeta de la app (si tiene varias partes, la carpeta que las contiene todas)"`
+	// Services is set only when the app has more than one part (or a part
+	// that is not the whole code).
+	Services []FolderService `json:"services,omitempty" jsonschema:"solo si la app tiene varias partes: cada una con su carpeta, relativa a la carpeta desde la que corres el comando"`
+	NextStep string          `json:"next_step" jsonschema:"qué hacer ahora"`
 }
 
 // uploadCommand is the shell command that streams the working folder to
@@ -78,20 +83,32 @@ func (t tools) deployFolder(ctx context.Context, caller mcpx.Principal, in Deplo
 	if t.opts.APIURL == "" {
 		return DeployFolderOut{}, errx.Internal("the API's public URL is not configured: uploads have no address")
 	}
+	services, err := t.projects.Services(ctx, caller.Organization, p.ID)
+	if err != nil {
+		return DeployFolderOut{}, err
+	}
 	ticket, err := t.commands.IssueUpload(ctx, caller.Organization, p.ID, env.ID,
-		release.IssueUpload{Name: in.Name, Message: in.Message, Config: in.config(), RequestedBy: caller.User})
+		release.IssueUpload{Name: in.Name, Message: in.Message, Rebuild: in.Rebuild, Config: in.config(), RequestedBy: caller.User})
 	if err != nil {
 		return DeployFolderOut{}, err
 	}
 	url := t.opts.APIURL + "/uploads/" + ticket.Token
-	return DeployFolderOut{
+	out := DeployFolderOut{
 		App:       p.Slug,
 		UploadURL: url,
 		ExpiresAt: ticket.ExpiresAt,
 		Command:   uploadCommand(url),
-		NextStep: "Ejecuta `command` tú mismo en una shell, dentro de la carpeta de la app (sirve una sola vez y vence en 10 minutos); " +
-			"luego llama a get_deployment (app=" + p.Slug + ") con wait_seconds=30 hasta que done sea true.",
-	}, nil
+	}
+	where := "dentro de la carpeta de la app"
+	if !project.Simple(services) {
+		var roots string
+		out.Services, roots = folderRoots(services)
+		where = "dentro de la carpeta que contiene todas las partes de la app (" + roots + "), no dentro de una de ellas: " +
+			"cada parte se recorta de esa carpeta según su root"
+	}
+	out.NextStep = "Ejecuta `command` tú mismo en una shell, " + where + " (sirve una sola vez y vence en 10 minutos); " +
+		"luego llama a get_deployment (app=" + p.Slug + ") con wait_seconds=30 hasta que done sea true."
+	return out, nil
 }
 
 // DeployImageIn is deploy_image's input.
@@ -179,22 +196,26 @@ type Step struct {
 
 // GetDeploymentOut is get_deployment's result.
 type GetDeploymentOut struct {
-	App          string     `json:"app" jsonschema:"slug de la app"`
-	DeploymentID string     `json:"deployment_id"`
-	Status       string     `json:"status" jsonschema:"building, pending, applying, verifying, ready, failed o cancelled"`
-	Step         string     `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló)"`
-	Steps        []Step     `json:"steps" jsonschema:"los pasos de la publicación y cómo va cada uno"`
-	Reason       string     `json:"reason" jsonschema:"deploy, rollback o auto_rollback"`
-	Done         bool       `json:"done" jsonschema:"true cuando ya terminó (en línea, falló o fue reemplazada); si es false vuelve a llamar con wait_seconds"`
-	URL          string     `json:"url,omitempty" jsonschema:"dirección pública de la app, cuando esta versión está en línea"`
-	Image        string     `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
-	Repository   string     `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
-	Commit       string     `json:"commit,omitempty" jsonschema:"SHA completo del commit si vino de GitHub"`
-	Failure      *Failure   `json:"failure,omitempty" jsonschema:"por qué no quedó en línea"`
-	CreatedAt    time.Time  `json:"created_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	ConsoleURL   string     `json:"console_url" jsonschema:"enlace a la app en la consola"`
-	NextStep     string     `json:"next_step" jsonschema:"qué hacer ahora"`
+	App          string   `json:"app" jsonschema:"slug de la app"`
+	DeploymentID string   `json:"deployment_id"`
+	Status       string   `json:"status" jsonschema:"building, pending, applying, verifying, ready, failed o cancelled"`
+	Step         string   `json:"step,omitempty" jsonschema:"paso en el que está (o en el que falló)"`
+	Steps        []Step   `json:"steps" jsonschema:"los pasos de la publicación y cómo va cada uno"`
+	Reason       string   `json:"reason" jsonschema:"deploy, rollback o auto_rollback"`
+	Done         bool     `json:"done" jsonschema:"true cuando ya terminó (en línea, falló o fue reemplazada); si es false vuelve a llamar con wait_seconds"`
+	URL          string   `json:"url,omitempty" jsonschema:"dirección pública de la app, cuando esta versión está en línea"`
+	Image        string   `json:"image,omitempty" jsonschema:"imagen corta; vacía mientras se construye"`
+	Repository   string   `json:"repository,omitempty" jsonschema:"repo de GitHub de donde vino (owner/nombre)"`
+	Commit       string   `json:"commit,omitempty" jsonschema:"SHA completo del commit si vino de GitHub"`
+	Failure      *Failure `json:"failure,omitempty" jsonschema:"por qué no quedó en línea"`
+	// Changed is set only when known (nil is unknown, [] is none).
+	Changed    []string   `json:"changed,omitempty" jsonschema:"partes que cambian en esta versión; las demás siguen igual"`
+	Rebuild    bool       `json:"rebuild,omitempty" jsonschema:"true si se pidió construir de nuevo todas las partes sin reutilizar imágenes"`
+	Builds     []BuildOut `json:"builds,omitempty" jsonschema:"el build de cada parte, si la versión vino de código: estado y si reutilizó una imagen anterior"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ConsoleURL string     `json:"console_url" jsonschema:"enlace a la app en la consola"`
+	NextStep   string     `json:"next_step" jsonschema:"qué hacer ahora"`
 }
 
 func (t tools) getDeployment(ctx context.Context, caller mcpx.Principal, in GetDeploymentIn) (GetDeploymentOut, error) {
@@ -218,7 +239,7 @@ func (t tools) getDeployment(ctx context.Context, caller mcpx.Principal, in GetD
 	if err != nil {
 		return GetDeploymentOut{}, err
 	}
-	return t.deploymentOut(p, d, cur), nil
+	return t.deploymentOut(ctx, caller.Organization, p, d, cur), nil
 }
 
 // wait re-reads d every poll interval until it finishes, the wait runs out
@@ -245,7 +266,7 @@ func (t tools) wait(ctx context.Context, caller mcpx.Principal, p project.Projec
 	return d, nil
 }
 
-func (t tools) deploymentOut(p project.Project, d release.Deployment, cur release.Current) GetDeploymentOut {
+func (t tools) deploymentOut(ctx context.Context, org identity.OrganizationID, p project.Project, d release.Deployment, cur release.Current) GetDeploymentOut {
 	v := version(d, cur.Deployment)
 	out := GetDeploymentOut{
 		App: p.Slug, DeploymentID: v.DeploymentID, Status: v.Status, Step: v.Step, Steps: make([]Step, 0, len(d.Steps)), Reason: v.Reason,
@@ -258,12 +279,21 @@ func (t tools) deploymentOut(p project.Project, d release.Deployment, cur releas
 	if d.Status == release.StatusReady && cur.Deployment != nil && cur.Deployment.ID == d.ID {
 		out.URL = cur.URL
 	}
+	out.Rebuild = d.Rebuild
+	if d.Changed != nil {
+		out.Changed = append([]string{}, d.Changed...)
+	}
+	out.Builds = t.buildsOut(ctx, org, p, d)
 	logs := "Usa get_build_logs (app=" + p.Slug + ", deployment_id=" + out.DeploymentID + ") para ver el log del build."
+	failedBuilds := failedServices(out.Builds)
 	switch {
 	case d.Status == release.StatusReady && out.URL != "":
 		out.NextStep = "Está en línea: comparte con el usuario la dirección " + out.URL + "."
 	case d.Status == release.StatusReady:
 		out.NextStep = "Esta versión terminó bien pero ya no es la que está en línea: usa get_app para ver la actual."
+	case d.Status == release.StatusFailed && d.Step == release.StepBuild && len(failedBuilds) > 0:
+		out.NextStep = "El build de " + strings.Join(failedBuilds, ", ") + " falló. Usa get_build_logs (app=" + p.Slug + ", deployment_id=" + out.DeploymentID +
+			", service=" + failedBuilds[0] + ") para ver su log. Corrige el código y vuelve a publicar con deploy_folder."
 	case d.Status == release.StatusFailed && d.Build != nil && d.Step == release.StepBuild:
 		out.NextStep = "El build falló. " + logs + " Corrige el código y vuelve a publicar con deploy_folder."
 	case d.Status == release.StatusFailed:
@@ -287,11 +317,13 @@ type GetBuildLogsIn struct {
 	DeploymentID string `json:"deployment_id,omitempty" jsonschema:"publicación cuyo build leer; si falta, la misma que mostraría get_deployment"`
 	After        *int64 `json:"after,omitempty" jsonschema:"seguir leyendo después de este cursor (el next de la respuesta anterior); si falta, devuelve las últimas líneas"`
 	Limit        int    `json:"limit,omitempty" jsonschema:"cuántas líneas devolver (por defecto 200, máximo 1000)"`
+	Service      string `json:"service,omitempty" jsonschema:"parte de la app cuyo build leer; por defecto la primera que falló, si no la primera"`
 }
 
 // GetBuildLogsOut is get_build_logs's result.
 type GetBuildLogsOut struct {
 	App         string   `json:"app" jsonschema:"slug de la app"`
+	Service     string   `json:"service,omitempty" jsonschema:"parte de la app a la que pertenece este build"`
 	BuildID     string   `json:"build_id"`
 	BuildStatus string   `json:"build_status" jsonschema:"queued, running, succeeded, failed o cancelled"`
 	Log         string   `json:"log" jsonschema:"las líneas del log, una por renglón"`
@@ -318,18 +350,24 @@ func (t tools) getBuildLogs(ctx context.Context, caller mcpx.Principal, in GetBu
 	if err != nil {
 		return GetBuildLogsOut{}, err
 	}
-	if d.Build == nil {
+	if d.Build == nil && len(d.Builds) == 0 {
+		if d.Reason != release.ReasonDeploy {
+			// a configuration change or a return to an earlier version reuses
+			// that version's images: its builds are in the version it came from
+			return GetBuildLogsOut{}, mcpx.NextStep(errx.Business("this publication reused an earlier version: it has no build"),
+				"Esta publicación no construyó nada (aplica un cambio de configuración o vuelve a una versión anterior): usa list_versions (app="+p.Slug+") y pasa el deployment_id de una versión publicada con un build.")
+		}
 		return GetBuildLogsOut{}, mcpx.NextStep(errx.Business("this version was published from an image: it has no build"),
 			"Esta versión se publicó desde una imagen y no tiene build: get_deployment muestra su estado.")
 	}
-	b, err := t.builds.Find(ctx, caller.Organization, *d.Build)
+	service, b, err := t.logsBuild(ctx, caller.Organization, d, in.Service)
 	if err != nil {
 		return GetBuildLogsOut{}, err
 	}
 	if b.Project != p.ID {
 		return GetBuildLogsOut{}, errx.NotFound("build not found")
 	}
-	out := GetBuildLogsOut{App: p.Slug, BuildID: b.ID.String(), BuildStatus: string(b.Status)}
+	out := GetBuildLogsOut{App: p.Slug, Service: service, BuildID: b.ID.String(), BuildStatus: string(b.Status)}
 	if b.Error != nil {
 		out.Failure = &Failure{Code: b.Error.Code, Message: b.Error.Message, Detail: b.Error.Detail}
 	}

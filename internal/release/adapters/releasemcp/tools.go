@@ -61,9 +61,11 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 			Description: "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), " +
 				"la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. " +
 				"También dice lo que la app usa (acceso, identidad, bases de datos, secretos, IA, salida a internet) en `uses`, y lo que le falta en `uses.attention`. " +
+				"En `services` están las partes de la app (una sola si es simple) y el estado en línea de cada una. " +
 				"Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), " +
 				"the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. " +
 				"It also reports what the app uses (access, identity, databases, secrets, AI, internet egress) in `uses`, and what is missing in `uses.attention`. " +
+				"`services` lists the app's parts (one if it is simple) and the online state of each. " +
 				"app is the slug (see list_apps) or the id.",
 			Toolset:     "apps",
 			Permissions: []string{permission.ProjectsRead, permission.DeploymentsRead},
@@ -91,10 +93,14 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 				"dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. " +
 				"No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. " +
 				"Pasa siempre `message`: qué cambió, en una frase corta para el usuario; es el nombre de la versión en la consola. " +
+				"Si la app tiene varias partes (`services` en get_app), corre el comando en la carpeta que las contiene todas (la raíz del repo), no dentro de una parte: " +
+				"cada una se recorta de ahí según su carpeta. Solo se construyen las partes cuyo código cambió; con rebuild=true se construyen todas de nuevo. " +
 				"Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: " +
 				"it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, " +
 				"inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. " +
 				"Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. " +
+				"If the app has several services (`services` in get_app), run the command in the folder that contains all of them (the repo root), not inside one service: " +
+				"each one is cropped from it by its root. Only the services whose code changed are built; with rebuild=true all are built again. " +
 				"app is the slug (see list_apps) or the id; env only takes non-secret values.",
 			Toolset:     "versions",
 			Permissions: []string{permission.DeploymentsCreate, permission.ProjectsRead},
@@ -117,10 +123,10 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 			Title: "Estado de una publicación",
 			Description: "Muestra una publicación de la app: paso actual, resultado, dirección cuando está en línea y el error con qué hacer si falló. " +
 				"Sin deployment_id es la que está en curso o, si no hay, la que está en línea. Con wait_seconds (hasta 45) espera a que termine antes de responder: " +
-				"úsala después de publicar, repitiéndola mientras done sea false. " +
+				"úsala después de publicar, repitiéndola mientras done sea false. En una app con varias partes dice cuáles cambian (`changed`) y el build de cada una (`builds`). " +
 				"Shows one publication of the app: current step, outcome, its URL once online and the error with what to do if it failed. " +
 				"Without deployment_id it is the one in progress or, if none, the one online. With wait_seconds (up to 45) it waits for it to finish before answering: " +
-				"use it after publishing, repeating while done is false. app is the slug (see list_apps) or the id.",
+				"use it after publishing, repeating while done is false. In an app with several services it says which ones change (`changed`) and each one's build (`builds`). app is the slug (see list_apps) or the id.",
 			Toolset:     "versions",
 			Permissions: []string{permission.DeploymentsRead, permission.ProjectsRead},
 			Risk:        mcpx.RiskRead,
@@ -131,8 +137,10 @@ func Tools(projects project.Queries, commands release.Commands, queries release.
 			Title: "Logs del build",
 			Description: "Muestra el log del build de una publicación hecha desde código (carpeta o GitHub): por defecto las últimas 200 líneas, para no llenar el contexto. " +
 				"Úsala cuando get_deployment diga que el build falló. Con after (el next de la respuesta anterior) sigue leyendo desde ahí. " +
+				"Con varias partes, `service` elige la parte (por defecto la primera que falló). " +
 				"Shows the build log of a publication made from source (folder or GitHub): the last 200 lines by default, to spare context. " +
 				"Use it when get_deployment says the build failed. With after (the previous answer's next) it keeps reading from there. " +
+				"With several services, `service` picks the one (the first that failed by default). " +
 				"app is the slug (see list_apps) or the id; without deployment_id it is the same publication get_deployment shows.",
 			Toolset:     "versions",
 			Permissions: []string{permission.DeploymentsRead, permission.ProjectsRead},
@@ -259,6 +267,7 @@ type Version struct {
 	CreatedByName string     `json:"created_by_name,omitempty" jsonschema:"nombre de quien la publicó según el directorio de la empresa al publicarla; vacío si aún no se conoce"`
 	RequestedVia  string     `json:"requested_via,omitempty" jsonschema:"desde dónde se pidió: console, assistant:<preset>, github o platform; vacío en versiones antiguas"`
 	Error         *Failure   `json:"error,omitempty"`
+	Changed       []string   `json:"changed,omitempty" jsonschema:"partes que cambian en esta versión; las demás siguen igual"`
 	CreatedAt     time.Time  `json:"created_at"`
 	FinishedAt    *time.Time `json:"finished_at,omitempty"`
 	IsCurrent     bool       `json:"is_current" jsonschema:"si es la versión que está en línea ahora"`
@@ -286,6 +295,9 @@ func version(d release.Deployment, current *release.Deployment) Version {
 	}
 	if d.Error != nil {
 		v.Error = &Failure{Code: d.Error.Code, Message: d.Error.Message, Detail: d.Error.Detail}
+	}
+	if d.Changed != nil {
+		v.Changed = append([]string{}, d.Changed...)
 	}
 	return v
 }
@@ -327,6 +339,8 @@ type GetAppOut struct {
 	LastDeployment *Version   `json:"last_deployment,omitempty" jsonschema:"la publicación más reciente, termine como termine"`
 	// Uses is what the app depends on and what is missing.
 	Uses UsesOut `json:"uses" jsonschema:"lo que usa la app (acceso, identidad, bases de datos, secretos, IA, salida a internet) y lo que le falta: no hace falta llamar a otras tools para saberlo"`
+	// Services are the app's parts and how each one runs online.
+	Services []ServiceOut `json:"services" jsonschema:"las partes de la app (al menos una): cómo está configurada cada una y su estado en línea; una app simple tiene una sola parte web en /. Si una está en failed, needs_attention es true"`
 	// Repository is the GitHub repository the app publishes from, if connected.
 	Repository *ConnectedRepo `json:"repository,omitempty" jsonschema:"repo de GitHub conectado: cada push a su rama publica la app"`
 }
@@ -359,6 +373,18 @@ func (t tools) getApp(ctx context.Context, caller mcpx.Principal, in GetAppIn) (
 		out.Uses = usesOf(uses)
 		out.Access = &AccessOut{Mode: string(uses.Access.Mode), Pending: uses.Access.Pending}
 		out.NeedsAttention = uses.NeedsPeople()
+	}
+	// Services never fail get_app either: unreadable configuration leaves the
+	// list empty, unreadable states leave each one "unknown".
+	out.Services = []ServiceOut{}
+	if configured, err := t.projects.Services(ctx, caller.Organization, p.ID); err != nil {
+		slog.Warn("get_app: services unavailable", "app", p.ID, "error", err)
+		out.NeedsAttention = true
+	} else {
+		out.Services = t.servicesOf(ctx, caller.Organization, p, env, configured)
+		if anyFailed(out.Services) {
+			out.NeedsAttention = true
+		}
 	}
 	if cur.Deployment != nil {
 		v := version(*cur.Deployment, cur.Deployment)

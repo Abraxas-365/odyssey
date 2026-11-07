@@ -3,6 +3,7 @@ package sourcemcp_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -45,8 +46,11 @@ type github struct {
 	connected     []source.Connect
 	connectedBy   []string
 	published     int
+	publishedWith []source.Publish
 	publishErr    error
 	repoQueries   []string
+	// detected records DetectServices calls ("own-installation repo branch root").
+	detected []string
 	// onList runs at the nth ListPushes call (to make a deployment appear).
 	onList func(n int)
 	lists  int
@@ -111,10 +115,20 @@ func (g *github) Publish(_ context.Context, _ identity.OrganizationID, app proje
 		return source.Push{}, g.publishErr
 	}
 	g.published++
+	g.publishedWith = append(g.publishedWith, in)
 	push := source.Push{ID: source.NewPushID(), Project: app, Status: source.StatusQueued, Trigger: source.TriggerManual, RequestedBy: in.RequestedBy,
 		Git: build.GitRef{Repository: "acme/cotizador", Branch: "main", Commit: strings.Repeat("cd", 20)}}
 	g.pushes = append([]source.Push{push}, g.pushes...)
 	return push, nil
+}
+
+// DetectServices proposes from a fixed monorepo tree (the real one reads
+// GitHub's).
+func (g *github) DetectServices(_ context.Context, _ identity.OrganizationID, inst source.InstallationID, repo int64, branch, root string) (project.Detected, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.detected = append(g.detected, fmt.Sprint(inst == g.installations[0].ID, " ", repo, " ", branch, " ", root))
+	return project.Detect(project.DetectServices{Paths: []string{"apps/web/package.json", "apps/api/go.mod"}, Root: root}), nil
 }
 
 // deploy marks the newest push as deployed.
@@ -220,7 +234,7 @@ func TestToolsAreListedByPermission(t *testing.T) {
 		var names []string
 		for _, tool := range res.Tools {
 			names = append(names, tool.Name)
-			if tool.OutputSchema == nil || tool.Annotations == nil || tool.Annotations.ReadOnlyHint != (tool.Name == "list_repositories") {
+			if tool.OutputSchema == nil || tool.Annotations == nil || tool.Annotations.ReadOnlyHint != (tool.Name == "list_repositories" || tool.Name == "detect_services") {
 				t.Fatalf("%s: schema/annotations %+v", tool.Name, tool.Annotations)
 			}
 		}
@@ -230,14 +244,15 @@ func TestToolsAreListedByPermission(t *testing.T) {
 	if got := list(reader...); len(got) != 0 {
 		t.Fatalf("a reader lists %v", got)
 	}
-	if got := list(writer...); !slices.Equal(got, []string{"connect_repository", "list_repositories", "publish_now"}) {
+	if got := list(writer...); !slices.Equal(got, []string{"connect_repository", "detect_services", "list_repositories", "publish_now"}) {
 		t.Fatalf("writer lists %v", got)
 	}
-	// publish_now needs deployments:create + projects:read; list_repositories projects:write.
+	// publish_now needs deployments:create + projects:read; list_repositories
+	// and detect_services projects:write.
 	if got := list(permission.ProjectsRead, permission.DeploymentsCreate); !slices.Equal(got, []string{"publish_now"}) {
 		t.Fatalf("deployer lists %v", got)
 	}
-	if got := list(permission.ProjectsWrite); !slices.Equal(got, []string{"list_repositories"}) {
+	if got := list(permission.ProjectsWrite); !slices.Equal(got, []string{"detect_services", "list_repositories"}) {
 		t.Fatalf("projects:write lists %v", got)
 	}
 
@@ -247,13 +262,14 @@ func TestToolsAreListedByPermission(t *testing.T) {
 		"list_repositories":  nil,
 		"connect_repository": {"app": "cotizador", "repository": "acme/cotizador"},
 		"publish_now":        {"app": "cotizador"},
+		"detect_services":    {"repository": "acme/cotizador"},
 	} {
 		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
 		if err == nil && !res.IsError {
 			t.Fatalf("%s ran for a reader", tool)
 		}
 	}
-	if len(f.gh.connected) != 0 || f.gh.published != 0 || len(f.gh.repoQueries) != 0 {
+	if len(f.gh.connected) != 0 || f.gh.published != 0 || len(f.gh.repoQueries) != 0 || len(f.gh.detected) != 0 {
 		t.Fatalf("something ran: %+v", f.gh)
 	}
 }
@@ -302,6 +318,7 @@ func TestListRepositoriesWhenGitHubIsOffOrNotInstalled(t *testing.T) {
 		"list_repositories":  nil,
 		"connect_repository": {"app": "cotizador", "repository": "acme/cotizador"},
 		"publish_now":        {"app": "cotizador"},
+		"detect_services":    {"repository": "acme/cotizador"},
 	} {
 		_, res := call[sourcemcp.ListRepositoriesOut](t, cs, tool, args)
 		if body := errorBody(t, res); body["code"] != source.CodeNotConfigured || !strings.Contains(body["next_step"], "GitHub no está habilitado") {
@@ -455,11 +472,84 @@ func TestPublishNow(t *testing.T) {
 		t.Fatalf("out: %+v", out)
 	}
 
-	// Still queued after the wait.
+	// Still queued after the wait; rebuild reaches the command.
 	f.gh.onList = nil
-	out, _ = call[sourcemcp.PublishNowOut](t, cs, "publish_now", map[string]any{"app": "cotizador"})
+	out, _ = call[sourcemcp.PublishNowOut](t, cs, "publish_now", map[string]any{"app": "cotizador", "rebuild": true})
 	if out.DeploymentID != "" || !strings.Contains(out.NextStep, "unos segundos") {
 		t.Fatalf("queued: %+v", out)
+	}
+	if len(f.gh.publishedWith) != 2 || f.gh.publishedWith[0].Rebuild || !f.gh.publishedWith[1].Rebuild || f.gh.publishedWith[1].RequestedBy != user {
+		t.Fatalf("published with %+v", f.gh.publishedWith)
+	}
+}
+
+func TestDetectServicesFromAFolder(t *testing.T) {
+	f := newFixture(t)
+	f.gh.enabled = false // a folder needs no GitHub
+	cs := f.connect(t, f.org, writer...)
+	paths := []any{"package.json", "pnpm-workspace.yaml", "apps/web/package.json", "apps/api/go.mod", "apps/jobs/pyproject.toml", "node_modules/x/package.json"}
+	out, res := call[sourcemcp.DetectServicesOut](t, cs, "detect_services", map[string]any{"paths": paths})
+	if res.IsError {
+		t.Fatalf("%+v", res.Content)
+	}
+	var got []string
+	for _, s := range out.Items {
+		got = append(got, s.Name+":"+s.Kind+":"+s.Root+":"+s.Route+":"+s.Evidence)
+	}
+	if !slices.Equal(got, []string{"web:web:apps/web:/:apps/web/package.json", "api:web:apps/api:/api:apps/api/go.mod", "jobs:worker:apps/jobs::apps/jobs/pyproject.toml"}) ||
+		out.Notes == nil || out.Truncated || !strings.Contains(out.NextStep, "set_services") || len(f.gh.detected) != 0 {
+		t.Fatalf("got %v %+v", got, out)
+	}
+
+	// One app is just an app; root narrows the search.
+	out, _ = call[sourcemcp.DetectServicesOut](t, cs, "detect_services", map[string]any{"paths": []any{"go.mod", "main.go"}})
+	if len(out.Items) != 1 || !strings.Contains(out.NextStep, "no hace falta set_services") {
+		t.Fatalf("one app: %+v", out)
+	}
+	out, _ = call[sourcemcp.DetectServicesOut](t, cs, "detect_services", map[string]any{"paths": paths, "root": "apps/api"})
+	if len(out.Items) != 1 || out.Items[0].Root != "" {
+		t.Fatalf("under root: %+v", out)
+	}
+	out, _ = call[sourcemcp.DetectServicesOut](t, cs, "detect_services", map[string]any{"paths": []any{"README.md"}})
+	if len(out.Items) != 0 || !strings.Contains(out.NextStep, "ninguna app") {
+		t.Fatalf("nothing: %+v", out)
+	}
+}
+
+func TestDetectServicesFromARepository(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, writer...)
+	out, res := call[sourcemcp.DetectServicesOut](t, cs, "detect_services", map[string]any{"repository": "ACME/Cotizador", "branch": "dev"})
+	if res.IsError {
+		t.Fatalf("%+v", res.Content)
+	}
+	if len(out.Items) != 2 || out.Items[1].Route != "/api" || !slices.Equal(f.gh.detected, []string{"true 100 dev "}) {
+		t.Fatalf("got %+v, asked %v", out, f.gh.detected)
+	}
+}
+
+func TestDetectServicesRejectsBadInput(t *testing.T) {
+	f := newFixture(t)
+	cs := f.connect(t, f.org, writer...)
+	cases := map[string]struct {
+		args map[string]any
+		want string
+	}{
+		"nothing":          {args: map[string]any{}, want: "git ls-files"},
+		"both":             {args: map[string]any{"paths": []any{"go.mod"}, "repository": "acme/cotizador"}, want: "not both"},
+		"an escaping root": {args: map[string]any{"paths": []any{"go.mod"}, "root": "../x"}, want: "VALIDATION"},
+		"an unknown repo":  {args: map[string]any{"repository": "acme/nadie"}, want: "list_repositories"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, res := call[sourcemcp.DetectServicesOut](t, cs, "detect_services", c.args)
+			if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, c.want) {
+				t.Fatalf("got %+v", res.Content)
+			}
+		})
+	}
+	if len(f.gh.detected) != 0 {
+		t.Fatalf("detected anyway: %v", f.gh.detected)
 	}
 }
 

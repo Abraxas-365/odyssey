@@ -1,7 +1,7 @@
 // Package projectmcp is the project domain's MCP tools: who the caller is
-// (whoami), which apps their organization has (list_apps) and creating one
-// (create_app). They call the same project.Commands and project.Queries as
-// the REST API.
+// (whoami), which apps their organization has (list_apps), creating one
+// (create_app) and an app's parts (list_services, set_services). They call
+// the same project.Commands and project.Queries as the REST API.
 package projectmcp
 
 import (
@@ -31,7 +31,7 @@ type Options struct {
 	NeedingAttention func(ctx context.Context, org identity.OrganizationID, apps []project.ID) (map[project.ID]bool, error)
 }
 
-// Tools are whoami, list_apps and create_app.
+// Tools are whoami, list_apps, create_app, list_services and set_services.
 func Tools(commands project.Commands, queries project.Queries, opts Options) []mcpx.Tool {
 	opts.ConsoleURL = strings.TrimRight(opts.ConsoleURL, "/")
 	t := tools{commands: commands, queries: queries, opts: opts}
@@ -83,6 +83,39 @@ func Tools(commands project.Commands, queries project.Queries, opts Options) []m
 			Permissions: []string{permission.ProjectsWrite},
 			Risk:        mcpx.RiskWrite,
 		}, t.createApp),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "list_services",
+			Title: "Partes de una app",
+			Description: "Lista las partes (servicios) de una app, en su orden: nombre, tipo (web responde en la dirección de la app; worker corre sin puerto, " +
+				"como un consumidor de colas), carpeta del código y ruta de la dirección que atiende. Una app nueva tiene una sola parte, web, en / con todo el código. " +
+				"Úsala antes de set_services, y para saber qué nombres pasar como services en set_env, request_secret, create_database y enable_ai. " +
+				"Lists an app's parts (services) in order: name, kind (web answers on the app's address; worker runs without a port, like a queue consumer), " +
+				"code folder and the address path it answers. A new app has one part, web, at / with all the code. Use it before set_services, " +
+				"and to know which names to pass as services to set_env, request_secret, create_database and enable_ai. app is the slug (see list_apps) or the id.",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsRead},
+			Risk:        mcpx.RiskRead,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.listServices),
+		mcpx.Typed(mcpx.Tool{
+			Name:  "set_services",
+			Title: "Definir las partes de una app",
+			Description: "Define las partes (servicios) de una app que tiene varias en un mismo repositorio o carpeta (por ejemplo un frontend en apps/web y una API en apps/api): " +
+				"la lista completa, en orden. Cada parte tiene name (minúsculas y números, hasta 20), kind (web o worker), root (su carpeta, relativa a la carpeta que se publica) " +
+				"y route (la ruta de la dirección que atiende: / para el sitio, /api para todo lo que empieza con /api; vacía para una parte web interna que solo ven las demás). " +
+				"strip_prefix quita la ruta antes de que llegue la petición (la parte ve /users en vez de /api/users). Máximo 8. " +
+				"Propónla con detect_services, confírmala con el usuario y guárdala aquí; la próxima versión la usa. Si la lista es la misma no cambia nada. " +
+				"Las reglas de TI pueden dejarla esperando su aprobación (pending_approval). " +
+				"Sets the parts (services) of an app that has several in one repository or folder (say a frontend in apps/web and an API in apps/api): the whole list, in order. " +
+				"Each has name (lowercase letters and digits, up to 20), kind (web or worker), root (its folder, relative to the folder that is published) and route " +
+				"(the address path it answers: / for the site, /api for everything under /api; empty for an internal web part only the others reach). " +
+				"strip_prefix removes the route before the request reaches it. At most 8. Propose it with detect_services, confirm it with the user and save it here; " +
+				"the next version uses it. The same list changes nothing. IT's rules may hold it for approval (pending_approval).",
+			Toolset:     "apps",
+			Permissions: []string{permission.ProjectsWrite, permission.ProjectsRead},
+			Risk:        mcpx.RiskWrite,
+			Annotations: mcpx.Annotations{Idempotent: true},
+		}, t.setServices),
 	}
 }
 

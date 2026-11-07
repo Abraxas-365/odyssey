@@ -519,6 +519,17 @@ func TestGetBuildLogsErrors(t *testing.T) {
 		t.Fatalf("image: %v", body)
 	}
 
+	// A configuration change or a rollback built nothing: point to list_versions.
+	for _, reason := range []release.Reason{release.ReasonConfig, release.ReasonRollback} {
+		d := release.Deployment{ID: release.NewDeploymentID(), Organization: f.org, Project: f.app, Environment: f.env, Status: release.StatusReady,
+			Step: release.StepPromote, Reason: reason, CreatedAt: t0.Add(8 * time.Hour)}
+		f.releases.deployments = append(f.releases.deployments, d)
+		_, res = call[releasemcp.GetBuildLogsOut](t, cs, "get_build_logs", map[string]any{"app": "cotizador", "deployment_id": d.ID.String()})
+		if body := errorBody(t, res); !strings.Contains(body["next_step"], "list_versions") {
+			t.Fatalf("%s: %v", reason, body)
+		}
+	}
+
 	// A build of another app is NotFound, like the REST route.
 	withBuild(f, build.StatusRunning, project.NewID())
 	_, res = call[releasemcp.GetBuildLogsOut](t, cs, "get_build_logs", map[string]any{"app": "cotizador"})

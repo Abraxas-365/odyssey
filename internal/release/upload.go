@@ -52,9 +52,12 @@ func MustParseUploadTicketID(raw string) UploadTicketID {
 // configuration. The client the ticket names comes from the request's
 // provenance (event.Meta), never from the input. Message is what changed, in
 // the words of whoever asked; the deployment the upload starts carries it.
+// Rebuild makes that deployment build every service again (no reuse of an
+// earlier image of the same code: a newer base image, a fix outside it).
 type IssueUpload struct {
 	Name    string `json:"name"`
 	Message string `json:"message"`
+	Rebuild bool   `json:"rebuild"`
 	Config
 	RequestedBy identity.UserID `json:"-"`
 }
@@ -87,7 +90,9 @@ type UploadTicket struct {
 	TokenHash    []byte                  `json:"-" db:"token_hash"`
 	Name         string                  `json:"name" db:"name"`
 	Message      string                  `json:"message" db:"message"`
-	Config       Config                  `json:"config" db:"-"`
+	// Rebuild is IssueUpload's: the deployment the upload starts reuses no image.
+	Rebuild bool   `json:"rebuild" db:"rebuild"`
+	Config  Config `json:"config" db:"-"`
 	// Client is the provenance of the request that issued it ("mcp:<client>"):
 	// the deployment the upload starts is attributed to it.
 	Client      string          `json:"client" db:"client"`

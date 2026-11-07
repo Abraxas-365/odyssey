@@ -168,6 +168,11 @@ func readable(dir string) bool {
 
 func markerRank(file string) int { return slices.Index(markers, file) }
 
+// Files are the only file names a proposal reads (the markers and the
+// workspace files): a caller that lists a big folder may send only the paths
+// that end in one of them and get the same proposal.
+func Files() []string { return slices.Concat(markers, workspaceFiles) }
+
 // workspaceFiles mark a folder as a workspace of apps (not an app).
 var workspaceFiles = []string{"pnpm-workspace.yaml", "turbo.json", "nx.json", "lerna.json", "go.work", "rush.json"}
 

@@ -5,6 +5,8 @@ package resourcemcp
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -44,7 +46,10 @@ func Tools(projects project.Queries, commands resource.Commands, queries resourc
 				"the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay " +
 				"in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. " +
 				"app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; " +
-				"name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several.",
+				"name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several. " +
+				"En una app de varias partes, services (nombres de list_services) limita qué partes reciben las variables; sin services las recibe toda la app. " +
+				"For an app with several services (parts), services (names from list_services) limits which parts receive the variables; without it the whole app does. " +
+				"A files volume of such an app must name exactly one part.",
 			Toolset:     "resources",
 			Permissions: []string{permission.ProjectsRead, permission.ProjectsWrite},
 			Risk:        mcpx.RiskWrite,
@@ -110,6 +115,7 @@ type Resource struct {
 	Message   string   `json:"message,omitempty" jsonschema:"por qué falló, si falló"`
 	Connected bool     `json:"connected" jsonschema:"si la app recibe sus variables"`
 	Variables []string `json:"variables" jsonschema:"nombres de las variables que la app lee (sus valores nunca se muestran)"`
+	Services  []string `json:"services,omitempty" jsonschema:"partes de la app que reciben sus variables; ausente = toda la app"`
 }
 
 func view(v resource.View) Resource {
@@ -122,17 +128,35 @@ func view(v resource.View) Resource {
 	case v.Phase == resource.PhaseFailed:
 		status = "failed"
 	}
-	return Resource{Name: v.Name, Kind: string(v.Kind), StorageGi: v.StorageGi, Status: status, Message: v.Message,
+	r := Resource{Name: v.Name, Kind: string(v.Kind), StorageGi: v.StorageGi, Status: status, Message: v.Message,
 		Connected: v.Connected, Variables: v.Variables}
+	if len(v.Services) > 0 {
+		r.Services = slices.Clone(v.Services)
+	}
+	return r
+}
+
+// scopeUnavailableCode is the 409 of a scope the app's cluster cannot honor
+// (the same code the release and fleet domains use).
+const scopeUnavailableCode = "SERVICE_SETTINGS_UNAVAILABLE"
+
+// scoped adds the next step to a SERVICE_SETTINGS_UNAVAILABLE error.
+func scoped(err error) error {
+	var e *errx.Error
+	if errors.As(err, &e) && e.Code == scopeUnavailableCode {
+		return mcpx.NextStep(e, "El clúster de esta app todavía no puede dar algo solo a algunas partes: hazlo para toda la app (sin services) o pide a TI que actualice su agente.")
+	}
+	return err
 }
 
 // CreateDatabaseIn is create_database's input.
 type CreateDatabaseIn struct {
-	App         string `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
-	Environment string `json:"environment,omitempty" jsonschema:"entorno de la app; production por defecto"`
-	Kind        string `json:"kind,omitempty" jsonschema:"postgres (por defecto), redis o files"`
-	Name        string `json:"name,omitempty" jsonschema:"nombre del recurso: minúsculas, números y guiones; db por defecto"`
-	Prefix      string `json:"prefix,omitempty" jsonschema:"prefijo en MAYÚSCULAS para las variables (ANALYTICS → ANALYTICS_DATABASE_URL), para tener varias bases"`
+	App         string   `json:"app" jsonschema:"slug o id de la app (list_apps los muestra)"`
+	Environment string   `json:"environment,omitempty" jsonschema:"entorno de la app; production por defecto"`
+	Kind        string   `json:"kind,omitempty" jsonschema:"postgres (por defecto), redis o files"`
+	Name        string   `json:"name,omitempty" jsonschema:"nombre del recurso: minúsculas, números y guiones; db por defecto"`
+	Prefix      string   `json:"prefix,omitempty" jsonschema:"prefijo en MAYÚSCULAS para las variables (ANALYTICS → ANALYTICS_DATABASE_URL), para tener varias bases"`
+	Services    []string `json:"services,omitempty" jsonschema:"partes de la app que reciben las variables (nombres de list_services); vacío = toda la app. Solo para apps de varias partes; un volumen files de una app de varias partes debe nombrar exactamente una"`
 }
 
 // CreateDatabaseOut is create_database's result.
@@ -160,10 +184,15 @@ func (t tools) createDatabase(ctx context.Context, caller mcpx.Principal, in Cre
 	if name == "" {
 		name = "db"
 	}
+	connect := &resource.ConnectOptions{Prefix: in.Prefix}
+	if len(in.Services) > 0 {
+		services := slices.Clone(in.Services)
+		connect.Services = &services
+	}
 	out, err := t.commands.Create(ctx, caller.Organization, p.ID, env.ID, resource.Create{Name: name, Kind: kind,
-		Connect: &resource.ConnectOptions{Prefix: in.Prefix}, RequestedBy: caller.User})
+		Connect: connect, RequestedBy: caller.User})
 	if err != nil {
-		return CreateDatabaseOut{}, err
+		return CreateDatabaseOut{}, scoped(err)
 	}
 	if out.Held() {
 		return CreateDatabaseOut{Pending: mcpx.PendingOf(out.Pending), App: p.Slug, NextStep: mcpx.PendingStep(out.Pending),

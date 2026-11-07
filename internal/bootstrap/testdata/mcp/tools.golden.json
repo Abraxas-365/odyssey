@@ -6,6 +6,7 @@
       "create_database",
       "deploy_folder",
       "deploy_image",
+      "detect_services",
       "enable_ai",
       "get_app",
       "get_attention",
@@ -16,12 +17,14 @@
       "list_repositories",
       "list_requests",
       "list_resources",
+      "list_services",
       "list_versions",
       "publish_now",
       "request_secret",
       "rollback",
       "set_access",
       "set_env",
+      "set_services",
       "whoami"
     ],
     "Lector": [
@@ -33,6 +36,7 @@
       "list_apps",
       "list_requests",
       "list_resources",
+      "list_services",
       "list_versions",
       "whoami"
     ],
@@ -42,6 +46,7 @@
       "create_database",
       "deploy_folder",
       "deploy_image",
+      "detect_services",
       "enable_ai",
       "get_app",
       "get_attention",
@@ -52,12 +57,14 @@
       "list_repositories",
       "list_requests",
       "list_resources",
+      "list_services",
       "list_versions",
       "publish_now",
       "request_secret",
       "rollback",
       "set_access",
       "set_env",
+      "set_services",
       "whoami"
     ]
   },
@@ -70,7 +77,7 @@
         "readOnlyHint": false,
         "title": "Conectar un repositorio"
       },
-      "description": "Conecta un repositorio de GitHub a una app: desde ahora cada push a la rama publica la app, y se publica el último commit ya. repository es owner/nombre (o el id numérico de list_repositories); branch por defecto es la rama principal del repo; root es la carpeta de la app dentro del repo (vacía si es la raíz). Espera unos segundos a que empiece la publicación y la devuelve. Connects a GitHub repository to an app: from now on every push to the branch publishes the app, and the latest commit is published right away. repository is owner/name (or the numeric id from list_repositories); branch defaults to the repository's main branch; root is the app's folder inside the repository (empty for its root). It waits a few seconds for the publication to start and returns it. app is the slug (see list_apps) or the id; env only takes non-secret values.",
+      "description": "Conecta un repositorio de GitHub a una app: desde ahora cada push a la rama publica la app, y se publica el último commit ya. repository es owner/nombre (o el id numérico de list_repositories); branch por defecto es la rama principal del repo; root es la carpeta de la app dentro del repo (vacía si es la raíz). Espera unos segundos a que empiece la publicación y la devuelve. Si el repo tiene varias apps (un monorepo), antes propón sus partes con detect_services (repository), guárdalas con set_services y conecta sin root: cada parte toma su carpeta y en cada push solo se construyen las que cambiaron. Connects a GitHub repository to an app: from now on every push to the branch publishes the app, and the latest commit is published right away. repository is owner/name (or the numeric id from list_repositories); branch defaults to the repository's main branch; root is the app's folder inside the repository (empty for its root). It waits a few seconds for the publication to start and returns it. For a repository with several apps (a monorepo), first propose its parts with detect_services (repository), save them with set_services and connect without root: each part takes its folder and every push builds only the changed ones. app is the slug (see list_apps) or the id; env only takes non-secret values.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -225,7 +232,7 @@
         "readOnlyHint": false,
         "title": "Crear una base de datos"
       },
-      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una versión nueva de la app que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several.",
+      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una versión nueva de la app que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several. En una app de varias partes, services (nombres de list_services) limita qué partes reciben las variables; sin services las recibe toda la app. For an app with several services (parts), services (names from list_services) limits which parts receive the variables; without it the whole app does. A files volume of such an app must name exactly one part.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -248,6 +255,16 @@
           "prefix": {
             "description": "prefijo en MAYÚSCULAS para las variables (ANALYTICS → ANALYTICS_DATABASE_URL), para tener varias bases",
             "type": "string"
+          },
+          "services": {
+            "description": "partes de la app que reciben las variables (nombres de list_services); vacío = toda la app. Solo para apps de varias partes; un volumen files de una app de varias partes debe nombrar exactamente una",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           }
         },
         "required": [
@@ -299,6 +316,16 @@
               },
               "name": {
                 "type": "string"
+              },
+              "services": {
+                "description": "partes de la app que reciben sus variables; ausente = toda la app",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
               },
               "status": {
                 "description": "preparing (se está preparando), ready (lista), failed (falló: mira message) o deleting (se está eliminando)",
@@ -352,7 +379,7 @@
         "readOnlyHint": false,
         "title": "Publicar una carpeta"
       },
-      "description": "Publica la carpeta de código de la máquina del usuario como una versión nueva de la app. Esta herramienta NO recibe archivos: crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. Pasa siempre `message`: qué cambió, en una frase corta para el usuario; es el nombre de la versión en la consola. Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. app is the slug (see list_apps) or the id; env only takes non-secret values.",
+      "description": "Publica la carpeta de código de la máquina del usuario como una versión nueva de la app. Esta herramienta NO recibe archivos: crea un enlace de subida de un solo uso (10 minutos) y devuelve el comando `command`, que TÚ debes ejecutar en una shell, dentro de la carpeta de la app; sube la carpeta (respeta .gitignore y excluye .git, node_modules y .env*) y responde con el deployment_id. No le muestres el enlace al usuario ni lo guardes. Después sigue con get_deployment (con wait_seconds) hasta que quede en línea. Pasa siempre `message`: qué cambió, en una frase corta para el usuario; es el nombre de la versión en la consola. Si la app tiene varias partes (`services` en get_app), corre el comando en la carpeta que las contiene todas (la raíz del repo), no dentro de una parte: cada una se recorta de ahí según su carpeta. Solo se construyen las partes cuyo código cambió; con rebuild=true se construyen todas de nuevo. Publishes the code folder on the user's machine as a new version of the app. This tool does NOT take files: it issues a one-use upload link (10 minutes) and returns `command`, which YOU must run yourself in a shell, inside the app's folder; it uploads the folder (honouring .gitignore, excluding .git, node_modules and .env*) and prints the deployment_id. Do not show the link to the user or keep it. Then follow with get_deployment (with wait_seconds) until it is online. If the app has several services (`services` in get_app), run the command in the folder that contains all of them (the repo root), not inside one service: each one is cropped from it by its root. Only the services whose code changed are built; with rebuild=true all are built again. app is the slug (see list_apps) or the id; env only takes non-secret values.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -383,6 +410,10 @@
             "description": "puerto en el que escucha la app (por defecto 8080; también llega como $PORT)",
             "type": "integer"
           },
+          "rebuild": {
+            "description": "true para construir de nuevo todas las partes aunque su código no haya cambiado (imagen base nueva, un arreglo fuera del código); por defecto se reutiliza lo ya construido",
+            "type": "boolean"
+          },
           "replicas": {
             "description": "cuántas copias correr, de 1 a 10 (por defecto 1)",
             "type": "integer"
@@ -402,7 +433,7 @@
             "type": "string"
           },
           "command": {
-            "description": "comando para ejecutar tú mismo en una shell, dentro de la carpeta de la app",
+            "description": "comando para ejecutar tú mismo en una shell, dentro de la carpeta de la app (si tiene varias partes, la carpeta que las contiene todas)",
             "type": "string"
           },
           "expires_at": {
@@ -412,6 +443,31 @@
           "next_step": {
             "description": "qué hacer ahora",
             "type": "string"
+          },
+          "services": {
+            "description": "solo si la app tiene varias partes: cada una con su carpeta, relativa a la carpeta desde la que corres el comando",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "description": "nombre de la parte",
+                  "type": "string"
+                },
+                "root": {
+                  "description": "carpeta de la parte, relativa a la carpeta que se sube; vacía si es todo el código",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "root"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           },
           "upload_url": {
             "description": "enlace de subida de un solo uso; no lo muestres ni lo guardes",
@@ -493,6 +549,16 @@
           },
           "branch": {
             "type": "string"
+          },
+          "changed": {
+            "description": "partes que cambian en esta versión; las demás siguen igual",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           },
           "commit": {
             "description": "SHA completo del commit si vino de GitHub",
@@ -598,13 +664,125 @@
     },
     {
       "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Proponer las partes de una app"
+      },
+      "description": "Propone las partes (servicios) de un código que tiene varias apps en un mismo repositorio o carpeta (un monorepo: por ejemplo apps/web y apps/api): qué carpetas son apps, cómo llamarlas, qué ruta de la dirección atiende cada una y cuáles son workers. Solo lee nombres de archivos, nunca su contenido, y no guarda nada: muestra la propuesta al usuario, ajústala si hace falta y guárdala con set_services. Para una carpeta del usuario pasa paths: las rutas de sus archivos relativas a la carpeta que se publica (basta con las que terminan en Dockerfile, package.json, go.mod, pyproject.toml, requirements.txt, Pipfile, Gemfile, composer.json, pom.xml, build.gradle, build.gradle.kts, Cargo.toml, deno.json, mix.exs, pnpm-workspace.yaml, turbo.json, nx.json, lerna.json, go.work, rush.json; sin node_modules ni .git). Para un repositorio de GitHub pasa repository (y branch si no es la principal); Odicea lee su árbol. root limita la búsqueda a una carpeta. Proposes the parts (services) of code that holds several apps in one repository or folder (a monorepo: say apps/web and apps/api): which folders are apps, what to call them, which address path each one answers and which are workers. It reads file names only, never contents, and saves nothing: show the proposal to the user, adjust it if needed and save it with set_services. For a folder of the user pass paths: its file paths relative to the folder that is published (those ending in one of the names above are enough; no node_modules or .git). For a GitHub repository pass repository (and branch when it is not the main one); Odicea reads its tree. root limits the search to a folder.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "description": "rama del repositorio (por defecto la principal)",
+            "type": "string"
+          },
+          "paths": {
+            "description": "rutas de los archivos de la carpeta, relativas a la carpeta que se publica (por ejemplo apps/web/package.json); basta con las que terminan en los nombres que dice la descripción. Hasta 20000",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "repository": {
+            "description": "en vez de paths: owner/nombre del repositorio de GitHub (o su id numérico de list_repositories)",
+            "type": "string"
+          },
+          "root": {
+            "description": "carpeta donde buscar, dentro de la carpeta o del repositorio (vacía: todo); las carpetas propuestas quedan relativas a ella",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "detect_services",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "description": "las partes propuestas, en el orden en que set_services las guardaría; vacía si no se encontró ninguna app",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "evidence": {
+                  "description": "el archivo que hizo pensar que la carpeta es una app",
+                  "type": "string"
+                },
+                "kind": {
+                  "description": "web o worker",
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "description": "su carpeta",
+                  "type": "string"
+                },
+                "route": {
+                  "description": "ruta de la dirección que atendería (vacía en un worker)",
+                  "type": "string"
+                },
+                "strip_prefix": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "root",
+                "route",
+                "strip_prefix",
+                "evidence"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "notes": {
+            "description": "lo que la propuesta dejó fuera o supuso, en español: muéstralo al usuario",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "truncated": {
+            "description": "true si no se leyeron todos los archivos: puede faltar alguna parte",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "notes",
+          "truncated",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Proponer las partes de una app"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": false,
         "title": "Dar IA a una app"
       },
-      "description": "Le da a una app acceso a los modelos de IA de la organización (chat, completions, mensajes): crea una llave propia de la app, se la entrega al clúster sin que pase por nadie y la app la recibe como variables de entorno, en una versión nueva de la app que empieza sola. El código de la app usa las librerías oficiales de OpenAI o Anthropic sin cambiar nada más: leen OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY y ANTHROPIC_BASE_URL solos. La llave nunca se muestra. Si ya estaba activa no cambia nada. Gives an app access to the organization's AI models: it makes a key just for the app, hands it to the cluster sealed, and the app receives it as environment variables, in a new version of the app that starts by itself. App code uses the official OpenAI or Anthropic libraries unchanged: they read OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL by themselves. The key is never shown. Already on: nothing changes. app is the slug (see list_apps) or the id; environment defaults to production.",
+      "description": "Le da a una app acceso a los modelos de IA de la organización (chat, completions, mensajes): crea una llave propia de la app, se la entrega al clúster sin que pase por nadie y la app la recibe como variables de entorno, en una versión nueva de la app que empieza sola. El código de la app usa las librerías oficiales de OpenAI o Anthropic sin cambiar nada más: leen OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY y ANTHROPIC_BASE_URL solos. La llave nunca se muestra. Si ya estaba activa no cambia nada. Gives an app access to the organization's AI models: it makes a key just for the app, hands it to the cluster sealed, and the app receives it as environment variables, in a new version of the app that starts by itself. App code uses the official OpenAI or Anthropic libraries unchanged: they read OPENAI_API_KEY, OPENAI_BASE_URL, ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL by themselves. The key is never shown. Already on: nothing changes. app is the slug (see list_apps) or the id; environment defaults to production. En una app de varias partes, services (nombres de list_services) limita qué partes reciben la IA; sin services la recibe toda la app y, si ya estaba activa, conserva las partes que tenía. For an app with several services (parts), services (names from list_services) limits which parts receive the AI; without it the whole app does (if it was already on, it keeps its parts).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -615,6 +793,16 @@
           "environment": {
             "description": "entorno de la app; production por defecto",
             "type": "string"
+          },
+          "services": {
+            "description": "partes de la app que reciben la IA (nombres de list_services); vacío = toda la app. Solo para apps de varias partes. Si lo omites, se conservan las partes que ya la tenían",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           }
         },
         "required": [
@@ -680,7 +868,7 @@
         "readOnlyHint": true,
         "title": "Estado de una app"
       },
-      "description": "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. También dice lo que la app usa (acceso, identidad, bases de datos, secretos, IA, salida a internet) en `uses`, y lo que le falta en `uses.attention`. Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. It also reports what the app uses (access, identity, databases, secrets, AI, internet egress) in `uses`, and what is missing in `uses.attention`. app is the slug (see list_apps) or the id.",
+      "description": "Muestra el estado de una app: si está en línea, su dirección, la versión que sirve (commit y autor si vino de GitHub), la publicación en curso y la última publicación, con el motivo si falló. Úsala para saber cómo va una app o por qué no se publicó. También dice lo que la app usa (acceso, identidad, bases de datos, secretos, IA, salida a internet) en `uses`, y lo que le falta en `uses.attention`. En `services` están las partes de la app (una sola si es simple) y el estado en línea de cada una. Shows an app's state: whether it is online, its URL, the version it serves (commit and author when it came from GitHub), the publication in progress and the latest one, with the reason if it failed. Use it to see how an app is doing or why it did not publish. It also reports what the app uses (access, identity, databases, secrets, AI, internet egress) in `uses`, and what is missing in `uses.attention`. `services` lists the app's parts (one if it is simple) and the online state of each. app is the slug (see list_apps) or the id.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -730,6 +918,16 @@
               },
               "branch": {
                 "type": "string"
+              },
+              "changed": {
+                "description": "partes que cambian en esta versión; las demás siguen igual",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
               },
               "commit": {
                 "description": "SHA completo del commit si vino de GitHub",
@@ -842,6 +1040,16 @@
               },
               "branch": {
                 "type": "string"
+              },
+              "changed": {
+                "description": "partes que cambian en esta versión; las demás siguen igual",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
               },
               "commit": {
                 "description": "SHA completo del commit si vino de GitHub",
@@ -956,6 +1164,16 @@
               },
               "branch": {
                 "type": "string"
+              },
+              "changed": {
+                "description": "partes que cambian en esta versión; las demás siguen igual",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
               },
               "commit": {
                 "description": "SHA completo del commit si vino de GitHub",
@@ -1089,6 +1307,65 @@
             "type": [
               "null",
               "object"
+            ]
+          },
+          "services": {
+            "description": "las partes de la app (al menos una): cómo está configurada cada una y su estado en línea; una app simple tiene una sola parte web en /. Si una está en failed, needs_attention es true",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "description": "web (atiende peticiones) o worker (corre en segundo plano, sin dirección)",
+                  "type": "string"
+                },
+                "message": {
+                  "description": "lo que dijo el clúster de esta parte, por ejemplo por qué falló",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "nombre de la parte de la app",
+                  "type": "string"
+                },
+                "ready_replicas": {
+                  "description": "copias que responden ahora",
+                  "type": "integer"
+                },
+                "replicas": {
+                  "description": "copias que debería haber",
+                  "type": "integer"
+                },
+                "root": {
+                  "description": "carpeta de la parte dentro del código de la app; vacía si es todo el código",
+                  "type": "string"
+                },
+                "route": {
+                  "description": "ruta de la dirección de la app que atiende (/ es toda; /api todo lo que cuelga de /api); vacía si es interna o un worker",
+                  "type": "string"
+                },
+                "state": {
+                  "description": "online (responde), starting (arrancando), failed (no arranca o no responde), unknown (no se pudo consultar ahora) o not_published (la versión en línea no la incluye o aún no hay versión en línea)",
+                  "type": "string"
+                },
+                "strip_prefix": {
+                  "description": "true si la parte recibe la ruta sin su prefijo (ve /users para /api/users)",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "route",
+                "root",
+                "strip_prefix",
+                "state",
+                "ready_replicas",
+                "replicas"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
             ]
           },
           "slug": {
@@ -1356,7 +1633,8 @@
           "console_url",
           "state",
           "needs_attention",
-          "uses"
+          "uses",
+          "services"
         ],
         "type": "object"
       },
@@ -1466,7 +1744,7 @@
         "readOnlyHint": true,
         "title": "Logs del build"
       },
-      "description": "Muestra el log del build de una publicación hecha desde código (carpeta o GitHub): por defecto las últimas 200 líneas, para no llenar el contexto. Úsala cuando get_deployment diga que el build falló. Con after (el next de la respuesta anterior) sigue leyendo desde ahí. Shows the build log of a publication made from source (folder or GitHub): the last 200 lines by default, to spare context. Use it when get_deployment says the build failed. With after (the previous answer's next) it keeps reading from there. app is the slug (see list_apps) or the id; without deployment_id it is the same publication get_deployment shows.",
+      "description": "Muestra el log del build de una publicación hecha desde código (carpeta o GitHub): por defecto las últimas 200 líneas, para no llenar el contexto. Úsala cuando get_deployment diga que el build falló. Con after (el next de la respuesta anterior) sigue leyendo desde ahí. Con varias partes, `service` elige la parte (por defecto la primera que falló). Shows the build log of a publication made from source (folder or GitHub): the last 200 lines by default, to spare context. Use it when get_deployment says the build failed. With after (the previous answer's next) it keeps reading from there. With several services, `service` picks the one (the first that failed by default). app is the slug (see list_apps) or the id; without deployment_id it is the same publication get_deployment shows.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1488,6 +1766,10 @@
           "limit": {
             "description": "cuántas líneas devolver (por defecto 200, máximo 1000)",
             "type": "integer"
+          },
+          "service": {
+            "description": "parte de la app cuyo build leer; por defecto la primera que falló, si no la primera",
+            "type": "string"
           }
         },
         "required": [
@@ -1547,6 +1829,10 @@
             "description": "cursor para pasar como after y leer lo que sigue",
             "type": "integer"
           },
+          "service": {
+            "description": "parte de la app a la que pertenece este build",
+            "type": "string"
+          },
           "truncated": {
             "description": "true si el log era tan largo que no se leyó completo: lo que falta está después de next",
             "type": "boolean"
@@ -1572,7 +1858,7 @@
         "readOnlyHint": true,
         "title": "Estado de una publicación"
       },
-      "description": "Muestra una publicación de la app: paso actual, resultado, dirección cuando está en línea y el error con qué hacer si falló. Sin deployment_id es la que está en curso o, si no hay, la que está en línea. Con wait_seconds (hasta 45) espera a que termine antes de responder: úsala después de publicar, repitiéndola mientras done sea false. Shows one publication of the app: current step, outcome, its URL once online and the error with what to do if it failed. Without deployment_id it is the one in progress or, if none, the one online. With wait_seconds (up to 45) it waits for it to finish before answering: use it after publishing, repeating while done is false. app is the slug (see list_apps) or the id.",
+      "description": "Muestra una publicación de la app: paso actual, resultado, dirección cuando está en línea y el error con qué hacer si falló. Sin deployment_id es la que está en curso o, si no hay, la que está en línea. Con wait_seconds (hasta 45) espera a que termine antes de responder: úsala después de publicar, repitiéndola mientras done sea false. En una app con varias partes dice cuáles cambian (`changed`) y el build de cada una (`builds`). Shows one publication of the app: current step, outcome, its URL once online and the error with what to do if it failed. Without deployment_id it is the one in progress or, if none, the one online. With wait_seconds (up to 45) it waits for it to finish before answering: use it after publishing, repeating while done is false. In an app with several services it says which ones change (`changed`) and each one's build (`builds`). app is the slug (see list_apps) or the id.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1601,6 +1887,75 @@
           "app": {
             "description": "slug de la app",
             "type": "string"
+          },
+          "builds": {
+            "description": "el build de cada parte, si la versión vino de código: estado y si reutilizó una imagen anterior",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "build_id": {
+                  "type": "string"
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "description": "por qué falló este build",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "description": "las palabras del clúster o del build, si dijo algo",
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "qué pasó, en español claro",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "reused": {
+                  "description": "true si reutilizó la imagen de un build anterior del mismo código en vez de construir",
+                  "type": "boolean"
+                },
+                "service": {
+                  "description": "parte de la app que construye",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "queued, running, succeeded, failed, cancelled o unknown (no se pudo leer el build)",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "service",
+                "build_id",
+                "status",
+                "reused"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "changed": {
+            "description": "partes que cambian en esta versión; las demás siguen igual",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           },
           "commit": {
             "description": "SHA completo del commit si vino de GitHub",
@@ -1662,6 +2017,10 @@
           "reason": {
             "description": "deploy, rollback o auto_rollback",
             "type": "string"
+          },
+          "rebuild": {
+            "description": "true si se pidió construir de nuevo todas las partes sin reutilizar imágenes",
+            "type": "boolean"
           },
           "repository": {
             "description": "repo de GitHub de donde vino (owner/nombre)",
@@ -2218,6 +2577,16 @@
                 "name": {
                   "type": "string"
                 },
+                "services": {
+                  "description": "partes de la app que reciben sus variables; ausente = toda la app",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
                 "status": {
                   "description": "preparing (se está preparando), ready (lista), failed (falló: mira message) o deleting (se está eliminando)",
                   "type": "string"
@@ -2268,6 +2637,93 @@
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
+        "title": "Partes de una app"
+      },
+      "description": "Lista las partes (servicios) de una app, en su orden: nombre, tipo (web responde en la dirección de la app; worker corre sin puerto, como un consumidor de colas), carpeta del código y ruta de la dirección que atiende. Una app nueva tiene una sola parte, web, en / con todo el código. Úsala antes de set_services, y para saber qué nombres pasar como services en set_env, request_secret, create_database y enable_ai. Lists an app's parts (services) in order: name, kind (web answers on the app's address; worker runs without a port, like a queue consumer), code folder and the address path it answers. A new app has one part, web, at / with all the code. Use it before set_services, and to know which names to pass as services to set_env, request_secret, create_database and enable_ai. app is the slug (see list_apps) or the id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "list_services",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "items": {
+            "description": "las partes, en orden",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "description": "web (responde en la dirección de la app) o worker (corre sin puerto)",
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "description": "carpeta de su código, relativa a la carpeta que se publica (vacía: toda)",
+                  "type": "string"
+                },
+                "route": {
+                  "description": "ruta de la dirección que atiende (/ el sitio, /api todo lo que empieza con /api); vacía en un worker o en una parte interna",
+                  "type": "string"
+                },
+                "strip_prefix": {
+                  "description": "true si la ruta se quita antes de que le llegue la petición",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "root",
+                "route",
+                "strip_prefix"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "single": {
+            "description": "true si la app es una sola parte web en / con todo el código (lo normal)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "app",
+          "items",
+          "single",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Partes de una app"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
         "title": "Versiones de una app"
       },
       "description": "Lista el historial de versiones (publicaciones) de una app, de la más reciente a la más antigua, con su estado, commit, autor y quién la publicó; marca la que está en línea. Úsala para elegir a qué versión volver o ver qué falló. Lists an app's version (deployment) history, newest first, with status, commit, author and who published it; it marks the one that is online. Use it to pick a version to go back to or to see what failed. app is the slug (see list_apps) or the id. Paginated: pass next_offset as offset to read more.",
@@ -2311,6 +2767,16 @@
                 },
                 "branch": {
                   "type": "string"
+                },
+                "changed": {
+                  "description": "partes que cambian en esta versión; las demás siguen igual",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
                 },
                 "commit": {
                   "description": "SHA completo del commit si vino de GitHub",
@@ -2447,13 +2913,17 @@
         "readOnlyHint": false,
         "title": "Publicar ahora"
       },
-      "description": "Publica ya el último commit de la rama conectada de la app, sin esperar un push. Espera unos segundos a que empiece la publicación y la devuelve. Publishes the latest commit of the app's connected branch right now, without waiting for a push. It waits a few seconds for the publication to start and returns it. app is the slug (see list_apps) or the id. The app needs a connected repository (connect_repository).",
+      "description": "Publica ya el último commit de la rama conectada de la app, sin esperar un push. Espera unos segundos a que empiece la publicación y la devuelve. En una app de varias partes solo se construyen las que cambiaron; rebuild: true las construye todas de nuevo. Publishes the latest commit of the app's connected branch right now, without waiting for a push. It waits a few seconds for the publication to start and returns it. In an app of several parts only the changed ones build; rebuild: true builds them all again. app is the slug (see list_apps) or the id. The app needs a connected repository (connect_repository).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "app": {
             "description": "slug o id de la app (list_apps los muestra)",
             "type": "string"
+          },
+          "rebuild": {
+            "description": "true para construir de nuevo todas las partes aunque su código no haya cambiado (imagen base nueva, un arreglo fuera del código); por defecto se reutiliza lo ya construido",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2520,6 +2990,16 @@
           "note": {
             "description": "para qué es, en una frase (lo ve la persona que lo carga)",
             "type": "string"
+          },
+          "services": {
+            "description": "partes de la app que reciben este secreto (nombres de list_services); vacío = toda la app. Solo para apps de varias partes. Si lo omites, el secreto conserva las partes que ya tenía",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           }
         },
         "required": [
@@ -2546,6 +3026,16 @@
           "next_step": {
             "description": "qué hacer ahora",
             "type": "string"
+          },
+          "services": {
+            "description": "partes de la app que reciben el secreto; ausente = toda la app",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           },
           "status": {
             "description": "waiting_for_value (falta que una persona lo cargue), loaded (ya tiene valor), reload (hay que volver a cargarlo), unavailable (el clúster aún no puede guardarlo: TI) o external (viene del almacén de la empresa)",
@@ -2607,6 +3097,16 @@
           },
           "branch": {
             "type": "string"
+          },
+          "changed": {
+            "description": "partes que cambian en esta versión; las demás siguen igual",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           },
           "commit": {
             "description": "SHA completo del commit si vino de GitHub",
@@ -2790,6 +3290,16 @@
               "branch": {
                 "type": "string"
               },
+              "changed": {
+                "description": "partes que cambian en esta versión; las demás siguen igual",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
               "commit": {
                 "description": "SHA completo del commit si vino de GitHub",
                 "type": "string"
@@ -2913,6 +3423,16 @@
             "description": "slug o id de la app (list_apps los muestra)",
             "type": "string"
           },
+          "services": {
+            "description": "partes de la app que reciben estas variables (nombres de list_services); vacío = toda la app. Solo para apps de varias partes. Si una parte tiene su propia variable, gana a la de toda la app",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
           "set": {
             "additionalProperties": {
               "type": "string"
@@ -2958,8 +3478,21 @@
               "array"
             ]
           },
+          "service_variables": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "description": "nombres de las variables propias de cada parte (parte → nombres), en apps de varias partes",
+            "type": "object"
+          },
           "variables": {
-            "description": "nombres de las variables del entorno tras el cambio",
+            "description": "nombres de las variables de toda la app tras el cambio",
             "items": {
               "type": "string"
             },
@@ -2978,6 +3511,16 @@
               },
               "branch": {
                 "type": "string"
+              },
+              "changed": {
+                "description": "partes que cambian en esta versión; las demás siguen igual",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
               },
               "commit": {
                 "description": "SHA completo del commit si vino de GitHub",
@@ -3075,6 +3618,16 @@
               "null",
               "object"
             ]
+          },
+          "warnings": {
+            "description": "avisos del cambio, p. ej. una variable propia de una parte que gana a la de toda la app; cuéntaselos al usuario",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
           }
         },
         "required": [
@@ -3086,6 +3639,134 @@
         "type": "object"
       },
       "title": "Variables de la app"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Definir las partes de una app"
+      },
+      "description": "Define las partes (servicios) de una app que tiene varias en un mismo repositorio o carpeta (por ejemplo un frontend en apps/web y una API en apps/api): la lista completa, en orden. Cada parte tiene name (minúsculas y números, hasta 20), kind (web o worker), root (su carpeta, relativa a la carpeta que se publica) y route (la ruta de la dirección que atiende: / para el sitio, /api para todo lo que empieza con /api; vacía para una parte web interna que solo ven las demás). strip_prefix quita la ruta antes de que llegue la petición (la parte ve /users en vez de /api/users). Máximo 8. Propónla con detect_services, confírmala con el usuario y guárdala aquí; la próxima versión la usa. Si la lista es la misma no cambia nada. Las reglas de TI pueden dejarla esperando su aprobación (pending_approval). Sets the parts (services) of an app that has several in one repository or folder (say a frontend in apps/web and an API in apps/api): the whole list, in order. Each has name (lowercase letters and digits, up to 20), kind (web or worker), root (its folder, relative to the folder that is published) and route (the address path it answers: / for the site, /api for everything under /api; empty for an internal web part only the others reach). strip_prefix removes the route before the request reaches it. At most 8. Propose it with detect_services, confirm it with the user and save it here; the next version uses it. The same list changes nothing. IT's rules may hold it for approval (pending_approval).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "items": {
+            "description": "la lista completa de partes, en orden (de 1 a 8)",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "description": "web (por defecto) o worker (sin puerto ni ruta)",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "minúsculas y números, empieza con letra, hasta 20 (por ejemplo web, api, jobs)",
+                  "type": "string"
+                },
+                "root": {
+                  "description": "carpeta de su código, relativa a la carpeta que se publica (por ejemplo apps/api); vacía: toda",
+                  "type": "string"
+                },
+                "route": {
+                  "description": "ruta de la dirección que atiende: / para el sitio, /api para la API; vacía para un worker o una parte interna",
+                  "type": "string"
+                },
+                "strip_prefix": {
+                  "description": "true para quitar la ruta antes de que llegue la petición (la parte ve /users en vez de /api/users)",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "app",
+          "items"
+        ],
+        "type": "object"
+      },
+      "name": "set_services",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "items": {
+            "description": "las partes como quedaron (o como siguen, si quedó esperando aprobación)",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "description": "web (responde en la dirección de la app) o worker (corre sin puerto)",
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "description": "carpeta de su código, relativa a la carpeta que se publica (vacía: toda)",
+                  "type": "string"
+                },
+                "route": {
+                  "description": "ruta de la dirección que atiende (/ el sitio, /api todo lo que empieza con /api); vacía en un worker o en una parte interna",
+                  "type": "string"
+                },
+                "strip_prefix": {
+                  "description": "true si la ruta se quita antes de que le llegue la petición",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "root",
+                "route",
+                "strip_prefix"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "la solicitud de aprobación; get_request muestra cómo va",
+            "type": "string"
+          },
+          "status": {
+            "description": "pending_approval cuando la acción quedó esperando la aprobación de TI (no se hizo nada todavía)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "items",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Definir las partes de una app"
     },
     {
       "annotations": {

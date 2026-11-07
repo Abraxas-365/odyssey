@@ -10,14 +10,14 @@ Con un repositorio conectado, **cada push a la rama publica la app** (sin que el
 2. `create_app` si la app no existe.
 3. `connect_repository` con `app` y `repository` (`owner/nombre`). Opciones:
    - `branch`: por defecto la rama principal.
-   - `root`: carpeta de la app dentro del repo (vacía si es la raíz; útil en monorepos).
+   - `root`: carpeta de la app dentro del repo (vacía si es la raíz). Si el repo tiene **varias apps** (un monorepo), no elijas una con `root`: define sus partes como en [varias-partes.md](varias-partes.md) (`detect_services` con `repository`, luego `set_services`) y conecta sin `root`.
    - `port`, `health_path`, `replicas`, `env`: como en [preparar-app.md](preparar-app.md) (`env` sin secretos).
    Publica el último commit ya y devuelve la publicación.
 4. `get_deployment` con `wait_seconds` hasta que `done` sea verdadero.
 
 ## Publicar sin esperar un push
 
-`publish_now` publica el último commit de la rama conectada.
+`publish_now` publica el último commit de la rama conectada. En una app de varias partes solo se construyen las que cambiaron; con `rebuild: true` se construyen todas de nuevo.
 
 ## Reglas
 

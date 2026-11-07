@@ -169,6 +169,18 @@ func TestUploadTickets(t *testing.T) {
 		t.Fatalf("ticket after a refused archive: %v", err)
 	}
 
+	// rebuild travels with the ticket into the deployment it starts (MS-7)
+	if d.Rebuild {
+		t.Fatal("a ticket without rebuild started a rebuild")
+	}
+	fresh, err := platform.Releases.Commands.IssueUpload(as("mcp:claude"), org, pid, env, release.IssueUpload{Rebuild: true, Config: cfg, RequestedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rd, err := platform.Releases.Commands.RedeemUpload(ctx, fresh.Token, bytes.NewReader(folder(t, "rebuilt"))); err != nil || !rd.Rebuild {
+		t.Fatalf("rebuild ticket: %+v %v", rd, err)
+	}
+
 	// tickets expired for more than a day are swept by the organization's next one
 	if _, err := db.ExecContext(ctx, `UPDATE release.upload_tickets SET created_at = now() - interval '3 days', expires_at = now() - interval '2 days' WHERE id = $1`, old.ID); err != nil {
 		t.Fatal(err)

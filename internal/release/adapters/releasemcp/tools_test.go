@@ -50,6 +50,8 @@ type releases struct {
 	appliedSettings *int64               // the revision the cluster was last told
 	uses            *release.Uses        // nil: nothing to attend to
 	usesErr         error                // Uses fails (release's own data)
+	states          []release.ServiceState
+	statesErr       error // ServiceStates fails
 }
 
 func (r *releases) place(org identity.OrganizationID, env project.EnvironmentID) error {
@@ -123,7 +125,10 @@ func (r *releases) Serving(context.Context, identity.OrganizationID, []project.E
 }
 
 func (r *releases) ServiceStates(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID) ([]release.ServiceState, error) {
-	return []release.ServiceState{}, nil
+	if r.statesErr != nil {
+		return nil, r.statesErr
+	}
+	return append([]release.ServiceState{}, r.states...), nil
 }
 
 func (r *releases) Uses(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Uses, error) {

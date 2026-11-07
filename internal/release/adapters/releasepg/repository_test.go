@@ -500,7 +500,7 @@ func TestUploadTickets(t *testing.T) {
 		t.Helper()
 		token, hash := release.NewUploadToken()
 		tk := release.UploadTicket{ID: release.NewUploadTicketID(), Organization: org, Project: project.NewID(), Environment: project.NewEnvironmentID(),
-			TokenHash: hash, Name: "visitas", Message: "Agrega el filtro por vendedor", Config: release.Config{Port: 3000, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}},
+			TokenHash: hash, Name: "visitas", Message: "Agrega el filtro por vendedor", Rebuild: true, Config: release.Config{Port: 3000, HealthPath: "/health", Replicas: 2, Env: map[string]string{"TZ": "America/Lima"}},
 			Client: "mcp:claude", RequestedBy: user, Permissions: []string{"odyssey:deployments:create", "odyssey:projects:tier"}, CreatedAt: now, ExpiresAt: now.Add(ttl)}
 		if err := repo.CreateUploadTicket(ctx, tk); err != nil {
 			t.Fatal(err)
@@ -523,7 +523,7 @@ func TestUploadTickets(t *testing.T) {
 	}
 
 	found, err := repo.FindUploadTicketByHash(ctx, tk.TokenHash)
-	if err != nil || found.ID != tk.ID || found.UsedAt != nil || found.Deployment != nil || found.Config.Env["TZ"] != "America/Lima" ||
+	if err != nil || found.ID != tk.ID || found.UsedAt != nil || found.Deployment != nil || found.Config.Env["TZ"] != "America/Lima" || !found.Rebuild ||
 		found.Config.Port != 3000 || found.Client != "mcp:claude" || found.RequestedBy != user || found.Name != "visitas" || found.Message != "Agrega el filtro por vendedor" || !found.ExpiresAt.Equal(tk.ExpiresAt) ||
 		len(found.Permissions) != 2 || found.Permissions[1] != "odyssey:projects:tier" {
 		t.Fatalf("find %+v %v", found, err)
