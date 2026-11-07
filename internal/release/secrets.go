@@ -1,6 +1,7 @@
 package release
 
 import (
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -48,6 +49,8 @@ type SecretRef struct {
 	Store    string `json:"store,omitempty"`
 	Key      string `json:"key,omitempty"`
 	Property string `json:"property,omitempty"`
+	// Services read it (MS-4); empty: the whole app.
+	Services Scope `json:"services,omitempty"`
 }
 
 // SecretRequest is a managed secret someone asked for (an assistant's
@@ -62,6 +65,9 @@ type SecretRequest struct {
 	RequestedBy  identity.UserID `json:"requested_by" db:"requested_by"`
 	RequestedVia string          `json:"requested_via" db:"requested_via"`
 	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
+	// Services will read it (MS-4); empty: the whole app. Loading the value
+	// keeps it.
+	Services Scope `json:"services,omitempty" db:"-"`
 }
 
 // Limits of variables and secrets.
@@ -117,9 +123,13 @@ func validVarValue(field, name, value string) error {
 }
 
 // SetEnv changes plain variables: Set adds or replaces, Unset removes.
+// Services says in which layer: empty, the whole app's; else the same
+// variables go to (or leave) the own layer of each service named (MS-4). An
+// Unset for the whole app removes the variable from every layer.
 type SetEnv struct {
 	Set         map[string]string `json:"set"`
 	Unset       []string          `json:"unset"`
+	Services    Scope             `json:"services"`
 	RequestedBy identity.UserID   `json:"-"`
 }
 
@@ -129,6 +139,9 @@ func (in SetEnv) Validate() error {
 	}
 	if len(in.Set) > MaxSettingsVars || len(in.Unset) > MaxSettingsVars {
 		return errx.InvalidField("set", "at most 100 variables per change")
+	}
+	if err := in.Services.CheckNames("services"); err != nil {
+		return err
 	}
 	for k, v := range in.Set {
 		if err := validVarName("set", k); err != nil {
@@ -149,10 +162,12 @@ func (in SetEnv) Validate() error {
 	return nil
 }
 
-// RequestSecret asks a person to load a managed secret's value.
+// RequestSecret asks a person to load a managed secret's value. Services is
+// who will read it (nil: the whole app, or, asked again, what was asked).
 type RequestSecret struct {
 	Name         string          `json:"name"`
 	Note         string          `json:"note"`
+	Services     *Scope          `json:"services"`
 	RequestedBy  identity.UserID `json:"-"`
 	RequestedVia string          `json:"-"`
 }
@@ -169,18 +184,29 @@ func (in RequestSecret) Validate() error {
 	if utf8.RuneCountInString(in.Note) > MaxSecretNote || !utf8.ValidString(in.Note) || strings.ContainsRune(in.Note, 0) {
 		return errx.InvalidField("note", "note is up to 200 characters of text")
 	}
-	return nil
+	return scopeNames(in.Services)
+}
+
+// scopeNames validates the names of an optional scope.
+func scopeNames(s *Scope) error {
+	if s == nil {
+		return nil
+	}
+	return s.CheckNames("services")
 }
 
 // LoadSecret stores a managed secret's value, sealed in the browser to the
 // environment's cluster key for this name and Version (pkg/secretbox): the
 // first load is version 1, each rotation the next one. A plain variable of
-// the same name is removed (it becomes a secret).
+// the same name is removed (it becomes a secret). Services is who reads it
+// (nil: as the secret, or its request, already says; the whole app for a
+// new one).
 type LoadSecret struct {
 	Name        string          `json:"-"`
 	Version     int64           `json:"version"`
 	KeyID       string          `json:"key_id"`
 	Sealed      []byte          `json:"sealed"`
+	Services    *Scope          `json:"services"`
 	RequestedBy identity.UserID `json:"-"`
 	// MayChangeExternal says the caller holds odyssey:secrets:external (the
 	// handler fills it in): only then may a value replace a secret IT pointed
@@ -200,15 +226,17 @@ func (in LoadSecret) Validate() error {
 	case len(in.Sealed) < secretbox.MinSealed || len(in.Sealed) > secretbox.MaxSealed:
 		return errx.InvalidField("sealed", "sealed must be the value sealed to the cluster key (base64), up to 64 KB of value")
 	}
-	return nil
+	return scopeNames(in.Services)
 }
 
 // SetExternalSecret points a secret variable at the company's vault.
+// Services: as in LoadSecret.
 type SetExternalSecret struct {
 	Name        string          `json:"-"`
 	Store       string          `json:"store"`
 	Key         string          `json:"key"`
 	Property    string          `json:"property"`
+	Services    *Scope          `json:"services"`
 	RequestedBy identity.UserID `json:"-"`
 }
 
@@ -229,7 +257,24 @@ func (in SetExternalSecret) Validate() error {
 	case len(in.Property) > MaxSecretProp || !printable(in.Property):
 		return errx.InvalidField("property", "property is up to 256 characters")
 	}
-	return nil
+	return scopeNames(in.Services)
+}
+
+// ScopeSecret changes who reads a secret (or an open request) without
+// touching its value.
+type ScopeSecret struct {
+	Name        string          `json:"-"`
+	Services    Scope           `json:"services"`
+	RequestedBy identity.UserID `json:"-"`
+	// MayChangeExternal: as in LoadSecret.
+	MayChangeExternal bool `json:"-"`
+}
+
+func (in ScopeSecret) Validate() error {
+	if err := validVarName("name", in.Name); err != nil {
+		return err
+	}
+	return in.Services.CheckNames("services")
 }
 
 func printable(s string) bool {
@@ -277,6 +322,9 @@ type ClusterSecrets struct {
 	Revoked bool `json:"revoked"`
 	// AI: the cluster's agent lists the AI capability (odicea.ai).
 	AI bool `json:"ai"`
+	// ScopedSettings: the cluster's agent can give a setting to some
+	// services only (odicea.service-settings, MS-4).
+	ScopedSettings bool `json:"scoped_settings"`
 	// Failures are the managed values whose last delivery did not arrive
 	// (by name; not part of the API: SecretView carries them).
 	Failures map[string]SecretFailure `json:"-"`
@@ -321,10 +369,16 @@ type DesiredSecret struct {
 	Store    string       `json:"store,omitempty"`
 	Key      string       `json:"key,omitempty"`
 	Property string       `json:"property,omitempty"`
+	// Services read it (empty: every service).
+	Services []string `json:"services,omitempty"`
 }
 
 // WithSettings is d configured by s: the environment's variables over the
 // release's, and its secrets (a secret wins over a variable of its name).
+// Each setting keeps the services it reaches; a scoped one (MS-4) does not
+// remove the release's variable of its name, since the services it does not
+// reach keep it (the agent decides per workload what wins). A service's own
+// variables go with the service, if the version has it.
 func (d DesiredApp) WithSettings(s Settings) DesiredApp {
 	s = s.Normalize()
 	d.Access = string(s.Access.Mode)
@@ -335,26 +389,39 @@ func (d DesiredApp) WithSettings(s Settings) DesiredApp {
 	for k, v := range s.Env {
 		env[k] = v
 	}
+	d.ServiceEnv = make(map[string]map[string]string, len(d.Services))
+	for _, svc := range d.Services {
+		if env := s.ServiceEnv[svc.Name]; len(env) > 0 {
+			d.ServiceEnv[svc.Name] = maps.Clone(env)
+		}
+	}
 	d.Resources = make([]DesiredResource, 0, len(s.Resources))
 	for _, r := range s.Resources {
-		for _, v := range resourcekind.Variables(r.Kind, r.Prefix) {
-			delete(env, v) // the connection wins over a release's variable of its name
+		if r.Services.Whole() {
+			for _, v := range resourcekind.Variables(r.Kind, r.Prefix) {
+				delete(env, v) // the connection wins over a release's variable of its name
+			}
 		}
-		d.Resources = append(d.Resources, DesiredResource{Name: r.Name, Kind: r.Kind, Prefix: r.Prefix})
+		d.Resources = append(d.Resources, DesiredResource{Name: r.Name, Kind: r.Kind, Prefix: r.Prefix, Services: r.Services})
 	}
 	d.Secrets = make([]DesiredSecret, 0, len(s.Secrets))
 	for _, r := range s.Secrets {
-		delete(env, r.Name)
+		if r.Services.Whole() {
+			delete(env, r.Name)
+		}
 		d.Secrets = append(d.Secrets, DesiredSecret{Name: r.Name, Source: r.Source, Version: r.Version, KeyID: r.KeyID,
-			Store: r.Store, Key: r.Key, Property: r.Property})
+			Store: r.Store, Key: r.Key, Property: r.Property, Services: r.Services})
 	}
 	d.AI = nil
 	if s.AI.Enabled {
-		for _, v := range AIVariables {
-			delete(env, v) // the AI wins over a release's variable of its name
+		if s.AI.Services.Whole() {
+			for _, v := range AIVariables {
+				delete(env, v) // the AI wins over a release's variable of its name
+			}
 		}
-		d.AI = &DesiredAI{BaseURL: s.AI.BaseURL, KeySecret: AIKeySecret}
-		d.Secrets = append(d.Secrets, DesiredSecret{Name: AIKeySecret, Source: SecretManaged, Version: s.AI.KeyVersion, KeyID: s.AI.KeyID})
+		d.AI = &DesiredAI{BaseURL: s.AI.BaseURL, KeySecret: AIKeySecret, Services: s.AI.Services}
+		d.Secrets = append(d.Secrets, DesiredSecret{Name: AIKeySecret, Source: SecretManaged, Version: s.AI.KeyVersion, KeyID: s.AI.KeyID,
+			Services: s.AI.Services})
 	}
 	d.Env = env
 	return d
@@ -426,7 +493,7 @@ func ViewSecrets(s Settings, requests []SecretRequest, c ClusterSecrets, version
 			continue
 		}
 		req := requests[i]
-		out.Items = append(out.Items, SecretView{SecretRef: SecretRef{Name: req.Name, Source: SecretManaged},
+		out.Items = append(out.Items, SecretView{SecretRef: SecretRef{Name: req.Name, Source: SecretManaged, Services: req.Services},
 			State: SecretStateMissing, NextVersion: NextSecretVersion(s, versions, req.Name), Request: &req})
 	}
 	slices.SortFunc(out.Items, func(a, b SecretView) int { return strings.Compare(a.Name, b.Name) })
@@ -457,19 +524,22 @@ func secretState(r SecretRef, c ClusterSecrets) SecretState {
 }
 
 // NameCount is how many names an environment holds under s: variables,
-// secrets, the variables of connected resources and open requests together, each name once (a request whose name is
-// a secret or a variable already takes no second place).
+// secrets, the variables of connected resources and of the AI, and open
+// requests, each name once (a request whose name is a secret or a variable
+// already takes no second place); a service's own variable takes a place of
+// its own (it is one more value).
 func (s Settings) NameCount(open []SecretRequest) int {
-	n := len(s.Env) + len(s.Secrets) + len(s.reserved())
-	for _, r := range open {
-		if _, plain := s.Env[r.Name]; plain {
-			continue
-		}
-		if _, taken := s.reserved()[r.Name]; taken {
-			continue
-		}
-		if _, secret := s.Secret(r.Name); !secret {
-			n++
+	n := 0
+	for _, held := range s.holdings(open) {
+		shared := false
+		for _, h := range held {
+			switch {
+			case h.layer != "":
+				n++
+			case !shared:
+				shared = true
+				n++
+			}
 		}
 	}
 	return n
@@ -480,11 +550,12 @@ func ErrTooManyVars(field string) error {
 	return errx.InvalidField(field, "an environment has at most 100 variables, secrets and pending requests")
 }
 
-// CheckRequest says whether a request for name fits: an open request of that
-// name is renewed, any other takes one more place.
-func (s Settings) CheckRequest(open []SecretRequest, name string) error {
-	if res, ok := s.reserved()[name]; ok {
-		return ErrVariableTaken(name, res)
+// CheckRequest says whether a request for name, for the services of scope,
+// fits: no resource or AI variable of its name reaches them, and an open
+// request of that name is renewed while any other takes one more place.
+func (s Settings) CheckRequest(open []SecretRequest, name string, scope Scope) error {
+	if h := clash(s.holdings(nil)[name], scope, heldByVariable, heldBySecret); h != nil {
+		return ErrVariableTaken(name, h.holder)
 	}
 	if slices.ContainsFunc(open, func(r SecretRequest) bool { return r.Name == name }) {
 		return nil
@@ -495,53 +566,140 @@ func (s Settings) CheckRequest(open []SecretRequest, name string) error {
 	return nil
 }
 
+// EnvChange is what WithEnv did: the next settings, the names set and unset
+// (sorted) and what may surprise (SettingsChange.Warnings).
+type EnvChange struct {
+	Next     Settings
+	Set      []string
+	Unset    []string
+	Warnings []string
+}
+
+// layer is the plain variables of service ("": the whole app's), made when
+// missing.
+func (s *Settings) layer(service string) map[string]string {
+	if service == "" {
+		return s.Env
+	}
+	if s.ServiceEnv[service] == nil {
+		s.ServiceEnv[service] = map[string]string{}
+	}
+	return s.ServiceEnv[service]
+}
+
 // WithEnv is the next settings with in applied (in validated); open are the
 // environment's open secret requests, which count against the limit. A name
-// that is a secret cannot become a plain variable (remove the secret first).
-func (s Settings) WithEnv(in SetEnv, open []SecretRequest) (Settings, []string, []string, error) {
+// that is a secret for a service the variable would reach cannot become a
+// plain variable (remove the secret first), and one a resource or the AI
+// sets there is taken. A service's own variable wins over the whole app's.
+func (s Settings) WithEnv(in SetEnv, open []SecretRequest) (EnvChange, error) {
 	n := s.next(in.RequestedBy)
-	var set, unset []string
-	taken := s.reserved()
-	for k, v := range in.Set {
-		if res, ok := taken[k]; ok {
-			return Settings{}, nil, nil, ErrVariableTaken(k, res)
+	held := s.holdings(open)
+	layers := []string{""}
+	if scope := in.Services.Normalize(); !scope.Whole() {
+		layers = scope
+	}
+	set, unset := map[string]bool{}, map[string]bool{}
+	var warnings []string
+	for _, k := range slices.Sorted(maps.Keys(in.Set)) {
+		v := in.Set[k]
+		for _, layer := range layers {
+			var scope Scope
+			if layer != "" {
+				scope = Scope{layer}
+			}
+			if h := clash(held[k], scope, heldByVariable, heldByRequest); h != nil {
+				if h.kind == heldBySecret {
+					return EnvChange{}, errx.InvalidField("set", k+" is a secret: remove the secret to make it a plain variable")
+				}
+				return EnvChange{}, ErrVariableTaken(k, h.holder)
+			}
+			env := n.layer(layer)
+			if old, ok := env[k]; !ok || old != v {
+				set[k] = true
+			}
+			env[k] = v
+			warnings = append(warnings, shadowing(n, k, layer)...)
 		}
-		if _, secret := n.Secret(k); secret {
-			return Settings{}, nil, nil, errx.InvalidField("set", k+" is a secret: remove the secret to make it a plain variable")
-		}
-		if old, ok := n.Env[k]; !ok || old != v {
-			set = append(set, k)
-		}
-		n.Env[k] = v
 	}
 	for _, k := range in.Unset {
-		if _, ok := n.Env[k]; ok {
-			unset = append(unset, k)
-			delete(n.Env, k)
+		if len(layers) == 1 && layers[0] == "" {
+			if _, ok := n.Env[k]; ok {
+				unset[k] = true
+				delete(n.Env, k)
+			}
+			for _, env := range n.ServiceEnv {
+				if _, ok := env[k]; ok {
+					unset[k] = true
+					delete(env, k)
+				}
+			}
+			continue
+		}
+		for _, layer := range layers {
+			if _, ok := n.ServiceEnv[layer][k]; ok {
+				unset[k] = true
+				delete(n.ServiceEnv[layer], k)
+			}
 		}
 	}
+	n = n.Normalize()
 	if n.NameCount(open) > MaxSettingsVars {
-		return Settings{}, nil, nil, ErrTooManyVars("set")
+		return EnvChange{}, ErrTooManyVars("set")
 	}
-	return n, set, unset, nil
+	return EnvChange{Next: n, Set: slices.Sorted(maps.Keys(set)), Unset: slices.Sorted(maps.Keys(unset)), Warnings: slices.Compact(warnings)}, nil
+}
+
+// shadowing words what setting k in layer means for the other layer: a
+// service's own value replaces the whole app's there, and a service with its
+// own value keeps it when the whole app's changes.
+func shadowing(n Settings, k, layer string) []string {
+	if layer != "" {
+		if _, ok := n.Env[k]; ok {
+			return []string{"El servicio " + layer + " usa su propio valor de " + k + ", no el de la app."}
+		}
+		return nil
+	}
+	var out []string
+	for _, svc := range slices.Sorted(maps.Keys(n.ServiceEnv)) {
+		if _, ok := n.ServiceEnv[svc][k]; ok {
+			out = append(out, "El servicio "+svc+" conserva su propio valor de "+k+".")
+		}
+	}
+	return out
 }
 
 // WithSecret is the next settings with ref in place of the secret of its
-// name (a plain variable of that name is removed: it becomes a secret). open
-// are the open secret requests (the one of ref's name is answered by it and
-// is not counted twice).
+// name, for the services ref.Services reaches. A plain variable of its name
+// there becomes the secret (removed), but one of the whole app cannot give
+// way to a secret of some services only (the others would lose it). A name
+// a resource or the AI sets for those services is taken. open are the open
+// secret requests (the one of ref's name is answered by it and is not
+// counted twice).
 func (s Settings) WithSecret(ref SecretRef, actor identity.UserID, open []SecretRequest) (Settings, error) {
-	if res, ok := s.reserved()[ref.Name]; ok {
-		return Settings{}, ErrVariableTaken(ref.Name, res)
+	ref.Services = ref.Services.Normalize()
+	if h := clash(s.holdings(nil)[ref.Name], ref.Services, heldByVariable, heldBySecret); h != nil {
+		return Settings{}, ErrVariableTaken(ref.Name, h.holder)
 	}
 	n := s.next(actor)
-	delete(n.Env, ref.Name)
+	if _, plain := n.Env[ref.Name]; plain {
+		if !ref.Services.Whole() {
+			return Settings{}, errx.InvalidField("services", ref.Name+" is a variable of the whole app: remove it, or give the secret to the whole app")
+		}
+		delete(n.Env, ref.Name)
+	}
+	for svc, env := range n.ServiceEnv {
+		if ref.Services.Reaches(svc) {
+			delete(env, ref.Name)
+		}
+	}
 	n.Secrets = slices.DeleteFunc(n.Secrets, func(r SecretRef) bool { return r.Name == ref.Name })
 	n.Secrets = append(n.Secrets, ref)
+	n = n.Normalize()
 	if n.NameCount(open) > MaxSettingsVars {
 		return Settings{}, ErrTooManyVars("name")
 	}
-	return n.Normalize(), nil
+	return n, nil
 }
 
 // WithoutSecret is the next settings without the secret named name.

@@ -49,6 +49,30 @@ type DesiredApp struct {
 	// for a version of one web service at "/" and are empty otherwise
 	// (Desired).
 	Services []Service `json:"services"`
+	// ServiceEnv are the plain variables of one service only (MS-4), by
+	// service of Services (WithSettings); they win over Env there.
+	ServiceEnv map[string]map[string]string `json:"service_env,omitempty"`
+}
+
+// Scoped says some setting of d reaches only some of its services: what a
+// cluster without the service-settings capability must not get.
+func (d DesiredApp) Scoped() bool {
+	for _, env := range d.ServiceEnv {
+		if len(env) > 0 {
+			return true
+		}
+	}
+	for _, s := range d.Secrets {
+		if len(s.Services) > 0 {
+			return true
+		}
+	}
+	for _, r := range d.Resources {
+		if len(r.Services) > 0 {
+			return true
+		}
+	}
+	return d.AI != nil && len(d.AI.Services) > 0
 }
 
 // Phase is how the cluster sees an app.

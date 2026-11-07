@@ -329,10 +329,10 @@ is the `authorize` step that starts the deployment's workflow.
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
-| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, resources[{name, kind, prefix}], ai:{enabled, key_version, key_id?, base_url?}, secrets[{…, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available}` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, service_env, resources[{name, kind, prefix, services?}], ai:{enabled, key_version, key_id?, base_url?, services?}, secrets[{…, services?, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available, scoped_settings}` |
 | `GET` | `/api/v1/projects/:id/environments/:environment/uses` | projects:read | 200 `{access:{mode, pending, failed}, identity:{verifiable}, resources[{name, kind, prefix, status, detail?, variables}], secrets:{total, missing[], external, unavailable}\|null, variables, ai:{available, enabled, status}\|null, egress:{mode, state, enforced}\|null, unavailable[], attention[{kind, who, message}]}` — «Lo que usa esta app» (below) |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
-| `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null}` (`{set, unset}`) |
+| `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null, warnings?}` (`{set, unset, services?}`) |
 
 **Lo que usa esta app (`…/uses`).** One read model of what the app depends on
 and what still stands in its way, assembled by release from its own settings
@@ -370,17 +370,17 @@ never appear in the API: `variables` are the names the app reads.
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `…/resources` | projects:read | 200 `{items[resource], available_kinds}` (oldest first) |
-| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, storage_gi?, connect?:{prefix}}`); **202** `pending_approval` when a rule holds the connection of a create with `connect` (nothing created yet) |
+| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, storage_gi?, connect?:{prefix, services?}}`); **202** `pending_approval` when a rule holds the connection of a create with `connect` (nothing created yet) |
 | `GET` | `…/resources/:name` | projects:read | 200 resource |
 | `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{storage_gi}`: it only grows) |
 | `DELETE` | `…/resources/:name` | `odyssey:resources:delete` | **202** resource, now `deleting` |
-| `PUT` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` (`{prefix?}`) |
+| `PUT` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` (`{prefix?, services?}`) |
 | `DELETE` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` |
 
 The resource: `{id, organization_id, project_id, environment_id, name, kind
 (postgres\|redis\|files), storage_gi, generation, status (active\|deleting),
 created_by, created_at, updated_at, phase (provisioning\|ready\|failed\|deleted),
-message, connected, prefix, variables[]}`. `phase` and `message` are what the
+message, connected, prefix, services[], variables[]}`. `phase` and `message` are what the
 cluster reported (read from the fleet, not stored; `provisioning` until the
 agent says otherwise).
 
@@ -399,6 +399,13 @@ agent says otherwise).
   it defines is a plain variable, a secret or another resource's (`PATCH …/env`
   and secrets are refused the same way for a connected resource's names); 409
   `RESOURCE_DELETING` for one being deleted.
+- **Services** (MS-4): `services` (in `connect` and in the connection's body)
+  picks the services that get its variables; absent keeps what the
+  connection says (the whole app for a new one), empty is the whole app. A
+  `files` volume of an app with several services is mounted by exactly one
+  (400 `services`: «un volumen de archivos lo monta un solo servicio: elige
+  cuál»). IT's rules see the services reached in `services` of
+  `connect_resource`.
 - **Deleting** erases the data for good. A connected resource is refused with
   409 `RESOURCE_IN_USE` («Desconéctalo primero»); the check and the connection
   are serialized on the environment's settings, so they cannot race. The
@@ -411,9 +418,10 @@ agent says otherwise).
 - A deploy of an app with resources waits for them (up to 10 min at the
   cluster); if one is not ready in time the deployment fails with
   `RESOURCE_NOT_READY` and the resource's own reason as `detail`.
-| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for `external`) | `managed`: 200 the secret (`missing` until loaded); `external`: **202** `{settings, deployment\|null}` |
+| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for `external`) | `managed`: 200 the secret (`missing` until loaded); `external`: **202** `{settings, deployment\|null}` (`services?` on both) |
 | `DELETE` | `/api/v1/projects/:id/environments/:environment/secrets/:name` | projects:write (+ `odyssey:secrets:external` for a vault secret: 403 without it) | **202** `{settings, deployment\|null}` |
-| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name/value` | projects:write (+ `odyssey:secrets:external` to replace a vault secret: 403 without it) | **202** `{settings, deployment\|null}` (`{version, key_id, sealed}`: ciphertext only); 409 `SECRET_VERSION_CONFLICT` when `version` is not the secret's `next_version` |
+| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name/value` | projects:write (+ `odyssey:secrets:external` to replace a vault secret: 403 without it) | **202** `{settings, deployment\|null}` (`{version, key_id, sealed, services?}`: ciphertext only); 409 `SECRET_VERSION_CONFLICT` when `version` is not the secret's `next_version` |
+| `PUT` | `/api/v1/projects/:id/environments/:environment/secrets/:name/services` | projects:write (+ `odyssey:secrets:external` for a vault secret) | **202** `{settings, deployment\|null}` (`{services}`; MS-4: who reads it, without writing the value again) |
 | `GET` | `/api/v1/projects/:id/releases/:release` | read | 200 release |
 | `GET` | `/api/v1/projects/:id/builds/:build` | read | 200 build |
 | `GET` | `/api/v1/projects/:id/builds/:build/logs` | read | 200 `{lines, next, finished}` (`after`, `limit` ≤ 1000) |
@@ -576,8 +584,24 @@ agent says otherwise).
   value over it needs that permission too (403). `DELETE …/secrets/:name`
   removes the secret or its open request. An environment holds at most 100
   variables, secrets and open requests together (400). Events `secret.changed`
-  (`requested` | `loaded` | `external` | `removed`, with the version, never a
+  (`requested` | `loaded` | `external` | `removed` | `scoped`, with the version, never a
   value).
+- **Settings by service** (MS-4). In an app of several services a setting can
+  reach some services only: `services` on `PATCH …/env`, the secret
+  endpoints, a resource's connection and `PUT …/ai` (absent: keep what is in
+  force, the whole app for something new; empty: the whole app, also the
+  services added later). Plain variables live in two layers: the whole app's
+  `env` and each service's own `service_env[service]`; a service's own
+  variable wins over the whole app's of the same name, and the response's
+  `warnings` says so. Any other overlap of the same name is 409
+  `VARIABLE_TAKEN` (two scopes overlap when they share a service; the whole
+  app overlaps everything). A service the app does not have is 400
+  `services`. Only a cluster whose agent lists `odicea.service-settings`
+  takes scoped settings (`scoped_settings` in the settings): otherwise 409
+  `SERVICE_SETTINGS_UNAVAILABLE`, and a deployment of a scoped app there
+  fails at `apply`. A scope naming a service the app removed later reaches
+  nobody until it comes back. Events carry `services` (additive, absent for
+  the whole app).
 - **Errors** (`error.code`): `HEALTH_CHECK_FAILED` (it runs but its health
   path does not answer), `IMAGE_PULL_FAILED` (the cluster cannot download the
   image), `APP_CRASHED` (it exits on start), `NOT_READY` (timeout),
@@ -613,8 +637,8 @@ never in any response.
 
 | Method | Path | Permission | Success |
 |---|---|---|---|
-| `GET` | `…/ai` | projects:read | 200 `{available, message?, enabled, status (off\|enabling\|enabled\|rotating\|disabling\|revoke_failed), base_url, variables[], enabled_by\|null, enabled_at\|null, warning?, revoke_error?}` |
-| `PUT` | `…/ai` | projects:write | **202** the same view (`enabling`); already on: nothing changes |
+| `GET` | `…/ai` | projects:read | 200 `{available, message?, enabled, status (off\|enabling\|enabled\|rotating\|disabling\|revoke_failed), base_url, variables[], enabled_by\|null, enabled_at\|null, warning?, revoke_error?, services[], scoped_settings}` |
+| `PUT` | `…/ai` | projects:write | **202** the same view (`enabling`); already on: nothing changes; optional `{services}` (MS-4) gives it to those services only, or moves it there while on (same key) |
 | `POST` | `…/ai/rotate` | projects:write | **202** the view (`rotating`): a new key, the old one revoked once the app runs with the new |
 | `DELETE` | `…/ai` | projects:write | **202** the view (`disabling`; `off` already: nothing; `revoke_failed`: retries the revocation) |
 

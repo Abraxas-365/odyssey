@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
@@ -33,16 +34,8 @@ func (s *Service) AITarget(ctx context.Context, organization identity.Organizati
 	if err != nil {
 		return release.AITarget{}, err
 	}
-	out := release.AITarget{Capable: c.AI, Key: c.Key, Revoked: c.Revoked,
+	out := release.AITarget{Capable: c.AI, Key: c.Key, Revoked: c.Revoked, ScopedSettings: c.ScopedSettings,
 		NextVersion: release.AINextVersion(settings, versions), Revision: settings.Revision, Current: settings.AI}
-	if !settings.AI.Enabled {
-		// the variables the AI would set, against what the app already defines
-		open, err := s.repo.ListSecretRequests(ctx, organization, env)
-		if err != nil {
-			return release.AITarget{}, err
-		}
-		_, _, out.Conflict = settings.WithAI(release.AISettings{Enabled: true, KeyVersion: out.NextVersion}, identity.UserID{}, open)
-	}
 	return out, nil
 }
 
@@ -54,14 +47,19 @@ func (s *Service) EnableAI(ctx context.Context, organization identity.Organizati
 	if err != nil {
 		return release.SettingsChange{}, err
 	}
+	if input.Services != nil {
+		if _, err := s.checkScope(ctx, p, e, input.Services.Normalize()); err != nil {
+			return release.SettingsChange{}, err
+		}
+	}
 	var out release.SettingsChange
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		state, prev, err := s.lockSettings(ctx, p, e)
 		if err != nil {
 			return err
 		}
-		want := input.Settings()
-		if prev.AI == want {
+		want := input.Settings(prev.AI)
+		if prev.AI.Equal(want) {
 			// Already in force (a retry after the commit): the key was
 			// delivered with it. Asking again still retries a config
 			// deployment that was refused at apply.
@@ -121,6 +119,91 @@ func (s *Service) DisableAI(ctx context.Context, organization identity.Organizat
 		return s.events.Publish(ctx, release.NewAIChanged(organization, input.RequestedBy, id.String(), out.Settings, started, names(p, e)))
 	})
 	return out, err
+}
+
+func (s *Service) ScopeAI(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, input release.ScopeAI) (release.SettingsChange, error) {
+	if err := input.Validate(); err != nil {
+		return release.SettingsChange{}, err
+	}
+	p, e, err := s.placeWritable(ctx, organization, id, env)
+	if err != nil {
+		return release.SettingsChange{}, err
+	}
+	scope := input.Services.Normalize()
+	if _, err := s.checkScope(ctx, p, e, scope); err != nil {
+		return release.SettingsChange{}, err
+	}
+	var out release.SettingsChange
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		state, prev, err := s.lockSettings(ctx, p, e)
+		if err != nil {
+			return err
+		}
+		if !prev.AI.Enabled {
+			return errx.Conflict("La IA de esta app está apagada: actívala antes de elegir qué servicios la usan.").
+				WithCode(release.CodeAIOff)
+		}
+		want := prev.AI
+		want.Services = scope
+		open, err := s.repo.ListSecretRequests(ctx, organization, e.ID)
+		if err != nil {
+			return err
+		}
+		n, changed, err := prev.WithAI(want, input.RequestedBy, open)
+		if err != nil {
+			return err
+		}
+		var next *release.Settings
+		if changed {
+			next = &n
+		}
+		var started *release.DeploymentID
+		if out, started, err = s.changeSettings(ctx, state, p, e, prev, next, input.RequestedBy); err != nil || next == nil {
+			return err
+		}
+		return s.events.Publish(ctx, release.NewAIChanged(organization, input.RequestedBy, id.String(), out.Settings, started, names(p, e)))
+	})
+	return out, err
+}
+
+func (s *Service) AIReach(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, services *release.Scope) ([]gate.Service, error) {
+	p, e, err := s.place(ctx, organization, id, env)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := s.repo.FindSettings(ctx, organization, env)
+	if err != nil {
+		return nil, err
+	}
+	var topology []project.Service
+	scope := release.Kept(services, nil)
+	if services == nil {
+		// What is in force is not checked again: it may name a service the
+		// app no longer has (it reaches nobody then).
+		if settings.AI.Enabled {
+			scope = settings.AI.Services.Normalize()
+		}
+		topology, err = s.projects.Services(ctx, organization, id)
+	} else {
+		topology, err = s.checkScope(ctx, p, e, scope)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A variable the app defines for a service the AI would reach.
+	want := settings.AI
+	if !want.Enabled {
+		want = release.AISettings{Enabled: true, KeyVersion: 1}
+	}
+	want.Services = scope
+	open, err := s.repo.ListSecretRequests(ctx, organization, env)
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := settings.WithAI(want, identity.UserID{}, open); err != nil {
+		return nil, err
+	}
+	return scope.Gate(topology), nil
 }
 
 func (s *Service) AISettled(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, revision int64) (bool, error) {

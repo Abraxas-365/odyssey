@@ -172,7 +172,7 @@ func (s *Service) apply(ctx context.Context, st *workflow.State) (any, error) {
 			return project.ArchivedError()
 		}
 		a, err := s.release.Enable(ctx, org, in.Project, e.ID, ai.Delivery{Version: m.Version, KeyID: m.ClusterKeyID,
-			BaseURL: s.opts.BaseURL, Sealed: m.Sealed, By: by})
+			BaseURL: s.opts.BaseURL, Sealed: m.Sealed, Services: in.Services, By: by})
 		if err != nil {
 			return err
 		}

@@ -71,8 +71,12 @@ type Settings struct {
 	// Env are the environment's plain variables (2a). They win over a
 	// release's env of the same name; never secrets.
 	Env map[string]string `json:"env"`
+	// ServiceEnv are plain variables of one service only (MS-4), by service:
+	// a service's own wins over Env's of the same name.
+	ServiceEnv map[string]map[string]string `json:"service_env"`
 	// Secrets are the environment's secret variables, sorted by name: only
-	// references, never a value. A name is in Env or in Secrets, not both.
+	// references, never a value. A name is a plain variable or a secret for
+	// the services it reaches, not both.
 	Secrets []SecretRef `json:"secrets"`
 	// Resources are the databases, caches and volumes connected to the app
 	// (2b), sorted by name: references only. The variables they define are
@@ -87,20 +91,32 @@ type Settings struct {
 // DefaultSettings are the settings of an environment that never changed them.
 func DefaultSettings(organization identity.OrganizationID, env project.EnvironmentID) Settings {
 	return Settings{Environment: env, Organization: organization, Access: AccessSettings{Mode: DefaultAccess},
-		Env: map[string]string{}, Secrets: []SecretRef{}, Resources: []ResourceUse{}}
+		Env: map[string]string{}, ServiceEnv: map[string]map[string]string{}, Secrets: []SecretRef{}, Resources: []ResourceUse{}}
 }
 
-// Normalize fills the empty collections (rows written before 2a have none).
+// Normalize fills the empty collections (rows written before 2a have none),
+// sorts them and normalizes every scope (a service layer left empty goes).
 func (s Settings) Normalize() Settings {
 	if s.Env == nil {
 		s.Env = map[string]string{}
 	}
+	if s.ServiceEnv == nil {
+		s.ServiceEnv = map[string]map[string]string{}
+	}
+	maps.DeleteFunc(s.ServiceEnv, func(_ string, env map[string]string) bool { return len(env) == 0 })
 	if s.Secrets == nil {
 		s.Secrets = []SecretRef{}
 	}
 	if s.Resources == nil {
 		s.Resources = []ResourceUse{}
 	}
+	for i := range s.Secrets {
+		s.Secrets[i].Services = s.Secrets[i].Services.Normalize()
+	}
+	for i := range s.Resources {
+		s.Resources[i].Services = s.Resources[i].Services.Normalize()
+	}
+	s.AI.Services = s.AI.Services.Normalize()
 	slices.SortFunc(s.Secrets, func(a, b SecretRef) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(s.Resources, func(a, b ResourceUse) int { return strings.Compare(a.Name, b.Name) })
 	return s
@@ -112,9 +128,41 @@ func (s Settings) next(actor identity.UserID) Settings {
 	n := s.Normalize()
 	n.Revision, n.CreatedBy, n.CreatedAt = 0, actor, time.Time{}
 	n.Env = maps.Clone(n.Env)
+	n.ServiceEnv = make(map[string]map[string]string, len(s.ServiceEnv))
+	for svc, env := range s.ServiceEnv {
+		n.ServiceEnv[svc] = maps.Clone(env)
+	}
 	n.Secrets = slices.Clone(n.Secrets)
 	n.Resources = slices.Clone(n.Resources)
+	for i := range n.Secrets {
+		n.Secrets[i].Services = slices.Clone(n.Secrets[i].Services)
+	}
+	for i := range n.Resources {
+		n.Resources[i].Services = slices.Clone(n.Resources[i].Services)
+	}
+	n.AI.Services = slices.Clone(n.AI.Services)
 	return n
+}
+
+// Scoped says some setting reaches only some services: what a cluster
+// without the service-settings capability cannot honor.
+func (s Settings) Scoped() bool {
+	for _, env := range s.ServiceEnv {
+		if len(env) > 0 {
+			return true
+		}
+	}
+	for _, r := range s.Secrets {
+		if !r.Services.Whole() {
+			return true
+		}
+	}
+	for _, u := range s.Resources {
+		if !u.Services.Whole() {
+			return true
+		}
+	}
+	return s.AI.Enabled && !s.AI.Services.Whole()
 }
 
 // Secret is the reference named name (false when there is none).
@@ -175,6 +223,10 @@ type AccessChange = SettingsChange
 type SettingsChange struct {
 	Settings   Settings    `json:"settings"`
 	Deployment *Deployment `json:"deployment"`
+	// Warnings are what the change did that may surprise (a service's own
+	// variable now shadows the whole app's of the same name), in plain
+	// Spanish; empty when nothing.
+	Warnings []string `json:"warnings,omitempty"`
 	// Outcome says the change was held for IT's approval (nothing changed).
 	gate.Outcome
 }

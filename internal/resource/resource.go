@@ -97,9 +97,30 @@ type Observed struct {
 type Connection struct {
 	Name   string `json:"name"`
 	Prefix string `json:"prefix"`
+	// Services get its variables (MS-4); empty: the whole app.
+	Services []string `json:"services"`
+}
+
+// Link is a connection being made.
+type Link struct {
+	Name   string
+	Prefix string
+	// Services are the services it reaches (nil: as the connection says,
+	// the whole app for a new one; empty: the whole app).
+	Services *[]string
 	// Judged: IT's rules were already asked (Usage.AuthorizeConnect), so
-	// connecting does not ask again. Never on the wire.
-	Judged bool `json:"-"`
+	// connecting does not ask again.
+	Judged bool
+}
+
+// Ask is a connection IT's rules are asked about before it is made
+// (Usage.AuthorizeConnect): the resource (it may not exist yet), the
+// services it would reach (as in Link) and what a held one re-runs.
+type Ask struct {
+	Name     string
+	Kind     resourcekind.Kind
+	Services *[]string
+	Detail   gate.Detail
 }
 
 // Applied is what connecting or disconnecting did in release: the settings
@@ -117,9 +138,11 @@ type View struct {
 	Phase   Phase  `json:"phase"`
 	Message string `json:"message"`
 	// Connected says whether the app receives the resource's variables;
-	// Prefix goes before their names.
-	Connected bool   `json:"connected"`
-	Prefix    string `json:"prefix"`
+	// Prefix goes before their names; Services get them (empty: the whole
+	// app).
+	Connected bool     `json:"connected"`
+	Prefix    string   `json:"prefix"`
+	Services  []string `json:"services"`
 	// Variables are the names the app reads the resource by: with the
 	// connection's prefix, or without one while not connected.
 	Variables []string `json:"variables"`
@@ -130,12 +153,13 @@ type View struct {
 
 // NewView puts a resource together with what is observed and its connection.
 func NewView(r Resource, o Observed, c *Connection) View {
-	v := View{Resource: r, Phase: o.Phase, Message: o.Message}
+	v := View{Resource: r, Phase: o.Phase, Message: o.Message, Services: []string{}}
 	if v.Phase == "" {
 		v.Phase = PhaseProvisioning
 	}
 	if c != nil {
 		v.Connected, v.Prefix = true, c.Prefix
+		v.Services = append(v.Services, c.Services...)
 	}
 	v.Variables = resourcekind.Variables(r.Kind, v.Prefix)
 	return v
@@ -183,6 +207,8 @@ type Create struct {
 // ConnectOptions are how a resource is connected.
 type ConnectOptions struct {
 	Prefix string `json:"prefix"`
+	// Services get its variables (absent or empty: the whole app; MS-4).
+	Services *[]string `json:"services"`
 }
 
 func (in Create) Normalize() Create {
@@ -191,7 +217,7 @@ func (in Create) Normalize() Create {
 		in.StorageGi = resourcekind.DefaultStorageGi
 	}
 	if in.Connect != nil {
-		c := ConnectOptions{Prefix: strings.TrimSpace(in.Connect.Prefix)}
+		c := ConnectOptions{Prefix: strings.TrimSpace(in.Connect.Prefix), Services: in.Connect.Services}
 		in.Connect = &c
 	}
 	return in
@@ -238,8 +264,11 @@ type Delete struct {
 
 // Connect is the request to connect a resource to the app.
 type Connect struct {
-	Name        string          `json:"-"`
-	Prefix      string          `json:"prefix"`
+	Name   string `json:"-"`
+	Prefix string `json:"prefix"`
+	// Services get its variables (absent: as the connection says, the
+	// whole app for a new one; empty: the whole app; MS-4).
+	Services    *[]string       `json:"services"`
 	RequestedBy identity.UserID `json:"-"`
 }
 

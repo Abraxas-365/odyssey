@@ -109,14 +109,15 @@ type Usage interface {
 	Connections(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) ([]Connection, error)
 	// Connect connects the resource (409 VARIABLE_TAKEN when a variable it
 	// defines is taken); Disconnect removes the connection.
-	Connect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, c Connection, by identity.UserID) (Applied, error)
+	Connect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, l Link, by identity.UserID) (Applied, error)
 	Disconnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, name string, by identity.UserID) (Applied, error)
-	// AuthorizeConnect asks IT's rules whether a resource of the kind may be
-	// connected, writing nothing but, when a rule wants approval, the request
-	// (a Pending answer: nothing else may then happen). Create asks it before
-	// it provisions anything and then connects with Connection.Judged; the
-	// detail describes the operation that will re-run once approved.
-	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, kind resourcekind.Kind, detail gate.Detail) (*gate.Pending, error)
+	// AuthorizeConnect checks the services a connection would reach and asks
+	// IT's rules whether it may be made, writing nothing but, when a rule
+	// wants approval, the request (a Pending answer: nothing else may then
+	// happen). Create asks it before it provisions anything and then
+	// connects with Link.Judged; ask.Detail describes the operation that
+	// will re-run once approved.
+	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, ask Ask) (*gate.Pending, error)
 	// WithConnectionsLocked runs fn holding the lock connecting takes, with
 	// the connections at that moment: a deletion that checks "not in use"
 	// inside fn cannot race a connection.

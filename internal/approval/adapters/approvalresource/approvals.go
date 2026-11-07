@@ -63,7 +63,7 @@ func (e *Executor) Execute(ctx context.Context, r approval.Request) error {
 			return err
 		}
 		out, err := e.resource.Connect(ctx, r.Organization, r.Project, r.Environment,
-			resource.Connect{Name: p.Name, Prefix: p.Prefix, RequestedBy: r.RequestedBy})
+			resource.Connect{Name: p.Name, Prefix: p.Prefix, Services: p.Services, RequestedBy: r.RequestedBy})
 		return finished(out.Outcome, err)
 	case resource.OpCreate:
 		var p resource.CreateApproval
@@ -71,7 +71,7 @@ func (e *Executor) Execute(ctx context.Context, r approval.Request) error {
 			return err
 		}
 		out, err := e.resource.Create(ctx, r.Organization, r.Project, r.Environment, resource.Create{Name: p.Name,
-			Kind: resourcekind.Kind(p.Kind), StorageGi: p.StorageGi, Connect: &resource.ConnectOptions{Prefix: p.Prefix},
+			Kind: resourcekind.Kind(p.Kind), StorageGi: p.StorageGi, Connect: &resource.ConnectOptions{Prefix: p.Prefix, Services: p.Services},
 			RequestedBy: r.RequestedBy})
 		return finished(out.Outcome, err)
 	}

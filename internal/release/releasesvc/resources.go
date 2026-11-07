@@ -8,6 +8,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 // ConnectResource connects a resource to the environment's app: a new
@@ -25,6 +26,16 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 	if err != nil {
 		return release.SettingsChange{}, err
 	}
+	// The services are checked (and IT's rules judge them) before the
+	// transaction, which re-reads the connection under the lock.
+	info, err := s.resources.Find(ctx, organization, e.ID, input.Name)
+	if err != nil {
+		return release.SettingsChange{}, err
+	}
+	_, reached, err := s.connectScope(ctx, p, e, info.Kind, input.Name, input.Services)
+	if err != nil {
+		return release.SettingsChange{}, err
+	}
 	// IT's rules judge BEFORE the transaction: a refusal (or, in 3b, the
 	// approval request it stores) must never live in a transaction that rolls
 	// back on that same refusal. The resource's kind is read here; the
@@ -33,13 +44,9 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 	// it provisions anything) is not judged twice; a tier change in the
 	// milliseconds between its check and this connection is ignored on purpose.
 	if !input.Judged {
-		info, err := s.resources.Find(ctx, organization, e.ID, input.Name)
-		if err != nil {
-			return release.SettingsChange{}, err
-		}
-		pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(info.Kind)}, gate.Hold{
-			Summary: "Conectar " + string(info.Kind) + " «" + info.Name + "» a " + where(p, e),
-			Payload: release.ConnectResourceApproval{Op: release.OpConnectResource, Name: input.Name, Prefix: input.Prefix}})
+		pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(info.Kind), Services: reached}, gate.Hold{
+			Summary: "Conectar " + string(info.Kind) + " «" + info.Name + "» a " + where(p, e) + scopeLabel(input.Services),
+			Payload: release.ConnectResourceApproval{Op: release.OpConnectResource, Name: input.Name, Prefix: input.Prefix, Services: input.Services}})
 		if err != nil {
 			return release.SettingsChange{}, err
 		}
@@ -64,7 +71,8 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 		if err != nil {
 			return err
 		}
-		use := release.ResourceUse{Name: info.Name, Kind: info.Kind, Prefix: input.Prefix}
+		old, _ := prev.Resource(info.Name)
+		use := release.ResourceUse{Name: info.Name, Kind: info.Kind, Prefix: input.Prefix, Services: release.Kept(input.Services, old.Services)}
 		n, changed, err := prev.WithResource(use, input.RequestedBy, open)
 		if err != nil {
 			return err
@@ -83,16 +91,65 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 	return out, err
 }
 
-// AuthorizeConnect is IT's rules' answer to connecting a resource of the kind
-// (nil, nil: allowed; a Pending: held, detail describes what will re-run). It
-// writes nothing but the approval request; see release.Usage.
-func (s *Service) AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, kind string, detail gate.Detail) (*gate.Pending, error) {
+// connectScope is the services a connection of the resource named name
+// reaches (in: what the input asks; nil keeps the connection's, the whole
+// app for a new one), checked: the app's services and a capable cluster
+// when it names some, and a files resource reaching exactly one service of
+// an app with several. reached is what IT's rules see.
+func (s *Service) connectScope(ctx context.Context, p project.Project, e project.Environment, kind resourcekind.Kind, name string,
+	in *release.Scope) (scope release.Scope, reached []gate.Service, err error) {
+	settings, err := s.repo.FindSettings(ctx, p.Organization, e.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	old, connected := settings.Resource(name)
+	scope = release.Kept(in, old.Services)
+	var topology []project.Service
+	if in == nil {
+		topology, err = s.projects.Services(ctx, p.Organization, p.ID)
+	} else {
+		topology, err = s.checkScope(ctx, p, e, scope)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	// what is in force stays as it is (its service may be gone)
+	if in != nil || !connected {
+		if err := release.CheckResourceScope(kind, scope, topology); err != nil {
+			return nil, nil, err
+		}
+	}
+	return scope, scope.Gate(topology), nil
+}
+
+// scopeLabel words the services asked for in a summary.
+func scopeLabel(in *release.Scope) string {
+	if in == nil {
+		return ""
+	}
+	return in.Normalize().Label()
+}
+
+// AuthorizeConnect is IT's rules' answer to connecting a resource (nil, nil:
+// allowed; a Pending: held, the detail describes what will re-run). It
+// checks the services the connection reaches and writes nothing but the
+// approval request; see release.Usage.
+func (s *Service) AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, connect release.AuthorizeConnect) (*gate.Pending, error) {
+	if connect.Services != nil {
+		if err := connect.Services.CheckNames("services"); err != nil {
+			return nil, err
+		}
+	}
 	p, e, err := s.placeWritable(ctx, organization, id, env)
 	if err != nil {
 		return nil, err
 	}
-	return s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: kind}, gate.Hold{
-		Summary: detail.Summary, Payload: detail.Payload})
+	_, reached, err := s.connectScope(ctx, p, e, connect.Kind, connect.Name, connect.Services)
+	if err != nil {
+		return nil, err
+	}
+	return s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(connect.Kind), Services: reached}, gate.Hold{
+		Summary: connect.Detail.Summary, Payload: connect.Detail.Payload})
 }
 
 // DisconnectResource removes the connection; the resource keeps existing.

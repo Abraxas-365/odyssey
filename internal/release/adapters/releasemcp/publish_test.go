@@ -64,6 +64,10 @@ func (c *commands) LoadSecret(context.Context, identity.OrganizationID, project.
 	return release.SettingsChange{}, errx.Internal("an assistant never loads a value")
 }
 
+func (c *commands) ScopeSecret(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.ScopeSecret) (release.SettingsChange, error) {
+	return release.SettingsChange{}, errx.Internal("not an assistant tool yet")
+}
+
 func (c *commands) SetExternalSecret(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, release.SetExternalSecret) (release.SettingsChange, error) {
 	return release.SettingsChange{}, errx.Internal("not an assistant tool")
 }

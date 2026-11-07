@@ -71,13 +71,26 @@ func (h *Handler) get(c *fiber.Ctx) error {
 }
 
 // enable answers 202: the key is made and delivered by the worker, and the
-// app is wired by a configuration deployment that follows.
+// app is wired by a configuration deployment that follows. The body is
+// optional: {"services": [...]} gives the AI to those services only ([]:
+// the whole app; absent: as it is, the whole app when it is off). With the
+// AI on, other services move it there (same key).
 func (h *Handler) enable(c *fiber.Ctx) error {
 	at, err := parse(c)
 	if err != nil {
 		return err
 	}
-	out, err := h.commands.Enable(c.UserContext(), at.org, at.project, at.environment, ai.Enable{RequestedBy: at.user})
+	in := ai.Enable{RequestedBy: at.user}
+	if httpx.HasBody(c) {
+		var body struct {
+			Services *[]string `json:"services"`
+		}
+		if err := httpx.DecodeJSON(c, &body); err != nil {
+			return err
+		}
+		in.Services = body.Services
+	}
+	out, err := h.commands.Enable(c.UserContext(), at.org, at.project, at.environment, in)
 	if err != nil {
 		return err
 	}

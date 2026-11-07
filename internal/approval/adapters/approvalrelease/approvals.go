@@ -71,7 +71,7 @@ func (e *Executor) Execute(ctx context.Context, r approval.Request) error {
 			return err
 		}
 		out, err := e.release.ConnectResource(ctx, r.Organization, r.Project, r.Environment,
-			release.ConnectResource{Name: p.Name, Prefix: p.Prefix, RequestedBy: r.RequestedBy})
+			release.ConnectResource{Name: p.Name, Prefix: p.Prefix, Services: p.Services, RequestedBy: r.RequestedBy})
 		return finished(out.Outcome, err)
 	}
 	return fmt.Errorf("approvalrelease: %q is not an action release re-runs", approval.OpOf(r))

@@ -5,6 +5,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
@@ -33,31 +34,23 @@ type ResourceUse struct {
 	Kind resourcekind.Kind `json:"kind"`
 	// Prefix goes before the variable names ("" for none).
 	Prefix string `json:"prefix"`
+	// Services get its variables (MS-4); empty: the whole app.
+	Services Scope `json:"services,omitempty"`
 }
 
 // Variables are the names the app reads the resource by.
 func (u ResourceUse) Variables() []string { return resourcekind.Variables(u.Kind, u.Prefix) }
 
-// DesiredResource is a connection as the cluster receives it.
-type DesiredResource struct {
-	Name   string            `json:"name"`
-	Kind   resourcekind.Kind `json:"kind"`
-	Prefix string            `json:"prefix"`
+func (u ResourceUse) equal(o ResourceUse) bool {
+	return u.Name == o.Name && u.Kind == o.Kind && u.Prefix == o.Prefix && u.Services.Equal(o.Services)
 }
 
-// resourceVariables maps every variable a connected resource defines to the
-// resource's name.
-func (s Settings) resourceVariables() map[string]string {
-	if len(s.Resources) == 0 {
-		return nil
-	}
-	out := map[string]string{}
-	for _, u := range s.Resources {
-		for _, v := range u.Variables() {
-			out[v] = u.Name
-		}
-	}
-	return out
+// DesiredResource is a connection as the cluster receives it.
+type DesiredResource struct {
+	Name     string            `json:"name"`
+	Kind     resourcekind.Kind `json:"kind"`
+	Prefix   string            `json:"prefix"`
+	Services []string          `json:"services,omitempty"`
 }
 
 // Resource is the connection to the resource named name (false: none).
@@ -77,9 +70,12 @@ func ErrVariableTaken(name, holder string) error {
 }
 
 // ConnectResource connects a resource of the environment to its app.
+// Services are the services that get its variables (nil: the whole app, or
+// as the connection already says).
 type ConnectResource struct {
 	Name        string          `json:"name"`
 	Prefix      string          `json:"prefix"`
+	Services    *Scope          `json:"services"`
 	RequestedBy identity.UserID `json:"-"`
 	// Judged says the caller already asked IT's rules about connecting this
 	// kind (Usage.AuthorizeConnect), so ConnectResource does not ask again.
@@ -95,7 +91,18 @@ func (in ConnectResource) Validate() error {
 	if err := resourcekind.CheckPrefix(in.Prefix); err != nil {
 		return errx.InvalidField("prefix", err.Error())
 	}
-	return nil
+	return scopeNames(in.Services)
+}
+
+// AuthorizeConnect is a connection IT's rules are asked about before it is
+// made (Usage.AuthorizeConnect): the resource (it may not exist yet), the
+// services it would reach (nil: as the connection says, the whole app for
+// a new one) and what a held one re-runs.
+type AuthorizeConnect struct {
+	Name     string
+	Kind     resourcekind.Kind
+	Services *Scope
+	Detail   gate.Detail
 }
 
 // DisconnectResource disconnects a resource from the app (it keeps existing).
@@ -112,27 +119,21 @@ func (in DisconnectResource) Validate() error {
 }
 
 // WithResource is the next settings with the resource connected under u
-// (replacing the connection of the same name, whose prefix may change). It
-// refuses a variable that a plain variable, a secret, an open secret request
-// or another resource already holds. changed is false when u was already
-// the connection.
+// (replacing the connection of the same name, whose prefix or services may
+// change). It refuses a variable that a plain variable, a secret, an open
+// secret request, another resource or the AI already holds for a service u
+// reaches. changed is false when u was already the connection.
 func (s Settings) WithResource(u ResourceUse, actor identity.UserID, open []SecretRequest) (next Settings, changed bool, err error) {
-	if old, ok := s.Resource(u.Name); ok && old == u {
+	u.Services = u.Services.Normalize()
+	if old, ok := s.Resource(u.Name); ok && old.equal(u) {
 		return s, false, nil
 	}
 	others := s
 	others.Resources = slices.DeleteFunc(slices.Clone(s.Resources), func(r ResourceUse) bool { return r.Name == u.Name })
-	taken := others.reserved()
+	held := others.holdings(open)
 	for _, v := range u.Variables() {
-		switch {
-		case taken[v] != "":
-			return Settings{}, false, ErrVariableTaken(v, taken[v])
-		case hasKey(s.Env, v):
-			return Settings{}, false, ErrVariableTaken(v, "una variable de la app")
-		case s.hasSecret(v):
-			return Settings{}, false, ErrVariableTaken(v, "un secreto de la app")
-		case slices.ContainsFunc(open, func(r SecretRequest) bool { return r.Name == v }):
-			return Settings{}, false, ErrVariableTaken(v, "un secreto pendiente de la app")
+		if h := clash(held[v], u.Services); h != nil {
+			return Settings{}, false, ErrVariableTaken(v, h.holder)
 		}
 	}
 	if len(others.Resources) >= MaxResourceUses {
@@ -156,10 +157,6 @@ func (s Settings) WithoutResource(name string, actor identity.UserID) (next Sett
 	n.Resources = slices.DeleteFunc(n.Resources, func(r ResourceUse) bool { return r.Name == name })
 	return n, true
 }
-
-func hasKey(m map[string]string, k string) bool { _, ok := m[k]; return ok }
-
-func (s Settings) hasSecret(name string) bool { _, ok := s.Secret(name); return ok }
 
 // ResourceInfo is what release needs to know of a resource to connect it.
 type ResourceInfo struct {
@@ -186,6 +183,8 @@ type ResourcesChanged struct {
 	Kind        string        `json:"kind"`
 	Prefix      string        `json:"prefix"`
 	Deployment  *DeploymentID `json:"deployment_id"`
+	// Services get its variables (MS-4, additive); absent: the whole app.
+	Services []string `json:"services,omitempty"`
 }
 
 func NewResourcesChanged(org identity.OrganizationID, actor identity.UserID, projectID string, now Settings, change string, u ResourceUse, deployment *DeploymentID, n Names) event.Event {
@@ -194,7 +193,7 @@ func NewResourcesChanged(org identity.OrganizationID, actor identity.UserID, pro
 		verb = "Desconectó"
 	}
 	return event.New(EventResourcesChanged, 1, org, actor, event.Subject(AccessSubjectKind, now.Environment),
-		verb+" "+u.Name+" de "+n.where(),
+		verb+" "+u.Name+u.Services.Label()+" de "+n.where(),
 		ResourcesChanged{Project: projectID, Environment: now.Environment.String(), Revision: now.Revision, Change: change,
-			Name: u.Name, Kind: string(u.Kind), Prefix: u.Prefix, Deployment: deployment})
+			Name: u.Name, Kind: string(u.Kind), Prefix: u.Prefix, Deployment: deployment, Services: u.Services})
 }

@@ -11,6 +11,7 @@ import (
 	"context"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -125,10 +126,11 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 	// Judged (not asked again). A tier changed in the milliseconds between
 	// this check and the connection is ignored on purpose.
 	if input.Connect != nil {
-		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, input.Kind, gate.Detail{
-			Summary: "Crear " + string(input.Kind) + " «" + input.Name + "» y conectarla a " + where(p, e),
-			Payload: resource.CreateApproval{Op: resource.OpCreate, Name: input.Name, Kind: string(input.Kind),
-				StorageGi: input.StorageGi, Prefix: input.Connect.Prefix}})
+		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, resource.Ask{Name: input.Name, Kind: input.Kind, Services: input.Connect.Services,
+			Detail: gate.Detail{
+				Summary: "Crear " + string(input.Kind) + " «" + input.Name + "» y conectarla a " + where(p, e) + servicesLabel(input.Connect.Services),
+				Payload: resource.CreateApproval{Op: resource.OpCreate, Name: input.Name, Kind: string(input.Kind),
+					StorageGi: input.StorageGi, Prefix: input.Connect.Prefix, Services: input.Connect.Services}}})
 		if err != nil {
 			return resource.Result{}, err
 		}
@@ -162,7 +164,7 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 		if input.Connect == nil {
 			return nil
 		}
-		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Connection{Name: r.Name, Prefix: input.Connect.Prefix, Judged: true}, input.RequestedBy)
+		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Link{Name: r.Name, Prefix: input.Connect.Prefix, Services: input.Connect.Services, Judged: true}, input.RequestedBy)
 		return err
 	})
 	if err != nil {
@@ -294,9 +296,10 @@ func (s *Service) Connect(ctx context.Context, org identity.OrganizationID, id p
 		return resource.Result{}, err
 	}
 	if found.Status != resource.StatusDeleting {
-		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, found.Kind, gate.Detail{
-			Summary: "Conectar " + string(found.Kind) + " «" + input.Name + "» a " + where(p, e),
-			Payload: resource.ConnectApproval{Op: resource.OpConnect, Name: input.Name, Prefix: input.Prefix}})
+		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, resource.Ask{Name: input.Name, Kind: found.Kind, Services: input.Services,
+			Detail: gate.Detail{
+				Summary: "Conectar " + string(found.Kind) + " «" + input.Name + "» a " + where(p, e) + servicesLabel(input.Services),
+				Payload: resource.ConnectApproval{Op: resource.OpConnect, Name: input.Name, Prefix: input.Prefix, Services: input.Services}}})
 		if err != nil {
 			return resource.Result{}, err
 		}
@@ -313,13 +316,21 @@ func (s *Service) Connect(ctx context.Context, org identity.OrganizationID, id p
 		if r.Status == resource.StatusDeleting {
 			return resource.ErrDeleting(input.Name)
 		}
-		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Connection{Name: input.Name, Prefix: input.Prefix, Judged: true}, input.RequestedBy)
+		applied, err = s.usage.Connect(ctx, org, id, e.ID, resource.Link{Name: input.Name, Prefix: input.Prefix, Services: input.Services, Judged: true}, input.RequestedBy)
 		return err
 	})
 	if err != nil {
 		return resource.Result{}, err
 	}
 	return s.result(ctx, p, e, input.Name, applied)
+}
+
+// servicesLabel words the services asked for in a summary.
+func servicesLabel(services *[]string) string {
+	if services == nil || len(*services) == 0 {
+		return ""
+	}
+	return " (solo " + strings.Join(*services, ", ") + ")"
 }
 
 func (s *Service) Disconnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, by identity.UserID) (resource.Result, error) {

@@ -669,6 +669,14 @@ paths:
         has adds no revision. Values never appear in the trail: event
         `env.changed` carries only the names. A name a connected resource defines is
         409 `VARIABLE_TAKEN`.
+
+        `services` (MS-4) picks the layer: absent or empty, the whole app's
+        `env`; else the same changes go to the own layer (`service_env`) of
+        each service named. A service's own variable wins over the whole
+        app's of the same name (`warnings` says so). An `unset` for the whole
+        app removes the variable from every layer. A service the app does not
+        have is 400 `services`; a cluster that cannot give a variable to one
+        service is 409 `SERVICE_SETTINGS_UNAVAILABLE`.
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -686,6 +694,7 @@ paths:
                   type: array
                   maxItems: 100
                   items: { $ref: "#/components/schemas/SecretName" }
+                services: { $ref: "#/components/schemas/ServiceScope" }
       responses:
         "202":
           description: The settings stored and the deployment applying them, if one started.
@@ -773,6 +782,11 @@ paths:
                   additionalProperties: false
                   properties:
                     prefix: { $ref: "#/components/schemas/ResourcePrefix" }
+                    services:
+                      allOf: [{ $ref: "#/components/schemas/ServiceScope" }]
+                      description: >-
+                        The services that get its variables (absent or empty: the whole app). A `files`
+                        resource of an app with several services reaches exactly one (400 `services`).
       responses:
         "201":
           description: The resource created (and connected, when asked).
@@ -895,6 +909,12 @@ paths:
         Connecting again with another prefix changes it. 409 `VARIABLE_TAKEN` if
         a variable it defines is already a plain variable, a secret or another
         resource's; 409 `RESOURCE_DELETING` for a resource being deleted.
+        `services` (MS-4) picks the services that get its variables (absent:
+        as the connection says, the whole app for a new one; empty: the whole
+        app); IT's rules see them in `services` of `connect_resource`. A
+        `files` resource of an app with several services reaches exactly one
+        (400 `services`); a cluster that cannot scope is 409
+        `SERVICE_SETTINGS_UNAVAILABLE`.
         Event `resources.changed`.
       x-permissions: [odyssey:projects:write]
       requestBody:
@@ -906,6 +926,7 @@ paths:
               additionalProperties: false
               properties:
                 prefix: { $ref: "#/components/schemas/ResourcePrefix" }
+                services: { $ref: "#/components/schemas/ServiceScope" }
       responses:
         "202":
           description: The resource connected and the deployment applying it, if one started; or `pending_approval` when IT's rules hold it.
@@ -983,8 +1004,22 @@ paths:
         variable the AI sets. Keys still waiting to be revoked (turning off, or
         `revoke_failed`) do not block it: the new key is independent. 409 `AI_BUSY`
         is only for a rotation in progress.
+        The optional body's `services` (MS-4) gives the AI to those services
+        only (empty: the whole app; absent: as it is). With the AI on, other
+        services move it there with the same key (judged like turning it on;
+        409 `AI_BUSY` while it is turning on). IT's rules see the services
+        reached in `services` of `enable_ai`.
         Event `ai.enabled`.
       x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                services: { $ref: "#/components/schemas/ServiceScope" }
       responses:
         "202":
           description: Accepted; poll the GET for `status`. Or `pending_approval` when IT's rules hold it.
@@ -1077,6 +1112,9 @@ paths:
         the next settings revision (202, like an access change); needs
         `odyssey:secrets:external` and a cluster with the operator and that
         store. Event `secret.changed` (`requested` | `external`).
+        `services` (MS-4): who reads it (absent: as the secret or its request
+        already says, the whole app for a new one; empty: the whole app). A
+        request keeps it and loading the value inherits it.
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -1092,6 +1130,7 @@ paths:
                 store: { type: string, maxLength: 253, description: "External: the ClusterSecretStore." }
                 key: { type: string, maxLength: 512, description: "External: the key in the vault." }
                 property: { type: string, maxLength: 256, description: "External: the property (optional)." }
+                services: { $ref: "#/components/schemas/ServiceScope" }
       responses:
         "200":
           description: The managed secret requested (or as it already was).
@@ -1176,9 +1215,61 @@ paths:
                 version: { type: integer, minimum: 1 }
                 key_id: { type: string }
                 sealed: { type: string, format: byte, description: "base64 of the HPKE encapsulated key + AES-256-GCM ciphertext." }
+                services:
+                  allOf: [{ $ref: "#/components/schemas/ServiceScope" }]
+                  description: "Who reads it (MS-4; absent: as the secret or its request says)."
       responses:
         "202":
           description: The reference stored and the deployment applying it, if one started.
+          headers:
+            Location: { schema: { type: string }, description: "The config deployment, when there is one." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsChange" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/projects/{id}/environments/{environment}/secrets/{name}/services:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+      - name: name
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/SecretName" }
+    put:
+      tags: [deployments]
+      operationId: scopeEnvironmentSecret
+      summary: Change which services read a secret
+      description: |
+        MS-4. Without writing the value again: a secret in force becomes the
+        next settings revision (202, applied like any settings change); one
+        still asked for (no value yet) changes its request (202 with
+        `deployment` null and the settings as they are). Empty `services`:
+        the whole app. 400 `services` for a service the app does not have;
+        409 `SERVICE_SETTINGS_UNAVAILABLE` when the cluster cannot scope; 409
+        `VARIABLE_TAKEN` when another source of the name reaches one of the
+        services. A secret read from the company's vault needs
+        `odyssey:secrets:external` (403). Event `secret.changed` (`scoped`).
+      x-permissions: [odyssey:projects:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [services]
+              properties:
+                services: { $ref: "#/components/schemas/ServiceScope" }
+      responses:
+        "202":
+          description: The settings stored and the deployment applying them, if one started.
           headers:
             Location: { schema: { type: string }, description: "The config deployment, when there is one." }
           content:
@@ -3431,10 +3522,29 @@ components:
         key_version: { type: integer }
         key_id: { type: string }
         base_url: { type: string }
+        services: { $ref: "#/components/schemas/ServiceScope" }
+    ServiceName:
+      type: string
+      pattern: "^[a-z][a-z0-9]{0,19}$"
+      description: A service of the app (its name in `services` of the project).
+    ServiceScope:
+      type: array
+      maxItems: 8
+      description: >-
+        The services a setting reaches (MS-4), sorted, without repeats; absent or empty: the whole app, also
+        the services added later. A scope naming a service the app no longer has reaches nobody until it
+        comes back.
+      items: { $ref: "#/components/schemas/ServiceName" }
+    ServiceEnvironmentVariables:
+      type: object
+      description: >-
+        Plain variables of one service only, by service name (MS-4). A service's own variable wins over the
+        whole app's of the same name (`env`).
+      additionalProperties: { $ref: "#/components/schemas/EnvironmentVariables" }
     EnvironmentSettings:
       type: object
       additionalProperties: false
-      required: [revision, access, env, resources, secrets, ai, secret_key, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available]
+      required: [revision, access, env, service_env, resources, secrets, ai, secret_key, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available, scoped_settings]
       properties:
         revision: { type: integer, description: "0: the defaults; every change adds one." }
         ai: { $ref: "#/components/schemas/SettingsAI" }
@@ -3445,6 +3555,7 @@ components:
           properties:
             mode: { $ref: "#/components/schemas/AccessMode" }
         env: { $ref: "#/components/schemas/EnvironmentVariables" }
+        service_env: { $ref: "#/components/schemas/ServiceEnvironmentVariables" }
         resources:
           type: array
           description: The resources the app is connected to, by name.
@@ -3478,6 +3589,12 @@ components:
             Whether the environment's cluster can protect apps with the sign-in (its agent lists `odicea.access`).
             An environment not placed yet is judged by the organization's default cluster; false with no cluster.
             When false only `public` can be applied there.
+        scoped_settings:
+          type: boolean
+          description: >-
+            Whether the environment's cluster can give a setting to some services only (its agent lists
+            `odicea.service-settings`). When false a `services` that names some is refused with 409
+            `SERVICE_SETTINGS_UNAVAILABLE`; the whole app still works.
     EnvironmentVariables:
       type: object
       description: >-
@@ -3487,7 +3604,7 @@ components:
     SettingsRevision:
       type: object
       additionalProperties: false
-      required: [revision, access, env, resources, secrets, ai]
+      required: [revision, access, env, service_env, resources, secrets, ai]
       description: One revision of an environment's configuration (only references to secrets, never a value).
       properties:
         revision: { type: integer }
@@ -3499,6 +3616,7 @@ components:
           properties:
             mode: { $ref: "#/components/schemas/AccessMode" }
         env: { $ref: "#/components/schemas/EnvironmentVariables" }
+        service_env: { $ref: "#/components/schemas/ServiceEnvironmentVariables" }
         resources:
           type: array
           items: { $ref: "#/components/schemas/ResourceUse" }
@@ -3516,6 +3634,12 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/Deployment"
+        warnings:
+          type: array
+          description: >-
+            What the change did that may surprise, in plain Spanish (a service's own variable now shadows the
+            whole app's of the same name). Absent when nothing.
+          items: { type: string }
     ResourceName:
       type: string
       pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
@@ -3630,9 +3754,10 @@ components:
         name: { $ref: "#/components/schemas/ResourceName" }
         kind: { $ref: "#/components/schemas/ResourceKind" }
         prefix: { type: string }
+        services: { $ref: "#/components/schemas/ServiceScope" }
     Resource:
       type: object
-      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, variables]
+      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, services, variables]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -3656,13 +3781,17 @@ components:
         message: { type: string, description: "Why it failed, when it did." }
         connected: { type: boolean, description: Whether the app receives the resource's variables. }
         prefix: { type: string, description: The connection's prefix ("" for none). }
+        services:
+          type: array
+          description: "The services that get its variables (empty: the whole app, or not connected)."
+          items: { $ref: "#/components/schemas/ServiceName" }
         variables:
           type: array
           description: The variable names the app reads the resource by (never their values).
           items: { type: string }
     AI:
       type: object
-      required: [available, enabled, status, base_url, variables, enabled_by, enabled_at]
+      required: [available, enabled, status, base_url, variables, enabled_by, enabled_at, services, scoped_settings]
       properties:
         available: { type: boolean, description: Whether the AI can be turned on here (the gateway is connected and the cluster can run it). }
         message: { type: string, description: "Why it is not available, when it is not." }
@@ -3680,6 +3809,11 @@ components:
         enabled_at: { type: [string, "null"], format: date-time }
         warning: { type: string, description: "Set while a key could not be revoked at the gateway: \"No se pudo revocar la llave en el gateway de IA; TI debe revisarlo.\" It stays until the revocation succeeds (also when the app has the AI on again with a new key)." }
         revoke_error: { type: string, description: Why the revocation failed (for IT; never a key). }
+        services:
+          type: array
+          description: "The services that use the AI (empty: the whole app, or off)."
+          items: { $ref: "#/components/schemas/ServiceName" }
+        scoped_settings: { type: boolean, description: "Whether the environment's cluster can give the AI to some services only (`odicea.service-settings`)." }
     ResourceChange:
       description: A resource plus what a connection change stored.
       allOf:
@@ -3714,6 +3848,7 @@ components:
         store: { type: string, description: "External: the cluster's ClusterSecretStore." }
         key: { type: string, description: "External: the key in the vault." }
         property: { type: string, description: "External: the property of the key (optional)." }
+        services: { $ref: "#/components/schemas/ServiceScope" }
     SecretView:
       type: object
       additionalProperties: false
@@ -3728,6 +3863,7 @@ components:
         store: { type: string }
         key: { type: string }
         property: { type: string }
+        services: { $ref: "#/components/schemas/ServiceScope" }
         state:
           type: string
           enum: [missing, loaded, reload, external, unavailable, failed]
@@ -3762,6 +3898,7 @@ components:
         requested_by: { type: string, format: uuid }
         requested_via: { type: string }
         created_at: { type: string, format: date-time }
+        services: { $ref: "#/components/schemas/ServiceScope" }
     ClusterSecretKey:
       type: object
       additionalProperties: false

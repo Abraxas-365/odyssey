@@ -252,13 +252,18 @@ type EnvChanged struct {
 	Set         []string      `json:"set"`
 	Unset       []string      `json:"unset"`
 	Deployment  *DeploymentID `json:"deployment_id"`
+	// Services are the services whose own variables changed (MS-4,
+	// additive); absent: the whole app's.
+	Services []string `json:"services,omitempty"`
 }
 
-func NewEnvChanged(org identity.OrganizationID, actor identity.UserID, projectID string, now Settings, set, unset []string, deployment *DeploymentID, n Names) event.Event {
+func NewEnvChanged(org identity.OrganizationID, actor identity.UserID, projectID string, now Settings, set, unset []string, services Scope, deployment *DeploymentID, n Names) event.Event {
 	set, unset = sorted(set), sorted(unset)
+	services = services.Normalize()
 	return event.New(EventEnvChanged, 1, org, actor, event.Subject(AccessSubjectKind, now.Environment),
-		"Cambió las variables de "+n.where(),
-		EnvChanged{Project: projectID, Environment: now.Environment.String(), Revision: now.Revision, Set: set, Unset: unset, Deployment: deployment})
+		"Cambió las variables"+services.Label()+" de "+n.where(),
+		EnvChanged{Project: projectID, Environment: now.Environment.String(), Revision: now.Revision, Set: set, Unset: unset,
+			Deployment: deployment, Services: services})
 }
 
 func sorted(s []string) []string {
@@ -273,6 +278,7 @@ const (
 	SecretChangeLoaded    = "loaded"    // a managed value was loaded (Version says which)
 	SecretChangeExternal  = "external"  // it now reads from the company's vault
 	SecretChangeRemoved   = "removed"   // the secret variable (or its request) is gone
+	SecretChangeScoped    = "scoped"    // other services read it now (MS-4); the value is the same
 )
 
 // SecretChanged v1: a secret variable of an environment changed. Never a
@@ -288,16 +294,29 @@ type SecretChanged struct {
 	Store       string        `json:"store,omitempty"`
 	Revision    int64         `json:"revision"`
 	Deployment  *DeploymentID `json:"deployment_id"`
+	// Services read it (MS-4, additive); absent: the whole app.
+	Services []string `json:"services,omitempty"`
 }
 
 func NewSecretChanged(org identity.OrganizationID, actor identity.UserID, projectID string, env Settings, ref SecretRef, change string, deployment *DeploymentID, n Names) event.Event {
+	only := ref.Services.Normalize().Label()
 	summary := map[string]string{
-		SecretChangeRequested: "Pidió el secreto " + ref.Name + " para " + n.where(),
-		SecretChangeLoaded:    "Cargó el secreto " + ref.Name + " de " + n.where(),
-		SecretChangeExternal:  "Conectó el secreto " + ref.Name + " de " + n.where() + " con el almacén " + ref.Store,
+		SecretChangeRequested: "Pidió el secreto " + ref.Name + only + " para " + n.where(),
+		SecretChangeLoaded:    "Cargó el secreto " + ref.Name + only + " de " + n.where(),
+		SecretChangeExternal:  "Conectó el secreto " + ref.Name + only + " de " + n.where() + " con el almacén " + ref.Store,
 		SecretChangeRemoved:   "Quitó el secreto " + ref.Name + " de " + n.where(),
+		SecretChangeScoped:    "Cambió quién usa el secreto " + ref.Name + " de " + n.where() + scopeWords(ref.Services),
 	}[change]
 	return event.New(EventSecretChanged, 1, org, actor, event.Subject(AccessSubjectKind, env.Environment), summary,
 		SecretChanged{Project: projectID, Environment: env.Environment.String(), Name: ref.Name, Change: change, Source: ref.Source,
-			Version: ref.Version, KeyID: ref.KeyID, Store: ref.Store, Revision: env.Revision, Deployment: deployment})
+			Version: ref.Version, KeyID: ref.KeyID, Store: ref.Store, Revision: env.Revision, Deployment: deployment,
+			Services: ref.Services.Normalize()})
+}
+
+// scopeWords is ": toda la app" or ": solo api y web".
+func scopeWords(s Scope) string {
+	if s.Normalize().Whole() {
+		return ": toda la app"
+	}
+	return ": solo " + joinAnd(s.Normalize())
 }

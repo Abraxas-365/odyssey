@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -127,12 +128,16 @@ func (s *Service) view(ctx context.Context, org identity.OrganizationID, id proj
 	if err != nil {
 		return ai.View{}, err
 	}
+	var v ai.View
 	switch refusal := s.refusal(t); {
 	case refusal != nil:
-		return ai.NewView(keys, s.opts.BaseURL, false, ai.MessageOf(refusal)), nil
+		v = ai.NewView(keys, s.opts.BaseURL, false, ai.MessageOf(refusal))
 	default:
-		return ai.NewView(keys, s.opts.BaseURL, true, ""), nil
+		v = ai.NewView(keys, s.opts.BaseURL, true, "")
 	}
+	v.Services = append([]string{}, t.Services...)
+	v.ScopedSettings = t.ScopedSettings
+	return v, nil
 }
 
 // refusal is why the environment's cluster cannot run the AI (nil: it can).
@@ -160,19 +165,39 @@ func (s *Service) Enable(ctx context.Context, org identity.OrganizationID, id pr
 	// IT's rules judge only a CHANGE, and before the transaction (a refusal,
 	// or in 3b the approval request it stores, must not live in a transaction
 	// that rolls back on that same refusal). The AI already on (or on its way)
-	// is a no-op and is not judged. The keys are read here and re-read under
-	// the lock: if the AI turned on in between, the transaction finds it on
-	// and changes nothing, so no second judgment is needed.
+	// is a no-op and is not judged, unless the services asked are others:
+	// that change is judged like turning it on. The keys are read here and
+	// re-read under the lock: if the AI turned on in between, the
+	// transaction finds it on and changes nothing, so no second judgment is
+	// needed.
 	current, err := s.repo.List(ctx, org, e.ID)
 	if err != nil {
 		return ai.View{}, err
 	}
-	if has := statusesOf(current); has[ai.StatusActive] || has[ai.StatusCreating] {
-		return s.view(ctx, org, id, e.ID, current)
+	has := statusesOf(current)
+	switch {
+	case has[ai.StatusCreating] && input.Services != nil:
+		return ai.View{}, ai.ErrBusy() // the key on its way carries the services it was asked with
+	case has[ai.StatusActive] || has[ai.StatusCreating]:
+		if input.Services == nil {
+			return s.view(ctx, org, id, e.ID, current)
+		}
+		t, err := s.release.Target(ctx, org, id, e.ID)
+		if err != nil {
+			return ai.View{}, err
+		}
+		if sameServices(t.Services, *input.Services) {
+			return s.view(ctx, org, id, e.ID, current)
+		}
+		return s.scope(ctx, p, e, *input.Services, input.RequestedBy)
 	}
-	pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionEnableAI}, gate.Hold{
-		Summary: "Activar la IA de «" + p.Name + "» (" + e.Slug + ")",
-		Payload: ai.EnableApproval{Op: ai.OpEnable}})
+	reached, err := s.release.Reach(ctx, org, id, e.ID, input.Services)
+	if err != nil {
+		return ai.View{}, err
+	}
+	pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionEnableAI, Services: reached}, gate.Hold{
+		Summary: "Activar la IA de «" + p.Name + "» (" + e.Slug + ")" + servicesLabel(input.Services),
+		Payload: ai.EnableApproval{Op: ai.OpEnable, Services: input.Services}})
 	if err != nil {
 		return ai.View{}, err
 	}
@@ -202,15 +227,71 @@ func (s *Service) Enable(ctx context.Context, org identity.OrganizationID, id pr
 		if refusal := s.refusal(t); refusal != nil {
 			return refusal
 		}
-		if t.Conflict != nil {
-			return t.Conflict // a variable the AI sets is the app's
+		// a variable the AI sets that the app defines, checked again under
+		// the lock (release refuses it again when it applies)
+		if _, err := s.release.Reach(ctx, org, id, e.ID, input.Services); err != nil {
+			return err
 		}
-		return s.begin(ctx, p, e, input.RequestedBy, ai.WorkflowEnable, &keys)
+		return s.begin(ctx, p, e, input.RequestedBy, ai.WorkflowEnable, input.Services, &keys)
 	})
 	if err != nil {
 		return ai.View{}, err
 	}
 	return s.view(ctx, org, id, e.ID, keys)
+}
+
+// scope moves the AI that is on to other services (same key), judged like
+// turning it on for them.
+func (s *Service) scope(ctx context.Context, p project.Project, e project.Environment, services []string, by identity.UserID) (ai.View, error) {
+	reached, err := s.release.Reach(ctx, p.Organization, p.ID, e.ID, &services)
+	if err != nil {
+		return ai.View{}, err
+	}
+	pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionEnableAI, Services: reached}, gate.Hold{
+		Summary: "Dar la IA de «" + p.Name + "» (" + e.Slug + ")" + servicesLabel(&services),
+		Payload: ai.EnableApproval{Op: ai.OpEnable, Services: &services}})
+	if err != nil {
+		return ai.View{}, err
+	}
+	if pending != nil {
+		return ai.View{Outcome: gate.Holding(*pending)}, nil
+	}
+	var keys []ai.Key
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.LockEnvironment(ctx, p.Organization, e.ID); err != nil {
+			return err
+		}
+		if keys, err = s.repo.List(ctx, p.Organization, e.ID); err != nil {
+			return err
+		}
+		switch has := statusesOf(keys); {
+		case has[ai.StatusCreating]:
+			return ai.ErrBusy()
+		case !has[ai.StatusActive]:
+			return ai.ErrNotEnabled()
+		}
+		_, err := s.release.Scope(ctx, p.Organization, p.ID, e.ID, services, by)
+		return err
+	})
+	if err != nil {
+		return ai.View{}, err
+	}
+	return s.view(ctx, p.Organization, p.ID, e.ID, keys)
+}
+
+// sameServices says a and b name the same services (as sets; empty is the
+// whole app).
+func sameServices(a, b []string) bool {
+	norm := func(s []string) []string { return slices.Compact(slices.Sorted(slices.Values(s))) }
+	return slices.Equal(norm(a), norm(b))
+}
+
+// servicesLabel words the services asked for in a summary.
+func servicesLabel(services *[]string) string {
+	if services == nil || len(*services) == 0 {
+		return ""
+	}
+	return " solo para " + strings.Join(*services, ", ")
 }
 
 func (s *Service) Rotate(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, input ai.Rotate) (ai.View, error) {
@@ -246,7 +327,7 @@ func (s *Service) Rotate(ctx context.Context, org identity.OrganizationID, id pr
 		if refusal := s.refusal(t); refusal != nil {
 			return refusal
 		}
-		return s.begin(ctx, p, e, input.RequestedBy, ai.WorkflowRotate, &keys)
+		return s.begin(ctx, p, e, input.RequestedBy, ai.WorkflowRotate, nil, &keys)
 	})
 	if err != nil {
 		return ai.View{}, err
@@ -256,14 +337,14 @@ func (s *Service) Rotate(ctx context.Context, org identity.OrganizationID, id pr
 
 // begin records the key being made and starts the workflow (the caller holds
 // the environment's lock and the transaction).
-func (s *Service) begin(ctx context.Context, p project.Project, e project.Environment, by identity.UserID, workflowName string, keys *[]ai.Key) error {
+func (s *Service) begin(ctx context.Context, p project.Project, e project.Environment, by identity.UserID, workflowName string, services *[]string, keys *[]ai.Key) error {
 	k := ai.Key{ID: ai.NewKeyID(), Organization: p.Organization, Project: p.ID, Environment: e.ID, Status: ai.StatusCreating, CreatedBy: by}
 	k.Name = ai.KeyName(e.ID, k.ID)
 	if err := s.repo.Create(ctx, k); err != nil {
 		return err
 	}
 	if _, err := s.engine.Start(ctx, workflow.Start{Workflow: workflowName, Organization: p.Organization, Actor: by,
-		Subject: event.Subject(ai.SubjectKind, k.ID), Input: ai.Input{Key: k.ID, Project: p.ID, Environment: e.ID},
+		Subject: event.Subject(ai.SubjectKind, k.ID), Input: ai.Input{Key: k.ID, Project: p.ID, Environment: e.ID, Services: services},
 		IdempotencyKey: k.ID.String()}); err != nil {
 		return err
 	}

@@ -565,7 +565,7 @@ func affected(res sql.Result, err error, op, notFound string) error {
 
 // ---- environment settings ----
 
-const settingsColumns = `environment_id, organization_id, revision, access_mode, env, secrets, resources, ai, created_by, created_at`
+const settingsColumns = `environment_id, organization_id, revision, access_mode, env, service_env, secrets, resources, ai, created_by, created_at`
 
 type settingsRow struct {
 	Environment  project.EnvironmentID   `db:"environment_id"`
@@ -573,6 +573,7 @@ type settingsRow struct {
 	Revision     int64                   `db:"revision"`
 	AccessMode   release.AccessMode      `db:"access_mode"`
 	Env          []byte                  `db:"env"`
+	ServiceEnv   []byte                  `db:"service_env"`
 	Secrets      []byte                  `db:"secrets"`
 	Resources    []byte                  `db:"resources"`
 	AI           []byte                  `db:"ai"`
@@ -585,6 +586,9 @@ func (s settingsRow) settings() (release.Settings, error) {
 		Access: release.AccessSettings{Mode: s.AccessMode}, CreatedBy: s.CreatedBy, CreatedAt: s.CreatedAt}
 	if err := json.Unmarshal(s.Env, &out.Env); err != nil {
 		return release.Settings{}, errx.Wrap(err, "decode environment variables", errx.TypeInternal)
+	}
+	if err := json.Unmarshal(s.ServiceEnv, &out.ServiceEnv); err != nil {
+		return release.Settings{}, errx.Wrap(err, "decode service variables", errx.TypeInternal)
 	}
 	if err := json.Unmarshal(s.Secrets, &out.Secrets); err != nil {
 		return release.Settings{}, errx.Wrap(err, "decode environment secrets", errx.TypeInternal)
@@ -638,6 +642,10 @@ func (r *Repository) AppendSettings(ctx context.Context, s release.Settings) (re
 	if err != nil {
 		return release.Settings{}, errx.Wrap(err, "encode environment variables", errx.TypeInternal)
 	}
+	serviceEnv, err := json.Marshal(s.ServiceEnv)
+	if err != nil {
+		return release.Settings{}, errx.Wrap(err, "encode service variables", errx.TypeInternal)
+	}
 	secrets, err := json.Marshal(s.Secrets)
 	if err != nil {
 		return release.Settings{}, errx.Wrap(err, "encode environment secrets", errx.TypeInternal)
@@ -651,9 +659,9 @@ func (r *Repository) AppendSettings(ctx context.Context, s release.Settings) (re
 		return release.Settings{}, errx.Wrap(err, "encode environment ai", errx.TypeInternal)
 	}
 	var row settingsRow
-	err = txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, env, secrets, resources, ai, created_by)
-		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4, $5, $6, $7, $8 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
-		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, env, secrets, resources, ai, s.CreatedBy)
+	err = txn.Q(ctx, r.db).GetContext(ctx, &row, `INSERT INTO release.environment_settings (environment_id, organization_id, revision, access_mode, env, service_env, secrets, resources, ai, created_by)
+		SELECT $1, $2, COALESCE(max(revision), 0) + 1, $3, $4, $5, $6, $7, $8, $9 FROM release.environment_settings WHERE environment_id = $1 AND organization_id = $2
+		RETURNING `+settingsColumns, s.Environment, s.Organization, s.Access.Mode, env, serviceEnv, secrets, resources, ai, s.CreatedBy)
 	if err != nil {
 		return release.Settings{}, pgerr.MapWith(err, "append environment settings", messages)
 	}
@@ -693,25 +701,65 @@ func (r *Repository) raiseSecretVersions(ctx context.Context, s release.Settings
 
 // ---- secret requests ----
 
-const requestColumns = `environment_id, organization_id, name, note, requested_by, requested_via, created_at`
+const requestColumns = `environment_id, organization_id, name, note, requested_by, requested_via, created_at, services`
+
+type requestRow struct {
+	release.SecretRequest
+	Services pq.StringArray `db:"services"`
+}
 
 // PutSecretRequest stores the request, or renews the one of the same name
-// (another person asked again: theirs is the note now).
+// (another person asked again: theirs is the note now, and the services
+// the caller resolved).
 func (r *Repository) PutSecretRequest(ctx context.Context, q release.SecretRequest) error {
-	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.secret_requests (environment_id, organization_id, name, note, requested_by, requested_via)
-		VALUES ($1, $2, $3, $4, $5, $6)
+	_, err := txn.Q(ctx, r.db).ExecContext(ctx, `INSERT INTO release.secret_requests (environment_id, organization_id, name, note, requested_by, requested_via, services)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (environment_id, name) DO UPDATE SET note = EXCLUDED.note, requested_by = EXCLUDED.requested_by,
-		    requested_via = EXCLUDED.requested_via, created_at = now()
+		    requested_via = EXCLUDED.requested_via, services = EXCLUDED.services, created_at = now()
 		WHERE release.secret_requests.organization_id = EXCLUDED.organization_id`,
-		q.Environment, q.Organization, q.Name, q.Note, q.RequestedBy, q.RequestedVia)
+		q.Environment, q.Organization, q.Name, q.Note, q.RequestedBy, q.RequestedVia, pq.Array(scopeArray(q.Services)))
 	return pgerr.MapWith(err, "put secret request", messages)
 }
 
+// ScopeSecretRequest changes the services of the open request q.Name (the
+// rest stays as it was asked).
+func (r *Repository) ScopeSecretRequest(ctx context.Context, q release.SecretRequest) error {
+	res, err := txn.Q(ctx, r.db).ExecContext(ctx, `UPDATE release.secret_requests SET services = $4
+		WHERE organization_id = $1 AND environment_id = $2 AND name = $3`,
+		q.Organization, q.Environment, q.Name, pq.Array(scopeArray(q.Services)))
+	if err != nil {
+		return pgerr.MapWith(err, "scope secret request", messages)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return errx.Wrap(err, "scope secret request", errx.TypeInternal)
+	}
+	if n == 0 {
+		return errx.NotFound("the environment has no secret named " + q.Name)
+	}
+	return nil
+}
+
+func scopeArray(s release.Scope) []string {
+	if s = s.Normalize(); s == nil {
+		return []string{}
+	}
+	return s
+}
+
 func (r *Repository) ListSecretRequests(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID) ([]release.SecretRequest, error) {
-	out := []release.SecretRequest{}
-	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT `+requestColumns+` FROM release.secret_requests
+	var rows []requestRow
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT `+requestColumns+` FROM release.secret_requests
 		WHERE organization_id = $1 AND environment_id = $2 ORDER BY name`, organization, env)
-	return out, pgerr.MapWith(err, "list secret requests", messages)
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list secret requests", messages)
+	}
+	out := make([]release.SecretRequest, len(rows))
+	for i, row := range rows {
+		out[i] = row.SecretRequest
+		out[i].Services = release.Scope(row.Services).Normalize()
+	}
+	return out, nil
 }
 
 func (r *Repository) DeleteSecretRequest(ctx context.Context, organization identity.OrganizationID, env project.EnvironmentID, name string) (bool, error) {

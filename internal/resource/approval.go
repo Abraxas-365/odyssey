@@ -18,18 +18,21 @@ type DeleteApproval struct {
 	Name string `json:"name"`
 }
 
-// ConnectApproval is the payload of a held connect_resource.
+// ConnectApproval is the payload of a held connect_resource. Services are
+// the ones asked for (absent: as the connection says; MS-4).
 type ConnectApproval struct {
-	Op     string `json:"op"`
-	Name   string `json:"name"`
-	Prefix string `json:"prefix"`
+	Op       string    `json:"op"`
+	Name     string    `json:"name"`
+	Prefix   string    `json:"prefix"`
+	Services *[]string `json:"services,omitempty"`
 }
 
 // CreateApproval is the payload of a held create that connects.
 type CreateApproval struct {
-	Op        string `json:"op"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	StorageGi int    `json:"storage_gi"`
-	Prefix    string `json:"prefix"`
+	Op        string    `json:"op"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"`
+	StorageGi int       `json:"storage_gi"`
+	Prefix    string    `json:"prefix"`
+	Services  *[]string `json:"services,omitempty"`
 }

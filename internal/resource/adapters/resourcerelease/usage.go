@@ -12,7 +12,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/resource"
-	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 type Usage struct {
@@ -30,9 +29,18 @@ var _ resource.Usage = (*Usage)(nil)
 func connections(uses []release.ResourceUse) []resource.Connection {
 	out := make([]resource.Connection, 0, len(uses))
 	for _, u := range uses {
-		out = append(out, resource.Connection{Name: u.Name, Prefix: u.Prefix})
+		out = append(out, resource.Connection{Name: u.Name, Prefix: u.Prefix, Services: append([]string{}, u.Services.Normalize()...)})
 	}
 	return out
+}
+
+// scope is release's form of the services resource carries (nil: keep).
+func scope(services *[]string) *release.Scope {
+	if services == nil {
+		return nil
+	}
+	s := release.Scope(append([]string{}, *services...))
+	return &s
 }
 
 func applied(c release.SettingsChange) resource.Applied {
@@ -52,16 +60,17 @@ func (u *Usage) Connections(ctx context.Context, org identity.OrganizationID, id
 	return connections(s.Resources), nil
 }
 
-func (u *Usage) Connect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, c resource.Connection, by identity.UserID) (resource.Applied, error) {
-	out, err := u.commands.ConnectResource(ctx, org, id, env, release.ConnectResource{Name: c.Name, Prefix: c.Prefix, RequestedBy: by, Judged: c.Judged})
+func (u *Usage) Connect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, l resource.Link, by identity.UserID) (resource.Applied, error) {
+	out, err := u.commands.ConnectResource(ctx, org, id, env, release.ConnectResource{Name: l.Name, Prefix: l.Prefix, Services: scope(l.Services),
+		RequestedBy: by, Judged: l.Judged})
 	if err != nil {
 		return resource.Applied{}, err
 	}
 	return applied(out), nil
 }
 
-func (u *Usage) AuthorizeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, kind resourcekind.Kind, detail gate.Detail) (*gate.Pending, error) {
-	return u.usage.AuthorizeConnect(ctx, org, id, env, string(kind), detail)
+func (u *Usage) AuthorizeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, ask resource.Ask) (*gate.Pending, error) {
+	return u.usage.AuthorizeConnect(ctx, org, id, env, release.AuthorizeConnect{Name: ask.Name, Kind: ask.Kind, Services: scope(ask.Services), Detail: ask.Detail})
 }
 
 func (u *Usage) Disconnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, by identity.UserID) (resource.Applied, error) {

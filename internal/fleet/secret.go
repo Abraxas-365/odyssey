@@ -113,6 +113,8 @@ type SecretTarget struct {
 	Revoked bool
 	// AI: the cluster's agent lists CapabilityAI.
 	AI bool
+	// ScopedSettings: the cluster's agent lists CapabilityServiceSettings.
+	ScopedSettings bool
 	// Failures are the environment's secrets whose last delivery did not
 	// arrive.
 	Failures []SecretFailure

@@ -49,7 +49,7 @@ func TestEventContracts(t *testing.T) {
 		release.NewAccessChanged(org, user, r.Project.String(), release.DefaultSettings(org, d.Environment),
 			release.Settings{Environment: d.Environment, Organization: org, Revision: 3, Access: release.AccessSettings{Mode: release.AccessOrganization}}, &restore, n),
 		release.NewEnvChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Organization: org, Revision: 4,
-			Env: map[string]string{"LOG_LEVEL": "debug", "TZ": "America/Lima"}}, []string{"TZ", "LOG_LEVEL"}, []string{"OLD"}, &restore, n),
+			Env: map[string]string{"LOG_LEVEL": "debug", "TZ": "America/Lima"}}, []string{"TZ", "LOG_LEVEL"}, []string{"OLD"}, nil, &restore, n),
 		release.NewSecretChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Revision: 5}, release.SecretRef{Name: "STRIPE_API_KEY",
 			Source: release.SecretManaged, Version: 2, KeyID: "k3yIdK3yIdK3yId0"}, release.SecretChangeLoaded, &restore, n),
 		release.NewResourcesChanged(org, user, r.Project.String(), release.Settings{Environment: d.Environment, Organization: org, Revision: 6},
@@ -389,19 +389,19 @@ func TestSettingsVarLimit(t *testing.T) {
 	}
 
 	// WithEnv: a 101st name is refused, replacing or removing is fine
-	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"NEW": "x"}, RequestedBy: user}, open); err == nil {
+	if _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"NEW": "x"}, RequestedBy: user}, open); err == nil {
 		t.Error("WithEnv took a 101st name")
 	} else {
 		tooMany("WithEnv", err)
 	}
-	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"V0": "y"}, RequestedBy: user}, open); err != nil {
+	if _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"V0": "y"}, RequestedBy: user}, open); err != nil {
 		t.Errorf("WithEnv replacing: %v", err)
 	}
-	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"NEW": "x"}, Unset: []string{"V0"}, RequestedBy: user}, open); err != nil {
+	if _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"NEW": "x"}, Unset: []string{"V0"}, RequestedBy: user}, open); err != nil {
 		t.Errorf("WithEnv swapping: %v", err)
 	}
 	// a name with an open request becomes a variable: still 100 (the request is not a second place)
-	if _, _, _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"R0": "x"}, RequestedBy: user}, open); err != nil {
+	if _, err := base.WithEnv(release.SetEnv{Set: map[string]string{"R0": "x"}, RequestedBy: user}, open); err != nil {
 		t.Errorf("WithEnv over a request: %v", err)
 	}
 
@@ -426,11 +426,11 @@ func TestSettingsVarLimit(t *testing.T) {
 
 	// CheckRequest: full refuses a new name, renews an open one, and a name
 	// that is a secret is not a new request
-	tooMany("CheckRequest", base.CheckRequest(open, "NEW"))
-	if err := base.CheckRequest(open, "R5"); err != nil {
+	tooMany("CheckRequest", base.CheckRequest(open, "NEW", nil))
+	if err := base.CheckRequest(open, "R5", nil); err != nil {
 		t.Errorf("CheckRequest renewing: %v", err)
 	}
-	if err := base.CheckRequest(open[:29], "NEW"); err != nil {
+	if err := base.CheckRequest(open[:29], "NEW", nil); err != nil {
 		t.Errorf("CheckRequest with a free place: %v", err)
 	}
 }

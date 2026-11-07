@@ -21,10 +21,13 @@ type SetAccessApproval struct {
 }
 
 // ConnectResourceApproval is the payload of a held connect_resource.
+// Services are the ones asked for (absent: as the connection says, the
+// whole app for a new one; MS-4).
 type ConnectResourceApproval struct {
-	Op     string `json:"op"`
-	Name   string `json:"name"`
-	Prefix string `json:"prefix"`
+	Op       string `json:"op"`
+	Name     string `json:"name"`
+	Prefix   string `json:"prefix"`
+	Services *Scope `json:"services,omitempty"`
 }
 
 // DeploymentApproval is the payload of a held deployment (deploy or rollback).

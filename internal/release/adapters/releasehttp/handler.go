@@ -49,6 +49,7 @@ func (h *Handler) Register(r fiber.Router) {
 	env.Put("/secrets/:name", httpx.RequirePermissions(permission.ProjectsWrite), h.putSecret)
 	env.Delete("/secrets/:name", httpx.RequirePermissions(permission.ProjectsWrite), h.removeSecret)
 	env.Put("/secrets/:name/value", httpx.RequirePermissions(permission.ProjectsWrite), h.loadSecret)
+	env.Put("/secrets/:name/services", httpx.RequirePermissions(permission.ProjectsWrite), h.scopeSecret)
 	r.Get("/projects/:id/releases/:release", httpx.RequirePermissions(permission.DeploymentsRead), h.findRelease)
 }
 
@@ -333,6 +334,10 @@ type settingsView struct {
 	// organization are refused there until IT enables it; public still works.
 	// An unplaced environment is judged by the organization's default cluster.
 	AccessProtectionAvailable bool `json:"access_protection_available"`
+	// ScopedSettings is false when the environment's cluster cannot give a
+	// setting to some services only (its agent lacks
+	// odicea.service-settings): every setting then reaches the whole app.
+	ScopedSettings bool `json:"scoped_settings"`
 }
 
 func (h *Handler) settings(c *fiber.Ctx) error {
@@ -359,7 +364,7 @@ func (h *Handler) settings(c *fiber.Ctx) error {
 	}
 	return c.JSON(settingsView{Settings: out, Secrets: secrets.Items, SecretKey: secrets.Cluster.Key,
 		ExternalSecrets: secrets.Cluster.External, SecretStores: secrets.Cluster.Stores, SecretsClusterRevoked: secrets.Cluster.Revoked,
-		AccessLoginAvailable: h.opts.AccessLoginAvailable, AccessProtectionAvailable: can})
+		AccessLoginAvailable: h.opts.AccessLoginAvailable, AccessProtectionAvailable: can, ScopedSettings: secrets.Cluster.ScopedSettings})
 }
 
 // uses answers "lo que usa esta app": what the app depends on and what needs
@@ -437,6 +442,7 @@ func (h *Handler) putSecret(c *fiber.Ctx) error {
 		Store    string               `json:"store"`
 		Key      string               `json:"key"`
 		Property string               `json:"property"`
+		Services *release.Scope       `json:"services"`
 	}
 	if err := httpx.DecodeJSON(c, &body); err != nil {
 		return err
@@ -444,7 +450,8 @@ func (h *Handler) putSecret(c *fiber.Ctx) error {
 	name := c.Params("name")
 	switch body.Source {
 	case release.SecretManaged:
-		v, err := h.commands.RequestSecret(c.UserContext(), org, at.project, at.environment, release.RequestSecret{Name: name, Note: body.Note, RequestedBy: user})
+		v, err := h.commands.RequestSecret(c.UserContext(), org, at.project, at.environment, release.RequestSecret{Name: name, Note: body.Note,
+			Services: body.Services, RequestedBy: user})
 		if err != nil {
 			return err
 		}
@@ -454,13 +461,32 @@ func (h *Handler) putSecret(c *fiber.Ctx) error {
 			return errx.Forbidden("reading a secret from the company's vault needs the permission " + permission.SecretsExternal)
 		}
 		out, err := h.commands.SetExternalSecret(c.UserContext(), org, at.project, at.environment, release.SetExternalSecret{Name: name,
-			Store: body.Store, Key: body.Key, Property: body.Property, RequestedBy: user})
+			Store: body.Store, Key: body.Key, Property: body.Property, Services: body.Services, RequestedBy: user})
 		if err != nil {
 			return err
 		}
 		return settingsChanged(c, out, 2)
 	}
 	return errx.InvalidField("source", "source is managed (a person loads the value) or external (the company's vault)")
+}
+
+// scopeSecret changes which services read a secret (or will read the one
+// still asked for), without writing its value again (MS-4).
+func (h *Handler) scopeSecret(c *fiber.Ctx) error {
+	org, user, at, err := actor(c)
+	if err != nil {
+		return err
+	}
+	var in release.ScopeSecret
+	if err := httpx.DecodeJSON(c, &in); err != nil {
+		return err
+	}
+	in.Name, in.RequestedBy, in.MayChangeExternal = c.Params("name"), user, httpx.Can(c, permission.SecretsExternal)
+	out, err := h.commands.ScopeSecret(c.UserContext(), org, at.project, at.environment, in)
+	if err != nil {
+		return err
+	}
+	return settingsChanged(c, out, 3)
 }
 
 // loadSecret takes a managed value sealed in the browser: the API never sees

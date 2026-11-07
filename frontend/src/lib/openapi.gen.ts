@@ -462,6 +462,14 @@ export interface paths {
          *     has adds no revision. Values never appear in the trail: event
          *     `env.changed` carries only the names. A name a connected resource defines is
          *     409 `VARIABLE_TAKEN`.
+         *
+         *     `services` (MS-4) picks the layer: absent or empty, the whole app's
+         *     `env`; else the same changes go to the own layer (`service_env`) of
+         *     each service named. A service's own variable wins over the whole
+         *     app's of the same name (`warnings` says so). An `unset` for the whole
+         *     app removes the variable from every layer. A service the app does not
+         *     have is 400 `services`; a cluster that cannot give a variable to one
+         *     service is 409 `SERVICE_SETTINGS_UNAVAILABLE`.
          */
         patch: operations["setEnvironmentVariables"];
         trace?: never;
@@ -561,6 +569,12 @@ export interface paths {
          *     Connecting again with another prefix changes it. 409 `VARIABLE_TAKEN` if
          *     a variable it defines is already a plain variable, a secret or another
          *     resource's; 409 `RESOURCE_DELETING` for a resource being deleted.
+         *     `services` (MS-4) picks the services that get its variables (absent:
+         *     as the connection says, the whole app for a new one; empty: the whole
+         *     app); IT's rules see them in `services` of `connect_resource`. A
+         *     `files` resource of an app with several services reaches exactly one
+         *     (400 `services`); a cluster that cannot scope is 409
+         *     `SERVICE_SETTINGS_UNAVAILABLE`.
          *     Event `resources.changed`.
          */
         put: operations["connectResource"];
@@ -606,6 +620,11 @@ export interface paths {
          *     variable the AI sets. Keys still waiting to be revoked (turning off, or
          *     `revoke_failed`) do not block it: the new key is independent. 409 `AI_BUSY`
          *     is only for a rotation in progress.
+         *     The optional body's `services` (MS-4) gives the AI to those services
+         *     only (empty: the whole app; absent: as it is). With the AI on, other
+         *     services move it there with the same key (judged like turning it on;
+         *     409 `AI_BUSY` while it is turning on). IT's rules see the services
+         *     reached in `services` of `enable_ai`.
          *     Event `ai.enabled`.
          */
         put: operations["enableEnvironmentAI"];
@@ -675,6 +694,9 @@ export interface paths {
          *     the next settings revision (202, like an access change); needs
          *     `odyssey:secrets:external` and a cluster with the operator and that
          *     store. Event `secret.changed` (`requested` | `external`).
+         *     `services` (MS-4): who reads it (absent: as the secret or its request
+         *     already says, the whole app for a new one; empty: the whole app). A
+         *     request keeps it and loading the value inherits it.
          */
         put: operations["putEnvironmentSecret"];
         post?: never;
@@ -720,6 +742,38 @@ export interface paths {
          *     Event `secret.changed` (`loaded`).
          */
         put: operations["loadEnvironmentSecret"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/environments/{environment}/secrets/{name}/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change which services read a secret
+         * @description MS-4. Without writing the value again: a secret in force becomes the
+         *     next settings revision (202, applied like any settings change); one
+         *     still asked for (no value yet) changes its request (202 with
+         *     `deployment` null and the settings as they are). Empty `services`:
+         *     the whole app. 400 `services` for a service the app does not have;
+         *     409 `SERVICE_SETTINGS_UNAVAILABLE` when the cluster cannot scope; 409
+         *     `VARIABLE_TAKEN` when another source of the name reaches one of the
+         *     services. A secret read from the company's vault needs
+         *     `odyssey:secrets:external` (403). Event `secret.changed` (`scoped`).
+         */
+        put: operations["scopeEnvironmentSecret"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2181,6 +2235,15 @@ export interface components {
             key_version: number;
             key_id?: string;
             base_url?: string;
+            services?: components["schemas"]["ServiceScope"];
+        };
+        /** @description A service of the app (its name in `services` of the project). */
+        ServiceName: string;
+        /** @description The services a setting reaches (MS-4), sorted, without repeats; absent or empty: the whole app, also the services added later. A scope naming a service the app no longer has reaches nobody until it comes back. */
+        ServiceScope: components["schemas"]["ServiceName"][];
+        /** @description Plain variables of one service only, by service name (MS-4). A service's own variable wins over the whole app's of the same name (`env`). */
+        ServiceEnvironmentVariables: {
+            [key: string]: components["schemas"]["EnvironmentVariables"];
         };
         EnvironmentSettings: {
             /** @description 0: the defaults; every change adds one. */
@@ -2190,6 +2253,7 @@ export interface components {
                 mode: components["schemas"]["AccessMode"];
             };
             env: components["schemas"]["EnvironmentVariables"];
+            service_env: components["schemas"]["ServiceEnvironmentVariables"];
             /** @description The resources the app is connected to, by name. */
             resources: components["schemas"]["ResourceUse"][];
             /** @description The environment's secrets judged against its cluster, then the open requests (state `missing`), by name. */
@@ -2205,6 +2269,8 @@ export interface components {
             access_login_available: boolean;
             /** @description Whether the environment's cluster can protect apps with the sign-in (its agent lists `odicea.access`). An environment not placed yet is judged by the organization's default cluster; false with no cluster. When false only `public` can be applied there. */
             access_protection_available: boolean;
+            /** @description Whether the environment's cluster can give a setting to some services only (its agent lists `odicea.service-settings`). When false a `services` that names some is refused with 409 `SERVICE_SETTINGS_UNAVAILABLE`; the whole app still works. */
+            scoped_settings: boolean;
         };
         /** @description Plain (non-secret) variables of the environment. They win over a release's env of the same name; a secret of the same name wins over both. Names starting with `ODYSSEY_` are reserved. */
         EnvironmentVariables: {
@@ -2218,6 +2284,7 @@ export interface components {
                 mode: components["schemas"]["AccessMode"];
             };
             env: components["schemas"]["EnvironmentVariables"];
+            service_env: components["schemas"]["ServiceEnvironmentVariables"];
             resources: components["schemas"]["ResourceUse"][];
             secrets: components["schemas"]["SecretRef"][];
         };
@@ -2225,6 +2292,8 @@ export interface components {
             settings: components["schemas"]["SettingsRevision"];
             /** @description The config deployment applying the change (null when none started). */
             deployment: null | components["schemas"]["Deployment"];
+            /** @description What the change did that may surprise, in plain Spanish (a service's own variable now shadows the whole app's of the same name). Absent when nothing. */
+            warnings?: string[];
         };
         /** @description Lowercase letters, digits and hyphens; unique among the environment's resources. */
         ResourceName: string;
@@ -2313,6 +2382,7 @@ export interface components {
             name: components["schemas"]["ResourceName"];
             kind: components["schemas"]["ResourceKind"];
             prefix?: string;
+            services?: components["schemas"]["ServiceScope"];
         };
         Resource: {
             /** Format: uuid */
@@ -2351,6 +2421,8 @@ export interface components {
             connected: boolean;
             /** @description The connection's prefix ("" for none). */
             prefix: string;
+            /** @description The services that get its variables (empty: the whole app, or not connected). */
+            services: components["schemas"]["ServiceName"][];
             /** @description The variable names the app reads the resource by (never their values). */
             variables: string[];
         };
@@ -2378,6 +2450,10 @@ export interface components {
             warning?: string;
             /** @description Why the revocation failed (for IT; never a key). */
             revoke_error?: string;
+            /** @description The services that use the AI (empty: the whole app, or off). */
+            services: components["schemas"]["ServiceName"][];
+            /** @description Whether the environment's cluster can give the AI to some services only (`odicea.service-settings`). */
+            scoped_settings: boolean;
         };
         /** @description A resource plus what a connection change stored. */
         ResourceChange: components["schemas"]["Resource"] & {
@@ -2409,6 +2485,7 @@ export interface components {
             key?: string;
             /** @description External: the property of the key (optional). */
             property?: string;
+            services?: components["schemas"]["ServiceScope"];
         };
         SecretView: {
             name: components["schemas"]["SecretName"];
@@ -2423,6 +2500,7 @@ export interface components {
             store?: string;
             key?: string;
             property?: string;
+            services?: components["schemas"]["ServiceScope"];
             /**
              * @description `missing`: requested, nobody loaded it yet; `loaded`: in force; `reload`: sealed to a key the environment's cluster no longer has (load it again); `external`: read from the vault; `unavailable`: the cluster cannot take this kind of secret; `failed`: the value in force never reached the cluster (see `failure`; load it again).
              * @enum {string}
@@ -2447,6 +2525,7 @@ export interface components {
             requested_via: string;
             /** Format: date-time */
             created_at: string;
+            services?: components["schemas"]["ServiceScope"];
         };
         ClusterSecretKey: {
             /** Format: uuid */
@@ -4097,6 +4176,7 @@ export interface operations {
                         [key: string]: string;
                     };
                     unset?: components["schemas"]["SecretName"][];
+                    services?: components["schemas"]["ServiceScope"];
                 };
             };
         };
@@ -4173,6 +4253,8 @@ export interface operations {
                     storage_gi?: number;
                     connect?: {
                         prefix?: components["schemas"]["ResourcePrefix"];
+                        /** @description The services that get its variables (absent or empty: the whole app). A `files` resource of an app with several services reaches exactly one (400 `services`). */
+                        services?: components["schemas"]["ServiceScope"];
                     };
                 };
             };
@@ -4324,6 +4406,7 @@ export interface operations {
             content: {
                 "application/json": {
                     prefix?: components["schemas"]["ResourcePrefix"];
+                    services?: components["schemas"]["ServiceScope"];
                 };
             };
         };
@@ -4415,7 +4498,13 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    services?: components["schemas"]["ServiceScope"];
+                };
+            };
+        };
         responses: {
             /** @description Accepted; poll the GET for `status`. Or `pending_approval` when IT's rules hold it. */
             202: {
@@ -4518,6 +4607,7 @@ export interface operations {
                     key?: string;
                     /** @description External: the property (optional). */
                     property?: string;
+                    services?: components["schemas"]["ServiceScope"];
                 };
             };
         };
@@ -4604,11 +4694,52 @@ export interface operations {
                      * @description base64 of the HPKE encapsulated key + AES-256-GCM ciphertext.
                      */
                     sealed: string;
+                    /** @description Who reads it (MS-4; absent: as the secret or its request says). */
+                    services?: components["schemas"]["ServiceScope"];
                 };
             };
         };
         responses: {
             /** @description The reference stored and the deployment applying it, if one started. */
+            202: {
+                headers: {
+                    /** @description The config deployment, when there is one. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsChange"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    scopeEnvironmentSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+                name: components["schemas"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    services: components["schemas"]["ServiceScope"];
+                };
+            };
+        };
+        responses: {
+            /** @description The settings stored and the deployment applying them, if one started. */
             202: {
                 headers: {
                     /** @description The config deployment, when there is one. */

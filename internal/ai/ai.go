@@ -185,6 +185,10 @@ type View struct {
 	// when the app has the AI again with a new key); RevokeError is why.
 	Warning     string `json:"warning,omitempty"`
 	RevokeError string `json:"revoke_error,omitempty"`
+	// Services use the AI (empty: the whole app); ScopedSettings says the
+	// cluster can give it to some services only.
+	Services       []string `json:"services"`
+	ScopedSettings bool     `json:"scoped_settings"`
 	// Outcome: turning the AI on was held for IT's approval and did not
 	// happen (the rest of the view is then empty); the transport answers 202.
 	gate.Outcome
@@ -194,7 +198,7 @@ type View struct {
 // message come from the cluster and the gateway, not from the rows).
 func NewView(keys []Key, baseURL string, available bool, message string) View {
 	v := View{Available: available, Message: message, BaseURL: strings.TrimRight(baseURL, "/"),
-		Variables: append([]string{}, Variables...), Status: StateOff}
+		Variables: append([]string{}, Variables...), Status: StateOff, Services: []string{}}
 	var active *Key
 	var creating, revoking, failed bool
 	for i := range keys {
@@ -234,7 +238,12 @@ func NewView(keys []Key, baseURL string, available bool, message string) View {
 }
 
 // Enable, Disable and Rotate are the requests; RequestedBy is the person.
-type Enable struct{ RequestedBy identity.UserID }
+// Enable.Services are the services that use the AI: nil keeps the ones in
+// force (the whole app when it is off), empty is the whole app.
+type Enable struct {
+	Services    *[]string
+	RequestedBy identity.UserID
+}
 type Disable struct{ RequestedBy identity.UserID }
 type Rotate struct{ RequestedBy identity.UserID }
 

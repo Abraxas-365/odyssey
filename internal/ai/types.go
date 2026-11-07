@@ -38,9 +38,10 @@ type Target struct {
 	NextVersion int64
 	// Revision is the latest settings revision.
 	Revision int64
-	// Conflict is why turning the AI on is refused for this app now
-	// (VARIABLE_TAKEN), nil when it is not.
-	Conflict error
+	// Services use the AI in force (empty: the whole app).
+	Services []string
+	// ScopedSettings: the cluster can give the AI to some services only.
+	ScopedSettings bool
 }
 
 // Delivery is what Release.Enable stores and sends.
@@ -49,7 +50,10 @@ type Delivery struct {
 	KeyID   string // the cluster key it was sealed to
 	BaseURL string
 	Sealed  []byte
-	By      identity.UserID
+	// Services use it: nil keeps the AI in force's (the whole app when it
+	// was off), empty is the whole app.
+	Services *[]string
+	By       identity.UserID
 }
 
 // Applied is the settings revision a change produced.

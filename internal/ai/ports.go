@@ -14,9 +14,11 @@ type Commands interface {
 	// Enable turns the app's AI on: it records the intent and starts the
 	// workflow that makes the key, hands it sealed to the cluster and wires
 	// the app (a configuration deployment). Already on (or on its way) it
-	// changes nothing. 422 AI_UNAVAILABLE when the organization has no AI or
-	// the environment's cluster cannot run it; 409 VARIABLE_TAKEN when the
-	// app defines a variable the AI sets.
+	// changes nothing, unless Services names others: then the AI that is on
+	// moves to them (same key). 422 AI_UNAVAILABLE when the organization has
+	// no AI or the environment's cluster cannot run it; 409 VARIABLE_TAKEN
+	// when the app defines a variable the AI sets for a service it reaches;
+	// 409 AI_BUSY when the services change while the key is being made.
 	Enable(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input Enable) (View, error)
 	// Rotate gives the app a new key; the old one is revoked once the app
 	// runs with the new one.
@@ -124,6 +126,13 @@ type Release interface {
 	Enable(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, d Delivery) (Applied, error)
 	// Disable turns the app's AI off (no revision when it already is).
 	Disable(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, by identity.UserID) (Applied, error)
+	// Reach checks the services that would use the AI (nil: the AI in
+	// force's; empty: the whole app) and returns the ones it reaches, as IT's
+	// rules see them; 409 VARIABLE_TAKEN when the app defines a variable the
+	// AI would set for one of them.
+	Reach(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, services *[]string) ([]gate.Service, error)
+	// Scope changes which services use the AI that is on (same key).
+	Scope(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, services []string, by identity.UserID) (Applied, error)
 	// Settled: the cluster was told the revision and no deployment is in
 	// progress (or nothing is online), so the app no longer needs the keys
 	// an earlier revision named.

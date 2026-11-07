@@ -48,4 +48,7 @@ type Input struct {
 	// with the keys and there is nothing to wait for or to update; the run only
 	// revokes them at the gateway (the sweep sets it, never a request).
 	Gone bool `json:"gone,omitempty"`
+	// Services use the AI an enable turns on (absent: the ones in force, the
+	// whole app when it is off; MS-4). A rotation keeps them.
+	Services *[]string `json:"services,omitempty"`
 }

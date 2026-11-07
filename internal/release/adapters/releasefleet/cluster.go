@@ -28,20 +28,20 @@ func (c *Cluster) Apply(ctx context.Context, t release.Target, app release.Desir
 	secrets := make([]fleet.AppSecret, 0, len(app.Secrets))
 	for _, s := range app.Secrets {
 		secrets = append(secrets, fleet.AppSecret{Name: s.Name, Source: string(s.Source), Version: s.Version, KeyID: s.KeyID,
-			Store: s.Store, Key: s.Key, Property: s.Property})
+			Store: s.Store, Key: s.Key, Property: s.Property, Services: s.Services})
 	}
 	resources := make([]fleet.ResourceRef, 0, len(app.Resources))
 	for _, r := range app.Resources {
-		resources = append(resources, fleet.ResourceRef{Name: r.Name, Kind: r.Kind, Prefix: r.Prefix})
+		resources = append(resources, fleet.ResourceRef{Name: r.Name, Kind: r.Kind, Prefix: r.Prefix, Services: r.Services})
 	}
 	var ai *fleet.AIRef
 	if app.AI != nil {
-		ai = &fleet.AIRef{BaseURL: app.AI.BaseURL, KeySecret: app.AI.KeySecret}
+		ai = &fleet.AIRef{BaseURL: app.AI.BaseURL, KeySecret: app.AI.KeySecret, Services: app.AI.Services}
 	}
 	var services []fleet.AppService
 	for _, s := range app.Services {
 		services = append(services, fleet.AppService{Name: s.Name, Kind: string(s.Kind), Route: s.Route, StripPrefix: s.StripPrefix,
-			Image: s.Image, Port: s.Port, HealthPath: s.HealthPath, Replicas: s.Replicas})
+			Image: s.Image, Port: s.Port, HealthPath: s.HealthPath, Replicas: s.Replicas, Env: app.ServiceEnv[s.Name]})
 	}
 	err := c.fleet.Apply(ctx, fleet.App{
 		Organization: t.Organization, Project: t.Project, Environment: t.Environment, Name: app.Name,
@@ -54,7 +54,7 @@ func (c *Cluster) Apply(ctx context.Context, t release.Target, app release.Desir
 		switch e.Code {
 		case fleet.CodeNoCluster, fleet.CodeClusterRevoked, fleet.CodeAccessUnavailable, fleet.CodeSecretsUnavailable,
 			fleet.CodeExternalSecretsUnavailable, fleet.CodeSecretKeyChanged, fleet.CodeSecretStoreUnknown,
-			fleet.CodeResourcesUnavailable, fleet.CodeAIUnavailable, project.CodeServicesUnavailable:
+			fleet.CodeResourcesUnavailable, fleet.CodeAIUnavailable, project.CodeServicesUnavailable, fleet.CodeServiceSettingsUnavailable:
 			return release.Failed(release.CodeApplyFailed, e.Message)
 		}
 		return release.Failed(release.CodeApplyFailed, "El clúster no pudo aceptar la configuración de la app.", e.Message)
@@ -68,7 +68,7 @@ func (c *Cluster) Secrets(ctx context.Context, t release.Target) (release.Cluste
 	if err != nil {
 		return release.ClusterSecrets{}, err
 	}
-	out := release.ClusterSecrets{External: st.External, Stores: st.Stores, Revoked: st.Revoked, AI: st.AI}
+	out := release.ClusterSecrets{External: st.External, Stores: st.Stores, Revoked: st.Revoked, AI: st.AI, ScopedSettings: st.ScopedSettings}
 	if st.Key != nil && !st.Cluster.IsZero() {
 		out.Key = &release.ClusterKey{Cluster: st.Cluster.String(), KeyID: st.Key.KeyID, Public: st.Key.Public}
 	}

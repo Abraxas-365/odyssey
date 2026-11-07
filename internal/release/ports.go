@@ -61,6 +61,9 @@ type Commands interface {
 	// SetExternalSecret points a secret at the company's vault through a
 	// ClusterSecretStore of the cluster. The caller checks the permission.
 	SetExternalSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input SetExternalSecret) (SettingsChange, error)
+	// ScopeSecret changes which services read a secret, or will read a
+	// requested one, keeping its value (NotFound when neither).
+	ScopeSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input ScopeSecret) (SettingsChange, error)
 	// RemoveSecret drops a secret variable, or a request (NotFound when neither).
 	RemoveSecret(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input RemoveSecret) (SettingsChange, error)
 	// IssueUpload issues a one-use ticket to publish a folder to the
@@ -237,14 +240,16 @@ type Usage interface {
 	// it waits and finds the resource deleting.
 	WithResourceUseLocked(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID,
 		fn func(ctx context.Context, connected []ResourceUse) error) error
-	// AuthorizeConnect asks IT's rules whether a resource of the kind may be
-	// connected to the environment's app, as the actor on ctx, and changes
-	// nothing. Creating a resource that connects asks it before provisioning
-	// anything; ConnectResource (Judged) then does not ask again. A rule
-	// that wants approval holds the operation described by detail and returns
-	// the pending answer (nothing else may then happen); the approved
-	// operation re-runs and redeems it here.
-	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, kind string, detail gate.Detail) (*gate.Pending, error)
+	// AuthorizeConnect asks IT's rules whether a resource may be connected
+	// to the environment's app (for the services connect names), as the
+	// actor on ctx, and changes nothing but the approval request. It checks
+	// the services first (the app's, a capable cluster, a files resource
+	// reaching one). Creating a resource that connects asks it before
+	// provisioning anything; ConnectResource (Judged) then does not ask
+	// again. A rule that wants approval holds the operation described by
+	// connect.Detail and returns the pending answer (nothing else may then
+	// happen); the approved operation re-runs and redeems it here.
+	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, connect AuthorizeConnect) (*gate.Pending, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -314,6 +319,9 @@ type Repository interface {
 
 	// PutSecretRequest stores (or renews) a request for a managed value.
 	PutSecretRequest(ctx context.Context, request SecretRequest) error
+	// ScopeSecretRequest changes the services of the open request of
+	// request.Name (NotFound when none).
+	ScopeSecretRequest(ctx context.Context, request SecretRequest) error
 	ListSecretRequests(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]SecretRequest, error)
 	// DeleteSecretRequest drops the request named name (false when none).
 	DeleteSecretRequest(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (bool, error)

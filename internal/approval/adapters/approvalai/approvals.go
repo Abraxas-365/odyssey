@@ -6,6 +6,7 @@ package approvalai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/Abraxas-365/odyssey/internal/ai"
@@ -44,7 +45,11 @@ func (e *Executor) Execute(ctx context.Context, r approval.Request) error {
 	if approval.OpOf(r) != ai.OpEnable {
 		return fmt.Errorf("approvalai: %q is not an action ai re-runs", approval.OpOf(r))
 	}
-	out, err := e.ai.Enable(ctx, r.Organization, r.Project, r.Environment, ai.Enable{RequestedBy: r.RequestedBy})
+	var p ai.EnableApproval
+	if err := json.Unmarshal(r.Payload, &p); err != nil {
+		return err
+	}
+	out, err := e.ai.Enable(ctx, r.Organization, r.Project, r.Environment, ai.Enable{Services: p.Services, RequestedBy: r.RequestedBy})
 	if err == nil && out.Held() {
 		return fmt.Errorf("the approved action was held for approval again")
 	}
