@@ -44,17 +44,39 @@ func sortedResources(a *v1alpha1.OdysseyApp) []v1alpha1.ResourceRefSpec {
 	return out
 }
 
-// hasFiles says a uses a files resource (a ReadWriteOnce volume: its pods
-// are replaced, never run side by side).
-func hasFiles(a *v1alpha1.OdysseyApp) bool {
-	return slices.ContainsFunc(a.Spec.Resources, func(r v1alpha1.ResourceRefSpec) bool { return r.Kind == v1alpha1.ResourceFiles })
+// resourcesOf are the resources that reach w, by name (a files resource
+// only its owner: filesOwner).
+func resourcesOf(a *v1alpha1.OdysseyApp, w workload) []v1alpha1.ResourceRefSpec {
+	var out []v1alpha1.ResourceRefSpec
+	var all []workload
+	for _, r := range sortedResources(a) {
+		if r.Kind == v1alpha1.ResourceFiles {
+			if all == nil {
+				all = workloads(a)
+			}
+			if filesOwner(r, all) == w.Name {
+				out = append(out, r)
+			}
+			continue
+		}
+		if w.reaches(r.Services) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
-// resourceEnv are the variables the pod reads its resources by, in the
+// hasFiles says w mounts a files resource (a ReadWriteOnce volume: its pods
+// are replaced, never run side by side).
+func hasFiles(a *v1alpha1.OdysseyApp, w workload) bool {
+	return slices.ContainsFunc(resourcesOf(a, w), func(r v1alpha1.ResourceRefSpec) bool { return r.Kind == v1alpha1.ResourceFiles })
+}
+
+// resourceEnv are the variables w's pods read their resources by, in the
 // order of resourcekind.Variables for each resource (by name).
-func resourceEnv(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
+func resourceEnv(a *v1alpha1.OdysseyApp, w workload) []corev1.EnvVar {
 	var out []corev1.EnvVar
-	for _, r := range sortedResources(a) {
+	for _, r := range resourcesOf(a, w) {
 		k := resourcekind.Kind(r.Kind)
 		names := resourcekind.Variables(k, r.Prefix)
 		if k == resourcekind.Files {
@@ -74,12 +96,12 @@ func resourceEnv(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
 // volumeName is the pod volume of files resource name.
 func volumeName(name string) string { return "res-" + name }
 
-// resourceVolumes are the pod's volumes and the container's mounts for the
-// files resources.
-func resourceVolumes(a *v1alpha1.OdysseyApp) ([]corev1.Volume, []corev1.VolumeMount) {
+// resourceVolumes are w's pod volumes and container mounts for the files
+// resources that reach it.
+func resourceVolumes(a *v1alpha1.OdysseyApp, w workload) ([]corev1.Volume, []corev1.VolumeMount) {
 	var vols []corev1.Volume
 	var mounts []corev1.VolumeMount
-	for _, r := range sortedResources(a) {
+	for _, r := range resourcesOf(a, w) {
 		if r.Kind != v1alpha1.ResourceFiles {
 			continue
 		}
@@ -91,10 +113,10 @@ func resourceVolumes(a *v1alpha1.OdysseyApp) ([]corev1.Volume, []corev1.VolumeMo
 	return vols, mounts
 }
 
-// resourcesHash identifies a's resource references (empty when there are
-// none, so apps without resources keep their pod template).
-func resourcesHash(a *v1alpha1.OdysseyApp) string {
-	refs := sortedResources(a)
+// resourcesHash identifies the resource references that reach w (empty
+// when none does, so a service without resources keeps its pod template).
+func resourcesHash(a *v1alpha1.OdysseyApp, w workload) string {
+	refs := resourcesOf(a, w)
 	if len(refs) == 0 {
 		return ""
 	}
@@ -105,10 +127,10 @@ func resourcesHash(a *v1alpha1.OdysseyApp) string {
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
-// resourceNames are the variables a's resources define.
-func resourceNames(a *v1alpha1.OdysseyApp) map[string]bool {
+// resourceNames are the variables the resources that reach w define.
+func resourceNames(a *v1alpha1.OdysseyApp, w workload) map[string]bool {
 	out := map[string]bool{}
-	for _, e := range resourceEnv(a) {
+	for _, e := range resourceEnv(a, w) {
 		out[e.Name] = true
 	}
 	return out

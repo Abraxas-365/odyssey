@@ -103,10 +103,14 @@ func externalStores(a *v1alpha1.OdysseyApp) map[string][]v1alpha1.SecretRefSpec 
 	return out
 }
 
-// secretEnv are the variables the pod reads from Secrets, by name.
-func secretEnv(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
+// secretEnv are the variables w's pods read from Secrets, by name (only the
+// secrets that reach w).
+func secretEnv(a *v1alpha1.OdysseyApp, w workload) []corev1.EnvVar {
 	var out []corev1.EnvVar
 	for _, s := range sortedSecrets(a) {
+		if !w.reaches(s.Services) {
+			continue
+		}
 		secret := secretstore.Name(a.Name)
 		if s.Source == v1alpha1.SecretExternal {
 			secret = externalName(a, s.Store)
@@ -118,16 +122,21 @@ func secretEnv(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
 	return out
 }
 
-// secretsHash identifies a's secret references (empty when there are none, so
-// apps without secrets keep their pod template).
-func secretsHash(a *v1alpha1.OdysseyApp) string {
-	refs := sortedSecrets(a)
-	if len(refs) == 0 {
-		return ""
-	}
+// secretsHash identifies the secret references that reach w (empty when
+// none does, so a service without secrets keeps its pod template; a new
+// version of a secret another service reads leaves it alone).
+func secretsHash(a *v1alpha1.OdysseyApp, w workload) string {
 	h := sha256.New()
-	for _, s := range refs {
+	n := 0
+	for _, s := range sortedSecrets(a) {
+		if !w.reaches(s.Services) {
+			continue
+		}
+		n++
 		fmt.Fprintf(h, "%s\x00%s\x00%d\x00%s\x00%s\x00%s\n", s.Name, s.Source, s.Version, s.Store, s.Key, s.Property)
+	}
+	if n == 0 {
+		return ""
 	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }

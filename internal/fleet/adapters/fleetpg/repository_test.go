@@ -2,6 +2,7 @@ package fleetpg_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -283,14 +284,17 @@ func TestDesiredApps(t *testing.T) {
 	if err != nil || got.Revision != 2 || got.Image != app.Image || got.Env["TZ"] != "America/Lima" || got.Labels["team"] != "ventas" || got.Port != 8080 || got.Access != fleet.AccessTeam {
 		t.Fatalf("find app %+v %v", got, err)
 	}
-	// an app of several services keeps them in its spec
+	// an app of several services keeps them in its spec, with the settings'
+	// services and each service's own env
 	shop := fleet.App{Organization: org, Project: proj, Environment: environment, Cluster: c.ID, Name: "shop", Revision: 1,
 		Services: []fleet.AppService{{Name: "web", Kind: fleet.ServiceWeb, Route: "/", Image: "r.local/web@sha256:00", Port: 3000, HealthPath: "/", Replicas: 1},
-			{Name: "worker", Kind: fleet.ServiceWorker, Image: "r.local/w@sha256:00", Replicas: 2}}}
+			{Name: "worker", Kind: fleet.ServiceWorker, Image: "r.local/w@sha256:00", Replicas: 2, Env: map[string]string{"QUEUE": "jobs"}}},
+		Resources: []fleet.ResourceRef{{Name: "main", Kind: "postgres", Services: []string{"worker"}}}}
 	if changed, err := repo.PutApp(ctx, shop); err != nil || !changed {
 		t.Fatalf("put shop %v %v", changed, err)
 	}
-	if got, err := repo.FindApp(ctx, org, c.ID, environment, "shop"); err != nil || len(got.Services) != 2 || got.Services[1] != shop.Services[1] {
+	if got, err := repo.FindApp(ctx, org, c.ID, environment, "shop"); err != nil || len(got.Services) != 2 || !reflect.DeepEqual(got.Services[1], shop.Services[1]) ||
+		!reflect.DeepEqual(got.Resources, shop.Resources) {
 		t.Fatalf("find shop %+v %v", got, err)
 	}
 	_, err = repo.FindApp(ctx, other, theirs.ID, environment, "shop")

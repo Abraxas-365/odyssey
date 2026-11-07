@@ -3,11 +3,13 @@ package desired
 import (
 	"context"
 	"errors"
-	fakediscovery "k8s.io/client-go/discovery/fake"
-	clienttesting "k8s.io/client-go/testing"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	fakediscovery "k8s.io/client-go/discovery/fake"
+	clienttesting "k8s.io/client-go/testing"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
@@ -458,7 +460,7 @@ func TestApplyMapsSecretsWithoutValues(t *testing.T) {
 		{Name: "A_MAN", Source: v1alpha1.SecretManaged, Version: 4},
 		{Name: "B_EXT", Source: v1alpha1.SecretExternal, Store: "vault", Key: "prod/b", Property: "password"},
 	}
-	if !slices.Equal(got, want) {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("secrets: %+v, want %+v", got, want)
 	}
 

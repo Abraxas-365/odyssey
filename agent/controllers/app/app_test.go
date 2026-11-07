@@ -252,6 +252,7 @@ func TestReconcile(t *testing.T) {
 	// A new revision whose pods never pass the health check fails, and stays
 	// failed even if a later look would say otherwise.
 	got.Spec.Revision = 2
+	got.Spec.Env = map[string]string{"NEW": "1"} // its pods change
 	if err := c.Update(ctx, got); err != nil {
 		t.Fatal(err)
 	}

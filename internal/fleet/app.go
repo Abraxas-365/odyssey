@@ -130,6 +130,65 @@ type AppService struct {
 	Port       int    `json:"port,omitempty"`
 	HealthPath string `json:"health_path,omitempty"`
 	Replicas   int    `json:"replicas"`
+	// Env are variables of this service only (MS-4): they win over App.Env.
+	Env map[string]string `json:"env,omitempty"`
+}
+
+// CapabilityServiceSettings is listed in Capabilities.APIs when the agent
+// honors settings of some services only (the services of AppSecret,
+// ResourceRef and AIRef, AppService.Env) and rolls only the services whose
+// pods change. An agent without it would hand every setting to every
+// service: it is never sent an app with such settings (ScopedSettings).
+const CapabilityServiceSettings = "odicea.service-settings"
+
+// CanScopeSettings reports whether the cluster lists CapabilityServiceSettings.
+func (c Capabilities) CanScopeSettings() bool {
+	return slices.Contains(c.APIs, CapabilityServiceSettings)
+}
+
+// CodeServiceSettingsUnavailable: the app's cluster cannot give a setting to
+// some services only (its agent predates MS-4).
+const CodeServiceSettingsUnavailable = "SERVICE_SETTINGS_UNAVAILABLE"
+
+// ServiceSettingsUnavailableMessage is its plain-language text.
+const ServiceSettingsUnavailableMessage = "El clúster de esta app todavía no puede dar una configuración solo a algunos servicios. Pide a TI que actualice su agente."
+
+// ScopedSettings reports whether some setting of a reaches only some of
+// its services: what an agent without CapabilityServiceSettings must not get.
+func (a App) ScopedSettings() bool {
+	for _, s := range a.Services {
+		if len(s.Env) > 0 {
+			return true
+		}
+	}
+	for _, s := range a.Secrets {
+		if len(s.Services) > 0 {
+			return true
+		}
+	}
+	for _, r := range a.Resources {
+		if len(r.Services) > 0 {
+			return true
+		}
+	}
+	return a.AI != nil && len(a.AI.Services) > 0
+}
+
+// validScope checks the services a setting names: distinct service names,
+// at most MaxAppServices. They need not be services of the app: one the
+// version no longer has reaches nobody.
+func validScope(services []string) error {
+	if len(services) > MaxAppServices {
+		return errx.Validation("a setting names at most 8 services")
+	}
+	seen := make(map[string]bool, len(services))
+	for _, s := range services {
+		if !serviceNamePattern.MatchString(s) || seen[s] {
+			return errx.Validation("a setting's services must be distinct service names")
+		}
+		seen[s] = true
+	}
+	return nil
 }
 
 // Simple reports whether the app is one web service at "/" (or has no
@@ -172,6 +231,14 @@ func validServices(svcs []AppService) error {
 			}
 		default:
 			return errx.Validation("a service is web or worker")
+		}
+		if len(s.Env) > MaxAppSecrets {
+			return errx.Validation("a service has at most 100 variables of its own")
+		}
+		for k := range s.Env {
+			if !envVarPattern.MatchString(k) {
+				return errx.Validation("a service's variables must be environment variable names")
+			}
 		}
 		names[s.Name], routes[s.Route] = true, s.Route != ""
 	}
@@ -220,6 +287,9 @@ func (a App) Validate() error {
 		if err := a.AI.Validate(a.Secrets); err != nil {
 			return err
 		}
+		if err := validScope(a.AI.Services); err != nil {
+			return err
+		}
 	}
 	if err := validServices(a.Services); err != nil {
 		return err
@@ -231,6 +301,9 @@ func (a App) Validate() error {
 			return errx.Validation("resources must be distinct, with a valid name and kind")
 		case resourcekind.CheckPrefix(r.Prefix) != nil:
 			return errx.Validation(resourcekind.CheckPrefix(r.Prefix).Error())
+		}
+		if err := validScope(r.Services); err != nil {
+			return err
 		}
 		seenRes[r.Name] = true
 	}
@@ -245,6 +318,9 @@ func (a App) Validate() error {
 			return errx.Validation("an external secret needs a store and a key")
 		case s.Source != SecretManaged && s.Source != SecretExternal:
 			return errx.Validation("secret source must be managed or external")
+		}
+		if err := validScope(s.Services); err != nil {
+			return err
 		}
 		seen[s.Name] = true
 	}

@@ -122,6 +122,9 @@ type ServiceSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=20
 	Replicas int32 `json:"replicas"`
+	// Env are variables of this service only: they win over spec.env.
+	// +optional
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // AISpec is how an app reaches the AI gateway.
@@ -134,6 +137,12 @@ type AISpec struct {
 	// KeySecret is the managed secret (one of spec.secrets) that holds the key.
 	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]{0,127}$`
 	KeySecret string `json:"keySecret"`
+	// Services are the app's services that get the AI; empty: every one.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern=`^[a-z][a-z0-9]{0,19}$`
+	Services []string `json:"services,omitempty"`
 }
 
 // SecretSource is where a secret's value comes from.
@@ -170,6 +179,12 @@ type SecretRefSpec struct {
 	// Property selects a field of the external secret (optional).
 	// +optional
 	Property string `json:"property,omitempty"`
+	// Services are the app's services that read it; empty: every one.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern=`^[a-z][a-z0-9]{0,19}$`
+	Services []string `json:"services,omitempty"`
 }
 
 // AccessMode is who may open an app.

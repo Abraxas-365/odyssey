@@ -21,13 +21,18 @@ const (
 // aiNames are the four variables the AI owns.
 var aiNames = map[string]bool{EnvOpenAIBaseURL: true, EnvOpenAIKey: true, EnvAnthropicBaseURL: true, EnvAnthropicKey: true}
 
-// aiEnv are the AI's variables for a (none without spec.ai). The key is read
-// from <app>-secrets, where the console delivered it as spec.ai.keySecret;
-// it is never a literal. OPENAI_BASE_URL has /v1 (the OpenAI SDKs append
-// /chat/completions to it); ANTHROPIC_BASE_URL does not (the Anthropic SDKs
-// append /v1/messages).
-func aiEnv(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
-	if a.Spec.AI == nil {
+// aiOn says the AI reaches w.
+func aiOn(a *v1alpha1.OdysseyApp, w workload) bool {
+	return a.Spec.AI != nil && w.reaches(a.Spec.AI.Services)
+}
+
+// aiEnv are the AI's variables for w (none when spec.ai does not reach it).
+// The key is read from <app>-secrets, where the console delivered it as
+// spec.ai.keySecret; it is never a literal. OPENAI_BASE_URL has /v1 (the
+// OpenAI SDKs append /chat/completions to it); ANTHROPIC_BASE_URL does not
+// (the Anthropic SDKs append /v1/messages).
+func aiEnv(a *v1alpha1.OdysseyApp, w workload) []corev1.EnvVar {
+	if !aiOn(a, w) {
 		return nil
 	}
 	base := strings.TrimRight(a.Spec.AI.BaseURL, "/")
@@ -43,9 +48,10 @@ func aiEnv(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
 
 // withAIEnv puts the AI's variables last, after dropping any of the same
 // names (like withAuthEnv, the AI wins over everything: a hand-edited
-// OdysseyApp cannot point the key elsewhere). Without spec.ai nothing changes.
-func withAIEnv(in []corev1.EnvVar, a *v1alpha1.OdysseyApp) []corev1.EnvVar {
-	ours := aiEnv(a)
+// OdysseyApp cannot point the key elsewhere). When the AI does not reach w
+// nothing changes.
+func withAIEnv(in []corev1.EnvVar, a *v1alpha1.OdysseyApp, w workload) []corev1.EnvVar {
+	ours := aiEnv(a, w)
 	if ours == nil {
 		return in
 	}

@@ -2,6 +2,7 @@ package desired
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func TestApplyMapsServices(t *testing.T) {
 		{Name: "api", Kind: v1alpha1.ServiceWeb, Route: "/api", StripPrefix: true, Image: "r.test/api@sha256:" + strings.Repeat("b", 64), Port: 8080, HealthPath: "/healthz", Replicas: 1},
 		{Name: "worker", Kind: v1alpha1.ServiceWorker, Image: "r.test/w@sha256:" + strings.Repeat("c", 64), Replicas: 1},
 	}
-	if !slices.Equal(got, want) {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("services: %+v", got)
 	}
 
@@ -104,7 +105,55 @@ func TestStatusesCarryEachService(t *testing.T) {
 
 func TestServicesCapabilityIsAlwaysReported(t *testing.T) {
 	s, _ := newSyncer(t, interceptor.Funcs{})
-	if !slices.Contains(s.Capabilities(context.Background()).GetApis(), CapabilityServices) {
+	apis := s.Capabilities(context.Background()).GetApis()
+	if !slices.Contains(apis, CapabilityServices) {
 		t.Error("the agent runs services: it must say so")
+	}
+	if !slices.Contains(apis, CapabilityServiceSettings) {
+		t.Error("the agent scopes settings by service: it must say so")
+	}
+}
+
+// The services a setting names reach the CRD sorted (the same set makes the
+// same spec), and a service's own env with it.
+func TestApplyMapsSettingScopes(t *testing.T) {
+	s, c := newSyncer(t, interceptor.Funcs{})
+	a := withServices(1)
+	a.Services[1].Env = map[string]string{"LOG_LEVEL": "debug"}
+	a.Secrets = []*fleetv1.SecretRef{{Name: "STRIPE_KEY", Source: "managed", Version: 1, Services: []string{"worker", "api"}}}
+	a.Resources = []*fleetv1.ResourceRef{{Name: "main", Kind: "postgres", Services: []string{"api"}}}
+	a.Ai = &fleetv1.AI{BaseUrl: "https://llm.test", KeySecret: "STRIPE_KEY", Services: []string{"api"}}
+	if err := s.Apply(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	got := get(t, c).Spec
+	if !slices.Equal(got.Secrets[0].Services, []string{"api", "worker"}) || !slices.Equal(got.Resources[0].Services, []string{"api"}) ||
+		got.AI == nil || !slices.Equal(got.AI.Services, []string{"api"}) {
+		t.Errorf("scopes: %+v %+v %+v", got.Secrets, got.Resources, got.AI)
+	}
+	if got.Services[1].Env["LOG_LEVEL"] != "debug" || got.Services[0].Env != nil {
+		t.Errorf("service env: %+v", got.Services)
+	}
+}
+
+func TestApplyRefusesBadScopes(t *testing.T) {
+	s, _ := newSyncer(t, interceptor.Funcs{})
+	for name, mutate := range map[string]func(*fleetv1.App){
+		"secret names a bad service": func(a *fleetv1.App) {
+			a.Secrets = []*fleetv1.SecretRef{{Name: "K", Source: "managed", Version: 1, Services: []string{"my-api"}}}
+		},
+		"resource repeats a service": func(a *fleetv1.App) {
+			a.Resources = []*fleetv1.ResourceRef{{Name: "main", Kind: "postgres", Services: []string{"api", "api"}}}
+		},
+		"ai names too many": func(a *fleetv1.App) {
+			a.Ai = &fleetv1.AI{BaseUrl: "https://llm.test", KeySecret: "K", Services: strings.Fields("a b c d e f g h i")}
+		},
+		"service env with a bad name": func(a *fleetv1.App) { a.Services[0].Env = map[string]string{"1BAD": "x"} },
+	} {
+		a := withServices(1)
+		mutate(a)
+		if err := s.Apply(context.Background(), a); !IsRejected(err) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

@@ -12,7 +12,9 @@ package bootstrap_test
 //     protected: /api goes to the api with its prefix removed after the
 //     gate saw it, /apix does not, and the sign-in returns to the URL the
 //     person opened.
-//  3. The next version drops the api and the worker: their objects go.
+//  3. A variable of the api only: the api rolls, the web and the worker
+//     keep their pods (MS-4).
+//  4. The next version drops the api and the worker: their objects go.
 //
 // It needs the cluster to reach the host (the build e2e's setup); it is
 // skipped on a throwaway k3s.
@@ -30,6 +32,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -335,8 +338,81 @@ func TestKubeServices(t *testing.T) {
 		t.Errorf("/ is the web's:\n%s", b)
 	}
 
-	// 3. The api and the worker go away.
-	if s := deploy(3, webSvc); len(s.Services) != 1 {
+	// 3. A variable of the api only (MS-4): the api rolls and has it; the
+	// web and the worker keep their pods, without it.
+	podsOf := func(svc string) []string {
+		t.Helper()
+		var pods corev1.PodList
+		if err := kc.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{app.LabelWorkload: name + "-" + svc}); err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, p := range pods.Items {
+			if p.DeletionTimestamp == nil {
+				out = append(out, p.Name)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	webPods, workerPods := podsOf("web"), podsOf("worker")
+	scoped := fleet.App{Organization: org, Project: target.Project, Environment: target.Environment, Name: name, Revision: 3,
+		Access: string(release.AccessTeam),
+		Env:    map[string]string{"WHOAMI_PORT_NUMBER": "8080", "WHOAMI_NAME": "rev2"},
+		Labels: map[string]string{"odyssey.dev/deployment": "d3"},
+		Services: []fleet.AppService{
+			{Name: "web", Kind: fleet.ServiceWeb, Route: "/", Image: whoami, Port: 8080, HealthPath: "/health", Replicas: 1},
+			{Name: "api", Kind: fleet.ServiceWeb, Route: "/api", StripPrefix: true, Image: whoami, Port: 8080, HealthPath: "/health", Replicas: 1,
+				Env: map[string]string{"ONLY_API": "1"}},
+			{Name: "worker", Kind: fleet.ServiceWorker, Image: whoami, Replicas: 1},
+		}}
+	if err := h.platform.Fleet.Dispatch.Apply(ctx, scoped); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, "revision 3 to settle", 4*time.Minute, func() bool {
+		s, err = k.Status(ctx, target, name)
+		return err == nil && s.ObservedRevision == 3 && s.Phase != release.PhaseProgressing
+	})
+	if s.Phase != release.PhaseReady {
+		t.Fatalf("revision 3: %+v", s)
+	}
+	deployments := map[string]appsv1.Deployment{}
+	for _, svc := range []string{"web", "api", "worker"} {
+		var d appsv1.Deployment
+		if err := kc.Get(ctx, client.ObjectKey{Namespace: ns, Name: name + "-" + svc}, &d); err != nil {
+			t.Fatal(err)
+		}
+		deployments[svc] = d
+	}
+	if !hasEnv(deployments["api"], "ONLY_API", "1") || deployments["api"].Spec.Template.Labels[app.LabelRevision] != "3" {
+		t.Errorf("the api rolls with its variable: %v", deployments["api"].Spec.Template.Labels)
+	}
+	for _, svc := range []string{"web", "worker"} {
+		if hasEnv(deployments[svc], "ONLY_API", "") || deployments[svc].Spec.Template.Labels[app.LabelRevision] != "2" {
+			t.Errorf("%s keeps the pods revision 2 made: %v", svc, deployments[svc].Spec.Template.Labels)
+		}
+	}
+	if got := podsOf("web"); !slices.Equal(got, webPods) {
+		t.Errorf("the web restarted: %v → %v", webPods, got)
+	}
+	if got := podsOf("worker"); !slices.Equal(got, workerPods) {
+		t.Errorf("the worker restarted: %v → %v", workerPods, got)
+	}
+	// The old api pod drains (preStop) while Traefik moves to the new one.
+	waitFor(t, ctx, "the api to answer after its roll", time.Minute, func() bool {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api", nil)
+		req.AddCookie(cookie)
+		res, err := web.Do(req)
+		if err != nil {
+			return false
+		}
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		return res.StatusCode == http.StatusOK && strings.Contains(string(body), "Hostname: "+name+"-api-")
+	})
+
+	// 4. The api and the worker go away.
+	if s := deploy(4, webSvc); len(s.Services) != 1 {
 		t.Fatalf("per-service status: %+v", s.Services)
 	}
 	for _, o := range []client.Object{

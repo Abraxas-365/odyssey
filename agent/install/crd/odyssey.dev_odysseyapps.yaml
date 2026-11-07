@@ -106,6 +106,15 @@ spec:
                       that holds the key.
                     pattern: ^[A-Za-z_][A-Za-z0-9_]{0,127}$
                     type: string
+                  services:
+                    description: 'Services are the app''s services that get the AI;
+                      empty: every one.'
+                    items:
+                      pattern: ^[a-z][a-z0-9]{0,19}$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
                 required:
                 - baseURL
                 - keySecret
@@ -174,6 +183,16 @@ spec:
                         the resource by.
                       maxLength: 40
                       type: string
+                    services:
+                      description: |-
+                        Services are the app's services wired to it; empty: every one (a files
+                        volume, ReadWriteOnce: only the first).
+                      items:
+                        pattern: ^[a-z][a-z0-9]{0,19}$
+                        type: string
+                      maxItems: 8
+                      type: array
+                      x-kubernetes-list-type: set
                   required:
                   - kind
                   - name
@@ -212,6 +231,15 @@ spec:
                       description: Property selects a field of the external secret
                         (optional).
                       type: string
+                    services:
+                      description: 'Services are the app''s services that read it;
+                        empty: every one.'
+                      items:
+                        pattern: ^[a-z][a-z0-9]{0,19}$
+                        type: string
+                      maxItems: 8
+                      type: array
+                      x-kubernetes-list-type: set
                     source:
                       description: SecretSource is where a secret's value comes from.
                       enum:
@@ -256,6 +284,12 @@ spec:
                     service, its Service and Ingress) is named after the app: "<app>" for the
                     service at "/", "<app>-<name>" for any other.
                   properties:
+                    env:
+                      additionalProperties:
+                        type: string
+                      description: 'Env are variables of this service only: they win
+                        over spec.env.'
+                      type: object
                     healthPath:
                       description: HealthPath must answer 2xx/3xx once a web service
                         is ready.

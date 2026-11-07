@@ -32,6 +32,8 @@ type AppSecret struct {
 	Store    string `json:"store,omitempty"`
 	Key      string `json:"key,omitempty"`
 	Property string `json:"property,omitempty"`
+	// Services read it (MS-4); empty: every service of the app.
+	Services []string `json:"services,omitempty"`
 }
 
 type deliveryTag struct{}

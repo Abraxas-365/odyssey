@@ -124,7 +124,20 @@ func (x *rollout) run(ctx context.Context, w workload, legacy bool) (bool, ctrl.
 	if done, res, err := x.r.ensure(ctx, x.a, d, func() { mutateWorkload(d, x.a, w, x.all, x.r.Config) }, nil); done {
 		return done, res, err
 	}
-	o := Observe(d, podsOf(x.pods, w.Deployment), x.a.Spec.Revision, x.r.Now(), x.r.HealthGrace)
+	// Against the revision its pods run: a revision that left them as they
+	// were (mutateWorkload) is judged by the Deployment's availability alone
+	// (restarts the kept pods piled up over weeks are not this revision's
+	// doing, and must not fail a change of another service; the control
+	// plane's timeout bounds a service that is down).
+	rev, pods := x.a.Spec.Revision, podsOf(x.pods, w.Deployment)
+	kept := revisionOf(d) > 0 && revisionOf(d) < rev
+	if kept {
+		rev, pods = revisionOf(d), nil
+	}
+	o := Observe(d, pods, rev, x.r.Now(), x.r.HealthGrace)
+	if kept {
+		o.ReadyReplicas = d.Status.ReadyReplicas
+	}
 	x.seen[w.Name] = o
 	ready := o.Phase == v1alpha1.PhaseReady
 	if w.web() {

@@ -1281,6 +1281,11 @@ type Capabilities struct {
 	// network plugin must enforce them: TI's part). "odicea.retire": the agent
 	// removes an app sent with App.deleted (and reports it "deleted"); an
 	// agent without it must not be sent one (it would run it again).
+	// "odicea.service-settings" (MS-4): the agent honors the services of
+	// SecretRef, ResourceRef, AI and Service.env (settings of some services
+	// only) and rolls only the services whose pods change. An agent without
+	// it would hand every setting to every service: it must not be sent one
+	// with services.
 	Apis           []string `protobuf:"bytes,2,rep,name=apis,proto3" json:"apis,omitempty"`
 	IngressClasses []string `protobuf:"bytes,3,rep,name=ingress_classes,json=ingressClasses,proto3" json:"ingress_classes,omitempty"`
 	StorageClasses []string `protobuf:"bytes,4,rep,name=storage_classes,json=storageClasses,proto3" json:"storage_classes,omitempty"`
@@ -2377,9 +2382,13 @@ type Service struct {
 	StripPrefix bool   `protobuf:"varint,4,opt,name=strip_prefix,json=stripPrefix,proto3" json:"strip_prefix,omitempty"`
 	Image       string `protobuf:"bytes,5,opt,name=image,proto3" json:"image,omitempty"`
 	// port and health_path are 0 and "" for a worker.
-	Port          int32  `protobuf:"varint,6,opt,name=port,proto3" json:"port,omitempty"`
-	HealthPath    string `protobuf:"bytes,7,opt,name=health_path,json=healthPath,proto3" json:"health_path,omitempty"`
-	Replicas      int32  `protobuf:"varint,8,opt,name=replicas,proto3" json:"replicas,omitempty"`
+	Port       int32  `protobuf:"varint,6,opt,name=port,proto3" json:"port,omitempty"`
+	HealthPath string `protobuf:"bytes,7,opt,name=health_path,json=healthPath,proto3" json:"health_path,omitempty"`
+	Replicas   int32  `protobuf:"varint,8,opt,name=replicas,proto3" json:"replicas,omitempty"`
+	// env are variables of this service only (MS-4): they win over the
+	// app's env of the same name (never over secrets, resources or the AI,
+	// which the control plane keeps from colliding).
+	Env           map[string]string `protobuf:"bytes,9,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2470,6 +2479,13 @@ func (x *Service) GetReplicas() int32 {
 	return 0
 }
 
+func (x *Service) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
 // AI is how an app reaches the AI gateway (freerouter): its key is a
 // managed secret of the app (listed in App.secrets, delivered sealed like
 // any other), never sent here.
@@ -2482,7 +2498,10 @@ type AI struct {
 	// key_secret names the SecretRef in App.secrets that holds the key
 	// ("ODICEA_AI_KEY"): the agent sets OPENAI_API_KEY and ANTHROPIC_API_KEY
 	// from it.
-	KeySecret     string `protobuf:"bytes,2,opt,name=key_secret,json=keySecret,proto3" json:"key_secret,omitempty"`
+	KeySecret string `protobuf:"bytes,2,opt,name=key_secret,json=keySecret,proto3" json:"key_secret,omitempty"`
+	// services are the services that get the AI's variables (MS-4); empty:
+	// every service of the app.
+	Services      []string `protobuf:"bytes,3,rep,name=services,proto3" json:"services,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2531,6 +2550,13 @@ func (x *AI) GetKeySecret() string {
 	return ""
 }
 
+func (x *AI) GetServices() []string {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
 // SecretRef is one secret variable of an app.
 type SecretRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2544,9 +2570,12 @@ type SecretRef struct {
 	Version int64 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
 	// store, key and property locate an external secret: the
 	// ClusterSecretStore, the remote key and (optional) the property in it.
-	Store         string `protobuf:"bytes,4,opt,name=store,proto3" json:"store,omitempty"`
-	Key           string `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
-	Property      string `protobuf:"bytes,6,opt,name=property,proto3" json:"property,omitempty"`
+	Store    string `protobuf:"bytes,4,opt,name=store,proto3" json:"store,omitempty"`
+	Key      string `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
+	Property string `protobuf:"bytes,6,opt,name=property,proto3" json:"property,omitempty"`
+	// services are the services that read it (MS-4); empty: every service of
+	// the app. A name the app no longer has reaches nobody (never everyone).
+	Services      []string `protobuf:"bytes,7,rep,name=services,proto3" json:"services,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2621,6 +2650,13 @@ func (x *SecretRef) GetProperty() string {
 		return x.Property
 	}
 	return ""
+}
+
+func (x *SecretRef) GetServices() []string {
+	if x != nil {
+		return x.Services
+	}
+	return nil
 }
 
 // Access is the app's exposure policy.
@@ -2933,7 +2969,10 @@ type ResourceRef struct {
 	// postgres → DATABASE_URL, PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD;
 	// redis → REDIS_URL; files → FILES_DIR (the volume is mounted at
 	// /data/<name>). With prefix "ANALYTICS", ANALYTICS_DATABASE_URL, …
-	Prefix        string `protobuf:"bytes,3,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	Prefix string `protobuf:"bytes,3,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	// services are the services wired to it (MS-4); empty: every service of
+	// the app (a "files" volume, ReadWriteOnce: only the first one).
+	Services      []string `protobuf:"bytes,4,rep,name=services,proto3" json:"services,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2987,6 +3026,13 @@ func (x *ResourceRef) GetPrefix() string {
 		return x.Prefix
 	}
 	return ""
+}
+
+func (x *ResourceRef) GetServices() []string {
+	if x != nil {
+		return x.Services
+	}
+	return nil
 }
 
 // Resource is the desired state of one resource of an environment (2b): a
@@ -3417,7 +3463,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd1\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb7\x02\n" +
 	"\aService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x14\n" +
@@ -3427,18 +3473,24 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x04port\x18\x06 \x01(\x05R\x04port\x12\x1f\n" +
 	"\vhealth_path\x18\a \x01(\tR\n" +
 	"healthPath\x12\x1a\n" +
-	"\breplicas\x18\b \x01(\x05R\breplicas\">\n" +
+	"\breplicas\x18\b \x01(\x05R\breplicas\x12,\n" +
+	"\x03env\x18\t \x03(\v2\x1a.fleet.v1.Service.EnvEntryR\x03env\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Z\n" +
 	"\x02AI\x12\x19\n" +
 	"\bbase_url\x18\x01 \x01(\tR\abaseUrl\x12\x1d\n" +
 	"\n" +
-	"key_secret\x18\x02 \x01(\tR\tkeySecret\"\x95\x01\n" +
+	"key_secret\x18\x02 \x01(\tR\tkeySecret\x12\x1a\n" +
+	"\bservices\x18\x03 \x03(\tR\bservices\"\xb1\x01\n" +
 	"\tSecretRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\x03R\aversion\x12\x14\n" +
 	"\x05store\x18\x04 \x01(\tR\x05store\x12\x10\n" +
 	"\x03key\x18\x05 \x01(\tR\x03key\x12\x1a\n" +
-	"\bproperty\x18\x06 \x01(\tR\bproperty\"\x1c\n" +
+	"\bproperty\x18\x06 \x01(\tR\bproperty\x12\x1a\n" +
+	"\bservices\x18\a \x03(\tR\bservices\"\x1c\n" +
 	"\x06Access\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\"H\n" +
 	"\tAppReport\x12\x12\n" +
@@ -3459,11 +3511,12 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12%\n" +
-	"\x0eready_replicas\x18\x05 \x01(\x05R\rreadyReplicas\"M\n" +
+	"\x0eready_replicas\x18\x05 \x01(\x05R\rreadyReplicas\"i\n" +
 	"\vResourceRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
-	"\x06prefix\x18\x03 \x01(\tR\x06prefix\"\xf5\x01\n" +
+	"\x06prefix\x18\x03 \x01(\tR\x06prefix\x12\x1a\n" +
+	"\bservices\x18\x04 \x03(\tR\bservices\"\xf5\x01\n" +
 	"\bResource\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -3504,7 +3557,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -3549,6 +3602,7 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*ResourceStatus)(nil),     // 40: fleet.v1.ResourceStatus
 	nil,                        // 41: fleet.v1.App.EnvEntry
 	nil,                        // 42: fleet.v1.App.LabelsEntry
+	nil,                        // 43: fleet.v1.Service.EnvEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
@@ -3583,24 +3637,25 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	37, // 29: fleet.v1.App.resources:type_name -> fleet.v1.ResourceRef
 	31, // 30: fleet.v1.App.ai:type_name -> fleet.v1.AI
 	30, // 31: fleet.v1.App.services:type_name -> fleet.v1.Service
-	35, // 32: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
-	36, // 33: fleet.v1.AppStatus.services:type_name -> fleet.v1.ServiceStatus
-	40, // 34: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
-	2,  // 35: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 36: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 37: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 38: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 39: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 40: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 41: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 42: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 43: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 44: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	40, // [40:45] is the sub-list for method output_type
-	35, // [35:40] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	43, // 32: fleet.v1.Service.env:type_name -> fleet.v1.Service.EnvEntry
+	35, // 33: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
+	36, // 34: fleet.v1.AppStatus.services:type_name -> fleet.v1.ServiceStatus
+	40, // 35: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
+	2,  // 36: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 37: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 38: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 39: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 40: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 41: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 42: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 43: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 44: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 45: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	41, // [41:46] is the sub-list for method output_type
+	36, // [36:41] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -3632,7 +3687,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   43,
+			NumMessages:   44,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

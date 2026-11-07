@@ -27,6 +27,8 @@ type ResourceRef struct {
 	Kind resourcekind.Kind `json:"kind"`
 	// Prefix goes before the variables the app reads it by ("" for none).
 	Prefix string `json:"prefix,omitempty"`
+	// Services are wired to it (MS-4); empty: every service of the app.
+	Services []string `json:"services,omitempty"`
 }
 
 // MaxAppResources bounds the resources an app uses.

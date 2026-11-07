@@ -76,7 +76,8 @@ func resourcesOf(refs []*fleetv1.ResourceRef) []v1alpha1.ResourceRefSpec {
 	}
 	out := make([]v1alpha1.ResourceRefSpec, 0, len(refs))
 	for _, r := range refs {
-		out = append(out, v1alpha1.ResourceRefSpec{Name: r.GetName(), Kind: v1alpha1.ResourceKind(r.GetKind()), Prefix: r.GetPrefix()})
+		out = append(out, v1alpha1.ResourceRefSpec{Name: r.GetName(), Kind: v1alpha1.ResourceKind(r.GetKind()), Prefix: r.GetPrefix(),
+			Services: scopeOf(r.GetServices())})
 	}
 	slices.SortFunc(out, func(a, b v1alpha1.ResourceRefSpec) int { return strings.Compare(a.Name, b.Name) })
 	return out
@@ -271,5 +272,5 @@ func aiOf(a *fleetv1.AI) *v1alpha1.AISpec {
 	if a == nil || a.GetBaseUrl() == "" {
 		return nil
 	}
-	return &v1alpha1.AISpec{BaseURL: a.GetBaseUrl(), KeySecret: a.GetKeySecret()}
+	return &v1alpha1.AISpec{BaseURL: a.GetBaseUrl(), KeySecret: a.GetKeySecret(), Services: scopeOf(a.GetServices())}
 }

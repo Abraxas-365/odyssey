@@ -23,6 +23,21 @@ func TestAppToProtoCarriesTheServices(t *testing.T) {
 	}
 }
 
+func TestAppToProtoCarriesTheScopes(t *testing.T) {
+	img := "r.local/api@sha256:" + strings.Repeat("b", 64)
+	got := appToProto(fleet.App{Name: "shop",
+		Services: []fleet.AppService{{Name: "api", Kind: fleet.ServiceWeb, Route: "/", Image: img, Port: 8080, HealthPath: "/", Replicas: 1,
+			Env: map[string]string{"LOG": "debug"}}},
+		Secrets:   []fleet.AppSecret{{Name: "K", Source: fleet.SecretManaged, Version: 1, Services: []string{"api"}}},
+		Resources: []fleet.ResourceRef{{Name: "main", Kind: "postgres", Services: []string{"api"}}},
+		AI:        &fleet.AIRef{BaseURL: "https://llm.test", KeySecret: "K", Services: []string{"api"}},
+	})
+	if got.GetServices()[0].GetEnv()["LOG"] != "debug" || got.GetSecrets()[0].GetServices()[0] != "api" ||
+		got.GetResources()[0].GetServices()[0] != "api" || got.GetAi().GetServices()[0] != "api" {
+		t.Errorf("scopes: %+v", got)
+	}
+}
+
 func TestReportFromProtoCarriesEachService(t *testing.T) {
 	r, err := reportFromProto(&fleetv1.AppReport{Apps: []*fleetv1.AppStatus{{EnvironmentId: project.NewEnvironmentID().String(), Name: "shop",
 		Phase: "failed", Reason: "crash", Message: "worker: restarted", Services: []*fleetv1.ServiceStatus{

@@ -302,6 +302,10 @@ func (s *Service) Apply(ctx context.Context, app fleet.App) error {
 		if !app.Simple() && !c.Agent.Capabilities.CanRunServices() {
 			return errx.Business(project.ServicesUnavailableMessage).WithCode(project.CodeServicesUnavailable)
 		}
+		// One that ignores a setting's services would hand it to all of them.
+		if app.ScopedSettings() && !c.Agent.Capabilities.CanScopeSettings() {
+			return errx.Business(fleet.ServiceSettingsUnavailableMessage).WithCode(fleet.CodeServiceSettingsUnavailable)
+		}
 		app.Cluster = c.ID
 		changed, err := s.repo.PutApp(ctx, app)
 		if err != nil || !changed {

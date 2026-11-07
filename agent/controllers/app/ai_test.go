@@ -23,9 +23,12 @@ func envByName(vars []corev1.EnvVar) map[string]corev1.EnvVar {
 	return out
 }
 
+// firstOf is a's first service (the only one of an app without services).
+func firstOf(a *v1alpha1.OdysseyApp) workload { return workloads(a)[0] }
+
 func TestAppWithAIGetsTheFourVariablesAndTheKeyIsAReference(t *testing.T) {
 	a := withAI("https://llm.test/")
-	got := envByName(withAIEnv(env(a), a))
+	got := envByName(withAIEnv(env(a), a, firstOf(a)))
 	if got["OPENAI_BASE_URL"].Value != "https://llm.test/v1" || got["ANTHROPIC_BASE_URL"].Value != "https://llm.test" {
 		t.Errorf("base urls: %+v %+v", got["OPENAI_BASE_URL"], got["ANTHROPIC_BASE_URL"])
 	}
@@ -41,7 +44,7 @@ func TestAIVariablesWinOverEverythingTheUserSet(t *testing.T) {
 	a := withAI("https://llm.test")
 	a.Spec.Env = map[string]string{"OPENAI_API_KEY": "sk-evil", "OPENAI_BASE_URL": "http://evil", "ANTHROPIC_BASE_URL": "http://evil", "KEEP": "1"}
 	a.Spec.Secrets = append(a.Spec.Secrets, managedRef("ANTHROPIC_API_KEY", 1))
-	vars := withAIEnv(env(a), a)
+	vars := withAIEnv(env(a), a, firstOf(a))
 	seen := map[string]int{}
 	for _, e := range vars {
 		seen[e.Name]++
@@ -64,7 +67,7 @@ func TestAppWithoutAIKeepsItsEnvUntouched(t *testing.T) {
 	a := newApp(1)
 	a.Spec.Env = map[string]string{"OPENAI_API_KEY": "mine"} // a hand-edited object: nothing reserves it without spec.ai
 	in := env(a)
-	out := withAIEnv(in, a)
+	out := withAIEnv(in, a, firstOf(a))
 	if len(in) != len(out) || envByName(out)["OPENAI_API_KEY"].Value != "mine" {
 		t.Errorf("env changed: %v -> %v", in, out)
 	}

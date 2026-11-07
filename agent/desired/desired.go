@@ -112,7 +112,49 @@ func Valid(a *fleetv1.App) error {
 	if err := validServices(a); err != nil {
 		return err
 	}
+	if err := validScopes(a); err != nil {
+		return err
+	}
 	return validResourceRefs(a.GetResources())
+}
+
+// validScopes checks the services each setting names (MS-4): distinct
+// service names. A name the app does not have is allowed: it reaches nobody.
+func validScopes(a *fleetv1.App) error {
+	check := func(what string, services []string) error {
+		if len(services) > MaxServices {
+			return fmt.Errorf("%s names %d services, at most %d", what, len(services), MaxServices)
+		}
+		seen := map[string]bool{}
+		for _, s := range services {
+			if !serviceName.MatchString(s) || seen[s] {
+				return fmt.Errorf("%s: services must be distinct service names", what)
+			}
+			seen[s] = true
+		}
+		return nil
+	}
+	for _, s := range a.GetSecrets() {
+		if err := check("secret "+s.GetName(), s.GetServices()); err != nil {
+			return err
+		}
+	}
+	for _, r := range a.GetResources() {
+		if err := check("resource "+r.GetName(), r.GetServices()); err != nil {
+			return err
+		}
+	}
+	if err := check("ai", a.GetAi().GetServices()); err != nil {
+		return err
+	}
+	for _, s := range a.GetServices() {
+		for k := range s.GetEnv() {
+			if !ValidEnvName(k) {
+				return fmt.Errorf("service %q: variable %q is not a valid environment variable name", s.GetName(), k)
+			}
+		}
+	}
+	return nil
 }
 
 // MaxServices bounds an app's services (as the control plane does).
@@ -156,8 +198,28 @@ func servicesOf(svcs []*fleetv1.Service) []v1alpha1.ServiceSpec {
 	out := make([]v1alpha1.ServiceSpec, len(svcs))
 	for i, s := range svcs {
 		out[i] = v1alpha1.ServiceSpec{Name: s.GetName(), Kind: v1alpha1.ServiceKind(s.GetKind()), Route: s.GetRoute(),
-			StripPrefix: s.GetStripPrefix(), Image: s.GetImage(), Port: s.GetPort(), HealthPath: s.GetHealthPath(), Replicas: s.GetReplicas()}
+			StripPrefix: s.GetStripPrefix(), Image: s.GetImage(), Port: s.GetPort(), HealthPath: s.GetHealthPath(), Replicas: s.GetReplicas(),
+			Env: nonEmpty(s.GetEnv())}
 	}
+	return out
+}
+
+// nonEmpty is m, or nil when it has nothing (the same spec either way).
+func nonEmpty(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// scopeOf is a setting's services, sorted (nil: every service), so the same
+// set always makes the same spec.
+func scopeOf(services []string) []string {
+	if len(services) == 0 {
+		return nil
+	}
+	out := slices.Clone(services)
+	slices.Sort(out)
 	return out
 }
 
@@ -241,7 +303,7 @@ func secretsOf(refs []*fleetv1.SecretRef) []v1alpha1.SecretRefSpec {
 	}
 	out := make([]v1alpha1.SecretRefSpec, 0, len(refs))
 	for _, r := range refs {
-		s := v1alpha1.SecretRefSpec{Name: r.GetName(), Source: v1alpha1.SecretSource(r.GetSource())}
+		s := v1alpha1.SecretRefSpec{Name: r.GetName(), Source: v1alpha1.SecretSource(r.GetSource()), Services: scopeOf(r.GetServices())}
 		if s.Source == v1alpha1.SecretManaged {
 			s.Version = r.GetVersion()
 		} else {
@@ -644,11 +706,18 @@ const CapabilityRetire = "odicea.retire"
 // services for a cluster that does not list it.
 const CapabilityServices = "odicea.services"
 
+// CapabilityServiceSettings is always reported: the agent gives a setting
+// only to the services it names (secrets, resources, AI, a service's own
+// env) and rolls only the services whose pods change. Same string as
+// fleet.CapabilityServiceSettings.
+const CapabilityServiceSettings = "odicea.service-settings"
+
 // Capabilities describes the cluster: its Kubernetes version, which known
 // platform APIs it has, and its ingress and storage classes. Whatever
 // cannot be read is left empty (the agent still connects).
 func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
-	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI, CapabilityRetire, CapabilityServices}, IngressClasses: []string{}, StorageClasses: []string{}}
+	out := &fleetv1.Capabilities{Apis: []string{CapabilityAI, CapabilityRetire, CapabilityServices, CapabilityServiceSettings},
+		IngressClasses: []string{}, StorageClasses: []string{}}
 	if s.Discovery != nil {
 		if v, err := s.Discovery.ServerVersion(); err == nil {
 			out.KubernetesVersion = v.GitVersion

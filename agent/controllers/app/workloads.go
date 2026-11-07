@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"strings"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
@@ -31,6 +32,25 @@ type workload struct {
 	// (the app's host and in-cluster address do not change), Deployment for
 	// any other.
 	Object string
+}
+
+// reaches says a setting for services gets to w: every service when it
+// names none, else only those it names (a name the app no longer has
+// reaches nobody: never everyone).
+func (w workload) reaches(services []string) bool {
+	return len(services) == 0 || slices.Contains(services, w.Name)
+}
+
+// filesOwner is the one service of all that mounts files resource r: the
+// first it reaches (a ReadWriteOnce volume mounts in one place; the control
+// plane lets a files resource name one service, this guards the rest).
+func filesOwner(r v1alpha1.ResourceRefSpec, all []workload) string {
+	for _, w := range all {
+		if w.reaches(r.Services) {
+			return w.Name
+		}
+	}
+	return ""
 }
 
 func (w workload) web() bool { return w.Kind == v1alpha1.ServiceWeb }

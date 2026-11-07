@@ -30,6 +30,8 @@ type AIRef struct {
 	BaseURL string `json:"base_url"`
 	// KeySecret names the managed secret of App.Secrets that holds the key.
 	KeySecret string `json:"key_secret"`
+	// Services get the AI (MS-4); empty: every service of the app.
+	Services []string `json:"services,omitempty"`
 }
 
 // CanUseAI reports whether the cluster lists CapabilityAI.

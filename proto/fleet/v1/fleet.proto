@@ -226,6 +226,11 @@ message Capabilities {
   // network plugin must enforce them: TI's part). "odicea.retire": the agent
   // removes an app sent with App.deleted (and reports it "deleted"); an
   // agent without it must not be sent one (it would run it again).
+  // "odicea.service-settings" (MS-4): the agent honors the services of
+  // SecretRef, ResourceRef, AI and Service.env (settings of some services
+  // only) and rolls only the services whose pods change. An agent without
+  // it would hand every setting to every service: it must not be sent one
+  // with services.
   repeated string apis = 2;
   repeated string ingress_classes = 3;
   repeated string storage_classes = 4;
@@ -434,6 +439,10 @@ message Service {
   int32 port = 6;
   string health_path = 7;
   int32 replicas = 8;
+  // env are variables of this service only (MS-4): they win over the
+  // app's env of the same name (never over secrets, resources or the AI,
+  // which the control plane keeps from colliding).
+  map<string, string> env = 9;
 }
 
 // AI is how an app reaches the AI gateway (freerouter): its key is a
@@ -448,6 +457,9 @@ message AI {
   // ("ODICEA_AI_KEY"): the agent sets OPENAI_API_KEY and ANTHROPIC_API_KEY
   // from it.
   string key_secret = 2;
+  // services are the services that get the AI's variables (MS-4); empty:
+  // every service of the app.
+  repeated string services = 3;
 }
 
 // SecretRef is one secret variable of an app.
@@ -465,6 +477,9 @@ message SecretRef {
   string store = 4;
   string key = 5;
   string property = 6;
+  // services are the services that read it (MS-4); empty: every service of
+  // the app. A name the app no longer has reaches nobody (never everyone).
+  repeated string services = 7;
 }
 
 // Access is the app's exposure policy.
@@ -526,6 +541,9 @@ message ResourceRef {
   // redis → REDIS_URL; files → FILES_DIR (the volume is mounted at
   // /data/<name>). With prefix "ANALYTICS", ANALYTICS_DATABASE_URL, …
   string prefix = 3;
+  // services are the services wired to it (MS-4); empty: every service of
+  // the app (a "files" volume, ReadWriteOnce: only the first one).
+  repeated string services = 4;
 }
 
 // Resource is the desired state of one resource of an environment (2b): a

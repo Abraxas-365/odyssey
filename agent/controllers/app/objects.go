@@ -5,6 +5,9 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,18 +82,23 @@ func labels(a *v1alpha1.OdysseyApp) map[string]string {
 	return l
 }
 
-// env is the spec's env, sorted, then the secret variables (read from
-// Secrets; a secret replaces a plain variable of its name), then the
-// resources' (they win over both), plus PORT unless the spec sets it either
-// way (the top-level port: an app without services).
-func env(a *v1alpha1.OdysseyApp) []corev1.EnvVar { return envFor(a, a.Spec.Port) }
+// env is the first service's env (tests; an app without services has just
+// that one): see envFor.
+func env(a *v1alpha1.OdysseyApp) []corev1.EnvVar {
+	w := workloads(a)[0]
+	return envFor(a, w, w.Port)
+}
 
-// envFor is env for a service listening on port (0: a worker, no PORT).
-func envFor(a *v1alpha1.OdysseyApp, port int32) []corev1.EnvVar {
-	res := resourceEnv(a)
-	resNames := resourceNames(a)
+// envFor is w's environment: the spec's env with w's own over it, sorted,
+// then the variables of the secrets that reach w (read from Secrets; a
+// secret replaces a plain variable of its name), then those of the
+// resources that reach w (they win over both), plus PORT unless any of them
+// sets it (port 0: a worker, no PORT).
+func envFor(a *v1alpha1.OdysseyApp, w workload, port int32) []corev1.EnvVar {
+	res := resourceEnv(a, w)
+	resNames := resourceNames(a, w)
 	var secret []corev1.EnvVar
-	for _, e := range secretEnv(a) {
+	for _, e := range secretEnv(a, w) {
 		if !resNames[e.Name] {
 			secret = append(secret, e)
 		}
@@ -102,21 +110,28 @@ func envFor(a *v1alpha1.OdysseyApp, port int32) []corev1.EnvVar {
 	for n := range resNames {
 		secretNames[n] = true
 	}
-	keys := make([]string, 0, len(a.Spec.Env))
-	for k := range a.Spec.Env {
+	plain := make(map[string]string, len(a.Spec.Env)+len(w.Env))
+	for k, v := range a.Spec.Env {
+		plain[k] = v
+	}
+	for k, v := range w.Env {
+		plain[k] = v // the service's own wins over the app's
+	}
+	keys := make([]string, 0, len(plain))
+	for k := range plain {
 		if !secretNames[k] {
 			keys = append(keys, k)
 		}
 	}
 	sort.Strings(keys)
-	out := make([]corev1.EnvVar, 0, len(keys)+len(secret)+1)
+	out := make([]corev1.EnvVar, 0, len(keys)+len(secret)+len(res)+1)
 	for _, k := range keys {
-		out = append(out, corev1.EnvVar{Name: k, Value: a.Spec.Env[k]})
+		out = append(out, corev1.EnvVar{Name: k, Value: plain[k]})
 	}
 	out = append(out, secret...)
 	out = append(out, res...)
-	_, plain := a.Spec.Env["PORT"]
-	if !plain && !secretNames["PORT"] && port != 0 {
+	_, hasPort := plain["PORT"]
+	if !hasPort && !secretNames["PORT"] && port != 0 {
 		out = append(out, corev1.EnvVar{Name: "PORT", Value: strconv.Itoa(int(port))})
 	}
 	return out
@@ -173,10 +188,38 @@ func mutateDeployment(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, cfg Config) 
 	mutateWorkload(d, a, ws[0], ws, cfg)
 }
 
-// mutateWorkload sets d to run service w of a's spec revision. Every
-// revision changes the pod template (its revision label), so every
-// deployment rolls out.
+// AnnotationTemplate is on each Deployment: a hash of the pod template it
+// runs without the labels every revision changes (volatileLabels). A
+// revision that leaves a service's pods as they were keeps its template,
+// revision label included, so the service is not restarted (MS-4: a secret
+// of the api does not restart the web).
+const AnnotationTemplate = "odicea.dev/template"
+
+// volatileLabels change with every revision but say nothing about what the
+// pods run: the revision, and the control plane's release and deployment.
+var volatileLabels = []string{LabelRevision, "odyssey.dev/release", "odyssey.dev/deployment"}
+
+// templateHash identifies t without its volatile labels.
+func templateHash(t corev1.PodTemplateSpec) string {
+	t = *t.DeepCopy()
+	for _, k := range volatileLabels {
+		delete(t.Labels, k)
+	}
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return "" // never: the template is plain data; "" rolls the pods
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])[:32]
+}
+
+// mutateWorkload sets d to run service w of a's spec revision. A revision
+// that changes w's pods rolls them out (they get its revision label); one
+// that does not keeps the template d has, with the revision that made it
+// (see AnnotationTemplate). Observe judges d against that revision.
 func mutateWorkload(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, w workload, all []workload, cfg Config) {
+	prevHash, prevLabels := d.Annotations[AnnotationTemplate], d.Spec.Template.Labels
+	keep := prevHash != "" && revisionOf(d) > 0
 	l := labels(a)
 	l[LabelWorkload], l[LabelService] = w.Deployment, w.Name
 	pod := make(map[string]string, len(a.Spec.Labels)+5)
@@ -188,7 +231,7 @@ func mutateWorkload(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, w workload, al
 	pod[LabelManagedBy], pod[LabelApp], pod[LabelRevision] = ManagedBy, a.Name, strconv.FormatInt(a.Spec.Revision, 10)
 	pod[LabelWorkload], pod[LabelService] = w.Deployment, w.Name
 	delete(pod, LabelAI) // never a person's: only spec.ai sets it
-	if a.Spec.AI != nil {
+	if aiOn(a, w) {
 		pod[LabelAI] = "true"
 	}
 	replicas, zero, one := w.Replicas, intstr.FromInt32(0), intstr.FromInt32(1)
@@ -203,14 +246,14 @@ func mutateWorkload(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, w workload, al
 		Type:          appsv1.RollingUpdateDeploymentStrategyType,
 		RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &zero, MaxSurge: &one},
 	}
-	if hasFiles(a) {
+	if hasFiles(a, w) {
 		// A ReadWriteOnce volume cannot be mounted by the old and the new pod
 		// at once: the old one goes first (a short outage, by design).
 		d.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 	}
 	d.Spec.ProgressDeadlineSeconds = &deadline
 	d.Spec.RevisionHistoryLimit = ptr(int32(3))
-	vols, mounts := resourceVolumes(a)
+	vols, mounts := resourceVolumes(a, w)
 	podSecurity := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
 	if len(vols) > 0 {
 		group, onMismatch := filesGroup, corev1.FSGroupChangeOnRootMismatch
@@ -220,7 +263,7 @@ func mutateWorkload(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, w workload, al
 		Name:            "app",
 		Image:           w.Image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Env:             withServiceEnv(withAuthEnv(withAIEnv(envFor(a, w.Port), a), a, cfg), w, all),
+		Env:             withServiceEnv(withAuthEnv(withAIEnv(envFor(a, w, w.Port), a, w), a, cfg), w, all),
 		VolumeMounts:    mounts,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
@@ -251,7 +294,7 @@ func mutateWorkload(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, w workload, al
 		container.Lifecycle = &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{Sleep: &corev1.SleepAction{Seconds: drainSeconds}}}
 	}
 	d.Spec.Template = corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{Labels: pod, Annotations: podAnnotations(a)},
+		ObjectMeta: metav1.ObjectMeta{Labels: pod, Annotations: podAnnotations(a, w)},
 		Spec: corev1.PodSpec{
 			AutomountServiceAccountToken: &no,
 			EnableServiceLinks:           &no,
@@ -260,16 +303,31 @@ func mutateWorkload(d *appsv1.Deployment, a *v1alpha1.OdysseyApp, w workload, al
 			Containers:                   []corev1.Container{container},
 		},
 	}
+	hash := templateHash(d.Spec.Template)
+	if keep && hash == prevHash {
+		// Same pods: keep the revision (and release, deployment) they run.
+		for _, k := range volatileLabels {
+			if v, ok := prevLabels[k]; ok {
+				d.Spec.Template.Labels[k] = v
+			} else {
+				delete(d.Spec.Template.Labels, k)
+			}
+		}
+	}
+	if d.Annotations == nil {
+		d.Annotations = map[string]string{}
+	}
+	d.Annotations[AnnotationTemplate] = hash
 }
 
-// podAnnotations roll the pods when the app's secrets or resources change
-// (none: apps without either keep the template they had).
-func podAnnotations(a *v1alpha1.OdysseyApp) map[string]string {
+// podAnnotations roll w's pods when the secrets or resources that reach it
+// change (none: a service without either keeps the template it had).
+func podAnnotations(a *v1alpha1.OdysseyApp, w workload) map[string]string {
 	var out map[string]string
-	if h := secretsHash(a); h != "" {
+	if h := secretsHash(a, w); h != "" {
 		out = map[string]string{AnnotationSecrets: h}
 	}
-	if h := resourcesHash(a); h != "" {
+	if h := resourcesHash(a, w); h != "" {
 		if out == nil {
 			out = map[string]string{}
 		}

@@ -98,6 +98,13 @@ type ResourceRefSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=40
 	Prefix string `json:"prefix,omitempty"`
+	// Services are the app's services wired to it; empty: every one (a files
+	// volume, ReadWriteOnce: only the first).
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern=`^[a-z][a-z0-9]{0,19}$`
+	Services []string `json:"services,omitempty"`
 }
 
 func init() {

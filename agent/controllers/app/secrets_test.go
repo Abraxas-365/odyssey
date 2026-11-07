@@ -167,9 +167,9 @@ func TestSecretsRollThePods(t *testing.T) {
 		func(s *v1alpha1.SecretRefSpec) { s.Property = "p" },
 	} {
 		a := withSecrets(1, externalRef("B", "vault", "k", ""))
-		before := secretsHash(a)
+		before := secretsHash(a, firstOf(a))
 		change(&a.Spec.Secrets[0])
-		if secretsHash(a) == before {
+		if secretsHash(a, firstOf(a)) == before {
 			t.Errorf("a changed reference must change the hash: %+v", a.Spec.Secrets)
 		}
 	}

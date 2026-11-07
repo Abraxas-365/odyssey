@@ -59,20 +59,20 @@ func appToProto(a fleet.App) *fleetv1.App {
 	secrets := make([]*fleetv1.SecretRef, 0, len(a.Secrets))
 	for _, s := range a.Secrets {
 		secrets = append(secrets, &fleetv1.SecretRef{Name: s.Name, Source: s.Source, Version: s.Version,
-			Store: s.Store, Key: s.Key, Property: s.Property})
+			Store: s.Store, Key: s.Key, Property: s.Property, Services: s.Services})
 	}
 	resources := make([]*fleetv1.ResourceRef, 0, len(a.Resources))
 	for _, r := range a.Resources {
-		resources = append(resources, &fleetv1.ResourceRef{Name: r.Name, Kind: string(r.Kind), Prefix: r.Prefix})
+		resources = append(resources, &fleetv1.ResourceRef{Name: r.Name, Kind: string(r.Kind), Prefix: r.Prefix, Services: r.Services})
 	}
 	var ai *fleetv1.AI
 	if a.AI != nil {
-		ai = &fleetv1.AI{BaseUrl: a.AI.BaseURL, KeySecret: a.AI.KeySecret}
+		ai = &fleetv1.AI{BaseUrl: a.AI.BaseURL, KeySecret: a.AI.KeySecret, Services: a.AI.Services}
 	}
 	services := make([]*fleetv1.Service, 0, len(a.Services))
 	for _, s := range a.Services {
 		services = append(services, &fleetv1.Service{Name: s.Name, Kind: s.Kind, Route: s.Route, StripPrefix: s.StripPrefix,
-			Image: s.Image, Port: int32(s.Port), HealthPath: s.HealthPath, Replicas: int32(s.Replicas)})
+			Image: s.Image, Port: int32(s.Port), HealthPath: s.HealthPath, Replicas: int32(s.Replicas), Env: s.Env})
 	}
 	return &fleetv1.App{
 		Resources: resources, Ai: ai, Services: services,
