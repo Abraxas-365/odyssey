@@ -82,12 +82,15 @@ type Row struct {
 	URL    string             `json:"url"`
 	Status Status             `json:"status"`
 	// Online is the version being served (nil when nothing is).
-	Online    *Online        `json:"online"`
-	Resources []ResourceRef  `json:"resources"`
-	AI        bool           `json:"ai"`
-	Secrets   SecretsSummary `json:"secrets"`
-	Scan      Scan           `json:"scan"`
-	Cluster   *ClusterRef    `json:"cluster"`
+	Online *Online `json:"online"`
+	// Services are the online version's services, in order ([] when nothing
+	// is online).
+	Services  []release.ServiceRef `json:"services"`
+	Resources []ResourceRef        `json:"resources"`
+	AI        bool                 `json:"ai"`
+	Secrets   SecretsSummary       `json:"secrets"`
+	Scan      Scan                 `json:"scan"`
+	Cluster   *ClusterRef          `json:"cluster"`
 	// NeedsAttention: someone has something to do (see Attention).
 	NeedsAttention bool           `json:"needs_attention"`
 	Attention      []AppAttention `json:"attention"`

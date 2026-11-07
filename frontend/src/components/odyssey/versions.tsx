@@ -29,6 +29,8 @@ export interface VersionData {
   source?: string
   /** Published from a GitHub commit: `message` is its title. */
   git?: { branch: string; sha: string; author: string }
+  /** What it changed, for an app of several parts ("Cambió: api"). */
+  changed?: string
 }
 
 const icon = { live: Check, previous: Check, preview: FlaskConical, failed: X, waiting: Clock }
@@ -56,6 +58,7 @@ export function VersionRow({ version: v, technical, onOpen, onRestore, onPublish
           {v.kind === 'preview' && <Badge>Versión de prueba</Badge>}
           {v.kind === 'failed' && <Badge variant="destructive">No se publicó</Badge>}
           {v.kind === 'waiting' && <Badge variant="info">Esperando aprobación de TI</Badge>}
+          {v.changed && <span className="text-xs text-muted-foreground">{v.changed}</span>}
         </div>
         {v.git ? (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">

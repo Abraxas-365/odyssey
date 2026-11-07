@@ -258,6 +258,13 @@ type Deployment struct {
 	// the first's), in the app's order; empty for an image and for
 	// deployments from source made before an app had services.
 	Builds []ServiceBuild `json:"builds" db:"-"`
+	// Changed are the services this deployment's version changes against the
+	// version serving when it was asked for (Previous): the same words as
+	// Compare's Changed. Read-side only (filled by Queries from the stored
+	// releases, never stored, so old deployments have it too): nil while it
+	// has no release, or no Previous and a release without services; [] when
+	// nothing changed (a config deployment).
+	Changed []string `json:"changed" db:"-"`
 	// Rebuild: its builds never reuse an earlier image of the same code.
 	Rebuild bool `json:"rebuild" db:"rebuild"`
 	// Config is how a deployment from source runs once built; its release

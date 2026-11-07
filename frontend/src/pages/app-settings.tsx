@@ -13,6 +13,7 @@ import { useArchiveProject, useUpdateProject } from '@/lib/projects'
 import type { Project } from '@/lib/types'
 import { useAppPage } from '@/features/apps/app-page'
 import { ResourcesPanel } from '@/features/apps/resources-panel'
+import { ServicesPanel } from '@/features/apps/services-panel'
 import { TierField } from '@/features/apps/tier-field'
 import { SecretsPanel, VariablesPanel } from '@/features/apps/variables-panel'
 
@@ -54,6 +55,7 @@ export function AppSettingsPage() {
         </Panel>
       )}
 
+      <ServicesPanel project={p.id} canWrite={canWrite} technical={technical} />
       {canRead && production && <VariablesPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
       {canRead && production && <SecretsPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} />}
       {canRead && production && <ResourcesPanel project={p.id} env={production.id} canWrite={canWrite} busy={publishing} technical={technical} />}

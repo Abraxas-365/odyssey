@@ -18,6 +18,7 @@ import { permissions } from '@/lib/permissions'
 import { usePreferences } from '@/lib/preferences'
 import type { InventoryFilter, InventoryRow, ProjectTier } from '@/lib/types'
 import { ownerText, rowUnavailable, scanText, statusText, toneClass } from '@/features/inventory/inventory'
+import { ServiceNames } from '@/features/apps/service-states'
 import { cn } from '@/lib/utils'
 
 const PAGE = 25
@@ -174,6 +175,7 @@ function Row({ row: r, me, technical }: { row: InventoryRow; me: string; technic
           {r.access && <> · {accessLabel(r.access)}</>}
           {technical && <span className="font-mono"> · {r.app.slug}</span>}
         </div>
+        <ServiceNames services={r.services} />
         {r.needs_attention && <div className="mt-1 text-xs font-medium text-warning">Necesita atención</div>}
         {missing && <div className="mt-1 text-xs text-muted-foreground">No pudimos leer {missing} ahora.</div>}
       </TableCell>

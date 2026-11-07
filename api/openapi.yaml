@@ -419,6 +419,33 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/environments/{environment}/services:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [deployments]
+      operationId: listServiceStates
+      summary: How each service of what an environment serves stands
+      description: >-
+        The services of the release the environment serves (`current`), in order, each with how its cluster sees it
+        right now. A cluster that reports per service is believed for each one; one that does not gives every
+        service the app's phase, reason and message, and `ready_replicas` only when the app has one service
+        (otherwise 0). `phase` is `""` while the cluster has not reported on the app yet. `replicas` is what the
+        release asks for. Nothing serving: `items: []`. The cluster is asked on every call; it changes nothing.
+      x-permissions: [odyssey:deployments:read]
+      responses:
+        "200":
+          description: The serving release's services.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceStateList" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/projects/{id}/environments/{environment}/deployments:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -3174,6 +3201,37 @@ components:
         strip_prefix: { type: boolean, description: "The service sees `/users` for `/api/users`." }
         updated_at: { type: string, format: date-time }
 
+    ServiceStateList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 8
+          items: { $ref: "#/components/schemas/ServiceState" }
+
+    ServiceState:
+      type: object
+      additionalProperties: false
+      description: How one service of the release an environment serves stands in its cluster.
+      required: [name, kind, route, phase, reason, message, ready_replicas, replicas]
+      properties:
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/ServiceKind" }
+        route: { type: string, description: 'The path of the app''s address it answers; "" when internal.' }
+        phase:
+          type: string
+          enum: ["", progressing, ready, failed]
+          description: '`""`: the cluster has not reported on the app yet (or does not mention this service).'
+        reason:
+          type: string
+          enum: ["", unhealthy, image_pull, crash, config, resource]
+          description: Why it failed; empty unless `phase` is `failed`.
+        message: { type: string, description: 'The cluster''s own words (often English); "" when it said nothing.' }
+        ready_replicas: { type: integer, minimum: 0 }
+        replicas: { type: integer, minimum: 1, description: How many replicas the release asks for. }
+
     ServiceList:
       type: object
       additionalProperties: false
@@ -4043,7 +4101,7 @@ components:
       type: object
       additionalProperties: false
       description: One attempt to make a release the one an environment serves. A finished one never changes.
-      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, builds, rebuild, status, reason, step, steps,
+      required: [id, organization_id, project_id, environment_id, release_id, image, build_id, source, builds, changed, rebuild, status, reason, step, steps,
                  revision, previous_release_id, rollback_of, settings_revision, error, run_id, requested_by, requested_by_name, requested_via, message, created_at, updated_at, finished_at]
       properties:
         id: { type: string, format: uuid }
@@ -4055,6 +4113,17 @@ components:
           format: uuid
           description: Null while a deployment from source builds (and when its build failed or was cancelled).
         image: { type: string, description: '"" while building.' }
+        changed:
+          type: [array, "null"]
+          items: { type: string }
+          description: |
+            The names of the services this deployment's version changes against the version that was serving when it
+            was asked for (`previous_release_id`; none: every service is new): a service that appears, goes away, is laid
+            out differently or runs another image; the ones that go away come last. Computed when read (so old
+            deployments have it too), by the list, the single read and `current`; `[]` when nothing changes (a `config`
+            deployment is the same release). Null when the deployment has no release yet (it is building, or its build
+            failed), when it has no `previous_release_id` and its release has no services, and in the answer of the
+            call that creates it.
         build_id:
           type: [string, "null"]
           format: uuid
@@ -4420,7 +4489,7 @@ components:
       type: object
       additionalProperties: false
       description: One environment of one app.
-      required: [app, environment, owner, access, url, status, online, resources, ai, secrets, scan, cluster, needs_attention, attention, unavailable]
+      required: [app, environment, owner, access, url, status, online, services, resources, ai, secrets, scan, cluster, needs_attention, attention, unavailable]
       properties:
         app:
           type: object
@@ -4461,6 +4530,18 @@ components:
               properties:
                 image: { type: string }
                 since: { type: [string, "null"], format: date-time }
+        services:
+          type: array
+          maxItems: 8
+          description: The services of the version being served, in order; empty when nothing is.
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, kind, route]
+            properties:
+              name: { type: string }
+              kind: { $ref: "#/components/schemas/ServiceKind" }
+              route: { type: string, description: 'The path of the app''s address it answers; "" when internal.' }
         resources:
           type: array
           items:

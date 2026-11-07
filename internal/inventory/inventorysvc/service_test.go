@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ type fakes struct {
 	placed     map[project.EnvironmentID]fleet.ClusterID
 	uses       map[project.EnvironmentID]release.Uses
 	usesCalls  int
+	usesMu     sync.Mutex // Uses runs in parallel workers
 	scansCalls int
 	down       map[string]bool // "scans", "clusters", "approvals", "placements", "github", "github off"
 	// installations are the organization's GitHub installations.
@@ -79,7 +81,9 @@ func (f *fakes) Serving(_ context.Context, _ identity.OrganizationID, envs []pro
 	return out, nil
 }
 func (f *fakes) Uses(_ context.Context, _ identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Uses, error) {
+	f.usesMu.Lock()
 	f.usesCalls++
+	f.usesMu.Unlock()
 	return f.uses[env], nil
 }
 func (f *fakes) Scans(_ context.Context, _ identity.OrganizationID, ids []build.ID) ([]build.BuildScan, error) {
@@ -541,5 +545,36 @@ func TestGitHubItemsForWhoManagesIt(t *testing.T) {
 	f.down["github off"], f.down["github"] = false, true
 	if k, got := kinds(manager); len(k) != 0 || len(got.Unavailable) != 1 || got.Unavailable[0] != inventory.SourceGitHub {
 		t.Fatalf("GitHub down is said, never \"todo en orden\": %+v", got)
+	}
+}
+
+// A row lists the services of the online version, in order, and none ([],
+// never null) when nothing is online.
+func TestRowServices(t *testing.T) {
+	org, user := identity.NewOrganizationID(), userID()
+	f := &fakes{serving: map[project.EnvironmentID]release.Serving{}, down: map[string]bool{}}
+	var envs [2]project.Environment
+	for i := range envs {
+		p := project.Project{ID: project.NewID(), Name: "App", Slug: "app", Tier: project.TierInternal, CreatedBy: user}
+		envs[i] = project.Environment{ID: project.NewEnvironmentID(), Project: p.ID, Slug: "production", Kind: project.KindProduction}
+		f.projects, f.envs = append(f.projects, p), append(f.envs, envs[i])
+	}
+	refs := []release.ServiceRef{{Name: "web", Kind: project.ServiceWeb, Route: "/"}, {Name: "jobs", Kind: project.ServiceWorker}}
+	f.serving[envs[0].ID] = release.Serving{Environment: envs[0].ID, Project: envs[0].Project, Image: "img", URL: "https://a", Services: refs}
+	page, err := newService(f).List(ctxOf(user, permission.ProjectsRead, permission.InventoryRead), org, inventory.Filter{}, query.Pagination{})
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("%+v %v", page, err)
+	}
+	for _, r := range page.Items {
+		switch r.Environment.ID {
+		case envs[0].ID:
+			if len(r.Services) != 2 || r.Services[0] != refs[0] || r.Services[1] != refs[1] {
+				t.Fatalf("online row services %+v", r.Services)
+			}
+		default:
+			if r.Services == nil || len(r.Services) != 0 {
+				t.Fatalf("offline row services %#v, want []", r.Services)
+			}
+		}
 	}
 }

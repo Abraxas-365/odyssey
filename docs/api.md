@@ -172,7 +172,7 @@ Read-only views composed from the other domains' own reads.
 
 | Method | Path | Permission | Success |
 |---|---|---|---|
-| `GET` | `/api/v1/inventory` | `inventory:read` (TI) | 200 `{items, page, truncated, unavailable}`, one row per app and environment; `?format=csv` downloads every match |
+| `GET` | `/api/v1/inventory` | `inventory:read` (TI) | 200 `{items, page, truncated, unavailable}`, one row per app and environment (each with `services[{name, kind, route}]`, the online version's, `[]` when nothing is); `?format=csv` downloads every match (last column `Servicios`: the names, space-separated) |
 | `GET` | `/api/v1/attention` | `projects:read` | 200 `{items, unavailable, truncated}` |
 | `GET` | `/api/v1/app-states?id=…` | `projects:read` + `deployments:read` | 200 `{items[{app_id, status, url, since, access:{mode, pending}\|null, cluster:{id, name}\|null, unavailable[], last_change:{at, reason, status, requested_by, requested_by_name, requested_via}\|null}]}` (`last_change`: the latest publication asked for in production, how it went and who asked, as on that deployment) |
 
@@ -346,15 +346,34 @@ is the `authorize` step that starts the deployment's workflow.
 
 | Method | Path | Permission | Success |
 |---|---|---|---|
-| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active, applied_settings_revision, access:{mode, pending}\|null}` |
-| `GET` | `/api/v1/projects/:id/environments/:environment/deployments` | read | 200 `{items, page}`, newest first (filter `status`) |
+| `GET` | `/api/v1/projects/:id/environments/:environment/current` | read | 200 `{environment_id, url, release, deployment, active, applied_settings_revision, access:{mode, pending}\|null}` (`deployment` and `active` carry `changed`, below) |
+| `GET` | `/api/v1/projects/:id/environments/:environment/services` | read | 200 `{items[{name, kind, route, phase, reason, message, ready_replicas, replicas}]}`: the services of the release online, in order, as the cluster sees each (below); nothing online → `items: []` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/deployments` | read | 200 `{items, page}`, newest first (filter `status`); each deployment carries `changed` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments` | create | **202** + `Location`, deployment |
-| `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment` | read | 200 deployment with `steps` and `changed` |
 | `POST` | `/api/v1/projects/:id/environments/:environment/deployments/:deployment/rollback` | rollback | **202** + `Location` of the new deployment |
 | `GET` | `/api/v1/projects/:id/environments/:environment/settings` | projects:read | 200 `{revision, access:{mode}, env, service_env, resources[{name, kind, prefix, services?}], ai:{enabled, key_version, key_id?, base_url?, services?}, secrets[{…, services?, state, request?}], secret_key\|null, external_secrets, secret_stores, secrets_cluster_revoked, access_login_available, access_protection_available, scoped_settings}` |
 | `GET` | `/api/v1/projects/:id/environments/:environment/uses` | projects:read | 200 `{access:{mode, pending, failed}, identity:{verifiable}, resources[{name, kind, prefix, status, detail?, variables}], secrets:{total, missing[], external, unavailable}\|null, variables, ai:{available, enabled, status}\|null, egress:{mode, state, enforced}\|null, unavailable[], attention[{kind, who, message}]}` — «Lo que usa esta app» (below) |
 | `PUT` | `/api/v1/projects/:id/environments/:environment/access` | projects:write (+ `odyssey:access:public` for `public`) | **202** `{settings, deployment\|null, access_login_available}` + `Location` when a deployment starts |
 | `PATCH` | `/api/v1/projects/:id/environments/:environment/env` | projects:write | **202** `{settings, deployment\|null, warnings?}` (`{set, unset, services?}`) |
+
+**`changed` (a deployment).** `string[] | null`: the services its version changes
+against the one serving when it was asked for (`previous_release_id`; none:
+every service is new), by the same comparison IT's rules see (a service that
+appears, goes away, is laid out differently or runs another image). Computed on
+read, never stored, so old deployments have it; one batch read per call (list,
+single, `current`). `[]` for a `config` deployment (same release); `null` while
+it has no release (building) and when it has neither a previous release nor
+services; also `null` in the answer that creates it.
+
+**Services of what serves (`…/services`).** One item per service of the release
+online, in order. `phase` (`progressing` · `ready` · `failed`, `""` while the
+cluster has not reported on the app), `reason` and `message` are the cluster's
+for that service; a cluster that does not report per service gives every
+service the app's, and `ready_replicas` only when the app has one service (else
+0). `replicas` is what the release asks for. It asks the cluster on each call
+and changes nothing (with the fake cluster each call counts as a status poll,
+as the deploy workflow's, toward `ReadyAfter`).
 
 **Lo que usa esta app (`…/uses`).** One read model of what the app depends on
 and what still stands in its way, assembled by release from its own settings

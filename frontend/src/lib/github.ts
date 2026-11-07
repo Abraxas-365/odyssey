@@ -176,11 +176,15 @@ export function useDisconnectRepository(project: string) {
   })
 }
 
-/** "Publicar ahora": queues the branch head. */
+/**
+ * "Publicar ahora": queues the branch head. `{rebuild: true}` is "Reconstruir
+ * todo": every service is built again instead of reusing the image of code
+ * that did not change (a newer base image, a fix outside the code).
+ */
 export function usePublishNow(project: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => api<GitHubPush>(`${repoPath(project)}/publish`, { method: 'POST' }),
+    mutationFn: (opts?: { rebuild?: boolean }) => api<GitHubPush>(`${repoPath(project)}/publish`, { method: 'POST', body: opts?.rebuild ? { rebuild: true } : undefined }),
     onSuccess: () => qc.invalidateQueries({ queryKey: githubKeys.pushes(project) }),
   })
 }

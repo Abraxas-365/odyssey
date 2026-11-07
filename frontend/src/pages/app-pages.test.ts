@@ -116,6 +116,46 @@ describe('UX v4 §5.5: the company log', () => {
   })
 })
 
+describe('MS-6: services (D3)', () => {
+  // An app of one service reads exactly as before: the word "servicio"
+  // reaches the screen only through the services files, and each component
+  // among them asks isMulti before saying it. Comments don't count.
+  const word = /\b[Ss]ervicios?\b/
+  const code = (body: string) => body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+  const says = (body: string) => word.test(code(body))
+  const allowed = [
+    'features/apps/services.ts',
+    'features/apps/services-panel.tsx',
+    'features/apps/service-states.tsx',
+    // IT's own vocabulary (rules on set_services), not the builder's
+    'features/policy/rules.ts',
+    // "Servicio externo" is an external key (a secret), another thing
+    'components/odyssey/resources.tsx',
+    // "Un servicio del que dependemos": an outside provider (EXTERNAL errors)
+    'lib/api.ts',
+  ]
+
+  it('the rule catches violations', () => {
+    expect(says(`<p>Este servicio falló</p>`)).toBe(true)
+    expect(says(`toast('Servicios guardados')`)).toBe(true)
+    expect(says(`// los servicios de la app\nconst x = 1`)).toBe(false)
+    expect(says(`/** servicios */ const y = 2`)).toBe(false)
+    expect(says(`const a = 'x' // y\nconst b = 'servicio'`)).toBe(true)
+  })
+
+  it('only the services files say "servicio"', () => {
+    const offending = files(src).map(rel).filter(f => !allowed.includes(f)).filter(f => says(readFileSync(join(src, f), 'utf8')))
+    expect(offending).toEqual([])
+  })
+
+  it('every services component asks isMulti before talking about services', () => {
+    for (const f of allowed.filter(f => f.startsWith('features/apps/') && f.endsWith('.tsx'))) {
+      const body = readFileSync(join(src, f), 'utf8')
+      expect(body, f).toMatch(/\bisMulti\(/)
+    }
+  })
+})
+
 describe('UX v4 §5.9: visual', () => {
   const monoTitle = /<h[1-6][^>]*font-mono|font-heading[^"'`]*font-mono|font-mono[^"'`]*font-heading/
   const monoFigure = /font-mono[^"'`]*text-(stat|title|display|section)\b|text-(stat|title|display|section)\b[^"'`]*font-mono/

@@ -29,6 +29,21 @@ export type ProjectFilter = Omit<ListProjectsQuery, 'status'> & { status?: Proje
 export type Environment = Schemas['Environment']
 export type EnvironmentList = Schemas['EnvironmentList']
 
+/**
+ * The parts an app is made of (multi-service, docs/api.md §11): its web, its
+ * API, a worker. The console says "partes"/"servicios" only once there are 2.
+ */
+export type Service = Schemas['Service']
+export type ServiceKind = Schemas['ServiceKind']
+export type ServiceList = Schemas['ServiceList']
+export type SetServices = Schemas['SetServicesRequest']
+export type ServiceSpec = SetServices['items'][number]
+export type DetectedServices = Schemas['DetectedServices']
+export type DetectedService = DetectedServices['items'][number]
+/** How each part of what an environment serves stands in its cluster (GET …/environments/{env}/services). */
+export type ServiceState = Schemas['ServiceState']
+export type ServiceStateList = Schemas['ServiceStateList']
+
 /** A release is an image + config; a deployment, one attempt to put it online (UI: "versión"). */
 export type Release = Schemas['Release']
 export type Deployment = Schemas['Deployment']

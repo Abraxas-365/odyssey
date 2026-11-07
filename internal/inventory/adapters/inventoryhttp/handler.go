@@ -136,7 +136,7 @@ func (h *Handler) csv(c *fiber.Ctx, org identity.OrganizationID, f inventory.Fil
 
 // Header is the first line of the CSV: plain Spanish, like the console.
 var Header = []string{"App", "Entorno", "Dueño", "Nivel", "Acceso", "URL", "Estado", "Versión en línea", "En línea desde",
-	"Recursos", "Usa IA", "Secretos", "Secretos por cargar", "Escaneo", "Críticas", "Altas", "Clúster", "Necesita atención"}
+	"Recursos", "Usa IA", "Secretos", "Secretos por cargar", "Escaneo", "Críticas", "Altas", "Clúster", "Necesita atención", "Servicios"}
 
 // CSV renders the rows. Every cell that a spreadsheet could read as a formula
 // (it starts with = + - @, a tab or a carriage return) is prefixed with an
@@ -165,9 +165,13 @@ func CSV(rows []inventory.Row) ([]byte, error) {
 				since = r.Online.Since.UTC().Format(time.RFC3339)
 			}
 		}
+		services := make([]string, len(r.Services))
+		for i, x := range r.Services {
+			services[i] = x.Name
+		}
 		cells := []string{r.App.Name, r.Environment.Slug, r.Owner.String(), string(r.App.Tier), string(r.Access), r.URL, string(r.Status), image, since,
 			strings.Join(resources, "; "), yesNo(r.AI), strconv.Itoa(r.Secrets.Total), strings.Join(r.Secrets.Missing, "; "),
-			string(r.Scan.State), strconv.Itoa(r.Scan.Critical), strconv.Itoa(r.Scan.High), cluster, yesNo(r.NeedsAttention)}
+			string(r.Scan.State), strconv.Itoa(r.Scan.Critical), strconv.Itoa(r.Scan.High), cluster, yesNo(r.NeedsAttention), strings.Join(services, " ")}
 		for i, cell := range cells {
 			cells[i] = Safe(cell)
 		}

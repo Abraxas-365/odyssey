@@ -12,6 +12,7 @@ function dep(over: Partial<Deployment>): Deployment {
     environment_id: 'e',
     release_id: `r${n}`,
     image: `r.local/app@sha256:${String(n).padStart(64, '0')}`,
+    changed: null,
     build_id: null,
     builds: [],
     source: null,
@@ -146,6 +147,18 @@ describe('folder versions', () => {
     expect(versionMessage(dep({}))).toBe('Nueva versión')
     // a restore keeps its own phrase, whatever the version it restores said
     expect(versionMessage(dep({ reason: 'rollback', message: 'x' }))).toBe('Volviste a una versión anterior')
+  })
+})
+
+describe('what a version changed (MS-6)', () => {
+  const part = (name: string) => ({ name, kind: 'web' as const, root: name, route: name === 'web' ? '/' : `/${name}`, strip_prefix: false, image: 'r/x@sha256:1', port: 8080, health_path: '/', replicas: 1 })
+  it('is said only for an app of several parts (D3)', () => {
+    const d = dep({ changed: ['api'] })
+    const one = current(d)
+    expect(versions([d], one, 'me')[0].changed).toBeUndefined()
+    const two = { ...one, release: { ...one.release!, services: [part('web'), part('api')] } }
+    expect(versions([d], two, 'me')[0].changed).toBe('Cambió: api')
+    expect(versions([dep({ changed: null })], two, 'me')[0].changed).toBeUndefined()
   })
 })
 

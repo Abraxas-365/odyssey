@@ -4,6 +4,7 @@ import { ArrowRight, FolderUp, GitBranch, RotateCcw, ShieldAlert, Upload } from 
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button, ButtonLink } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -168,12 +169,13 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
   const [over, setOver] = useState(false)
   const [packError, setPackError] = useState<string>()
   const [message, setMessage] = useState('')
+  const [rebuild, setRebuild] = useState(false)
   const [port, setPort] = useState(BUILD_PORT)
   const [health, setHealth] = useState('/')
   const problem = plan && planProblem(plan)
   const sending = packing || deploy.isPending
 
-  const reset = () => { setPlan(undefined); setPackError(undefined); setMessage(''); setOver(false); deploy.reset(); if (input.current) input.current.value = '' }
+  const reset = () => { setPlan(undefined); setPackError(undefined); setMessage(''); setRebuild(false); setOver(false); deploy.reset(); if (input.current) input.current.value = '' }
   const close = (next: boolean) => { if (sending) return; onOpenChange(next); if (!next) reset() }
 
   const pick = (files: File[]) => {
@@ -210,7 +212,7 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
       return
     }
     deploy.mutate(
-      { name: plan.name, source, config: { port: Number(port), health_path: health.trim() || '/', message: message.trim() || undefined } },
+      { name: plan.name, source, config: { port: Number(port), health_path: health.trim() || '/', message: message.trim() || undefined, rebuild: rebuild || undefined } },
       { onSuccess: () => { toast.success('Publicando…'); onOpenChange(false); reset() } },
     )
   }
@@ -269,6 +271,15 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
               <Input id="upload-message" maxLength={MAX_MESSAGE} value={message} onChange={e => setMessage(e.target.value)} placeholder="Agrega el filtro por vendedor" />
               <FieldDescription>Así se llamará esta versión en el historial.</FieldDescription>
             </Field>
+          )}
+          {!first && (
+            <label className="flex items-start gap-2.5 text-sm">
+              <Checkbox className="mt-0.5" checked={rebuild} onCheckedChange={v => setRebuild(!!v)} />
+              <span>
+                <span className="font-medium">Reconstruir todo</span>
+                <span className="block text-xs text-muted-foreground">Construye todo otra vez aunque el código no haya cambiado. Úsalo si TI te lo pide (por ejemplo, para tomar una imagen base nueva).</span>
+              </span>
+            </label>
           )}
           {technical && (
             <div className="grid gap-4 sm:grid-cols-2">

@@ -122,6 +122,10 @@ func (r *releases) Serving(context.Context, identity.OrganizationID, []project.E
 	return nil, nil
 }
 
+func (r *releases) ServiceStates(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID) ([]release.ServiceState, error) {
+	return []release.ServiceState{}, nil
+}
+
 func (r *releases) Uses(_ context.Context, org identity.OrganizationID, _ project.ID, env project.EnvironmentID) (release.Uses, error) {
 	if err := r.place(org, env); err != nil {
 		return release.Uses{}, err

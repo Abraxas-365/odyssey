@@ -260,6 +260,12 @@ func mustKey() secretbox.Key {
 	return k
 }
 
+// Status reports the app. It counts a poll toward Outcome.ReadyAfter while
+// progressing, whoever asks: the deploy workflow's wait_ready, or any other
+// reader (the console's per-service read), so a reader can bring "ready"
+// forward for an app that is rolling out (only this fake does that).
+// Services mirror the desired services with the app's phase, as an agent
+// that reports per service would (none when the desired app had none).
 func (c *Cluster) Status(_ context.Context, t release.Target, name string) (release.AppStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -272,15 +278,21 @@ func (c *Cluster) Status(_ context.Context, t release.Target, name string) (rele
 	}
 	s := release.AppStatus{ObservedRevision: a.desired.Revision, Phase: release.PhaseProgressing,
 		URL: "https://" + name + "." + c.opts.Domain}
-	if a.polls < a.outcome.ReadyAfter {
+	switch {
+	case a.polls < a.outcome.ReadyAfter:
 		a.polls++
-		return s, nil
-	}
-	if a.outcome.Unhealthy {
+	case a.outcome.Unhealthy:
 		s.Phase, s.Reason, s.Message = release.PhaseFailed, release.FailureUnhealthy, "GET "+a.desired.HealthPath+" respondió 503."
-		return s, nil
+	default:
+		s.Phase, s.ReadyReplicas = release.PhaseReady, a.desired.Replicas
 	}
-	s.Phase, s.ReadyReplicas = release.PhaseReady, a.desired.Replicas
+	for _, sv := range a.desired.Services {
+		st := release.ServiceStatus{Name: sv.Name, Phase: s.Phase, Reason: s.Reason, Message: s.Message}
+		if s.Phase == release.PhaseReady {
+			st.ReadyReplicas = sv.Replicas
+		}
+		s.Services = append(s.Services, st)
+	}
 	return s, nil
 }
 

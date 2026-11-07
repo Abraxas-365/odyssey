@@ -266,6 +266,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments/{environment}/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * How each service of what an environment serves stands
+         * @description The services of the release the environment serves (`current`), in order, each with how its cluster sees it right now. A cluster that reports per service is believed for each one; one that does not gives every service the app's phase, reason and message, and `ready_replicas` only when the app has one service (otherwise 0). `phase` is `""` while the cluster has not reported on the app yet. `replicas` is what the release asks for. Nothing serving: `items: []`. The cluster is asked on every call; it changes nothing.
+         */
+        get: operations["listServiceStates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments/{environment}/deployments": {
         parameters: {
             query?: never;
@@ -1931,6 +1954,31 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        ServiceStateList: {
+            items: components["schemas"]["ServiceState"][];
+        };
+        /** @description How one service of the release an environment serves stands in its cluster. */
+        ServiceState: {
+            name: string;
+            kind: components["schemas"]["ServiceKind"];
+            /** @description The path of the app's address it answers; "" when internal. */
+            route: string;
+            /**
+             * @description `""`: the cluster has not reported on the app yet (or does not mention this service).
+             * @enum {string}
+             */
+            phase: "" | "progressing" | "ready" | "failed";
+            /**
+             * @description Why it failed; empty unless `phase` is `failed`.
+             * @enum {string}
+             */
+            reason: "" | "unhealthy" | "image_pull" | "crash" | "config" | "resource";
+            /** @description The cluster's own words (often English); "" when it said nothing. */
+            message: string;
+            ready_replicas: number;
+            /** @description How many replicas the release asks for. */
+            replicas: number;
+        };
         ServiceList: {
             items: components["schemas"]["Service"][];
         };
@@ -2644,6 +2692,16 @@ export interface components {
             /** @description "" while building. */
             image: string;
             /**
+             * @description The names of the services this deployment's version changes against the version that was serving when it
+             *     was asked for (`previous_release_id`; none: every service is new): a service that appears, goes away, is laid
+             *     out differently or runs another image; the ones that go away come last. Computed when read (so old
+             *     deployments have it too), by the list, the single read and `current`; `[]` when nothing changes (a `config`
+             *     deployment is the same release). Null when the deployment has no release yet (it is building, or its build
+             *     failed), when it has no `previous_release_id` and its release has no services, and in the answer of the
+             *     call that creates it.
+             */
+            changed: string[] | null;
+            /**
              * Format: uuid
              * @description The build of a deployment from source (`GET /projects/{id}/builds/{build}`): its first service's when the app has several (see `builds`); null for an image.
              */
@@ -2953,6 +3011,13 @@ export interface components {
                 /** Format: date-time */
                 since: string | null;
             };
+            /** @description The services of the version being served, in order; empty when nothing is. */
+            services: {
+                name: string;
+                kind: components["schemas"]["ServiceKind"];
+                /** @description The path of the app's address it answers; "" when internal. */
+                route: string;
+            }[];
             resources: {
                 name: string;
                 kind: components["schemas"]["ResourceKind"];
@@ -4024,6 +4089,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentRelease"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listServiceStates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The serving release's services. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStateList"];
                 };
             };
             400: components["responses"]["Validation"];

@@ -3,6 +3,7 @@ import type { AppStatusKind, ProgressStepItem, VersionData } from '@/components/
 import { formatBytes, formatRelative } from '@/lib/format'
 import type { CurrentRelease, Deployment, DeploymentStep } from '@/lib/types'
 import { attribution } from './attribution'
+import { changedText } from './services'
 
 /**
  * Plain-language view of releases (UX v3 §1, §7): builders see "versiones"
@@ -129,6 +130,7 @@ function versionItem(d: Deployment, current: CurrentRelease | undefined, me: str
     sha: d.image.split('@sha256:')[1] || undefined,
     source: sourceDetail(d),
     git: gitOf(d),
+    changed: changedText(d.changed, current?.release?.services.length ?? 0),
     restorable: kind === 'previous' && d.release_id !== current?.release?.id,
   }
 }

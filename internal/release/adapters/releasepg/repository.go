@@ -103,6 +103,41 @@ func (r *Repository) releaseServices(ctx context.Context, id release.ID) ([]rele
 	return out, pgerr.MapWith(err, "list release services", messages)
 }
 
+type releaseServiceRow struct {
+	Release release.ID `db:"release_id"`
+	release.Service
+}
+
+// ReleaseServices reads the services of many releases in one statement,
+// scoped by organization: a release of another one is absent.
+func (r *Repository) ReleaseServices(ctx context.Context, organization identity.OrganizationID, ids []release.ID) (map[release.ID][]release.Service, error) {
+	out := map[release.ID][]release.Service{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows := []releaseServiceRow{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT s.release_id, s.name, s.kind, s.root, s.route, s.strip_prefix, s.image, s.port, s.health_path, s.replicas
+		FROM release.release_services s
+		JOIN release.releases r ON r.id = s.release_id
+		WHERE r.organization_id = $1 AND s.release_id = ANY($2::uuid[])
+		ORDER BY s.release_id, s.position`, organization, pq.Array(releaseStrings(ids)))
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list releases services", messages)
+	}
+	for _, row := range rows {
+		out[row.Release] = append(out[row.Release], row.Service)
+	}
+	return out, nil
+}
+
+func releaseStrings(ids []release.ID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
+	}
+	return out
+}
+
 func (r *Repository) FindRelease(ctx context.Context, organization identity.OrganizationID, id release.ID) (release.Release, error) {
 	var row releaseRow
 	err := txn.Q(ctx, r.db).GetContext(ctx, &row, `SELECT id, organization_id, project_id, image, config, created_by, created_at
@@ -439,9 +474,17 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 		return nil, pgerr.MapWith(err, "list environments serving", messages)
 	}
 	out := make([]release.Serving, len(rows))
+	services, err := r.servingServices(ctx, organization, envs)
+	if err != nil {
+		return nil, err
+	}
 	for i, row := range rows {
 		s := release.Serving{Environment: row.Environment, Project: row.Project, URL: row.URL, Image: row.Image, Build: row.Build, Since: row.Since,
-			Access: release.AccessInForce(row.Image != "", row.Applied, row.AppliedMode, row.Latest, row.LatestMode)}
+			Access:   release.AccessInForce(row.Image != "", row.Applied, row.AppliedMode, row.Latest, row.LatestMode),
+			Services: services[row.Environment]}
+		if s.Services == nil {
+			s.Services = []release.ServiceRef{}
+		}
 		if row.LastID != nil && row.LastStatus != nil && row.LastReason != nil && row.LastCreated != nil {
 			s.Last = &release.LastDeployment{ID: *row.LastID, Status: *row.LastStatus, Reason: *row.LastReason, CreatedAt: *row.LastCreated, FinishedAt: row.LastEnded}
 			if row.LastBy != nil {
@@ -464,6 +507,31 @@ func (r *Repository) ListServing(ctx context.Context, organization identity.Orga
 			}
 		}
 		out[i] = s
+	}
+	return out, nil
+}
+
+type servingServiceRow struct {
+	Environment project.EnvironmentID `db:"environment_id"`
+	release.ServiceRef
+}
+
+// servingServices reads, in one statement, the services of the release each
+// environment serves, in order (an environment serving nothing is absent).
+func (r *Repository) servingServices(ctx context.Context, organization identity.OrganizationID, envs []project.EnvironmentID) (map[project.EnvironmentID][]release.ServiceRef, error) {
+	rows := []servingServiceRow{}
+	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `
+		SELECT s.environment_id, rs.name, rs.kind, rs.route
+		  FROM release.environment_states s
+		  JOIN release.release_services rs ON rs.release_id = s.current_release_id
+		 WHERE s.organization_id = $1 AND s.environment_id = ANY($2::uuid[])
+		 ORDER BY s.environment_id, rs.position`, organization, pq.Array(envStrings(envs)))
+	if err != nil {
+		return nil, pgerr.MapWith(err, "list environments serving services", messages)
+	}
+	out := map[project.EnvironmentID][]release.ServiceRef{}
+	for _, row := range rows {
+		out[row.Environment] = append(out[row.Environment], row.ServiceRef)
 	}
 	return out, nil
 }

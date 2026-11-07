@@ -30,6 +30,9 @@ type Serving struct {
 	// Access is who can open the app online now (nil when nothing is online
 	// or the mode in force cannot be told).
 	Access *ServingAccess `json:"access"`
+	// Services are the online release's services, in order ([] when nothing
+	// is online).
+	Services []ServiceRef `json:"services"`
 }
 
 // ServingAccess is who can open the app online: the mode the cluster was

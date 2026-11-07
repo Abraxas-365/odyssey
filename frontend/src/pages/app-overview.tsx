@@ -10,7 +10,8 @@ import { useBuild } from '@/lib/releases'
 import { CodePanel } from '@/features/github/code-panel'
 import { useAppPage } from '@/features/apps/app-page'
 import { FirstVersion } from '@/features/apps/publish-paths'
-import { BuildLog, PublishingPanel, RestoreDialog, VersionsPanel } from '@/features/apps/release-panels'
+import { PublishingPanel, BuildLog, RestoreDialog, VersionsPanel } from '@/features/apps/release-panels'
+import { ServiceStatesPanel } from '@/features/apps/service-states'
 import { UsesCard } from '@/features/apps/uses-card'
 import { configReachedApp, failureText, liveVersion, previousVersion, versions, type VersionItem } from '@/features/apps/versions'
 import { buildScanText, toneClass as scanTone } from '@/features/inventory/inventory'
@@ -59,6 +60,8 @@ export function AppOverviewPage() {
       )}
 
       {(live || connected || !canPublish) && <CodePanel project={p} archived={archived} />}
+
+      {production && <ServiceStatesPanel project={p.id} env={production.id} release={live?.release ?? undefined} technical={technical} />}
 
       {production && <UsesCard project={p.id} env={production.id} technical={technical} />}
 

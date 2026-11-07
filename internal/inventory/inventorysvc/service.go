@@ -334,6 +334,7 @@ func row(a app, e env, u *release.Uses) inventory.Row {
 		Owner:       a.project.CreatedBy,
 		Status:      statusOf(e.serving),
 		Resources:   []inventory.ResourceRef{},
+		Services:    []release.ServiceRef{},
 		Secrets:     inventory.SecretsSummary{Missing: []string{}},
 		Scan:        sc,
 		Cluster:     e.cluster,
@@ -342,6 +343,7 @@ func row(a app, e env, u *release.Uses) inventory.Row {
 	}
 	if e.serving != nil {
 		r.URL = e.serving.URL
+		r.Services = append(r.Services, e.serving.Services...)
 		if e.serving.Image != "" {
 			r.Online = &inventory.Online{Image: e.serving.Image, Since: e.serving.Since}
 		}

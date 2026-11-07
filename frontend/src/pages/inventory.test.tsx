@@ -130,7 +130,7 @@ const row = (p: Partial<InventoryRow> & { name?: string; id?: string }): Invento
   environment: { id: `e-${p.id ?? 'a1'}`, slug: 'production', kind: 'production' },
   owner: 'u1', access: 'team', url: '', status: 'online', online: { image: 'r/x@sha256:1', since: null }, resources: [], ai: false,
   secrets: { total: 0, missing: [] }, scan: { state: 'clean', critical: 0, high: 0, scanned_at: null }, cluster: { id: 'c1', name: 'Lima' },
-  needs_attention: false, attention: [], unavailable: [], ...p,
+  needs_attention: false, attention: [], unavailable: [], services: [], ...p,
 })
 const page = (items: InventoryRow[], patch: Partial<Page> = {}): Page => ({ items, page: { total: items.length, limit: 25, offset: 0 }, truncated: false, unavailable: [], ...patch })
 

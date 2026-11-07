@@ -105,6 +105,9 @@ const messages: Record<string, string> = {
   APPROVAL_SELF: 'No puedes decidir tu propia solicitud. Tiene que hacerlo otra persona de TI.',
   APPROVAL_DECIDED: 'Esta solicitud ya se decidió. Recarga para ver cómo quedó.',
   APPROVAL_NOT_USABLE: 'Esta aprobación ya no sirve. Vuelve a pedirla.',
+  // services (docs/api.md §11): the cluster's agent is older than the feature
+  SERVICES_UNAVAILABLE: 'El servidor de esta app todavía no puede correr varias partes. Pídele a TI que actualice su agente.',
+  SERVICE_SETTINGS_UNAVAILABLE: 'El servidor de esta app todavía no puede dar algo solo a algunas partes. Guárdalo para toda la app o pídele a TI que actualice su agente.',
 }
 
 export function errorMessage(error: unknown): string {

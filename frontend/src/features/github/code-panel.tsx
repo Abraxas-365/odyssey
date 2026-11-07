@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Code2, GitBranch, Rocket, Unplug } from 'lucide-react'
+import { Code2, GitBranch, RefreshCw, Rocket, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -93,6 +93,18 @@ function ConnectedPanel({ project, repo, branch, root, archived }: { project: Pr
               <Button variant="ghost" size="sm" onClick={() => setConfirm(true)}>
                 <Unplug />
                 Desconectar
+              </Button>
+            )}
+            {can(permissions.deploymentsCreate) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                title="Construye todo otra vez, aunque el código no haya cambiado: por ejemplo, para tomar una versión nueva de la imagen base."
+                onClick={() => publish.mutate({ rebuild: true }, { onSuccess: () => toast.success('Construyendo todo otra vez y publicando…') })}
+              >
+                <RefreshCw />
+                Reconstruir todo
               </Button>
             )}
             {can(permissions.deploymentsCreate) && (

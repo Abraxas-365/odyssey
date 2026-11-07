@@ -469,7 +469,14 @@ func (s *Service) deployment(ctx context.Context, organization identity.Organiza
 
 func (s *Service) FindDeployment(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, deployment release.DeploymentID) (release.Deployment, error) {
 	d, err := s.deployment(ctx, organization, id, env, deployment)
-	return d.WithProgress(), err
+	if err != nil {
+		return d, err
+	}
+	d = d.WithProgress()
+	if err := s.fillChanged(ctx, organization, &d); err != nil {
+		return release.Deployment{}, err
+	}
+	return d, nil
 }
 
 func (s *Service) ListDeployments(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, filter release.DeploymentFilter, page query.Pagination) (query.Paginated[release.Deployment], error) {
@@ -480,10 +487,18 @@ func (s *Service) ListDeployments(ctx context.Context, organization identity.Org
 		return query.Paginated[release.Deployment]{}, err
 	}
 	out, err := s.repo.ListDeployments(ctx, organization, env, filter, page.Normalize())
+	if err != nil {
+		return out, err
+	}
+	ptrs := make([]*release.Deployment, len(out.Items))
 	for i := range out.Items {
 		out.Items[i] = out.Items[i].WithProgress()
+		ptrs[i] = &out.Items[i]
 	}
-	return out, err
+	if err := s.fillChanged(ctx, organization, ptrs...); err != nil {
+		return query.Paginated[release.Deployment]{}, err
+	}
+	return out, nil
 }
 
 func (s *Service) FindRelease(ctx context.Context, organization identity.OrganizationID, id project.ID, rel release.ID) (release.Release, error) {
@@ -513,6 +528,7 @@ func (s *Service) Current(ctx context.Context, organization identity.Organizatio
 		}
 		out.Release = &r
 	}
+	var deployments []*release.Deployment
 	for _, x := range []struct {
 		id   *release.DeploymentID
 		into **release.Deployment
@@ -526,6 +542,10 @@ func (s *Service) Current(ctx context.Context, organization identity.Organizatio
 		}
 		d = d.WithProgress()
 		*x.into = &d
+		deployments = append(deployments, &d)
+	}
+	if err := s.fillChanged(ctx, organization, deployments...); err != nil {
+		return release.Current{}, err
 	}
 	if out.Access, err = s.accessInForce(ctx, organization, env, state.AppliedSettings, out.Release != nil); err != nil {
 		return release.Current{}, err

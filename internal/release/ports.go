@@ -103,6 +103,10 @@ type Queries interface {
 	// and the attention list. An environment that never deployed is absent.
 	// It changes nothing.
 	Serving(ctx context.Context, organization identity.OrganizationID, environments []project.EnvironmentID) ([]Serving, error)
+	// ServiceStates are the services of the release the environment serves,
+	// in order, and how the cluster sees each (nothing serving: empty). It
+	// changes nothing.
+	ServiceStates(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) ([]ServiceState, error)
 }
 
 // AccessLookup finds an environment by its id alone, for the access sign-in
@@ -257,6 +261,10 @@ type Usage interface {
 type Repository interface {
 	CreateRelease(ctx context.Context, release Release) error
 	FindRelease(ctx context.Context, organization identity.OrganizationID, release ID) (Release, error)
+	// ReleaseServices are the services of each of the releases (the
+	// organization's own), in their order, in one query; an unknown id is
+	// absent from the map.
+	ReleaseServices(ctx context.Context, organization identity.OrganizationID, ids []ID) (map[ID][]Service, error)
 
 	CreateDeployment(ctx context.Context, deployment Deployment) error
 	FindDeployment(ctx context.Context, organization identity.OrganizationID, deployment DeploymentID) (Deployment, error)

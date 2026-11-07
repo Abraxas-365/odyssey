@@ -7,6 +7,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/inventory"
 	"github.com/Abraxas-365/odyssey/internal/inventory/adapters/inventoryhttp"
+	"github.com/Abraxas-365/odyssey/internal/release"
 )
 
 func TestCSVNeutralizesFormulas(t *testing.T) {
@@ -25,6 +26,7 @@ func TestCSVNeutralizesFormulas(t *testing.T) {
 		Secrets:   inventory.SecretsSummary{Total: 2, Missing: []string{"@KEY", "OK"}},
 		Scan:      inventory.Scan{State: inventory.ScanVulnerable, Critical: 1, High: 2},
 		Cluster:   &inventory.ClusterRef{Name: "+Lima, \"norte\""},
+		Services:  []release.ServiceRef{{Name: "web", Kind: "web", Route: "/"}, {Name: "=jobs", Kind: "worker"}},
 	}}
 	out, err := inventoryhttp.CSV(rows)
 	if err != nil {
@@ -49,5 +51,11 @@ func TestCSVNeutralizesFormulas(t *testing.T) {
 	}
 	if records[1][0] != `'=HYPERLINK("http://evil","click")` || records[1][16] != `'+Lima, "norte"` || records[1][12] != "@KEY; OK" && records[1][12] != "'@KEY; OK" {
 		t.Fatalf("row %q", records[1])
+	}
+	if got := records[1][len(inventoryhttp.Header)-1]; got != "web '=jobs" && got != "web =jobs" {
+		t.Fatalf("services cell %q", got)
+	}
+	if inventoryhttp.Header[len(inventoryhttp.Header)-1] != "Servicios" {
+		t.Fatalf("Servicios must be the last column: %v", inventoryhttp.Header)
 	}
 }

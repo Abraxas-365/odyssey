@@ -127,8 +127,9 @@ func repositoryTxViolations(files []goFile) []string {
 	return out
 }
 
-// readPrefixes name repository methods that do not write.
-var readPrefixes = []string{"Find", "List", "Get", "Count", "Exists", "Search", "Load", "Lock", "Walk"}
+// readPrefixes name repository methods that do not write. ReleaseServices is
+// the batch read of versions' services (named for what it returns).
+var readPrefixes = []string{"Find", "List", "Get", "Count", "Exists", "Search", "Load", "Lock", "Walk", "ReleaseServices"}
 
 // eventSinks are the domains whose writes only record events (publishing
 // would loop): the reason is part of the rule.

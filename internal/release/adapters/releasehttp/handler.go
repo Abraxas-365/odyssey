@@ -38,6 +38,7 @@ func New(commands release.Commands, queries release.Queries, opts Options) *Hand
 func (h *Handler) Register(r fiber.Router) {
 	env := r.Group("/projects/:id/environments/:environment")
 	env.Get("/current", httpx.RequirePermissions(permission.DeploymentsRead), h.current)
+	env.Get("/services", httpx.RequirePermissions(permission.DeploymentsRead), h.services)
 	env.Get("/deployments", httpx.RequirePermissions(permission.DeploymentsRead), h.list)
 	env.Post("/deployments", httpx.RequirePermissions(permission.DeploymentsCreate), h.deploy)
 	env.Get("/deployments/:deployment", httpx.RequirePermissions(permission.DeploymentsRead), h.find)
@@ -107,6 +108,24 @@ func (h *Handler) current(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(out)
+}
+
+// services answers {items}: the services of the release the environment
+// serves and how its cluster sees each.
+func (h *Handler) services(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	at, err := parsePlace(c)
+	if err != nil {
+		return err
+	}
+	items, err := h.queries.ServiceStates(c.UserContext(), org, at.project, at.environment)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"items": items})
 }
 
 func (h *Handler) list(c *fiber.Ctx) error {
