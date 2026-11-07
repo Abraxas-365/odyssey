@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Bot, FolderUp, GitBranch } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button, ButtonLink } from '@/components/ui/button'
@@ -16,12 +17,16 @@ import { usePreferences } from '@/lib/preferences'
 import { slugify, useCreateProject } from '@/lib/projects'
 import type { Project } from '@/lib/types'
 import { buildPrompt, deriveName } from './overview'
+import { ProposedParts, saveProposal, useRepoProposal } from './services-panel'
 
 /** How the first version arrives (UX v4 §5.6). */
 export type Way = 'assistant' | 'github' | 'folder'
 
 /** The app page opens "Subir una carpeta" when it is reached with this (`/apps/:id?subir=1`). */
 export const UPLOAD_PARAM = 'subir'
+
+/** A new app has no parts of its own yet: any proposal of two or more is offered. */
+const NEW_APP: never[] = []
 
 /**
  * Create an app (UX v4 §5.6, POST /api/v1/projects): "¿Qué quieres crear?" in
@@ -48,13 +53,17 @@ export function CreateAppDialog({ open, onOpenChange, initialIdea = '' }: { open
   const connect = useConnectRepository()
   const github = useGitHubReadiness(open && way === 'github')
   const importing = way === 'github'
-  const busy = create.isPending || connect.isPending
+  const proposal = useRepoProposal(importing ? choice : noRepoChoice, NEW_APP)
+  const [split, setSplit] = useState(true)
+  const qc = useQueryClient()
+  const [saving, setSaving] = useState(false)
+  const busy = create.isPending || connect.isPending || saving
   const name = named ?? deriveName(idea)
   const address = slug ?? slugify(name)
   const fieldError = create.error instanceof ApiError ? create.error.field : undefined
 
   const reset = () => {
-    setIdea(''); setNamed(null); setSlug(null); setWay('assistant'); setChoice(noRepoChoice); setCreated(undefined); create.reset(); connect.reset()
+    setIdea(''); setNamed(null); setSlug(null); setWay('assistant'); setChoice(noRepoChoice); setCreated(undefined); setSplit(true); create.reset(); connect.reset()
   }
   const close = () => { onOpenChange(false); reset() }
   // Naming the app after the repository saves a step; the name stays editable.
@@ -73,10 +82,16 @@ export function CreateAppDialog({ open, onOpenChange, initialIdea = '' }: { open
     }
     if (importing && choice.repo) {
       // The app exists now: if connecting fails, it opens on its "Código" panel to try again.
-      await connect.mutateAsync({ project: project.id, body: connectBody(choice.repo, choice.branch, choice.root) }).then(
-        () => toast.success('Conectamos tu repositorio. Lo estamos publicando…'),
-        e => toast.error(`La app se creó, pero no pudimos conectar el repositorio. ${errorMessage(e)}`),
-      )
+      // Its parts are saved first, so the first version already builds each one.
+      setSaving(true)
+      const parts = split && proposal.rows ? await saveProposal(qc, project.id, proposal.rows, 'La app se creó, pero no la conectamos todavía. ') : true
+      setSaving(false)
+      if (parts) {
+        await connect.mutateAsync({ project: project.id, body: connectBody(choice.repo, choice.branch, choice.root) }).then(
+          () => toast.success('Conectamos tu repositorio. Lo estamos publicando…'),
+          e => toast.error(`La app se creó, pero no pudimos conectar el repositorio. ${errorMessage(e)}`),
+        )
+      }
     }
     close()
     navigate(way === 'folder' ? `/apps/${project.id}?${UPLOAD_PARAM}=1` : `/apps/${project.id}`)
@@ -123,12 +138,13 @@ export function CreateAppDialog({ open, onOpenChange, initialIdea = '' }: { open
               ]}
             />
             {importing && <RepoPicker value={choice} onChange={choose} idPrefix="create-repo" />}
+            {importing && <ProposedParts proposal={proposal} use={split} onUseChange={setSplit} technical={technical} />}
             <ErrorNotice error={create.error} />
             <DialogFooter>
               <Button type="button" variant="outline" disabled={busy} onClick={close}>Cancelar</Button>
-              <Button type="submit" disabled={busy || !name.trim() || (importing && (!choice.repo || github.state !== 'ready'))}>
+              <Button type="submit" disabled={busy || !name.trim() || (importing && (!choice.repo || github.state !== 'ready' || proposal.loading))}>
                 {busy && <Spinner />}
-                {create.isPending ? 'Creando…' : connect.isPending ? 'Conectando…' : importing ? 'Crear e importar' : way === 'folder' ? 'Crear y subir' : 'Crear app'}
+                {create.isPending ? 'Creando…' : saving ? 'Guardando las partes…' : connect.isPending ? 'Conectando…' : importing ? 'Crear e importar' : way === 'folder' ? 'Crear y subir' : 'Crear app'}
               </Button>
             </DialogFooter>
           </form>

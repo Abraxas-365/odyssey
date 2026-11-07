@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Code2, GitBranch, RefreshCw, Rocket, Unplug } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -10,8 +11,10 @@ import { useAuth } from '@/lib/auth'
 import { formatRelative } from '@/lib/format'
 import { connectBody, pushActive, pushStatusText, useConnectRepository, useDisconnectRepository, useProjectRepository, usePublishNow, usePushes } from '@/lib/github'
 import { permissions } from '@/lib/permissions'
-import { Technical } from '@/lib/preferences'
+import { Technical, usePreferences } from '@/lib/preferences'
+import { useServices } from '@/lib/services'
 import type { GitHubPush, Project } from '@/lib/types'
+import { ProposedParts, saveProposal, useRepoProposal } from '@/features/apps/services-panel'
 import { noRepoChoice, RepoPicker, useGitHubReadiness, type RepoChoice } from './repo-picker'
 
 /** What the latest push says, in plain words (the failure's own message when it failed). */
@@ -161,13 +164,27 @@ export function ConnectRepoDialog({ project, open, onOpenChange }: { project: Pr
   const [choice, setChoice] = useState<RepoChoice>(noRepoChoice)
   const connect = useConnectRepository()
   const github = useGitHubReadiness(open)
+  const { technical } = usePreferences()
+  const services = useServices(open ? project.id : undefined)
+  const proposal = useRepoProposal(choice, services.data?.items)
+  const [split, setSplit] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const qc = useQueryClient()
+  const pending = connect.isPending || saving
   const close = (next: boolean) => {
-    if (connect.isPending) return
+    if (pending) return
     onOpenChange(next)
-    if (!next) { setChoice(noRepoChoice); connect.reset() }
+    if (!next) { setChoice(noRepoChoice); setSplit(true); connect.reset() }
   }
-  const submit = () => {
+  const submit = async () => {
     if (!choice.repo) return
+    // the parts first, so the first version already builds each one
+    if (split && proposal.rows) {
+      setSaving(true)
+      const saved = await saveProposal(qc, project.id, proposal.rows)
+      setSaving(false)
+      if (!saved) return
+    }
     connect.mutate(
       { project: project.id, body: connectBody(choice.repo, choice.branch, choice.root) },
       { onSuccess: () => { toast.success('Conectamos tu repositorio. Lo estamos publicando…'); close(false) } },
@@ -176,18 +193,19 @@ export function ConnectRepoDialog({ project, open, onOpenChange }: { project: Pr
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-        <form onSubmit={e => { e.preventDefault(); submit() }} className="flex flex-col gap-5">
+        <form onSubmit={e => { e.preventDefault(); void submit() }} className="flex flex-col gap-5">
           <DialogHeader>
             <DialogTitle>Conectar un repositorio</DialogTitle>
             <DialogDescription>Elige el repositorio y la rama. Cada cambio que subas a esa rama se publica solo.</DialogDescription>
           </DialogHeader>
           <RepoPicker value={choice} onChange={setChoice} idPrefix="code-repo" />
+          <ProposedParts proposal={proposal} use={split} onUseChange={setSplit} technical={technical} />
           <ErrorNotice error={connect.error} />
           <DialogFooter>
-            <Button type="button" variant="outline" disabled={connect.isPending} onClick={() => close(false)}>Cancelar</Button>
-            <Button type="submit" disabled={!choice.repo || github.state !== 'ready' || connect.isPending}>
-              {connect.isPending && <Spinner />}
-              {connect.isPending ? 'Conectando…' : 'Conectar y publicar'}
+            <Button type="button" variant="outline" disabled={pending} onClick={() => close(false)}>Cancelar</Button>
+            <Button type="submit" disabled={!choice.repo || github.state !== 'ready' || pending || proposal.loading}>
+              {pending && <Spinner />}
+              {saving ? 'Guardando las partes…' : connect.isPending ? 'Conectando…' : 'Conectar y publicar'}
             </Button>
           </DialogFooter>
         </form>

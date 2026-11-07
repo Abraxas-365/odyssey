@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, FolderUp, GitBranch, RotateCcw, ShieldAlert, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -13,8 +14,10 @@ import { Callout, EmptyState, ErrorNotice, ListSkeleton, LogViewer, Panel, Panel
 import { dropEntries, readDrop } from '@/lib/drop'
 import { formatBytes } from '@/lib/format'
 import { useBuildLog, useDeploy, useDeploySource, useRollback } from '@/lib/releases'
+import { useServices } from '@/lib/services'
 import { packSource, planProblem, planSource, SOURCE_LIMITS, type SourcePlan } from '@/lib/tarball'
 import type { BuildLogLine, Deployment } from '@/lib/types'
+import { ProposedParts, saveProposal, useFolderProposal } from './services-panel'
 import { progressSteps, waitingForIT, waitingLabel, type VersionItem } from './versions'
 
 /** "Publicando una nueva versión" with its steps (UX v3 §7); the build's log stays one click away. */
@@ -173,9 +176,15 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
   const [port, setPort] = useState(BUILD_PORT)
   const [health, setHealth] = useState('/')
   const problem = plan && planProblem(plan)
-  const sending = packing || deploy.isPending
+  const services = useServices(open ? project : undefined)
+  const paths = useMemo(() => (plan && !planProblem(plan) ? plan.files.map(f => f.path) : undefined), [plan])
+  const proposal = useFolderProposal(paths, services.data?.items)
+  const [split, setSplit] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const qc = useQueryClient()
+  const sending = packing || saving || deploy.isPending
 
-  const reset = () => { setPlan(undefined); setPackError(undefined); setMessage(''); setRebuild(false); setOver(false); deploy.reset(); if (input.current) input.current.value = '' }
+  const reset = () => { setPlan(undefined); setPackError(undefined); setMessage(''); setRebuild(false); setSplit(true); setOver(false); deploy.reset(); if (input.current) input.current.value = '' }
   const close = (next: boolean) => { if (sending) return; onOpenChange(next); if (!next) reset() }
 
   const pick = (files: File[]) => {
@@ -210,6 +219,13 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
     if (source.size > SOURCE_LIMITS.compressed) {
       setPackError('La carpeta comprimida pesa más de 100 MB. Elige solo la carpeta de la app, sin videos ni respaldos.')
       return
+    }
+    // the parts first, so this version already builds each one
+    if (split && proposal.rows) {
+      setSaving(true)
+      const saved = await saveProposal(qc, project, proposal.rows)
+      setSaving(false)
+      if (!saved) return
     }
     deploy.mutate(
       { name: plan.name, source, config: { port: Number(port), health_path: health.trim() || '/', message: message.trim() || undefined, rebuild: rebuild || undefined } },
@@ -265,6 +281,7 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
             </p>
           )}
           {problem && <Callout tone="bad">{problem}</Callout>}
+          <ProposedParts proposal={proposal} use={split} onUseChange={setSplit} technical={technical} />
           {!first && (
             <Field>
               <FieldLabel htmlFor="upload-message">Qué cambió <span className="font-normal text-muted-foreground">(opcional)</span></FieldLabel>
@@ -297,9 +314,9 @@ export function UploadFolderDialog({ project, env, open, onOpenChange, busy, tec
           <ErrorNotice error={deploy.error} />
           <DialogFooter>
             <Button type="button" variant="outline" disabled={sending} onClick={() => close(false)}>Cancelar</Button>
-            <Button type="submit" disabled={sending || reading || !plan || !!problem || !port}>
+            <Button type="submit" disabled={sending || reading || !plan || !!problem || !port || proposal.loading}>
               {sending && <Spinner />}
-              {packing ? 'Preparando la carpeta…' : deploy.isPending ? 'Subiendo…' : busy ? 'Publicar (reemplaza la que está en curso)' : 'Publicar'}
+              {packing ? 'Preparando la carpeta…' : saving ? 'Guardando las partes…' : deploy.isPending ? 'Subiendo…' : busy ? 'Publicar (reemplaza la que está en curso)' : 'Publicar'}
             </Button>
           </DialogFooter>
         </form>

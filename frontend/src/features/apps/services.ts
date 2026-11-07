@@ -1,4 +1,4 @@
-import type { DetectedService, Service, ServiceKind, ServiceSpec, ServiceState } from '@/lib/types'
+import type { DetectedService, DetectedServices, Service, ServiceKind, ServiceSpec, ServiceState } from '@/lib/types'
 
 /**
  * An app's services in plain words (MS-6). D3: an app of one service reads
@@ -124,6 +124,21 @@ const failureWords: Record<Exclude<ServiceState['reason'], ''>, string> = {
   config: 'Falta configuración',
   resource: 'Espera un recurso',
 }
+
+/**
+ * What a detection proposes to do before the first publication: the parts
+ * to save when the code has two or more (each valid as the API would judge
+ * it); undefined when it is one app (nothing to save, nothing to say).
+ */
+export function proposalOf(d: Pick<DetectedServices, 'items'> | undefined): Draft[] | undefined {
+  if (!d || !isMulti(d.items)) return undefined
+  const rows = d.items.slice(0, MAX_SERVICES).map(fromDetected)
+  return hasProblems(problemsOf(rows)) ? undefined : rows
+}
+
+/** The notes of a proposal, plus one when GitHub cut the tree short. */
+export const proposalNotes = (d: Pick<DetectedServices, 'notes' | 'truncated'>): string[] =>
+  [...d.notes, ...(d.truncated ? ['GitHub no entregó todo el código: revisa que no falte ninguna parte.'] : [])]
 
 /**
  * What a version changed, for its line in Historial: undefined when there is

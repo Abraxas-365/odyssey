@@ -15,10 +15,15 @@ import { anchors } from './uses'
 import { useAuth } from '@/lib/auth'
 import { formatRelative } from '@/lib/format'
 import { permissions } from '@/lib/permissions'
-import { useLoadSecret, usePutSecret, useRemoveSecret, useSetEnv, useSettings } from '@/lib/releases'
+import { useLoadSecret, usePutSecret, useRemoveSecret, useScopeSecret, useSetEnv, useSettings } from '@/lib/releases'
 import { MAX_SECRET_VALUE } from '@/lib/secretbox'
-import type { SecretView } from '@/lib/types'
-import { canLoad, canRemove, envChanged, envDiff, loadLabel, looksSecret, rowsOf, rowsValid, secretStateText, variableNameProblem, type VariableRow } from './variables'
+import { useServices } from '@/lib/services'
+import type { SecretView, Service } from '@/lib/types'
+import { afterWrite } from '@/features/approvals/notice'
+import { scopeField, sameScope } from './scope'
+import { ScopeBadge, ScopePicker } from './service-scope'
+import { isMulti } from './services'
+import { canLoad, canRemove, envChanged, envDiff, layerBody, layerEnv, loadLabel, looksSecret, overriddenBy, rowsOf, rowsValid, secretStateText, variableNameProblem, type VariableRow } from './variables'
 
 const applied = (deployment: unknown) => (deployment ? 'Aplicando el cambio a la app…' : 'Guardado. La app lo recibe con la próxima publicación.')
 
@@ -29,22 +34,31 @@ const applied = (deployment: unknown) => (deployment ? 'Aplicando el cambio a la
  */
 export function VariablesPanel({ project, env, canWrite, busy }: { project: string; env: string; canWrite: boolean; busy: boolean }) {
   const settings = useSettings(project, env)
+  const services = useServices(project).data?.items
   const save = useSetEnv(project, env)
-  const original = settings.data?.env
+  // '' is the whole app's own variables; a name is that part's own layer (MS-4). One part: always ''.
+  const [pickedLayer, setLayer] = useState('')
+  const multi = isMulti(services)
+  const scoped = settings.data?.scoped_settings === true
+  const layer = multi && scoped && services?.some(s => s.name === pickedLayer) ? pickedLayer : ''
+  const original = layerEnv(settings.data, layer)
   const [rows, setRows] = useState<VariableRow[] | null>(null)
   const shown = rows ?? rowsOf(original)
   const secretNames = settings.data?.secrets.map(s => s.name) ?? []
   const dirty = rows !== null && envChanged(original, rows)
   const valid = rowsValid(shown, secretNames)
   const suspicious = shown.filter(r => r.name.trim() && looksSecret(r.name) && original?.[r.name.trim()] !== r.value).map(r => r.name.trim())
+  const [notes, setNotes] = useState<string[]>([])
 
   const edit = (i: number, patch: Partial<VariableRow>) => setRows(shown.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+  const changeLayer = (next: string) => { setLayer(next); setRows(null); setNotes([]); save.reset() }
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!dirty || !valid || !rows) return
-    save.mutate(envDiff(original, rows), {
+    save.mutate(layerBody(envDiff(original, rows), layer), {
       onSuccess: out => {
         setRows(null)
+        setNotes(out.warnings ?? [])
         toast.success(applied(out.deployment))
       },
     })
@@ -56,11 +70,22 @@ export function VariablesPanel({ project, env, canWrite, busy }: { project: stri
         <PanelHeader icon={SlidersHorizontal} title="Variables" description="Ajustes de la app que no son secretos: zona horaria, nivel de log, direcciones públicas." />
         <PanelBody>
           <ErrorNotice error={settings.error} onRetry={() => settings.refetch()} />
-          {settings.data && shown.length === 0 && <p className="text-[13px] text-muted-foreground">Esta app no tiene variables.</p>}
+          {multi && scoped && (
+            <ChipGroup
+              label="Para"
+              value={layer}
+              onChange={changeLayer}
+              options={[{ value: '', label: 'Toda la app' }, ...(services ?? []).map(s => ({ value: s.name, label: <span className="font-mono">{s.name}</span> }))]}
+            />
+          )}
+          {multi && layer && <p className="text-xs text-muted-foreground">Estas variables las recibe solo <span className="font-mono">{layer}</span>. Si una se llama igual que una de toda la app, gana la de esta parte.</p>}
+          {multi && !scoped && <ScopePicker value={[]} onChange={() => {}} services={services} scoped={false} />}
+          {settings.data && shown.length === 0 && <p className="text-[13px] text-muted-foreground">{layer ? 'Esta parte no tiene variables propias.' : 'Esta app no tiene variables.'}</p>}
           {shown.length > 0 && (
-            <div className="flex flex-col gap-2" role="list" aria-label="Variables de la app">
+            <div className="flex flex-col gap-2" role="list" aria-label={layer ? `Variables de ${layer}` : 'Variables de la app'}>
               {shown.map((r, i) => {
                 const problem = variableNameProblem(r.name, shown, secretNames)
+                const over = layer ? [] : overriddenBy(r.name.trim(), settings.data?.service_env)
                 return (
                   <div key={i} role="listitem" className="flex flex-col gap-1">
                     <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2">
@@ -94,6 +119,7 @@ export function VariablesPanel({ project, env, canWrite, busy }: { project: stri
                       )}
                     </div>
                     {problem && <p className="text-xs text-destructive">{problem}</p>}
+                    {over.length > 0 && <p className="text-xs text-muted-foreground">{over.join(', ')} {over.length > 1 ? 'tienen' : 'tiene'} su propio valor para esta variable.</p>}
                   </div>
                 )
               })}
@@ -104,6 +130,7 @@ export function VariablesPanel({ project, env, canWrite, busy }: { project: stri
               Cualquiera que vea la app puede leer una variable. Si es una contraseña, llave o token, guárdalo en Secretos.
             </Callout>
           )}
+          {notes.length > 0 && <Callout tone="info" title="Ten en cuenta">{notes.join(' ')}</Callout>}
           <ErrorNotice error={save.error} />
         </PanelBody>
         {canWrite && (
@@ -141,6 +168,9 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
   const [loading, setLoading] = useState<SecretView>()
   const [removing, setRemoving] = useState<SecretView>()
   const [adding, setAdding] = useState(false)
+  const [scoping, setScoping] = useState<SecretView>()
+  const services = useServices(project).data?.items
+  const multi = isMulti(services)
   const remove = useRemoveSecret(project, env)
   const panel = useRef<HTMLElement>(null)
   const data = settings.data
@@ -193,6 +223,7 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-[13px] font-medium">{s.name}</span>
                       <Badge variant={state.tone} title={state.help}>{state.label}</Badge>
+                      <ScopeBadge scope={s.services ?? s.request?.services} services={services} />
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {s.request?.note ? `${s.request.note} · ` : ''}
@@ -207,6 +238,11 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
                   </div>
                   {canWrite && (
                     <div className="flex items-center gap-1.5">
+                      {multi && data.scoped_settings && (
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setScoping(s)}>
+                          Cambiar quién lo lee
+                        </Button>
+                      )}
                       {canLoad(s, keyAvailable) && (
                         <Button size="sm" variant={s.state === 'loaded' ? 'outline' : 'primary'} disabled={busy} onClick={() => setLoading(s)}>
                           {loadLabel(s)}
@@ -233,6 +269,7 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
         </PanelFooter>
       )}
       {loading && <LoadSecretDialog project={project} env={env} secret={loading} onClose={() => setLoading(undefined)} />}
+      {scoping && data && <ScopeSecretDialog project={project} env={env} secret={scoping} services={services} scoped={data.scoped_settings} onClose={() => setScoping(undefined)} />}
       {adding && data && (
         <AddSecretDialog
           project={project}
@@ -240,6 +277,8 @@ export function SecretsPanel({ project, env, canWrite, busy }: { project: string
           taken={[...data.secrets.map(s => s.name), ...Object.keys(data.env)]}
           stores={canExternal ? data.secret_stores : []}
           keyAvailable={keyAvailable}
+          services={services}
+          scoped={data.scoped_settings}
           onClose={() => setAdding(false)}
           onRequested={s => setLoading(s)}
         />
@@ -340,17 +379,65 @@ function LoadSecretDialog({ project, env, secret, onClose }: { project: string; 
 
 type Source = 'managed' | 'external'
 
+/** "Cambiar quién lo lee": the parts that receive a secret, without loading its value again. */
+function ScopeSecretDialog({ project, env, secret, services, scoped, onClose }: {
+  project: string
+  env: string
+  secret: SecretView
+  services: readonly Pick<Service, 'name' | 'kind'>[] | undefined
+  scoped: boolean
+  onClose: () => void
+}) {
+  const scope = useScopeSecret(project, env)
+  const was = secret.services ?? secret.request?.services ?? []
+  const [value, setValue] = useState<string[]>(was)
+  const changed = !sameScope(value, was)
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!changed) return
+    scope.mutate(
+      { name: secret.name, services: value },
+      {
+        onSuccess: out => {
+          afterWrite(out, o => toast.success(o.deployment ? 'Cambiando quién recibe el secreto…' : 'Guardado. Se aplica con la próxima publicación.'))
+          onClose()
+        },
+      },
+    )
+  }
+  return (
+    <Dialog open onOpenChange={v => !v && !scope.isPending && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <form onSubmit={submit} className="flex flex-col gap-5">
+          <DialogHeader>
+            <DialogTitle>¿Quién lee <span className="font-mono">{secret.name}</span>?</DialogTitle>
+            <DialogDescription>No hace falta cargar el valor otra vez: solo cambia qué partes de la app lo reciben.</DialogDescription>
+          </DialogHeader>
+          <ScopePicker value={value} onChange={setValue} services={services} scoped={scoped} disabled={scope.isPending} />
+          <ErrorNotice error={scope.error} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={scope.isPending}>Cancelar</Button>
+            <Button type="submit" variant="primary" disabled={!changed || !scoped || scope.isPending}>{scope.isPending ? 'Guardando…' : 'Guardar'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /**
  * Declares a secret. `managed` (anyone who edits the app) is loaded next;
  * `external` reads it from the company's vault and is offered only to who
  * holds odyssey:secrets:external on a cluster with the operator.
  */
-function AddSecretDialog({ project, env, taken, stores, keyAvailable, onClose, onRequested }: {
+function AddSecretDialog({ project, env, taken, stores, keyAvailable, services, scoped, onClose, onRequested }: {
   project: string
   env: string
   taken: string[]
   stores: string[]
   keyAvailable: boolean
+  services: readonly Pick<Service, 'name' | 'kind'>[] | undefined
+  scoped: boolean
   onClose: () => void
   onRequested: (s: SecretView) => void
 }) {
@@ -361,13 +448,15 @@ function AddSecretDialog({ project, env, taken, stores, keyAvailable, onClose, o
   const [store, setStore] = useState(stores[0] ?? '')
   const [key, setKey] = useState('')
   const [property, setProperty] = useState('')
+  const [scope, setScope] = useState<string[]>([])
   const n = name.trim()
   const problem = taken.includes(n) ? 'Ya hay una variable o un secreto con este nombre.' : variableNameProblem(n, [], [])
   const ready = !!n && !problem && (source === 'managed' ? keyAvailable : !!store && !!key.trim())
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ready) return
-    const body = source === 'managed' ? { source, note: note.trim() || undefined } : { source, store, key: key.trim(), property: property.trim() || undefined }
+    const to = scopeField(scoped ? scope : [])
+    const body = source === 'managed' ? { source, note: note.trim() || undefined, ...to } : { source, store, key: key.trim(), property: property.trim() || undefined, ...to }
     put.mutate(
       { name: n, body },
       {
@@ -431,6 +520,7 @@ function AddSecretDialog({ project, env, taken, stores, keyAvailable, onClose, o
           {source === 'managed' && !keyAvailable && (
             <Callout tone="warn" title="El clúster de esta app todavía no puede guardar secretos.">Pídele a TI que lo habilite.</Callout>
           )}
+          <ScopePicker value={scope} onChange={setScope} services={services} scoped={scoped} disabled={put.isPending} />
           <ErrorNotice error={put.error} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={put.isPending}>Cancelar</Button>

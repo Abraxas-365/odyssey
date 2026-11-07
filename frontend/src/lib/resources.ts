@@ -42,9 +42,15 @@ export const useResizeResource = (project: string, env: string) =>
 export const useDeleteResource = (project: string, env: string) =>
   useResourceWrite(project, env, (name: string) => api<Resource | PendingApproval>(`${path(project, env)}/${enc(name)}`, { method: 'DELETE' }))
 
+/** What PUT …/connection carries: the prefix and, for some parts only, their names (empty: the whole app). */
+export const connectBody = (prefix?: string, services?: readonly string[]) => ({
+  ...(prefix ? { prefix } : {}),
+  ...(services && services.length > 0 ? { services: [...services] } : {}),
+})
+
 export const useConnectResource = (project: string, env: string) =>
-  useResourceWrite(project, env, ({ name, prefix }: { name: string; prefix?: string }) =>
-    api<ResourceChange | PendingApproval>(`${path(project, env)}/${enc(name)}/connection`, { method: 'PUT', body: prefix ? { prefix } : {} }))
+  useResourceWrite(project, env, ({ name, prefix, services }: { name: string; prefix?: string; services?: string[] }) =>
+    api<ResourceChange | PendingApproval>(`${path(project, env)}/${enc(name)}/connection`, { method: 'PUT', body: connectBody(prefix, services) }))
 
 export const useDisconnectResource = (project: string, env: string) =>
   useResourceWrite(project, env, (name: string) => api<ResourceChange>(`${path(project, env)}/${enc(name)}/connection`, { method: 'DELETE' }))

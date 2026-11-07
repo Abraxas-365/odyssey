@@ -30,11 +30,13 @@ export function useAI(project: string, env: string | undefined) {
 function useAIWrite(project: string, env: string, method: 'PUT' | 'POST' | 'DELETE', suffix = '') {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => api<AppAI | PendingApproval>(`${path(project, env)}${suffix}`, { method }),
+    mutationFn: (services?: string[]) =>
+      api<AppAI | PendingApproval>(`${path(project, env)}${suffix}`, { method, ...(services && services.length > 0 ? { body: { services } } : {}) }),
     onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }), qc.invalidateQueries({ queryKey: ['approvals'] })]),
   })
 }
 
+/** Enabling takes the parts that get the AI (`services`: absent or empty, the whole app). */
 export const useEnableAI = (project: string, env: string) => useAIWrite(project, env, 'PUT')
 export const useDisableAI = (project: string, env: string) => useAIWrite(project, env, 'DELETE')
 export const useRotateAI = (project: string, env: string) => useAIWrite(project, env, 'POST', '/rotate')

@@ -108,6 +108,8 @@ const messages: Record<string, string> = {
   // services (docs/api.md §11): the cluster's agent is older than the feature
   SERVICES_UNAVAILABLE: 'El servidor de esta app todavía no puede correr varias partes. Pídele a TI que actualice su agente.',
   SERVICE_SETTINGS_UNAVAILABLE: 'El servidor de esta app todavía no puede dar algo solo a algunas partes. Guárdalo para toda la app o pídele a TI que actualice su agente.',
+  // a name another source (a variable, a secret, a database, the AI) already gives to the same part
+  VARIABLE_TAKEN: 'Otra cosa de la app ya entrega una variable con ese nombre a la misma parte. Cámbiale el nombre o quita la otra primero.',
 }
 
 export function errorMessage(error: unknown): string {

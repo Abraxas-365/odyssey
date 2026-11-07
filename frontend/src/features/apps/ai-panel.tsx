@@ -4,10 +4,14 @@ import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ErrorNotice, TechnicalDetails } from '@/components/odyssey'
 import { useAI, useDisableAI, useEnableAI, useRotateAI } from '@/lib/ai'
+import { useServices } from '@/lib/services'
 import { afterWrite } from '@/features/approvals/notice'
 import { aiActions, aiState, aiUnavailable, aiVariablesText } from './ai'
+import { ScopeBadge, ScopePicker } from './service-scope'
+import { isMulti } from './services'
 import { anchors } from './uses'
 
 /**
@@ -22,8 +26,19 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
   const rotate = useRotateAI(project, env)
   const disable = useDisableAI(project, env)
   const [confirming, setConfirming] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [scope, setScope] = useState<string[]>([])
+  const services = useServices(project).data?.items
+  const multi = isMulti(services)
   const a = ai.data
   if (!a) return ai.error ? <li className="px-5 py-3.5"><ErrorNotice error={ai.error} onRetry={() => ai.refetch()} /></li> : null
+  const turnOn = (parts: string[]) =>
+    enable.mutate(parts, {
+      onSuccess: out => {
+        afterWrite(out, () => toast.success('Activando la IA. La app recibe la llave en unos instantes.'))
+        setPicking(false)
+      },
+    })
   const state = aiState(a)
   const can = aiActions(a, canWrite, busy)
   const pending = enable.isPending || rotate.isPending || disable.isPending
@@ -38,12 +53,13 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
             <span className="text-[13px] font-medium">IA</span>
             <span className="text-xs text-muted-foreground">Los modelos de IA de la empresa, con una llave propia de esta app</span>
             <Badge variant={state.tone}>{state.label}</Badge>
+            {a.status !== 'off' && <ScopeBadge scope={a.services} services={services} />}
           </div>
         </div>
         {canWrite && (
           <div className="flex items-center gap-1.5">
             {(a.status === 'off' || a.status === 'revoke_failed') && (
-              <Button size="sm" variant="outline" disabled={!can.enable || pending} onClick={() => enable.mutate(undefined, { onSuccess: out => afterWrite(out, () => toast.success('Activando la IA. La app recibe la llave en unos instantes.')) })}>
+              <Button size="sm" variant="outline" disabled={!can.enable || pending} onClick={() => (multi ? setPicking(true) : turnOn([]))}>
                 Activar
               </Button>
             )}
@@ -80,6 +96,23 @@ export function AIRow({ project, env, canWrite, busy, technical }: { project: st
         </TechnicalDetails>
       )}
       <ErrorNotice error={enable.error ?? rotate.error ?? disable.error} />
+      {picking && (
+        <Dialog open onOpenChange={v => !v && !enable.isPending && setPicking(false)}>
+          <DialogContent className="sm:max-w-md">
+            <form onSubmit={e => { e.preventDefault(); turnOn(a.scoped_settings ? scope : []) }} className="flex flex-col gap-5">
+              <DialogHeader>
+                <DialogTitle>Activar la IA</DialogTitle>
+                <DialogDescription>Elige qué partes de la app reciben la llave de IA.</DialogDescription>
+              </DialogHeader>
+              <ScopePicker value={scope} onChange={setScope} services={services} scoped={a.scoped_settings} disabled={enable.isPending} />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setPicking(false)} disabled={enable.isPending}>Cancelar</Button>
+                <Button type="submit" variant="primary" disabled={enable.isPending}>{enable.isPending ? 'Activando…' : 'Activar'}</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
       {confirming && (
         <AlertDialog open onOpenChange={v => !v && !disable.isPending && setConfirming(false)}>
           <AlertDialogContent>

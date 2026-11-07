@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bodyOf, changedText, hasProblems, isMulti, isSimple, newDraft, problemsOf, sameList, stateText, whereText, type Draft } from './services'
+import { bodyOf, changedText, hasProblems, isMulti, isSimple, newDraft, problemsOf, proposalNotes, proposalOf, sameList, stateText, whereText, type Draft } from './services'
 
 const web: Draft = { name: 'web', kind: 'web', root: 'apps/web', route: '/', strip_prefix: false }
 const api: Draft = { name: 'api', kind: 'web', root: 'apps/api', route: '/api', strip_prefix: true }
@@ -74,5 +74,14 @@ describe('services (MS-6)', () => {
     expect(changedText([], 2)).toBe('Sin cambios en el código')
     expect(changedText(['api'], 2)).toBe('Cambió: api')
     expect(changedText(['web', 'api', 'jobs'], 3)).toBe('Cambiaron: web, api y jobs')
+  })
+
+  it('offers a detection only when it found two or more valid parts', () => {
+    const det = (items: Draft[]) => ({ items: items.map(d => ({ ...d, evidence: `${d.root}/package.json` })) })
+    expect(proposalOf(undefined)).toBeUndefined()
+    expect(proposalOf(det([{ name: 'web', kind: 'web', root: '', route: '/', strip_prefix: false }]))).toBeUndefined() // one app: nothing to say
+    expect(proposalOf(det([web, api, jobs]))).toEqual([web, api, jobs])
+    expect(proposalOf(det([web, { ...api, route: '/' }]))).toBeUndefined() // two at /: never saved as proposed
+    expect(proposalNotes({ notes: ['a'], truncated: true })).toHaveLength(2)
   })
 })

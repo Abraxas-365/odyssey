@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Boxes, Plus, ScanSearch, Trash2 } from 'lucide-react'
+import type { QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,10 +11,12 @@ import { Spinner } from '@/components/ui/spinner'
 import { Callout, ErrorNotice, ListSkeleton, Panel, PanelBody, PanelFooter, PanelHeader, PanelList, PanelRow, Term } from '@/components/odyssey'
 import { useProjectRepository } from '@/lib/github'
 import { errorMessage } from '@/lib/api'
-import { useDetectRepository, useServices, useSetServices } from '@/lib/services'
+import { isPending, pendingNotice } from '@/lib/approvals'
+import { MAX_DETECT_PATHS, saveServices, useDetectFolder, useDetectRepository, useRepositoryProposal, useServices, useSetServices } from '@/lib/services'
 import type { DetectedServices, Service, ServiceKind } from '@/lib/types'
 import { afterWrite } from '@/features/approvals/notice'
-import { bodyOf, draftOf, fromDetected, hasProblems, isMulti, isSimple, kindText, MAX_SERVICES, newDraft, problemsOf, sameList, whereText, type Draft } from './services'
+import type { RepoChoice } from '@/features/github/repo-picker'
+import { bodyOf, draftOf, fromDetected, hasProblems, isMulti, isSimple, kindText, MAX_SERVICES, newDraft, normalizeRoot, problemsOf, proposalNotes, proposalOf, sameList, whereText, type Draft } from './services'
 
 /**
  * App → Configuración → Servicios (MS-6): the parts the app is made of. An
@@ -31,7 +34,7 @@ export function ServicesPanel({ project, canWrite, technical }: { project: strin
   const saved = services.data.items
   const edit = (rows: Draft[], detected?: DetectedServices) => {
     setEditing(rows)
-    setNotes(detected ? [...detected.notes, ...(detected.truncated ? ['GitHub no entregó todo el código: revisa que no falte ninguna parte.'] : [])] : [])
+    setNotes(detected ? proposalNotes(detected) : [])
   }
 
   if (editing) return <ServicesEditor project={project} saved={saved} initial={editing} notes={notes} onDone={() => setEditing(null)} />
@@ -113,6 +116,113 @@ function SplitActions({ project, rows, onEdit, editLabel = 'Separar a mano' }: {
 }
 
 const kindItems: Record<ServiceKind, string> = { web: kindText.web.label, worker: kindText.worker.label }
+
+/** What the person sees and decides about a proposal before the first publication. */
+export interface Proposal {
+  /** The parts to save, when the code has two or more and they differ from the saved ones. */
+  rows?: Draft[]
+  notes: string[]
+  loading: boolean
+  error: unknown
+}
+
+const emptyProposal: Proposal = { notes: [], loading: false, error: null }
+
+/**
+ * A proposal judged against what the app already has. Offered only to an app
+ * that is still one piece (a new one: `[]`): once a person split it, the
+ * platform's list wins and detection never rewrites it (Configuración does).
+ * Unknown (still loading): nothing, rather than a guess.
+ */
+export function offerOf(detected: DetectedServices | undefined, saved: Pick<Service, 'name' | 'kind' | 'root' | 'route' | 'strip_prefix'>[] | undefined): Draft[] | undefined {
+  if (!saved || isMulti(saved)) return undefined
+  return proposalOf(detected)
+}
+
+/**
+ * The parts found in a repository being picked (create/connect). It waits
+ * for the typing to stop, and asks again when the branch or folder changes.
+ */
+export function useRepoProposal(choice: RepoChoice, saved: Service[] | undefined): Proposal {
+  const [pick, setPick] = useState<{ installation: string; repository: number; branch: string; root: string }>()
+  const { repo, branch } = choice
+  const root = normalizeRoot(choice.root)
+  useEffect(() => {
+    if (!repo) { setPick(undefined); return }
+    const t = setTimeout(() => setPick({ installation: repo.installation_id, repository: repo.id, branch, root }), 300)
+    return () => clearTimeout(t)
+  }, [repo, branch, root])
+  const q = useRepositoryProposal(saved && !isMulti(saved) ? pick : undefined)
+  if (!repo || !saved || isMulti(saved)) return emptyProposal
+  const settling = !pick || pick.installation !== repo.installation_id || pick.repository !== repo.id || pick.branch !== branch || pick.root !== root
+  return { rows: settling ? undefined : offerOf(q.data, saved), notes: q.data ? proposalNotes(q.data) : [], loading: settling || q.isFetching, error: q.error }
+}
+
+/** The parts found in a picked folder (upload); the folder's own name is not a path part. */
+export function useFolderProposal(paths: string[] | undefined, saved: Service[] | undefined): Proposal {
+  const detect = useDetectFolder()
+  const { mutate, reset } = detect
+  // an app already split keeps its parts: nothing is asked
+  const ask = paths?.length && saved && !isMulti(saved) ? paths : undefined
+  useEffect(() => {
+    if (!ask) { reset(); return }
+    mutate({ paths: ask.slice(0, MAX_DETECT_PATHS) })
+  }, [ask, mutate, reset])
+  if (!ask) return emptyProposal
+  return { rows: offerOf(detect.data, saved), notes: detect.data ? proposalNotes(detect.data) : [], loading: detect.isPending, error: detect.error }
+}
+
+/**
+ * "Encontramos 3 partes en tu código": what will be saved before publishing
+ * and a way to publish it as one piece instead. Draws nothing when the code
+ * is one app (D3) or detection failed (it is a convenience: publishing still
+ * works, and Configuración can split the app later).
+ */
+export function ProposedParts({ proposal, use, onUseChange, technical }: { proposal: Proposal; use: boolean; onUseChange: (use: boolean) => void; technical: boolean }) {
+  if (proposal.loading && !proposal.rows) return <p className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" />Revisando cómo está organizado el código…</p>
+  const rows = proposal.rows
+  if (!rows || !isMulti(rows)) return null
+  return (
+    <Callout tone="info" icon={Boxes} title={`Encontramos ${rows.length} partes en tu código`}>
+      <ul className="mt-1.5 flex flex-col gap-1" aria-label="Partes encontradas">
+        {rows.map(r => (
+          <li key={r.name} className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
+            <span className="font-mono font-medium text-foreground">{r.name}</span>
+            <span className="text-muted-foreground">{whereText(r)}</span>
+            {technical && <span className="font-mono text-[11px] text-muted-foreground">{r.root || '.'}</span>}
+          </li>
+        ))}
+      </ul>
+      {use && proposal.notes.map(n => <p key={n} className="mt-1.5 text-xs text-muted-foreground">{n}</p>)}
+      <label className="mt-2.5 flex items-start gap-2 text-[13px] text-foreground">
+        <Checkbox className="mt-0.5" checked={use} onCheckedChange={v => onUseChange(!!v)} />
+        <span>
+          Publicarlas como partes separadas
+          <span className="block text-xs text-muted-foreground">Cada una se construye desde su carpeta y todas salen juntas. Puedes cambiarlas después en Configuración.</span>
+        </span>
+      </label>
+    </Callout>
+  )
+}
+
+/**
+ * Saves the accepted parts right before the first publication. False when
+ * publishing must wait: IT holds the change (202, said calmly) or it failed
+ * (said as an error, with `failed` naming what already happened).
+ */
+export async function saveProposal(qc: QueryClient, project: string, rows: Draft[], failed = ''): Promise<boolean> {
+  try {
+    const out = await saveServices(qc, project, { items: bodyOf(rows) })
+    if (isPending(out)) {
+      toast.message(`${pendingNotice} Publica cuando lo aprueben: las partes de la app cambian recién entonces.`)
+      return false
+    }
+    return true
+  } catch (e) {
+    toast.error(`${failed}No pudimos guardar las partes de la app. ${errorMessage(e)}`)
+    return false
+  }
+}
 
 function ServicesEditor({ project, saved, initial, notes, onDone }: { project: string; saved: Service[]; initial: Draft[]; notes: string[]; onDone: () => void }) {
   const set = useSetServices(project)

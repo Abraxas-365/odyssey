@@ -12,8 +12,13 @@ import { useAuth } from '@/lib/auth'
 import { afterWrite } from '@/features/approvals/notice'
 import { permissions } from '@/lib/permissions'
 import { useConnectResource, useCreateResource, useDeleteResource, useDisconnectResource, useResizeResource, useResources } from '@/lib/resources'
-import type { Resource, ResourceKind } from '@/lib/types'
+import { useSettings } from '@/lib/releases'
+import { useServices } from '@/lib/services'
+import type { Resource, ResourceKind, Service } from '@/lib/types'
 import { AIRow } from './ai-panel'
+import { scopeField, scopeProblem } from './scope'
+import { ScopeBadge, ScopePicker } from './service-scope'
+import { isMulti } from './services'
 import { anchors } from './uses'
 import { atLimit, deleteBlock, deleteConfirmed, DEFAULT_GI, failureOf, isActive, kindText, MAX_GI, MAX_NAME, MAX_PREFIX, MIN_GI, nameProblem, prefixProblem, sizeLabel, sizeProblem, stateOf, suggestName } from './resources'
 
@@ -29,16 +34,22 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
   const list = useResources(project, env)
   const connect = useConnectResource(project, env)
   const disconnect = useDisconnectResource(project, env)
+  const services = useServices(project).data?.items
+  const scoped = useSettings(project, env).data?.scoped_settings
   const [adding, setAdding] = useState(false)
+  const [connecting, setConnecting] = useState<Resource>()
   const [sizing, setSizing] = useState<Resource>()
   const [removing, setRemoving] = useState<Resource>()
   const items = list.data?.items ?? []
   const kinds = list.data?.available_kinds ?? []
   const mayDelete = can(permissions.resourcesDelete)
   const full = atLimit(items.length)
+  const multi = isMulti(services)
 
   const change = (r: Resource, on: boolean) => {
     const done = (out: { deployment_id: string | null }) => toast.success(applied(out.deployment_id))
+    // an app of several parts asks who gets it first; one part: one click, as always
+    if (on && multi) return setConnecting(r)
     if (on) connect.mutate({ name: r.name }, { onSuccess: out => afterWrite(out, done) })
     else disconnect.mutate(r.name, { onSuccess: done })
   }
@@ -78,6 +89,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
                     <span className="text-xs text-muted-foreground">{text.label} · {sizeLabel(r.storage_gi)}</span>
                     <Badge variant={state.tone}>{state.label}</Badge>
                     {r.status === 'active' && <Badge variant={r.connected ? 'success' : 'secondary'}>{r.connected ? 'Conectada a la app' : 'Sin conectar'}</Badge>}
+                    {r.connected && <ScopeBadge scope={r.services} services={services} />}
                   </div>
                 </div>
                 {canWrite && isActive(r) && (
@@ -118,14 +130,60 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
           </Button>
         </PanelFooter>
       )}
-      {adding && <AddResourceDialog project={project} env={env} kinds={kinds} taken={items.map(r => r.name)} onClose={() => setAdding(false)} />}
+      {adding && <AddResourceDialog project={project} env={env} kinds={kinds} taken={items.map(r => r.name)} services={services} scoped={scoped} onClose={() => setAdding(false)} />}
+      {connecting && <ConnectDialog project={project} env={env} resource={connecting} services={services} scoped={scoped} onClose={() => setConnecting(undefined)} />}
       {sizing && <ResizeDialog project={project} env={env} resource={sizing} onClose={() => setSizing(undefined)} />}
       {removing && <DeleteDialog project={project} env={env} resource={removing} onClose={() => setRemoving(undefined)} />}
     </Panel>
   )
 }
 
-function AddResourceDialog({ project, env, kinds, taken, onClose }: { project: string; env: string; kinds: ResourceKind[]; taken: string[]; onClose: () => void }) {
+/**
+ * "Conectar" in an app of several parts: who gets the variables. A files
+ * volume goes to exactly one part. When the app's cluster cannot give it to
+ * some parts only, it is connected to the whole app as before.
+ */
+function ConnectDialog({ project, env, resource, services, scoped, onClose }: {
+  project: string
+  env: string
+  resource: Resource
+  services: readonly Pick<Service, 'name' | 'kind'>[] | undefined
+  scoped: boolean | undefined
+  onClose: () => void
+}) {
+  const connect = useConnectResource(project, env)
+  const exactlyOne = resource.kind === 'files'
+  const [scope, setScope] = useState<string[]>(resource.services)
+  const problem = scopeProblem(scope, { services, scoped, exactlyOne })
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (problem) return
+    connect.mutate(
+      { name: resource.name, services: scoped ? scope : [] },
+      { onSuccess: out => { afterWrite(out, o => toast.success(applied(o.deployment_id))); onClose() } },
+    )
+  }
+  return (
+    <Dialog open onOpenChange={v => !v && !connect.isPending && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={submit} className="flex flex-col gap-5">
+          <DialogHeader>
+            <DialogTitle>Conectar <span className="font-mono">{resource.name}</span></DialogTitle>
+            <DialogDescription>Elige qué partes de la app reciben sus variables.</DialogDescription>
+          </DialogHeader>
+          <ScopePicker value={scope} onChange={setScope} services={services} scoped={scoped} exactlyOne={exactlyOne} disabled={connect.isPending} />
+          <ErrorNotice error={connect.error} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={connect.isPending}>Cancelar</Button>
+            <Button type="submit" variant="primary" disabled={!!problem || (exactlyOne && !scoped) || connect.isPending}>{connect.isPending ? 'Conectando…' : 'Conectar'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AddResourceDialog({ project, env, kinds, taken, services, scoped, onClose }: { project: string; env: string; kinds: ResourceKind[]; taken: string[]; services: readonly Pick<Service, 'name' | 'kind'>[] | undefined; scoped: boolean | undefined; onClose: () => void }) {
   const create = useCreateResource(project, env)
   const [kind, setKind] = useState<ResourceKind>(kinds[0] ?? 'postgres')
   const [name, setName] = useState(() => suggestName(kinds[0] ?? 'postgres', taken))
@@ -133,11 +191,13 @@ function AddResourceDialog({ project, env, kinds, taken, onClose }: { project: s
   const [prefix, setPrefix] = useState('')
   const [size, setSize] = useState(DEFAULT_GI)
   const [connectIt, setConnectIt] = useState(true)
+  const [scope, setScope] = useState<string[]>([])
   const n = name.trim()
   const problem = nameProblem(n, taken) ?? (n ? undefined : 'Ponle un nombre.')
   const pProblem = connectIt ? prefixProblem(prefix) : undefined
   const sProblem = sizeProblem(size)
-  const ready = !problem && !pProblem && !sProblem
+  const scopeIssue = connectIt ? scopeProblem(scope, { services, scoped, exactlyOne: kind === 'files' }) : undefined
+  const ready = !problem && !pProblem && !sProblem && !scopeIssue
   const pick = (k: ResourceKind) => {
     setKind(k)
     if (!edited) setName(suggestName(k, taken))
@@ -146,7 +206,7 @@ function AddResourceDialog({ project, env, kinds, taken, onClose }: { project: s
     e.preventDefault()
     if (!ready) return
     create.mutate(
-      { name: n, kind, storage_gi: size, ...(connectIt ? { connect: prefix.trim() ? { prefix: prefix.trim() } : {} } : {}) },
+      { name: n, kind, storage_gi: size, ...(connectIt ? { connect: { ...(prefix.trim() ? { prefix: prefix.trim() } : {}), ...scopeField(scoped ? scope : []) } } : {}) },
       {
         onSuccess: out => {
           afterWrite(out, o => toast.success(o.connected ? applied(o.deployment_id) : 'Listo. Falta conectarla a la app.'))
@@ -183,6 +243,7 @@ function AddResourceDialog({ project, env, kinds, taken, onClose }: { project: s
                 {pProblem ? <FieldError>{pProblem}</FieldError> : <FieldDescription>Úsalo si la app tiene dos del mismo tipo: así no se pisan las variables.</FieldDescription>}
               </Field>
             )}
+            {connectIt && <ScopePicker value={scope} onChange={setScope} services={services} scoped={scoped} exactlyOne={kind === 'files'} disabled={create.isPending} />}
           </FieldGroup>
           <ErrorNotice error={create.error} />
           <DialogFooter>

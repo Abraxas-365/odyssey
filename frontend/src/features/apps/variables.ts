@@ -75,3 +75,23 @@ export const canRemove = (s: SecretView, canExternal: boolean) => s.source === '
 
 /** The button that loads a value says what it will do. */
 export const loadLabel = (s: SecretView) => (s.state === 'loaded' ? 'Cambiar valor' : s.state === 'reload' || s.state === 'failed' ? 'Volver a cargar' : 'Cargar valor')
+
+/**
+ * What PATCH /env receives for a layer (MS-4): '' is the whole app's own
+ * variables; a name is that part's own layer (its variables win over the
+ * whole app's of the same name).
+ */
+export function layerBody(diff: { set: Record<string, string>; unset: string[] }, layer: string): { set: Record<string, string>; unset: string[]; services?: string[] } {
+  return layer ? { ...diff, services: [layer] } : diff
+}
+
+/** The variables a layer starts from (the whole app's or one part's own). */
+export const layerEnv = (settings: { env: Record<string, string>; service_env?: Record<string, Record<string, string>> } | undefined, layer: string): Record<string, string> | undefined =>
+  layer ? settings?.service_env?.[layer] ?? {} : settings?.env
+
+/** The parts whose own layer sets `name` (they win over the whole app's value). */
+export const overriddenBy = (name: string, serviceEnv: Record<string, Record<string, string>> | undefined): string[] =>
+  Object.entries(serviceEnv ?? {})
+    .filter(([, env]) => name in env)
+    .map(([part]) => part)
+    .sort()

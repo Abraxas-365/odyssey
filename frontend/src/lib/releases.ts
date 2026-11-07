@@ -120,6 +120,20 @@ export function usePutSecret(project: string, env: string) {
   })
 }
 
+/**
+ * Changes who reads a secret without writing its value again (MS-4: PUT
+ * …/secrets/{name}/services). Empty = the whole app. IT's rules may hold it
+ * (202 `pending_approval`).
+ */
+export function useScopeSecret(project: string, env: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, services }: { name: string; services: string[] }) =>
+      api<SettingsChange | PendingApproval>(`${envPath(project, env)}/secrets/${enc(name)}/services`, { method: 'PUT', body: { services } }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) }), qc.invalidateQueries({ queryKey: ['approvals'] })]),
+  })
+}
+
 export function useRemoveSecret(project: string, env: string) {
   const qc = useQueryClient()
   return useMutation({

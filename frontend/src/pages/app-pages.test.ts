@@ -127,6 +127,7 @@ describe('MS-6: services (D3)', () => {
     'features/apps/services.ts',
     'features/apps/services-panel.tsx',
     'features/apps/service-states.tsx',
+    'features/apps/service-scope.tsx',
     // IT's own vocabulary (rules on set_services), not the builder's
     'features/policy/rules.ts',
     // "Servicio externo" is an external key (a secret), another thing
