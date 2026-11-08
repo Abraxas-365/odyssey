@@ -189,9 +189,10 @@ func TestOfferedLeavesOutWhatCannotBeCreated(t *testing.T) {
 	if len(o.Unavailable) != 1 || o.Unavailable[0].Kind != resourcekind.Files || o.Unavailable[0].Reason == "" {
 		t.Fatalf("unavailable %+v", o.Unavailable)
 	}
-	// no cluster: every kind unavailable, with the same reason
+	// no cluster: every kind the catalog prepares unavailable, with the same
+	// reason (object storage has no recipe until IT publishes one)
 	o, pol := offered(t, project.TierProduction, []string{})
-	if len(o.Recipes) != 0 || len(o.Unavailable) != len(resourcekind.Kinds) {
+	if len(o.Recipes) != 0 || len(o.Unavailable) != 3 || slices.ContainsFunc(o.Unavailable, func(u resource.UnavailableKind) bool { return u.Kind == resourcekind.ObjectStorage }) {
 		t.Fatalf("no cluster %+v", o)
 	}
 	for _, u := range o.Unavailable {

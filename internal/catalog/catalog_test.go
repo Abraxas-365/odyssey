@@ -64,6 +64,9 @@ func TestFactoryVersionsAreSound(t *testing.T) {
 		}
 	}
 	for _, k := range resourcekind.Kinds {
+		if !resourcekind.Of(k).Builtin {
+			continue // nothing built in to pin to: only ever the organization's own
+		}
 		if _, ok := catalog.Factory().Version(catalog.BasicRecipe(k), 1); !ok {
 			t.Errorf("%s has no basic recipe (what existing resources are pinned to)", k)
 		}
@@ -180,12 +183,15 @@ func TestEventContracts(t *testing.T) {
 
 func TestOrgRecipeValidate(t *testing.T) {
 	ok := catalog.OrgRecipe{Organization: identity.NewOrganizationID(), Recipe: "org-rds-reportes", Version: 1,
-		Kind: resourcekind.Postgres, Title: "Reportes", Engine: resourcespec.EngineExisting,
+		Kind: resourcekind.Postgres, Title: "Reportes", Engine: resourcespec.EngineExisting, Spec: resourcespec.ExamplePostgres("vault"),
 		CreatedBy: identity.MustParseUserID("00000000-0000-4000-8000-000000000002")}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*catalog.OrgRecipe){
+		"no connection":    func(o *catalog.OrgRecipe) { o.Spec = resourcespec.Spec{} },
+		"files":            func(o *catalog.OrgRecipe) { o.Kind = resourcekind.Files },
+		"bad connection":   func(o *catalog.OrgRecipe) { o.Spec.Existing = &resourcespec.Existing{} },
 		"factory-like id":  func(o *catalog.OrgRecipe) { o.Recipe = "rds-reportes" },
 		"uppercase id":     func(o *catalog.OrgRecipe) { o.Recipe = "org-RDS" },
 		"empty after org-": func(o *catalog.OrgRecipe) { o.Recipe = "org-" },

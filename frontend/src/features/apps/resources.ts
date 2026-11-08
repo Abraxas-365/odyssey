@@ -1,4 +1,4 @@
-import { Database, FolderOpen, Zap, type LucideIcon } from 'lucide-react'
+import { Archive, Database, FolderOpen, Zap, type LucideIcon } from 'lucide-react'
 import type { Resource, ResourceKind } from '@/lib/types'
 
 /** Same limits as the API (pkg/resourcekind, internal/resource). */
@@ -17,6 +17,7 @@ export const kindText: Record<ResourceKind, { label: string; noun: string; the: 
   postgres: { label: 'Base de datos', noun: 'La base de datos', the: 'la base de datos', defaultName: 'db', help: 'Para guardar los datos de la app: clientes, pedidos, usuarios.', technical: 'PostgreSQL', sized: true, icon: Database },
   redis: { label: 'Caché', noun: 'La caché', the: 'la caché', defaultName: 'cache', help: 'Guarda datos temporales para que la app responda más rápido.', technical: 'Redis', sized: true, icon: Zap },
   files: { label: 'Archivos', noun: 'El espacio de archivos', the: 'el espacio de archivos', defaultName: 'archivos', help: 'Una carpeta donde la app guarda archivos que deben conservarse.', technical: 'Volumen persistente', sized: true, icon: FolderOpen },
+  'object-storage': { label: 'Almacenamiento de objetos', noun: 'El almacenamiento de objetos', the: 'el almacenamiento de objetos', defaultName: 'objetos', help: 'Un bucket de la empresa donde la app guarda y lee archivos.', technical: 'S3 (bucket existente)', sized: false, icon: Archive },
 }
 
 export type StateTone = 'success' | 'warning' | 'destructive' | 'info' | 'secondary'

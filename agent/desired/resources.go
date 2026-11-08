@@ -41,8 +41,20 @@ func ValidResource(r *fleetv1.Resource) error {
 	if !resourcekind.Kind(r.GetKind()).Valid() {
 		return fmt.Errorf("resource kind %q is not %s", r.GetKind(), resourcekind.KindsLabel())
 	}
-	if _, err := resourcekind.ParseStorage(r.GetStorage()); err != nil {
-		return err
+	// Without a connection of the company's, the kind's built-in engine
+	// prepares it; a kind with none (object storage) is only ever one the
+	// company already has. A deletion carries its spec too: the
+	// organization's versions are never deleted (catalog triggers), so
+	// resource.DesiredOf always finds it.
+	existing := specOf(r).Existing != nil
+	if !existing && !resourcekind.Of(resourcekind.Kind(r.GetKind())).Builtin {
+		return fmt.Errorf("resource kind %q is only ever one the company already has: update the agent", r.GetKind())
+	}
+	// one the company already has has no size
+	if r.GetStorage() != "" || !existing {
+		if _, err := resourcekind.ParseStorage(r.GetStorage()); err != nil {
+			return err
+		}
 	}
 	// A spec this agent does not know would be prepared as a basic resource:
 	// refuse it so the control plane says the agent needs an update.
@@ -109,6 +121,10 @@ func validResourceRefs(refs []*fleetv1.ResourceRef) error {
 		}
 		if !resourcekind.Kind(r.GetKind()).Valid() {
 			return fmt.Errorf("resource %q has kind %q, not %s", r.GetName(), r.GetKind(), resourcekind.KindsLabel())
+		}
+		// This agent connects only what a built-in engine prepares.
+		if !resourcekind.Of(resourcekind.Kind(r.GetKind())).Builtin {
+			return fmt.Errorf("resource %q has kind %q, which this agent cannot connect: update the agent", r.GetName(), r.GetKind())
 		}
 		if err := resourcekind.CheckPrefix(r.GetPrefix()); err != nil {
 			return fmt.Errorf("resource %q: %w", r.GetName(), err)

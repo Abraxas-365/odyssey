@@ -2,6 +2,7 @@ package catalogpg_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -18,16 +19,15 @@ import (
 func orgRecipe(org identity.OrganizationID, recipe string, version int) catalog.OrgRecipe {
 	return catalog.OrgRecipe{Organization: org, Recipe: recipe, Version: version, Kind: resourcekind.Postgres,
 		Title: "Base de reportes", Description: "La RDS de reportes de la empresa", Engine: resourcespec.EngineExisting,
-		CreatedBy: user, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+		Spec: resourcespec.ExamplePostgres("vault"), CreatedBy: user, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
 }
 
 func TestPublishedAndTenantIsolation(t *testing.T) {
 	repo, _, ctx := setup(t)
 	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
 	want := orgRecipe(org, "org-reportes", 1)
-	// a spec round-trips through jsonb (the existing engine's arrives in a
-	// later cut; any typed spec is stored as is)
-	want.Spec = resourcespec.Spec{Postgres: &resourcespec.Postgres{Instances: 2, Major: 17}}
+	// the connection round-trips through jsonb
+	want.Spec = resourcespec.ExamplePostgres("aws-prod")
 	// stored Clean, as validated
 	want.Title = "  Base de reportes \n"
 	for _, o := range []catalog.OrgRecipe{orgRecipe(org, "org-reportes", 2), want,
@@ -45,7 +45,7 @@ func TestPublishedAndTenantIsolation(t *testing.T) {
 		t.Fatalf("order: %+v", got)
 	}
 	if g := got[1]; g.Organization != org || g.Kind != want.Kind || g.Title != "Base de reportes" || g.Description != want.Description ||
-		g.Engine != want.Engine || g.Spec.Postgres == nil || *g.Spec.Postgres != *want.Spec.Postgres || g.CreatedBy != user ||
+		g.Engine != want.Engine || !reflect.DeepEqual(g.Spec, want.Spec) || g.CreatedBy != user ||
 		!g.CreatedAt.Equal(want.CreatedAt) {
 		t.Fatalf("round trip: %+v", g)
 	}

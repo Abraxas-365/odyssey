@@ -32,8 +32,8 @@ const (
 	Redis Kind = "redis"
 	// Files is a volume the app mounts.
 	Files Kind = "files"
-	// ObjectStorage is an S3-compatible bucket. Declared, not available: no
-	// recipe fulfils it yet.
+	// ObjectStorage is an S3-compatible bucket. No built-in engine prepares
+	// it: only a bucket the company already has fulfils it.
 	ObjectStorage Kind = "object-storage"
 )
 
@@ -41,11 +41,35 @@ const (
 type Variable struct {
 	// Name, without the connection's prefix.
 	Name string
-	// Secret: a credential (its value lives only in the cluster).
+	// Secret: a credential (its value lives only in the cluster). A resource
+	// the company already has gives it only as a reference to a secret store,
+	// never as a value written in Odicea.
 	Secret bool
+	// Optional: a resource may leave it out (the app then does not get it):
+	// a bucket read with the pod's own identity has no keys.
+	Optional bool
+	// Derived: the agent builds it from the other variables (a connection
+	// URL from its pieces, escaped); nobody writes it.
+	Derived bool
+	// Format is what a value written for it must look like (FormatHost…;
+	// "" any short text).
+	Format string
+	// Together names a set of optional variables a resource gives all of
+	// or none of (a key and its secret): "" for none.
+	Together string
 	// Meaning in plain Spanish, for the catalog.
 	Meaning string
 }
+
+// Formats of a variable's value.
+const (
+	// FormatHost: a DNS name or IP address outside the cluster.
+	FormatHost = "host"
+	// FormatPort: a TCP port.
+	FormatPort = "port"
+	// FormatURL: an http(s) URL whose host is a FormatHost.
+	FormatURL = "url"
+)
 
 // Contract is what a kind promises the app, whatever recipe fulfils it.
 type Contract struct {
@@ -61,10 +85,14 @@ type Contract struct {
 	Mounted bool
 	// HoldsData: deleting it or fulfilling it with another recipe loses data.
 	HoldsData bool
-	// Available: this version can provision it. A declared contract that is
-	// not available is not a valid kind to ask for.
-	Available bool
-	// Unavailable is what to tell someone whose cluster cannot provision it.
+	// Builtin: the agent's built-in engine prepares it (a cluster lists it in
+	// its resource kinds when it can).
+	Builtin bool
+	// Existing: a resource the company already has can fulfil it (the
+	// existing engine writes its connection). A mounted kind cannot.
+	Existing bool
+	// Unavailable is what to tell someone whose cluster cannot provision it
+	// with its built-in engine.
 	Unavailable string
 	// Settings names the built-in engine's settings block the kind takes
 	// (pkg/resourcespec: "postgres"); "" takes none.
@@ -77,11 +105,11 @@ func (c Contract) The() string { return c.Article + " " + c.Noun }
 // registry is every contract, in the order the console lists them.
 var registry = []Contract{
 	{
-		Kind: Postgres, Noun: "base de datos", Article: "la", HoldsData: true, Available: true,
+		Kind: Postgres, Noun: "base de datos", Article: "la", HoldsData: true, Builtin: true, Existing: true,
 		Variables: []Variable{
-			{Name: "DATABASE_URL", Secret: true, Meaning: "la dirección completa de conexión, con usuario y contraseña"},
-			{Name: "PGHOST", Meaning: "el servidor"},
-			{Name: "PGPORT", Meaning: "el puerto"},
+			{Name: "DATABASE_URL", Secret: true, Derived: true, Meaning: "la dirección completa de conexión, con usuario y contraseña"},
+			{Name: "PGHOST", Format: FormatHost, Meaning: "el servidor"},
+			{Name: "PGPORT", Format: FormatPort, Meaning: "el puerto"},
 			{Name: "PGDATABASE", Meaning: "el nombre de la base"},
 			{Name: "PGUSER", Meaning: "el usuario"},
 			{Name: "PGPASSWORD", Secret: true, Meaning: "la contraseña"},
@@ -90,46 +118,44 @@ var registry = []Contract{
 		Settings:    "postgres",
 	},
 	{
-		Kind: Redis, Noun: "caché", Article: "la", Available: true,
+		Kind: Redis, Noun: "caché", Article: "la", Builtin: true, Existing: true,
 		Variables: []Variable{
 			{Name: "REDIS_URL", Secret: true, Meaning: "la dirección de conexión, con contraseña"},
 		},
 		Unavailable: "Este clúster no puede crear cachés. Pide a TI que actualice su agente y configure una clase de almacenamiento.",
 	},
 	{
-		Kind: Files, Noun: "espacio de archivos", Article: "el", Mounted: true, HoldsData: true, Available: true,
+		Kind: Files, Noun: "espacio de archivos", Article: "el", Mounted: true, HoldsData: true, Builtin: true,
 		Variables: []Variable{
 			{Name: "FILES_DIR", Meaning: "la carpeta donde la app guarda sus archivos"},
 		},
 		Unavailable: "Este clúster no puede crear espacios de archivos. Pide a TI que configure una clase de almacenamiento por defecto.",
 	},
 	{
-		Kind: ObjectStorage, Noun: "almacenamiento de objetos", Article: "el", HoldsData: true,
+		Kind: ObjectStorage, Noun: "almacenamiento de objetos", Article: "el", HoldsData: true, Existing: true,
 		Variables: []Variable{
 			{Name: "S3_BUCKET", Meaning: "el nombre del bucket"},
-			{Name: "S3_ENDPOINT", Meaning: "la dirección del servicio"},
+			{Name: "S3_ENDPOINT", Optional: true, Format: FormatURL, Meaning: "la dirección del servicio (vacía: la de AWS)"},
 			{Name: "S3_REGION", Meaning: "la región"},
-			{Name: "AWS_ACCESS_KEY_ID", Secret: true, Meaning: "la llave de acceso"},
-			{Name: "AWS_SECRET_ACCESS_KEY", Secret: true, Meaning: "el secreto de la llave"},
+			{Name: "AWS_ACCESS_KEY_ID", Secret: true, Optional: true, Together: "aws-key", Meaning: "la llave de acceso (vacía: la identidad de la app)"},
+			{Name: "AWS_SECRET_ACCESS_KEY", Secret: true, Optional: true, Together: "aws-key", Meaning: "el secreto de la llave"},
 		},
-		Unavailable: "Este clúster no puede crear almacenamiento de objetos. Pide a TI que lo habilite.",
+		Unavailable: "Odicea no crea almacenamiento de objetos: TI puede ofrecer uno que la empresa ya tenga.",
 	},
 }
 
-// Kinds are the available kinds, in the order the console lists them.
-var Kinds = available()
-
-func available() []Kind {
-	var out []Kind
-	for _, c := range registry {
-		if c.Available {
-			out = append(out, c.Kind)
-		}
+// Kinds are every kind, in the order the console lists them. Whether one
+// can be asked for depends on the organization's recipes (the catalog) and
+// on the cluster (its engines), never on this list.
+var Kinds = func() []Kind {
+	out := make([]Kind, len(registry))
+	for i, c := range registry {
+		out[i] = c.Kind
 	}
 	return out
-}
+}()
 
-// Contracts are every declared contract (available or not), in order.
+// Contracts are every contract, in order.
 func Contracts() []Contract { return slices.Clone(registry) }
 
 // Lookup is k's contract (false: no such kind is declared).
@@ -150,11 +176,23 @@ func Of(k Kind) Contract {
 	return Contract{Kind: k, Noun: "recurso", Article: "el", Unavailable: "Este clúster no puede crear este tipo de recurso. Pide a TI que lo revise."}
 }
 
-// Valid says whether k is a kind this version can provision.
-func (k Kind) Valid() bool { return slices.Contains(Kinds, k) }
+// Variable is the contract's variable named name (false: it has none).
+func (c Contract) Variable(name string) (Variable, bool) {
+	i := slices.IndexFunc(c.Variables, func(v Variable) bool { return v.Name == name })
+	if i < 0 {
+		return Variable{}, false
+	}
+	return c.Variables[i], true
+}
 
-// KindsLabel lists the available kinds for an error message: "postgres,
-// redis or files".
+// Valid says whether k is a declared kind.
+func (k Kind) Valid() bool {
+	_, ok := Lookup(k)
+	return ok
+}
+
+// KindsLabel lists the kinds for an error message: "postgres, redis, files
+// or object-storage".
 func KindsLabel() string {
 	names := make([]string, len(Kinds))
 	for i, k := range Kinds {

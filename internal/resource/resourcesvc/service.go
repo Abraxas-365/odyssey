@@ -595,7 +595,15 @@ func (s *Service) Stranded(ctx context.Context, org identity.OrganizationID, id 
 	}
 	out := []resource.Resource{}
 	for _, r := range rows {
-		if r.Status == resource.StatusDeleting || !resourcekind.Of(r.Kind).HoldsData {
+		if r.Status == resource.StatusDeleting {
+			continue
+		}
+		// a resource the company already has is never made again in the new
+		// tier: it counts even when its kind holds no data (the app would
+		// point somewhere else). Every organization recipe is one
+		// (OrgRecipe.Validate), and only those carry its prefix.
+		existing := strings.HasPrefix(r.Recipe, catalog.OrgPrefix)
+		if !existing && !resourcekind.Of(r.Kind).HoldsData {
 			continue // nothing to lose: it can be made again in the new tier
 		}
 		offered := slices.ContainsFunc(entries, func(e catalog.Entry) bool { return e.Recipe == r.Recipe && e.Offering.Offers(tier) })

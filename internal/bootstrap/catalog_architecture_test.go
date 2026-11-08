@@ -288,6 +288,87 @@ func TestOnlyTheCatalogReadsTheFactoryAlone(t *testing.T) {
 	report(t, factoryLookupViolations(sources(t, false)))
 }
 
+// resourcespecPkg describes how a resource is prepared, including the
+// connection of one the company already has (host, store, key).
+const resourcespecPkg = "github.com/Abraxas-365/odyssey/pkg/resourcespec"
+
+// eventSpecViolations: an event is the trail (and the webhooks); a recipe's
+// connection never goes in it, so no events.go imports resourcespec nor
+// declares a field of a type that carries a spec (a desired resource, a
+// recipe version), which needs no import from inside its own domain. An
+// event names the recipe@version, which is enough to read the rest.
+func eventSpecViolations(files []goFile) []string {
+	carriers := map[string]bool{"DesiredResource": true, "Desired": true, "RecipeVersion": true, "OrgRecipe": true, "Spec": true, "Existing": true}
+	var out []string
+	for _, f := range files {
+		if path.Base(f.rel) != "events.go" {
+			continue
+		}
+		for _, imp := range f.file.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == resourcespecPkg {
+				out = append(out, f.fset.Position(imp.Pos()).String()+
+					": events carry the recipe@version, never its spec (an existing connection would reach the trail)")
+			}
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			st, ok := n.(*ast.StructType)
+			if !ok {
+				return true
+			}
+			for _, field := range st.Fields.List {
+				t := field.Type
+				for {
+					if s, ok := t.(*ast.StarExpr); ok {
+						t = s.X
+						continue
+					}
+					if a, ok := t.(*ast.ArrayType); ok {
+						t = a.Elt
+						continue
+					}
+					break
+				}
+				name := ""
+				switch x := t.(type) {
+				case *ast.Ident:
+					name = x.Name
+				case *ast.SelectorExpr:
+					name = x.Sel.Name
+				}
+				if carriers[name] {
+					out = append(out, f.fset.Position(field.Pos()).String()+": an event field of type "+name+
+						" carries a spec; copy the fields the event needs")
+				}
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestEventsCarryNoResourceSpec(t *testing.T) {
+	report(t, eventSpecViolations(sources(t, false)))
+}
+
+func TestEventSpecRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		"widget/events.go": `package widget; import _ "` + resourcekindPkg + `"; type Made struct{ Recipe string; Version int }`,
+		"widget/widget.go": `package widget; import _ "` + resourcespecPkg + `"; type W struct{ D DesiredResource }`,
+	})
+	if v := eventSpecViolations(files); len(v) != 0 {
+		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))
+	}
+	files = parseFixtures(t, map[string]string{
+		"order/events.go": `package order; import _ "` + resourcespecPkg + `"`,
+		"fleet/events.go": `package fleet; type Applied struct{ R *DesiredResource; V []catalog.RecipeVersion }`,
+	})
+	expectViolations(t, eventSpecViolations(files),
+		"fleet/events.go: an event field of type DesiredResource carries a spec",
+		"fleet/events.go: an event field of type RecipeVersion carries a spec",
+		"order/events.go: events carry the recipe@version, never its spec")
+}
+
 func TestFactoryLookupRuleCatchesViolations(t *testing.T) {
 	files := parseFixtures(t, map[string]string{
 		"catalog/catalogsvc/s.go": `package catalogsvc; import "` + modulePath + `catalog"; var k = catalog.Factory()`,

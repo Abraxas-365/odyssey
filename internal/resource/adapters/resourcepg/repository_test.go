@@ -84,6 +84,30 @@ func TestRepository(t *testing.T) {
 	if err := repo.Create(ctx, unnamed); errType(err) != errx.TypeValidation {
 		t.Fatalf("no recipe: %v", err)
 	}
+	// a resource the company already has: no size, and then no storage_gi in
+	// params; a size of 0 with params.storage_gi, or a size without it, is
+	// refused; object storage is a kind (in a place of its own, out of the
+	// lists below)
+	envCompany := project.NewEnvironmentID()
+	company := mk(org, envCompany, "bucket", resourcekind.ObjectStorage)
+	company.Project = project.NewID()
+	company.Recipe, company.StorageGi, company.Params = "org-s3", 0, map[string]int{}
+	if err := repo.Create(ctx, company); err != nil {
+		t.Fatalf("existing without size: %v", err)
+	}
+	if got, err := repo.Find(ctx, org, envCompany, "bucket"); err != nil || got.StorageGi != 0 || len(got.Params) != 0 || got.Kind != resourcekind.ObjectStorage {
+		t.Fatalf("existing round trip %+v %v", got, err)
+	}
+	zeroInParams := company
+	zeroInParams.ID, zeroInParams.Name, zeroInParams.Params = resource.NewID(), "zero", map[string]int{"storage_gi": 0}
+	if err := repo.Create(ctx, zeroInParams); errType(err) != errx.TypeValidation {
+		t.Fatalf("size 0 in params: %v", err)
+	}
+	sizeWithout := mk(org, env, "nosize", resourcekind.Files)
+	sizeWithout.Params = map[string]int{}
+	if err := repo.Create(ctx, sizeWithout); errType(err) != errx.TypeValidation {
+		t.Fatalf("size without params: %v", err)
+	}
 
 	cache := mk(org, env, "cache", resourcekind.Redis)
 	if err := repo.Create(ctx, cache); err != nil {
@@ -148,8 +172,14 @@ func TestRepository(t *testing.T) {
 	if err := repo.Change(ctx, org, env, "db", map[string]int{"storage_gi": 3}, 3); errType(err) != errx.TypeNotFound {
 		t.Fatalf("shrink: %v", err)
 	}
-	if err := repo.Change(ctx, org, env, "db", map[string]int{"max_connections": 3}, 3); err == nil {
-		t.Fatal("params without storage_gi")
+	if err := repo.Change(ctx, org, env, "db", map[string]int{"max_connections": 3}, 3); errType(err) != errx.TypeNotFound {
+		t.Fatalf("a sized resource losing its size: %v", err)
+	}
+	if err := repo.Change(ctx, org, envCompany, "bucket", map[string]int{"storage_gi": 4}, 2); errType(err) != errx.TypeNotFound {
+		t.Fatalf("a resource with no size gaining one: %v", err)
+	}
+	if err := repo.Change(ctx, org, envCompany, "bucket", map[string]int{}, 2); err != nil {
+		t.Fatalf("a resource with no size stays without one: %v", err)
 	}
 	if err := repo.Change(ctx, other, env, "db", map[string]int{"storage_gi": 9}, 9); err != nil {
 		t.Fatal(err) // the other tenant's own "db"

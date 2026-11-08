@@ -2579,10 +2579,10 @@ export interface components {
         /** @description Goes before the variable names (`ANALYTICS` → `ANALYTICS_DATABASE_URL`); empty for none. */
         ResourcePrefix: string;
         /**
-         * @description `postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`).
+         * @description `postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`), `object-storage` (`S3_BUCKET`, `S3_REGION`, …; only ever a resource the company already has, offered through one of its organization's recipes).
          * @enum {string}
          */
-        ResourceKind: "postgres" | "redis" | "files";
+        ResourceKind: "postgres" | "redis" | "files" | "object-storage";
         EnvironmentUses: {
             access: {
                 /** @enum {string} */

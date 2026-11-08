@@ -54,10 +54,13 @@ func TestVariables(t *testing.T) {
 	if Kind("mysql").Valid() {
 		t.Error("mysql valid")
 	}
-	if ObjectStorage.Valid() {
-		t.Error("object-storage is declared, not available")
+	if !ObjectStorage.Valid() || Of(ObjectStorage).Builtin || !Of(ObjectStorage).Existing {
+		t.Error("object-storage is a kind only ever the company's own")
 	}
-	if KindsLabel() != "postgres, redis or files" {
+	if Of(Files).Existing {
+		t.Error("files are mounted: never one the company already has")
+	}
+	if KindsLabel() != "postgres, redis, files or object-storage" {
 		t.Errorf("label %q", KindsLabel())
 	}
 }
@@ -83,6 +86,32 @@ func TestContracts(t *testing.T) {
 		}
 		if c.Mounted && c.Variables[0].Secret {
 			t.Errorf("%s: a mounted kind's first variable is its path, not a secret", c.Kind)
+		}
+		if !c.Builtin && !c.Existing {
+			t.Errorf("%s: nothing can prepare it", c.Kind)
+		}
+		if c.Mounted && c.Existing {
+			t.Errorf("%s: a mounted kind is a volume of the cluster, never the company's own", c.Kind)
+		}
+		required := 0
+		for _, v := range c.Variables {
+			switch {
+			case v.Format != "" && v.Format != FormatHost && v.Format != FormatPort && v.Format != FormatURL:
+				t.Errorf("%s: %s has an unknown format %q", c.Kind, v.Name, v.Format)
+			case v.Derived && (v.Optional || v.Format != ""):
+				t.Errorf("%s: %s is derived: never written, so neither optional nor formatted", c.Kind, v.Name)
+			case v.Together != "" && !v.Optional:
+				t.Errorf("%s: %s goes with others: all or none, so optional", c.Kind, v.Name)
+			}
+			if v.Together != "" && !slices.ContainsFunc(c.Variables, func(o Variable) bool { return o.Name != v.Name && o.Together == v.Together }) {
+				t.Errorf("%s: %s goes together with nobody", c.Kind, v.Name)
+			}
+			if !v.Derived && !v.Optional {
+				required++
+			}
+		}
+		if required == 0 {
+			t.Errorf("%s: an existing connection would need no value at all", c.Kind)
 		}
 	}
 	if got := Of("nope"); got.The() != "el recurso" || got.Unavailable == "" {

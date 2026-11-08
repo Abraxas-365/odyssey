@@ -92,7 +92,7 @@ func (usage) Connections(context.Context, identity.OrganizationID, project.ID, p
 type cat struct{ resource.Catalog }
 
 var reportes = catalog.OrgRecipe{Organization: org, Recipe: "org-reportes", Version: 1, Kind: resourcekind.Postgres,
-	Title: "Reportes", Engine: resourcespec.EngineExisting, CreatedBy: user}
+	Title: "Reportes", Engine: resourcespec.EngineExisting, Spec: resourcespec.ExamplePostgres("vault"), CreatedBy: user}
 
 func (cat) Version(_ context.Context, o identity.OrganizationID, recipe string, version int) (catalog.RecipeVersion, bool, error) {
 	if o == org {

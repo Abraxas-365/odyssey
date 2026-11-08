@@ -122,7 +122,7 @@ fails for a missing field.
 | `env` | `name` (empty for `set_services`: it is about the whole app) |
 | `access` | `mode` (`team` · `organization` · `public`; only for `set_access`) |
 | `actor` | `id`, `permissions` (list) — those of the **authenticated principal** (deferred work: see "Who asks, when the work is deferred") |
-| `resource` | `kind` (`postgres` · `redis` · `files`); for `create_resource` / `change_resource` also what the catalog resolved: `recipe`, `recipe_version`, `engine`, `params` (map, every parameter, defaults filled in; for a change, the result) and `out_of_range` (the parameters outside the offering's pre-approved range) |
+| `resource` | `kind` (`postgres` · `redis` · `files` · `object-storage`); for `create_resource` / `change_resource` also what the catalog resolved: `recipe`, `recipe_version`, `engine` (`builtin` · `existing`), `params` (map, every parameter, defaults filled in; for a change, the result) and `out_of_range` (the parameters outside the offering's pre-approved range) |
 | `scan` | `known`, `checked`, `critical`, `high` |
 | `services` | list of `{name, kind, route, public}` — what the action brings (deploy, rollback, set_services) |
 | `changed` | list of service names that change against what the environment serves |

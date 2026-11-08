@@ -13,7 +13,7 @@ import (
 
 func published(org identity.OrganizationID, version int, title string) catalog.OrgRecipe {
 	return catalog.OrgRecipe{Organization: org, Recipe: "org-reportes", Version: version, Kind: resourcekind.Postgres,
-		Title: title, Engine: resourcespec.EngineExisting, CreatedBy: user, CreatedAt: time.Now().UTC()}
+		Title: title, Engine: resourcespec.EngineExisting, Spec: resourcespec.ExamplePostgres("vault"), CreatedBy: user, CreatedAt: time.Now().UTC()}
 }
 
 // A resource's pinned version is read through Version: the factory's and
@@ -28,7 +28,7 @@ func TestVersionKnowsTheOrganizationsOwnRecipes(t *testing.T) {
 	}
 	v, ok, err := svc.Version(ctx, org, "org-reportes", 1)
 	if err != nil || !ok || v.Title != "Reportes" || v.Engine != resourcespec.EngineExisting ||
-		len(v.Params) != 0 || len(v.Requires) != 1 || v.Requires[0] != resourcespec.Existing {
+		len(v.Params) != 0 || len(v.Requires) != 2 || v.Requires[0] != resourcespec.ConnectExisting || v.Requires[1] != resourcespec.SecretStore("vault") {
 		t.Fatalf("own v1: %+v %v %v", v, ok, err)
 	}
 	if v, ok, _ := svc.Version(ctx, org, catalog.PostgresProduction, 1); !ok || v.Recipe != catalog.PostgresProduction {

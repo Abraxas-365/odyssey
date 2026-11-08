@@ -47,50 +47,88 @@ func ResourcesUnavailableMessage(kind resourcekind.Kind) string {
 	return resourcekind.Of(kind).Unavailable
 }
 
-// CanProvision reports whether the cluster lists kind in ResourceKinds.
+// CanProvision reports whether the cluster lists kind in ResourceKinds:
+// its built-in engine prepares it.
 func (c Capabilities) CanProvision(kind resourcekind.Kind) bool {
 	return slices.Contains(c.ResourceKinds, string(kind))
 }
 
+// CanConnect reports whether the cluster can wire an app to a resource of
+// kind: its built-in engine prepares it, or the kind can be one the company
+// already has and the agent writes such connections (the resource itself
+// is checked by CheckResource, with its recipe's stores).
+func (c Capabilities) CanConnect(kind resourcekind.Kind) bool {
+	return c.CanProvision(kind) || (resourcekind.Of(kind).Existing && slices.Contains(c.ResourceCapabilities, resourcespec.ConnectExisting))
+}
+
 // Resources are every resource capability the cluster announces: the
 // built-in engine of each kind it lists (resourcespec.Builtin, what an agent
-// older than the catalog means by listing a kind) and its
-// ResourceCapabilities, sorted and without repeats.
+// older than the catalog means by listing a kind), its ResourceCapabilities
+// and the secret stores it reads from (resourcespec.SecretStore), sorted
+// and without repeats.
 func (c Capabilities) Resources() []string {
-	out := make([]string, 0, len(c.ResourceKinds)+len(c.ResourceCapabilities))
+	out := make([]string, 0, len(c.ResourceKinds)+len(c.ResourceCapabilities)+len(c.SecretStores))
 	for _, k := range c.ResourceKinds {
 		out = append(out, resourcespec.Builtin(resourcekind.Kind(k)))
 	}
 	out = append(out, c.ResourceCapabilities...)
+	for _, s := range c.SecretStores {
+		out = append(out, resourcespec.SecretStore(s))
+	}
 	slices.Sort(out)
 	return slices.Compact(out)
 }
 
 // CheckResource is ApplyResource's guard (and a move's, for every resource
-// of the environment): the cluster must provision the kind and honour
-// everything the spec requires. A missing kind is CodeResourcesUnavailable
-// as always; a missing capability is CodeResourcesUnsupported, naming it.
+// of the environment): the cluster must honour everything the spec
+// requires. A built-in resource of a kind the cluster does not list is
+// CodeResourcesUnavailable as always; any other missing capability is
+// CodeResourcesUnsupported, naming it. A resource the company already has
+// needs no built-in engine: only the existing engine and its stores.
 func (c Capabilities) CheckResource(kind resourcekind.Kind, spec resourcespec.Spec) error {
-	if !c.CanProvision(kind) {
+	if spec.Existing == nil && !c.CanProvision(kind) {
 		return errx.Business(ResourcesUnavailableMessage(kind)).WithCode(CodeResourcesUnavailable).WithDetail("kind", string(kind))
 	}
-	if missing := resourcespec.Missing(spec.Requires(kind), c.Resources()); len(missing) > 0 {
-		return errx.Business("El clúster de este entorno no puede preparar "+resourcekind.Of(kind).The()+
-			" como lo pide su receta: su agente necesita una actualización ("+strings.Join(missing, ", ")+").").
-			WithCode(CodeResourcesUnsupported).WithDetail("kind", string(kind)).WithDetail("missing", strings.Join(missing, ","))
+	missing := resourcespec.Missing(spec.Requires(kind), c.Resources())
+	if len(missing) == 0 {
+		return nil
 	}
-	return nil
+	msg := "El clúster de este entorno no puede preparar " + resourcekind.Of(kind).The() +
+		" como lo pide su receta: su agente necesita una actualización (" + strings.Join(missing, ", ") + ")."
+	if spec.Existing != nil {
+		msg = ExistingUnsupportedMessage(kind, missing)
+	}
+	return errx.Business(msg).WithCode(CodeResourcesUnsupported).WithDetail("kind", string(kind)).WithDetail("missing", strings.Join(missing, ","))
+}
+
+// ExistingUnsupportedMessage is why a cluster cannot connect a resource the
+// company already has: its agent does not write such connections (or the
+// cluster has no External Secrets), or it lost a secret store the recipe
+// reads from. Fixed phrases: the store's name is IT's, the rest is ours.
+func ExistingUnsupportedMessage(kind resourcekind.Kind, missing []string) string {
+	if slices.Contains(missing, resourcespec.ConnectExisting) {
+		return "El clúster de este entorno no puede conectar " + resourcekind.Of(kind).The() +
+			" de la empresa: necesita External Secrets y un agente actualizado. Pide a TI que lo revise."
+	}
+	var stores []string
+	for _, m := range missing {
+		if s, ok := strings.CutPrefix(m, resourcespec.SecretStore("")); ok {
+			stores = append(stores, "«"+s+"»")
+		}
+	}
+	return "El clúster de este entorno no tiene el almacén de secretos " + strings.Join(stores, ", ") +
+		" de donde se leen las credenciales de " + resourcekind.Of(kind).The() + ". Pide a TI que lo revise."
 }
 
 // CodeResourcesUnsupported: the cluster provisions the kind but not as the
 // resource's recipe asks (its agent lacks a capability the spec requires).
 const CodeResourcesUnsupported = "RESOURCES_UNSUPPORTED"
 
-// CheckResources is Apply's guard: a cluster that cannot provision a kind
-// must not get an app (or a resource) that waits for it.
+// CheckResources is Apply's guard: a cluster that cannot provision or
+// connect a kind must not get an app that waits for it.
 func (c Capabilities) CheckResources(refs []ResourceRef) error {
 	for _, r := range refs {
-		if !c.CanProvision(r.Kind) {
+		if !c.CanConnect(r.Kind) {
 			return errx.Business(ResourcesUnavailableMessage(r.Kind)).WithCode(CodeResourcesUnavailable).WithDetail("kind", string(r.Kind))
 		}
 	}
@@ -110,7 +148,8 @@ type DesiredResource struct {
 	// Generation grows with every change; an older one never replaces a
 	// newer one, here or in the cluster.
 	Generation int64 `json:"generation" db:"generation"`
-	// StorageGi is the volume's size; it only grows.
+	// StorageGi is the volume's size; it only grows. 0: a resource the
+	// company already has (Spec.Existing), which has no size.
 	StorageGi int `json:"storage_gi" db:"storage_gi"`
 	// Recipe is the catalog recipe@version that resolved it ("" before the
 	// catalog), shown in the cluster; the agent acts on Spec.
@@ -137,7 +176,10 @@ func (r DesiredResource) Validate() error {
 		return errx.Validation("resource kind must be " + resourcekind.KindsLabel())
 	case r.Generation < 1:
 		return errx.Validation("resource generation must be positive")
-	case r.StorageGi < resourcekind.MinStorageGi || r.StorageGi > resourcekind.MaxStorageGi:
+	case r.Spec.Existing != nil && r.StorageGi != 0:
+		return errx.Validation("a resource the company already has has no size")
+	case r.Spec.Existing == nil && !r.Deleted && (r.StorageGi < resourcekind.MinStorageGi || r.StorageGi > resourcekind.MaxStorageGi),
+		r.StorageGi < 0 || r.StorageGi > resourcekind.MaxStorageGi:
 		return errx.Validation(fmt.Sprintf("resource size is between %dGi and %dGi", resourcekind.MinStorageGi, resourcekind.MaxStorageGi))
 	case len(r.Recipe) > MaxRecipeRef || text.HasForbiddenControl(r.Recipe):
 		return errx.Validation("resource recipe is too long or has control characters")

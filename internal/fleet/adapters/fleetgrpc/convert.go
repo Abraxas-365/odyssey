@@ -180,14 +180,19 @@ func buildLogFromProto(l *fleetv1.BuildLog) (fleet.BuildLog, error) {
 func resourceToProto(d fleet.DesiredResource) *fleetv1.ControlMessage {
 	out := &fleetv1.Resource{
 		OrganizationId: d.Organization.String(), ProjectId: d.Project.String(), EnvironmentId: d.Environment.String(),
-		Name: d.Name, Kind: string(d.Kind), Generation: d.Generation, Storage: resourcekind.Storage(d.StorageGi), Deleted: d.Deleted,
+		Name: d.Name, Kind: string(d.Kind), Generation: d.Generation, Deleted: d.Deleted,
 		Recipe: d.Recipe,
 	}
+	if d.StorageGi > 0 { // a resource the company already has has no size
+		out.Storage = resourcekind.Storage(d.StorageGi)
+	}
 	// A basic resource carries no spec: an agent older than the catalog
-	// reads exactly what it always did.
-	if !d.Spec.IsZero() {
+	// reads exactly what it always did. A resource the company already has
+	// is not carried until the proto has its arm (stage 2, cut 3); no agent
+	// announces the existing engine before then, so CheckResource refuses it
+	// first.
+	if p := d.Spec.Postgres; p != nil && !d.Spec.IsZero() {
 		out.SpecSchemaVersion = resourcespec.SchemaVersion
-		p := d.Spec.Postgres
 		out.Spec = &fleetv1.Resource_BuiltinPostgres{BuiltinPostgres: &fleetv1.BuiltinPostgres{
 			Instances: int32(p.Instances), Major: int32(p.Major), Cpu: p.CPU, Memory: p.Memory,
 		}}

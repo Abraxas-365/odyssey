@@ -5,7 +5,7 @@ a hardcoded list. The catalog has four pieces with four owners:
 
 | Piece | Owner | Mutable? | Where |
 |---|---|---|---|
-| **Type** (`postgres`, `redis`, `files`) | Odicea | with the binary | `pkg/resourcekind` (the contract: variables, noun, settings) |
+| **Type** (`postgres`, `redis`, `files`, `object-storage`) | Odicea | with the binary | `pkg/resourcekind` (the contract: variables, noun, settings; `Builtin`: an engine of Odicea prepares it; `Existing`: it can be one the company already has) |
 | **Recipe version** (`postgres-produccion@1`) | Odicea | **never** once released | `internal/catalog/recipes.go` |
 | **Offering** (of a recipe, per organization) | IT | yes (`PUT …/offering`) | table `catalog.offerings` |
 | **Resource** (pinned `recipe@version` + params) | the app's team | only its mutable params | table `resource.resources` |
@@ -42,9 +42,37 @@ as the factory's: a published version never changes (the table only takes
 inserts; triggers refuse updates, deletes and truncation) and a new connection
 is a new version. Their ids start with `org-`, which no factory recipe does
 (`TestFactoryVersionsAreSound`), so a later Odicea release never takes one.
-They have no parameters and no factory offering. Stage 2 lands in cuts: this
-one stores and reads them (the catalog lists one, inactive); publishing them
-(API, permission), offering them and the agent's `existing` engine come next.
+They have no parameters and no factory offering. Stage 2 lands in cuts: so
+far they are stored and read (the catalog lists one, inactive) and their
+connection is validated; publishing them (API, permission), offering them and
+the agent's `existing` engine come next.
+
+**The connection** (`resourcespec.Existing`) lists where each variable of the
+type's contract comes from: a value written in the recipe, or a reference
+`{store, key, property}` to a `ClusterSecretStore` (External Secrets). A
+credential (a secret variable) is only ever a reference, so it never passes
+through Odicea; a derived variable (`DATABASE_URL`) is never written, the agent
+builds it from the pieces; optional ones (`S3_ENDPOINT`, the AWS keys) may be
+left out, and a key goes with its secret (both or neither). A written host may
+be a private address or an internal name, but never loopback, link-local (the
+cloud's metadata service), a single label (the pod's search domains would make
+it a Service), a number some resolvers read as an address, or a name under
+`*.svc`, `*.cluster.local` or `*.localhost`. `files`
+can never be one (it is a volume of the cluster); `object-storage` is only
+ever one (no engine of Odicea makes it).
+
+**Capabilities per engine.** A built-in resource needs the kind's engine in
+the cluster (`builtin:<kind>`); one the company already has needs
+`existing` (an agent that writes such connections, with External Secrets)
+and `secretstore:<name>` for each store it reads, derived from the stores
+the cluster reports, never the kind's built-in engine: a cluster without
+CloudNativePG can connect the company's database. A store the cluster later
+loses leaves the resource `failed`, naming the store. Such a resource has no
+size: `storage_gi` is 0 and `params` has no `storage_gi` (CHECKs in
+`resource.resources` and `fleet.desired_resources`). A tier change counts it
+as stranded whenever its recipe is not offered in the new tier, even if its
+kind holds no data. No event carries a recipe's spec (only `recipe@version`);
+an architecture test keeps `resourcespec` out of every `events.go`.
 
 Because of them, a resource's pinned version is read through
 `catalog.Queries.Version(org, recipe, version)` (the factory's and the

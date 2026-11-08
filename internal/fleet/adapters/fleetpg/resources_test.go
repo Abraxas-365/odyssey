@@ -206,6 +206,30 @@ func TestDesiredResourceSpec(t *testing.T) {
 	if list, _ := repo.ListEnvironmentResources(ctx, org, theirs.ID, environment); len(list) != 0 {
 		t.Fatalf("another cluster lists %v", list)
 	}
+
+	// a resource the company already has: no size, its connection kept whole;
+	// a size with it, or none without it, is refused by Postgres too
+	bucket := fleet.DesiredResource{Organization: org, Project: proj, Environment: environment, Cluster: c.ID, Name: "reportes",
+		Kind: resourcekind.Postgres, Generation: 1, Recipe: "org-reportes@1", Spec: resourcespec.ExamplePostgres("vault")}
+	if _, err := repo.PutResource(ctx, bucket); err != nil {
+		t.Fatalf("existing: %v", err)
+	}
+	if got, err := repo.FindResource(ctx, org, c.ID, environment, "reportes"); err != nil || got.StorageGi != 0 || !reflect.DeepEqual(got.Spec, bucket.Spec) {
+		t.Fatalf("existing round trip %+v %v", got, err)
+	}
+	for name, sql := range map[string]string{
+		"existing with size": `UPDATE fleet.desired_resources SET storage_gi = 5 WHERE name = 'reportes'`,
+		"builtin without":    `UPDATE fleet.desired_resources SET storage_gi = 0 WHERE name = 'db'`,
+		"unknown kind":       `UPDATE fleet.desired_resources SET kind = 'queue' WHERE name = 'db'`,
+		"existing files":     `UPDATE fleet.desired_resources SET kind = 'files' WHERE name = 'reportes'`,
+	} {
+		if _, err := e.db.ExecContext(ctx, sql); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := e.db.ExecContext(ctx, `UPDATE fleet.desired_resources SET kind = 'object-storage' WHERE name = 'reportes'`); err != nil {
+		t.Errorf("object-storage refused: %v", err)
+	}
 }
 
 // A full report lists every resource of the cluster: the status of one it

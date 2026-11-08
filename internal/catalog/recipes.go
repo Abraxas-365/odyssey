@@ -115,7 +115,7 @@ func (k Known) Latest() []RecipeVersion {
 // parameters and no factory offering: IT offers it after publishing.
 func (o OrgRecipe) RecipeVersion() RecipeVersion {
 	return RecipeVersion{Recipe: o.Recipe, Version: o.Version, Kind: o.Kind, Title: o.Title, Description: o.Description,
-		Engine: o.Engine, Params: []Param{}, Spec: o.Spec, Requires: resourcespec.Requires(o.Engine, o.Kind, o.Spec)}
+		Engine: o.Engine, Params: []Param{}, Spec: o.Spec, Requires: o.Spec.Requires(o.Kind)}
 }
 
 // BasicRecipe is the recipe a resource created before the catalog is

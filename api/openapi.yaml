@@ -4019,8 +4019,8 @@ components:
       description: Goes before the variable names (`ANALYTICS` → `ANALYTICS_DATABASE_URL`); empty for none.
     ResourceKind:
       type: string
-      enum: [postgres, redis, files]
-      description: "`postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`)."
+      enum: [postgres, redis, files, object-storage]
+      description: "`postgres` (variables `DATABASE_URL`, `PGHOST`, …), `redis` (`REDIS_URL`), `files` (`FILES_DIR`), `object-storage` (`S3_BUCKET`, `S3_REGION`, …; only ever a resource the company already has, offered through one of its organization's recipes)."
     EnvironmentUses:
       type: object
       additionalProperties: false

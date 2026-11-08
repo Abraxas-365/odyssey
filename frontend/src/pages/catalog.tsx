@@ -79,7 +79,7 @@ function Catalog() {
   )
 }
 
-const plural: Record<ResourceKind, string> = { postgres: 'Bases de datos', redis: 'Cachés', files: 'Archivos' }
+const plural: Record<ResourceKind, string> = { postgres: 'Bases de datos', redis: 'Cachés', files: 'Archivos', 'object-storage': 'Almacenamiento de objetos' }
 
 /** "Sandbox · Interna" in factory order. */
 const tierList = (ts: readonly ProjectTier[]) => tierOptions.filter(o => ts.includes(o.value)).map(o => o.title).join(' · ')

@@ -2,6 +2,7 @@ package resourcesvc
 
 import (
 	"context"
+	"slices"
 
 	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -35,6 +36,11 @@ func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id p
 	}
 	out := resource.Offered{Tier: p.Tier, Recipes: []resource.Offer{}, Unavailable: []resource.UnavailableKind{}}
 	for _, k := range resourcekind.Kinds {
+		// a kind no recipe of the catalog prepares (object storage until IT
+		// publishes one) is not something to ask IT for
+		if !slices.ContainsFunc(entries, func(e catalog.Entry) bool { return e.Kind == k }) {
+			continue
+		}
 		var offers []resource.Offer
 		reason := ""
 		// the default Resolve picks for this asker (a team's over everyone's;

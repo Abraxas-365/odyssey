@@ -134,18 +134,18 @@ func (r *Repository) Count(ctx context.Context, organization identity.Organizati
 }
 
 // Change stores params whole; storage_gi follows params.storage_gi (the
-// table's CHECK keeps them equal) and never goes down.
+// table's CHECK keeps them equal; 0 without it: a resource with no size).
+// It never goes down, and a resource never gains or loses a size (a change
+// keeps its recipe@version): like shrinking, that matches no row.
 func (r *Repository) Change(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, params map[string]int, generation int64) error {
-	size, ok := params[catalog.ParamStorage]
-	if !ok {
-		return fmt.Errorf("resource %s: params without %s", name, catalog.ParamStorage)
-	}
+	size := params[catalog.ParamStorage]
 	b, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("resource %s params: %w", name, err)
 	}
 	return r.update(ctx, `UPDATE resource.resources SET storage_gi = $4, params = $5, generation = $6, updated_at = now()
-		WHERE organization_id = $1 AND environment_id = $2 AND name = $3 AND status = 'active' AND storage_gi <= $4`,
+		WHERE organization_id = $1 AND environment_id = $2 AND name = $3 AND status = 'active'
+		AND storage_gi <= $4 AND (storage_gi = 0) = ($4 = 0)`,
 		organization, environment, name, size, b, generation)
 }
 

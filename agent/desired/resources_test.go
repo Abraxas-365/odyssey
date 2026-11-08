@@ -96,8 +96,12 @@ func TestApplyResourceRefusesWhatItCannotName(t *testing.T) {
 		"kind":       func(r *fleetv1.Resource) { r.Kind = "mongo" },
 		"name":       func(r *fleetv1.Resource) { r.Name = "Bad_Name" },
 		"storage":    func(r *fleetv1.Resource) { r.Storage = "lots" },
-		"env":        func(r *fleetv1.Resource) { r.EnvironmentId = "../x" },
-		"generation": func(r *fleetv1.Resource) { r.Generation = 0 },
+		"no storage": func(r *fleetv1.Resource) { r.Storage = "" },
+		// object storage has no engine of its own: only a connection of the
+		// company's, which this proto cannot carry yet
+		"object storage": func(r *fleetv1.Resource) { r.Kind = "object-storage" },
+		"env":            func(r *fleetv1.Resource) { r.EnvironmentId = "../x" },
+		"generation":     func(r *fleetv1.Resource) { r.Generation = 0 },
 	} {
 		r := res(1)
 		mut(r)

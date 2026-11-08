@@ -69,6 +69,9 @@ func TestBasicRecipesKeepTodaysBehaviour(t *testing.T) {
 	svc, _, _ := setup()
 	ctx, org := context.Background(), identity.NewOrganizationID()
 	for _, k := range resourcekind.Kinds {
+		if !resourcekind.Of(k).Builtin {
+			continue
+		}
 		for _, tier := range []project.Tier{project.TierSandbox, project.TierInternal} {
 			r, err := svc.Resolve(ctx, org, catalog.Request{Kind: k, Tier: tier, Capabilities: old,
 				Params: map[string]int{catalog.ParamStorage: resourcekind.MaxStorageGi}})

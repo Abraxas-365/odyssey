@@ -163,7 +163,7 @@ func (o OrgRecipe) Validate() error {
 	if _, known := resourcekind.Lookup(o.Kind); !known {
 		return errx.InvalidField("kind", "no kind "+string(o.Kind))
 	}
-	if o.Engine != resourcespec.EngineExisting {
+	if o.Engine != resourcespec.EngineExisting || o.Spec.Existing == nil {
 		return errx.InvalidField("engine", "an organization publishes only resources it already has (engine "+resourcespec.EngineExisting+")")
 	}
 	if err := text.Required("title", o.Title, MaxTitle); err != nil {
@@ -426,7 +426,7 @@ type Entry struct {
 // offered in the tier (CodeUnavailable), offered only to other teams
 // (NotForTeams), or a cluster that cannot honour it (ClusterCannot).
 func (e Entry) Usable(tier project.Tier, caps, teams []string) error {
-	if c, known := resourcekind.Lookup(e.Kind); !known || !c.Available || !e.Offering.Offers(tier) {
+	if _, known := resourcekind.Lookup(e.Kind); !known || !e.Offering.Offers(tier) {
 		return Unavailable(e.Kind, tier)
 	}
 	if !e.Offering.For(teams) {
@@ -583,14 +583,18 @@ func TeamsUnavailable() error {
 // ClusterCannot is the 422 for a recipe the environment's cluster cannot
 // honour. A cluster lacking the kind's built-in engine cannot provision the
 // kind at all: that is resourcekind.CodeUnavailable with the contract's own
-// words (what to install), as the fleet would say.
+// words (what to install), as the fleet would say. A resource the company
+// already has needs the existing engine and the stores it reads from.
 func ClusterCannot(v RecipeVersion, missing []string) error {
 	if slices.Contains(missing, resourcespec.Builtin(v.Kind)) {
 		return errx.Business(resourcekind.Of(v.Kind).Unavailable).WithCode(resourcekind.CodeUnavailable).
 			WithDetail("kind", string(v.Kind))
 	}
-	return errx.Business("El clúster de esta app todavía no puede preparar «"+v.Title+"». Pide a TI que actualice su agente.").
-		WithCode(CodeUnavailable).WithDetail("recipe", v.Ref()).WithDetail("missing", strings.Join(missing, ","))
+	msg := "El clúster de esta app todavía no puede preparar «" + v.Title + "». Pide a TI que actualice su agente."
+	if v.Spec.Existing != nil {
+		msg = "El clúster de esta app no puede conectarse a «" + v.Title + "»: le falta External Secrets o el almacén de secretos de donde se leen sus credenciales. Pide a TI que lo revise."
+	}
+	return errx.Business(msg).WithCode(CodeUnavailable).WithDetail("recipe", v.Ref()).WithDetail("missing", strings.Join(missing, ","))
 }
 
 // RuleCatalog names the catalog's own reason to ask IT (Floor): it is not a

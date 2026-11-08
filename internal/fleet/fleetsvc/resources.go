@@ -77,7 +77,8 @@ func (s *Service) ResourceStatus(ctx context.Context, organization identity.Orga
 	return st, nil
 }
 
-// ResourceKinds answers fleet.Resources.ResourceKinds without placing anything.
+// ResourceKinds answers fleet.Resources.ResourceKinds without placing
+// anything: the kinds the cluster can prepare or connect.
 func (s *Service) ResourceKinds(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resourcekind.Kind, error) {
 	c, ok, err := s.resourceCluster(ctx, organization, environment)
 	out := []resourcekind.Kind{}
@@ -85,7 +86,7 @@ func (s *Service) ResourceKinds(ctx context.Context, organization identity.Organ
 		return out, err
 	}
 	for _, k := range resourcekind.Kinds {
-		if c.Agent.Capabilities.CanProvision(k) {
+		if c.Agent.Capabilities.CanConnect(k) {
 			out = append(out, k)
 		}
 	}

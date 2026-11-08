@@ -423,7 +423,8 @@ never appear in the API: `variables` are the names the app reads.
 | `DELETE` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` |
 
 The resource: `{id, organization_id, project_id, environment_id, name, kind
-(postgres\|redis\|files), storage_gi, recipe, recipe_version, params,
+(postgres\|redis\|files\|object-storage), storage_gi (0: a resource the company
+already has, which has no size; then params has no storage_gi), recipe, recipe_version, params,
 generation, status (active\|deleting),
 created_by, created_at, updated_at, phase (provisioning\|ready\|failed\|deleted),
 message, connected, prefix, services[], variables[]}`. `phase` and `message` are what the
