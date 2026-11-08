@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Callout, ErrorNotice } from '@/components/odyssey'
 import { useCatalog } from '@/lib/catalog'
 import { useEvaluatePolicy } from '@/lib/policy'
 import type { PolicyAction, PolicyEvaluation, ProjectTier, ResourceKind } from '@/lib/types'
-import { accessModeOptions, actionOptions, catalogNote, decisionText, defaultScenario, effectInfo, onRecipe, onResource, resourceKindOptions, scanOptions, scenarioInput, scenarioRecipe, scenarioRecipes, tierOptions, type Candidate, type Scenario, type ScanScenario } from './rules'
+import { accessModeOptions, actionOptions, catalogNote, decisionText, defaultScenario, effectInfo, onRecipe, onResource, resourceKindOptions, scanOptions, scenarioInput, scenarioProblem, scenarioRecipe, scenarioRecipes, tierOptions, type Candidate, type Scenario, type ScanScenario } from './rules'
 
 const labelOf = (opts: { value: string; label?: string; title?: string }[]) => Object.fromEntries(opts.map(o => [o.value, o.label ?? o.title ?? o.value]))
 
@@ -40,6 +40,7 @@ export function TryRules({ outcome, onResult, candidate, disabled, initial = def
   const scans = labelOf(scanOptions)
   const changing = scenario.action === 'change_resource'
   const choices = scenarioRecipes(entries, scenario)
+  const problem = scenarioProblem(scenario, recipe)
   const fallback = changing ? 'La más probable' : 'La de por defecto'
   const recipes: Record<string, string> = { '': fallback, ...Object.fromEntries(choices.map(e => [e.recipe, e.offering.active ? e.title : `${e.title} (ya no se ofrece)`])) }
 
@@ -93,11 +94,19 @@ export function TryRules({ outcome, onResult, candidate, disabled, initial = def
               {!recipe && catalog.data && <FieldDescription>No hay una opción por defecto para este nivel: se prueba sin receta.</FieldDescription>}
             </Field>
             {recipe?.params.some(p => p.name === 'storage_gi') && (
-              <Field>
-                <FieldLabel htmlFor="try-size">{changing ? 'Tamaño nuevo (GB)' : 'Tamaño (GB)'}</FieldLabel>
-                <Input id="try-size" type="number" min={1} value={Number.isNaN(scenario.size) ? '' : scenario.size} onChange={e => set('size', e.target.valueAsNumber)} />
-                {changing && <FieldDescription>Se prueba como si cambiara a este tamaño (solo puede crecer, dentro del límite de TI).</FieldDescription>}
-              </Field>
+              <>
+                {changing && (
+                  <Field>
+                    <FieldLabel htmlFor="try-current">Tamaño actual (GB)</FieldLabel>
+                    <Input id="try-current" type="number" min={1} value={Number.isNaN(scenario.current) ? '' : scenario.current} onChange={e => set('current', e.target.valueAsNumber)} />
+                  </Field>
+                )}
+                <Field data-invalid={!!problem || undefined}>
+                  <FieldLabel htmlFor="try-size">{changing ? 'Tamaño nuevo (GB)' : 'Tamaño (GB)'}</FieldLabel>
+                  <Input id="try-size" type="number" min={1} value={Number.isNaN(scenario.size) ? '' : scenario.size} onChange={e => set('size', e.target.valueAsNumber)} />
+                  {problem && <FieldError>{problem}</FieldError>}
+                </Field>
+              </>
             )}
           </>
         )}
@@ -120,7 +129,7 @@ export function TryRules({ outcome, onResult, candidate, disabled, initial = def
         )}
       </FieldGroup>
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" disabled={evaluate.isPending || disabled} onClick={run}>
+        <Button type="button" variant="outline" size="sm" disabled={evaluate.isPending || disabled || !!problem} onClick={run}>
           <Play />
           {evaluate.isPending ? 'Probando…' : 'Probar'}
         </Button>

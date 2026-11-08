@@ -141,11 +141,22 @@ would resolve (the one picked among those offered in the tier, else the
 tier's default) and `change_resource` with any recipe of the kind, offered or
 not (a change uses the resource's pinned version, whatever the offering), and
 a size: `resource.recipe`, `recipe_version`, `engine`, `params` and
-`out_of_range` computed from the offering. A change is tried as if growing to
-that size from nothing (mutability and the current value are not modelled).
+`out_of_range` computed from the offering. A change also asks the size the
+resource has now and, like `ResolveChange`, judges only the size: what the
+catalog refuses before any rule (the same size, shrinking what only grows,
+changing what is immutable, beyond the limits) is said under the field and
+not tried. The other parameters go at their defaults (the dry run does not
+know a real resource's), so a rule reading them sees those.
 The dry run evaluates IT's rules only, so when the size is outside the
 pre-approved range the console adds that the catalog's floor
 (`catalog:preapproved`) asks for approval on its own.
+
+"Cambiar tamaño" reads the resource's recipe offering from `GET
+/catalog/recipes` (the limits and pre-approved range hold even when IT
+withdrew it): beyond the limits it is refused in the form, beyond the
+pre-approved range the button says "Pedir aprobación" (the PATCH answers 202).
+It waits for the catalog before sending; a resource pinned to another version
+than the offered one (its parameter may differ) is left to the server.
 
 ## Stage 1a cuts
 

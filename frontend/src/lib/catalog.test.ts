@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CatalogOfferParam, EnvironmentCatalog } from './types'
-import { defaultOf, defaultTakenBy, markOf, offeredKinds, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, offersOf, paramProblem, startingOffer } from './catalog'
+import { defaultOf, defaultTakenBy, growthOf, markOf, offeredKinds, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, offersOf, paramProblem, startingOffer } from './catalog'
 import { catalogEntry as entry } from './catalog.fixture'
 
 const size = { name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'grows' as const }
@@ -97,5 +97,29 @@ describe('what a builder sees when creating', () => {
     expect(startingOffer(c, 'postgres')?.recipe).toBe('postgres-basico')
     expect(startingOffer(c, 'redis')?.recipe).toBe('redis-basico')
     expect(startingOffer(c, 'files' as never)).toBeUndefined()
+  })
+
+  it('grows a resource within its recipe offering, saying when it asks IT', () => {
+    const g = growthOf(entry({}, { active: false, limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 10 } } }), 1)!
+    expect(g.max).toBe(50)
+    expect(g.problem(20, 8)).toBeUndefined()
+    expect(g.problem(8, 8)).toBeUndefined()
+    expect(g.problem(4, 8)).toBe('Solo puede crecer: ahora tiene 8 GB.')
+    expect(g.problem(60, 8)).toBe('Tu empresa permite hasta 50 GB.')
+    expect(g.problem(Number.NaN, 8)).toBe('Escribe un tamaño en números enteros.')
+    expect(g.problem(9.5, 8)).toBe('Escribe un tamaño en números enteros.')
+    expect(g.asks(10)).toBe(false)
+    expect(g.asks(11)).toBe(true)
+    expect(g.hint).toBe('Al instante hasta 10 GB; más, con aprobación de TI.')
+    expect(growthOf(entry(), 1)?.hint).toBe('')
+    // a floor above 1 is worded as a range
+    expect(growthOf(entry({}, { limits: { storage_gi: { min: 5, max: 50 } } }), 1)?.problem(60, 8)).toBe('Tu empresa permite entre 5 y 50 GB.')
+    // an immutable size cannot change at all
+    const fixed = entry({ params: [{ name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'immutable' }] })
+    expect(growthOf(fixed, 1)?.problem(9, 8)).toBe('Tamaño: no se puede cambiar después de crear el recurso.')
+    // nothing to say: no entry, no size, or a resource pinned to another version
+    expect(growthOf(undefined, 1)).toBeUndefined()
+    expect(growthOf(entry({ params: [] }), 1)).toBeUndefined()
+    expect(growthOf(entry({ version: 2 }), 1)).toBeUndefined()
   })
 })

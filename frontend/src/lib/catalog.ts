@@ -184,6 +184,47 @@ export function paramProblem(p: CatalogOfferParam, v: number): string | undefine
   return undefined
 }
 
+/** How a resource's size can grow under its recipe's offering (`growthOf`). */
+export interface Growth {
+  max: number
+  /** Why `size` cannot be asked for, coming from `current` (undefined: it can). */
+  problem: (size: number, current: number) => string | undefined
+  /** Whether `size` is outside what IT lets grow at once (the catalog asks IT). */
+  asks: (size: number) => boolean
+  /** Added to the field's hint: up to where it grows at once, when IT narrowed it. */
+  hint: string
+}
+
+/**
+ * The size rules of a resource's recipe, from its offering as `ResolveChange`
+ * applies them (the limits and pre-approved range hold even when IT withdrew
+ * the offering). Only a size that changes is judged; IT's own rules may still
+ * ask, so the server has the last word (202). Undefined without a size, or
+ * when the resource is pinned to another `version` than the entry's: its
+ * parameter may differ, so only the server can say.
+ */
+export function growthOf(e: Pick<CatalogEntry, 'params' | 'offering' | 'version'> | undefined, version: number): Growth | undefined {
+  const p = e?.params.find(x => x.name === 'storage_gi')
+  if (!e || !p || e.version !== version) return undefined
+  const f = offeringForm(e)
+  const l = f.limits[p.name]
+  const pre = f.preapproved[p.name]
+  const u = p.unit ? ` ${unitLabel(p.unit)}` : ''
+  return {
+    max: l.max,
+    problem: (size, current) => {
+      if (!Number.isInteger(size)) return 'Escribe un tamaño en números enteros.'
+      if (size === current) return undefined
+      if (p.mutability === 'immutable') return `${p.label}: no se puede cambiar después de crear el recurso.`
+      if (p.mutability === 'grows' && size < current) return `Solo puede crecer: ahora tiene ${current}${u}.`
+      if (size < l.min || size > l.max) return l.min > 1 ? `Tu empresa permite entre ${l.min} y ${l.max}${u}.` : `Tu empresa permite hasta ${l.max}${u}.`
+      return undefined
+    },
+    asks: size => size < pre.min || size > pre.max,
+    hint: pre.max < l.max ? `Al instante hasta ${pre.max}${u}; más, con aprobación de TI.` : '',
+  }
+}
+
 /** What can happen to a parameter later, for the field's hint. */
 export const mutabilityHint: Record<CatalogOfferParam['mutability'], string> = {
   grows: 'Después solo puede crecer.',

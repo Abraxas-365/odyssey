@@ -1,6 +1,6 @@
 import type { CatalogEntry, PolicyAction, PolicyDraft, PolicyEffect, PolicyEvaluation, PolicyInput, PolicyRule, ProjectTier, ResourceKind } from '@/lib/types'
 import type { Tone } from '@/components/odyssey'
-import { defaultOf, offeringForm } from '@/lib/catalog'
+import { defaultOf, offeringForm, unitLabel } from '@/lib/catalog'
 
 /** IT's rules in plain words (UX v3 §11): effects, tiers and actions are never shown by their ids. */
 export const effectInfo: Record<PolicyEffect, { label: string; tone: Tone }> = {
@@ -96,14 +96,18 @@ export interface Scenario {
   tier: ProjectTier
   mode: string
   kind: ResourceKind
-  /** create/change: the catalog recipe ('' = the kind's default here) and the size asked for. */
+  /**
+   * create/change: the catalog recipe ('' = the kind's default here) and the
+   * size asked for; a change also has the size the resource has now.
+   */
   recipe: string
   size: number
+  current: number
   scan: ScanScenario
   critical: number
 }
 
-export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', kind: 'postgres', recipe: '', size: 1, scan: 'none', critical: 0 }
+export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', kind: 'postgres', recipe: '', size: 1, current: 1, scan: 'none', critical: 0 }
 
 /** The recipe a create/change is tried with: what the catalog would resolve (its offered version and ranges). */
 export type ScenarioRecipe = Pick<CatalogEntry, 'recipe' | 'version' | 'engine' | 'params' | 'offering'>
@@ -142,6 +146,30 @@ export function catalogNote(input: Pick<PolicyInput, 'action' | 'resource'>): st
   return 'Además, el tamaño pedido supera lo que TI dejó crear al instante en el catálogo: eso pide aprobación aunque ninguna regla lo diga.'
 }
 
+/**
+ * What the catalog refuses before any rule runs, so the dry run would be
+ * misleading: a size outside IT's limits and, for a change, one equal to the
+ * current (nothing to judge), smaller when it only grows, or any change of an
+ * immutable one (`ResolveChange`). Undefined when the rules decide.
+ */
+export function scenarioProblem(s: Pick<Scenario, 'action' | 'size' | 'current'>, recipe: ScenarioRecipe | undefined): string | undefined {
+  const p = recipe?.params.find(x => x.name === 'storage_gi')
+  if (!onRecipe(s.action) || !recipe || !p) return undefined
+  const size = s.size
+  if (!Number.isInteger(size)) return 'Escribe un tamaño en números enteros.'
+  if (size < 1) return 'El tamaño mínimo es 1.'
+  if (s.action === 'change_resource') {
+    const cur = s.current
+    if (!Number.isInteger(cur) || cur < 1) return 'Escribe el tamaño que tiene ahora, en números enteros.'
+    if (size === cur) return 'Es el mismo tamaño que ya tiene: no hay nada que aprobar.'
+    if (p.mutability === 'immutable') return `${p.label}: no se puede cambiar después de crear el recurso.`
+    if (p.mutability === 'grows' && size < cur) return `${p.label}: solo crece, no puede bajar de ${cur}.`
+  }
+  const l = offeringForm(recipe).limits[p.name]
+  if (size < l.min || size > l.max) return `${p.label}: tu empresa permite entre ${l.min} y ${l.max}${p.unit ? ` ${unitLabel(p.unit)}` : ''}; se rechaza sin llegar a las reglas.`
+  return undefined
+}
+
 export const scanOptions: { value: ScanScenario; label: string }[] = [
   { value: 'none', label: 'Todavía no se analiza (antes de construir)' },
   { value: 'failed', label: 'No se pudo analizar' },
@@ -152,7 +180,8 @@ export const scanOptions: { value: ScanScenario; label: string }[] = [
  * The dry run's input. For a create or a change, `recipe` (when known) adds
  * what the catalog resolves: the recipe, its version, every parameter (the
  * size asked, the rest at their defaults) and which are outside IT's
- * pre-approved range — what `catalog:preapproved` and IT's rules read.
+ * pre-approved range — what `catalog:preapproved` and IT's rules read. A
+ * change judges only what changes (the size), as `ResolveChange` does.
  */
 export function scenarioInput(s: Scenario, candidate?: Candidate, recipe?: ScenarioRecipe): PolicyInput {
   const input: PolicyInput = {
@@ -169,13 +198,14 @@ export function scenarioInput(s: Scenario, candidate?: Candidate, recipe?: Scena
   if (onRecipe(s.action) && recipe) {
     const pre = offeringForm(recipe).preapproved
     const params = Object.fromEntries(recipe.params.map(p => [p.name, p.name === 'storage_gi' ? Math.max(1, Math.trunc(s.size) || 1) : defaultOf(recipe, p)]))
+    const judged = s.action === 'change_resource' ? recipe.params.filter(p => p.name === 'storage_gi') : recipe.params
     input.resource = {
       kind: s.kind,
       recipe: recipe.recipe,
       recipe_version: recipe.version,
       engine: recipe.engine,
       params,
-      out_of_range: recipe.params.filter(p => params[p.name] < pre[p.name].min || params[p.name] > pre[p.name].max).map(p => p.name),
+      out_of_range: judged.filter(p => params[p.name] < pre[p.name].min || params[p.name] > pre[p.name].max).map(p => p.name),
     }
   }
   if (candidate) input.rule = candidateRule(candidate)

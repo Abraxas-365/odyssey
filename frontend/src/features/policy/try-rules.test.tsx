@@ -39,13 +39,19 @@ describe('TryRules with the catalog', () => {
   })
 
   it('tries a change on a recipe IT no longer offers (what exists keeps changing)', async () => {
-    mount({ ...defaultScenario, action: 'change_resource', recipe: 'postgres-produccion', size: 5 })
+    mount({ ...defaultScenario, action: 'change_resource', recipe: 'postgres-produccion', current: 2, size: 5 })
     expect(await screen.findByLabelText('Tamaño nuevo (GB)')).toBeTruthy()
-    expect(screen.getByText(/solo puede crecer/)).toBeTruthy()
+    expect((screen.getByLabelText('Tamaño actual (GB)') as HTMLInputElement).value).toBe('2')
     await userEvent.click(screen.getByRole('button', { name: /Probar/ }))
     await waitFor(() => expect(evaluated()).toHaveLength(1))
     expect(evaluated()[0].resource).toMatchObject({ recipe: 'postgres-produccion', params: { storage_gi: 5 }, out_of_range: [] })
     expect(screen.queryByText(/pide aprobación aunque/)).toBeNull()
+  })
+
+  it('does not try a change the catalog refuses on its own (shrinking what only grows)', async () => {
+    mount({ ...defaultScenario, action: 'change_resource', recipe: 'postgres-basico', current: 8, size: 3 })
+    expect(await screen.findByText(/solo crece, no puede bajar de 8/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: /Probar/ }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('shows an empty size field instead of NaN when it is cleared', async () => {

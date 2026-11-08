@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Callout, ChipGroup, ErrorNotice, ListSkeleton, OptionCards, Panel, PanelBody, PanelFooter, PanelHeader, TechnicalDetails, toneBadge } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
 import { afterWrite } from '@/features/approvals/notice'
-import { defaultValues, markOf, mutabilityHint, offeredKinds, offersOf, paramProblem, startingOffer, unitLabel, useEnvironmentCatalog } from '@/lib/catalog'
+import { defaultValues, growthOf, markOf, mutabilityHint, offeredKinds, offersOf, paramProblem, startingOffer, unitLabel, useCatalog, useEnvironmentCatalog } from '@/lib/catalog'
 import { permissions } from '@/lib/permissions'
 import { useConnectResource, useCreateResource, useDeleteResource, useDisconnectResource, useResizeResource, useResources } from '@/lib/resources'
 import { useSettings } from '@/lib/releases'
@@ -341,12 +341,16 @@ const effectTone = { allow: 'ok', approval: 'warn', deny: 'bad' } as const
 
 function ResizeDialog({ project, env, resource, onClose }: { project: string; env: string; resource: Resource; onClose: () => void }) {
   const resize = useResizeResource(project, env)
+  const catalog = useCatalog()
+  const growth = growthOf(catalog.data?.items.find(e => e.recipe === resource.recipe), resource.recipe_version)
   const [size, setSize] = useState(resource.storage_gi)
-  const problem = sizeProblem(size, resource.storage_gi)
+  const problem = growth ? growth.problem(size, resource.storage_gi) : sizeProblem(size, resource.storage_gi)
   const same = size === resource.storage_gi
+  const asks = !problem && !same && !!growth?.asks(size)
+  const loading = catalog.isPending
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    if (problem || same) return
+    if (problem || same || loading) return
     resize.mutate({ name: resource.name, storage_gi: size }, { onSuccess: out => { afterWrite(out, () => toast.success('Ampliando el espacio…')); onClose() } })
   }
   return (
@@ -359,13 +363,15 @@ function ResizeDialog({ project, env, resource, onClose }: { project: string; en
           </DialogHeader>
           <Field data-invalid={!!problem || undefined}>
             <FieldLabel htmlFor="resize-size">Tamaño (GB)</FieldLabel>
-            <Input id="resize-size" type="number" inputMode="numeric" min={resource.storage_gi} max={MAX_GI} value={size} autoFocus onChange={e => setSize(e.target.valueAsNumber)} />
-            {problem ? <FieldError>{problem}</FieldError> : <FieldDescription>Ahora tiene {sizeLabel(resource.storage_gi)}.</FieldDescription>}
+            <Input id="resize-size" type="number" inputMode="numeric" min={resource.storage_gi} max={growth?.max ?? MAX_GI} value={Number.isNaN(size) ? '' : size} autoFocus onChange={e => setSize(e.target.valueAsNumber)} />
+            {problem ? <FieldError>{problem}</FieldError> : <FieldDescription>Ahora tiene {sizeLabel(resource.storage_gi)}.{growth?.hint ? ` ${growth.hint}` : ''}</FieldDescription>}
           </Field>
+          {asks && <Callout tone="warn" title="Pide aprobación">Es más de lo que TI dejó ampliar al instante. Se amplía si TI lo aprueba.</Callout>}
+          {!loading && !growth && !problem && !same && <FieldDescription>Si TI pide aprobarlo, te lo diremos al guardar.</FieldDescription>}
           <ErrorNotice error={resize.error} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={resize.isPending}>Cancelar</Button>
-            <Button type="submit" variant="primary" disabled={!!problem || same || resize.isPending}>{resize.isPending ? 'Guardando…' : 'Ampliar'}</Button>
+            <Button type="submit" variant="primary" disabled={!!problem || same || loading || resize.isPending}>{resize.isPending ? 'Guardando…' : asks ? 'Pedir aprobación' : 'Ampliar'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

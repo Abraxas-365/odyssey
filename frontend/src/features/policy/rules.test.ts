@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PolicyEvaluation, PolicyRule } from '@/lib/types'
 import { catalogEntry } from '@/lib/catalog.fixture'
-import { actionOptions, candidateOutcome, candidateRule, catalogNote, decisionText, defaultScenario, draftReady, draftUnchanged, effectInfo, expressionVariables, newRuleDraft, ruleOutcome, ruleSentence, scenarioInput, scenarioRecipe, scenarioRecipes, tierLabel, tierOptions, toDraft } from './rules'
+import { actionOptions, candidateOutcome, candidateRule, catalogNote, decisionText, defaultScenario, draftReady, draftUnchanged, effectInfo, expressionVariables, newRuleDraft, ruleOutcome, ruleSentence, scenarioInput, scenarioProblem, scenarioRecipe, scenarioRecipes, tierLabel, tierOptions, toDraft } from './rules'
 
 const rule = (patch: Partial<PolicyRule> = {}): PolicyRule => ({
   id: 'r1', name: 'Publicar en producción requiere aprobación de TI', description: '', expression: "action == 'deploy'", effect: 'approval',
@@ -124,6 +124,43 @@ describe('policy rules mapping', () => {
     // other actions never carry a recipe
     expect(scenarioInput({ ...defaultScenario, action: 'connect_resource' }, undefined, recipe).resource).toEqual({ kind: 'postgres' })
     expect(actionOptions.map(o => o.value)).toEqual(expect.arrayContaining(['create_resource', 'change_resource']))
+  })
+
+  it('says what the catalog refuses before the rules, so the dry run is not misleading', () => {
+    const recipe = {
+      recipe: 'postgres-basico', version: 1, engine: 'builtin' as const, params: [{ name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'grows' as const }],
+      offering: { recipe: 'postgres-basico', version: 1, active: true, tiers: ['production' as const], defaults: ['production' as const], limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 10 } }, revision: 1, updated_by: '', created_at: '', updated_at: '' },
+    }
+    const change = { ...defaultScenario, action: 'change_resource' as const, current: 8, size: 20 }
+    expect(scenarioProblem(change, recipe)).toBeUndefined()
+    expect(scenarioProblem({ ...change, size: 8 }, recipe)).toMatch(/mismo tamaño/)
+    expect(scenarioProblem({ ...change, size: 4 }, recipe)).toMatch(/solo crece, no puede bajar de 8/)
+    expect(scenarioProblem({ ...change, size: 60 }, recipe)).toMatch(/entre 1 y 50 GB/)
+    expect(scenarioProblem({ ...change, current: Number.NaN }, recipe)).toMatch(/tiene ahora/)
+    const fixed = { ...recipe, params: [{ ...recipe.params[0], mutability: 'immutable' as const }] }
+    expect(scenarioProblem(change, fixed)).toMatch(/no se puede cambiar/)
+    // a create never compares with a current size
+    expect(scenarioProblem({ ...change, action: 'create_resource', size: 4 }, recipe)).toBeUndefined()
+    expect(scenarioProblem({ ...change, action: 'create_resource', size: Number.NaN }, recipe)).toMatch(/Escribe un tamaño/)
+    expect(scenarioProblem({ ...change, action: 'create_resource', size: 1.5 }, recipe)).toMatch(/enteros/)
+    expect(scenarioProblem({ ...change, action: 'create_resource', size: 0 }, recipe)).toBe('El tamaño mínimo es 1.')
+    // other actions, or no recipe, are the rules' alone
+    expect(scenarioProblem({ ...change, action: 'deploy', size: 900 }, recipe)).toBeUndefined()
+    expect(scenarioProblem(change, undefined)).toBeUndefined()
+  })
+
+  it('judges only the size on a change, every parameter on a create', () => {
+    const recipe = {
+      recipe: 'postgres-produccion', version: 1, engine: 'builtin' as const,
+      params: [
+        { name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 5, max: 100, default: 5, mutability: 'grows' as const },
+        { name: 'instances', label: 'Instancias', unit: '', min: 1, max: 3, default: 2, mutability: 'mutable' as const },
+      ],
+      offering: { recipe: 'postgres-produccion', version: 1, active: true, tiers: ['production' as const], defaults: [], limits: {}, preapproved: { instances: { max: 1 } }, revision: 1, updated_by: '', created_at: '', updated_at: '' },
+    }
+    const s = { ...defaultScenario, kind: 'postgres' as const, size: 6, current: 5 }
+    expect(scenarioInput({ ...s, action: 'create_resource' }, undefined, recipe).resource?.out_of_range).toEqual(['instances'])
+    expect(scenarioInput({ ...s, action: 'change_resource' }, undefined, recipe).resource?.out_of_range).toEqual([])
     for (const o of actionOptions) expect(o.label).not.toMatch(/_resource/)
   })
 

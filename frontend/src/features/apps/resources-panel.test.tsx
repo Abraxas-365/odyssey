@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogOffer, EnvironmentCatalog } from '@/lib/types'
+import { catalogEntry } from '@/lib/catalog.fixture'
 
 const api = vi.fn()
 vi.mock('@/lib/api', async orig => ({ ...(await orig<typeof import('@/lib/api')>()), api: (...a: unknown[]) => api(...a) }))
@@ -93,5 +94,54 @@ describe('AddResourceDialog from the catalog (1b)', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Agregar/ }))
     await userEvent.click(await screen.findByText('Qué recibe la app'))
     expect(screen.getByText('postgres-basico@1')).toBeTruthy()
+  })
+})
+
+describe('ResizeDialog within the recipe offering', () => {
+  beforeEach(() => { api.mockReset() })
+
+  const db = {
+    id: 'r1', organization_id: 'o', project_id: 'p', environment_id: 'e', name: 'db', kind: 'postgres', storage_gi: 8, recipe: 'postgres-basico', recipe_version: 1,
+    params: { storage_gi: 8 }, generation: 1, status: 'active', created_by: 'u', created_at: '', updated_at: '', phase: 'ready', message: '', connected: true, prefix: '', services: [], variables: [],
+  }
+  function serveResize(resource = db) {
+    api.mockImplementation((path: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return Promise.resolve({ status: 'pending_approval', approval_id: 'a1', rules: ['catalog:preapproved'] })
+      if (path === '/catalog/recipes') return Promise.resolve({ items: [catalogEntry({}, { limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 10 } } })] })
+      if (path === '/projects/p/services') return Promise.resolve({ items: [] })
+      if (path.endsWith('/resources')) return Promise.resolve({ items: [resource], available_kinds: ['postgres'] })
+      if (path.endsWith('/ai')) return Promise.resolve({ status: 'off', available: true, enabled: false, services: [], scoped_settings: true, variables: [], base_url: '' })
+      return Promise.resolve({ scoped_settings: true })
+    })
+  }
+
+  it('uses IT limits, says beyond the instant range it asks, and sends the size', async () => {
+    serveResize()
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Cambiar tamaño' }))
+    expect(await screen.findByText(/Al instante hasta 10 GB/)).toBeTruthy()
+    const field = screen.getByLabelText('Tamaño (GB)')
+    fireEvent.change(field, { target: { value: '9' } })
+    expect((screen.getByRole('button', { name: 'Ampliar' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText('Pide aprobación')).toBeNull()
+    fireEvent.change(field, { target: { value: '60' } })
+    expect(screen.getByText('Tu empresa permite hasta 50 GB.')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Ampliar' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(field, { target: { value: '20' } })
+    expect(screen.getByText(/más de lo que TI dejó ampliar al instante/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Pedir aprobación' }))
+    await waitFor(() => expect(api.mock.calls.some(c => c[1]?.method === 'PATCH')).toBe(true))
+    expect(api.mock.calls.find(c => c[1]?.method === 'PATCH')?.[1].body).toEqual({ storage_gi: 20 })
+  })
+
+  it('leaves a resource of another recipe version to the server', async () => {
+    serveResize({ ...db, recipe_version: 2 })
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Cambiar tamaño' }))
+    const field = await screen.findByLabelText('Tamaño (GB)')
+    fireEvent.change(field, { target: { value: '60' } })
+    expect(await screen.findByText(/te lo diremos al guardar/)).toBeTruthy()
+    expect(screen.queryByText(/Al instante hasta/)).toBeNull()
+    expect((screen.getByRole('button', { name: 'Ampliar' }) as HTMLButtonElement).disabled).toBe(false)
   })
 })
