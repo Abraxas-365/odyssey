@@ -160,6 +160,7 @@ func TestEventContracts(t *testing.T) {
 	user := identity.MustParseUserID("00000000-0000-4000-8000-000000000002")
 	v, _ := catalog.Version(catalog.PostgresProduction, 1)
 	o := catalog.Offering{Recipe: v.Recipe, OfferingDraft: v.Factory.Normalize(), Revision: 3}
+	o.Teams = []string{"grp_datos"}
 	for _, e := range []event.Event{catalog.NewOfferingUpdated(org, user, v.Title, o)} {
 		eventtest.Golden(t, e)
 	}

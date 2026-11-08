@@ -38,6 +38,8 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/build/buildmodule"
 	"github.com/Abraxas-365/odyssey/internal/build/buildsvc"
+	"github.com/Abraxas-365/odyssey/internal/catalog"
+	"github.com/Abraxas-365/odyssey/internal/catalog/adapters/catalogiam"
 	"github.com/Abraxas-365/odyssey/internal/catalog/catalogmodule"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -132,13 +134,14 @@ func RunWorker() error {
 	}
 	defer blobs.Close()
 	var people release.People
+	var teams catalog.Directory
 	if cfg.Directory.Enabled() {
-		people = releaseiam.New(cfg.Directory.URL, cfg.Directory.Environment, cfg.Directory.Secret, releaseiam.Options{})
+		people, teams = iamDirectories(cfg.Directory)
 	} else {
 		slog.Warn("versions keep no requester name: set IAMKIT_SERVICE_ACCOUNT_SECRET (make seed provisions the service account)")
 	}
 	p, err := Assemble(ctx, db, Options{Workflow: workflowpg.Options{ListenURL: cfg.DatabaseURL}, ClusterConfig: cfg.Cluster,
-		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub, AI: cfg.AI, People: people})
+		Blobs: blobs, BuilderConfig: cfg.Builder, GitHub: cfg.GitHub, AI: cfg.AI, People: people, Teams: teams})
 	if err != nil {
 		return err
 	}
@@ -386,6 +389,20 @@ type Options struct {
 	// deployment (the worker) and the people of the activity trail (the
 	// API). Nil keeps no names.
 	People release.People
+	// Teams are the organization's teams (catalogiam on IAMKit, from
+	// config.Directory; tests pass a fake). Nil: catalog offerings cannot be
+	// limited to teams.
+	Teams catalog.Directory
+}
+
+// iamDirectories are the IAMKit directories read as the backend's service
+// account: people (releaseiam, which owns the secret and its token) and
+// teams (catalogiam, reusing that token).
+func iamDirectories(cfg config.Directory) (release.People, catalog.Directory) {
+	people := releaseiam.New(cfg.URL, cfg.Environment, cfg.Secret, releaseiam.Options{})
+	teams := catalogiam.New(cfg.URL, cfg.Environment, catalogiam.Token{Get: people.Token, Forget: people.ForgetToken},
+		catalogiam.Options{})
+	return people, teams
 }
 
 // directory is the same IAMKit directory for the activity trail: nil stays
@@ -415,7 +432,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	// project is built before policy, so it learns of IT's rules after.
 	projects.UsePolicy(policies.Project)
 	// the catalog depends on no other domain; resources ask it what can be created.
-	catalogs := catalogmodule.New(catalogmodule.Deps{DB: db, Events: events})
+	catalogs := catalogmodule.New(catalogmodule.Deps{DB: db, Events: events, Directory: opts.Teams})
 	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
 		CertificateTTL: opts.CertificateTTL})
 	// project is built before the fleet, so it learns of its clusters after.
@@ -571,7 +588,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Source: sourcesvc.Options{Assistants: cfg.MCP.TemplateClients}, Gateway: cfg.Fleet.Gateway, Blobs: blobs, Access: cfg.Access, AccessIssuer: PublicAPIURL(cfg), IAM: cfg.IAM, BuilderConfig: cfg.Builder, AI: cfg.AI,
 		Build: buildsvc.Options{SourceQuota: cfg.Blob.SourceQuota}, GitHub: cfg.GitHub, ClusterConfig: cfg.Cluster}
 	if cfg.Directory.Enabled() {
-		opts.People = releaseiam.New(cfg.Directory.URL, cfg.Directory.Environment, cfg.Directory.Secret, releaseiam.Options{})
+		opts.People, opts.Teams = iamDirectories(cfg.Directory)
 	} else {
 		slog.Warn("the activity trail shows no names: set IAMKIT_SERVICE_ACCOUNT_SECRET (make seed provisions the service account)")
 	}

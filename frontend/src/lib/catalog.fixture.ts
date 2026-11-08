@@ -8,7 +8,7 @@ export function catalogEntry(over: Partial<CatalogEntry> = {}, offering: Partial
     ...over,
     offering: {
       recipe: over.recipe ?? 'postgres-basico', version: 1, active: true, tiers: ['sandbox', 'internal', 'production'], defaults: ['sandbox', 'internal', 'production'],
-      limits: {}, preapproved: {}, revision: 0, updated_by: '', created_at: '', updated_at: '', ...offering,
+      limits: {}, preapproved: {}, teams: [], revision: 0, updated_by: '', created_at: '', updated_at: '', ...offering,
     },
   }
 }

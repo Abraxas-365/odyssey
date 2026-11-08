@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { releaseKeys } from './releases'
-import type { CatalogEntry, CatalogOffer, CatalogOfferingDraft, CatalogOfferParam, CatalogParam, CatalogRange, EnvironmentCatalog, PolicyEffect, ProjectTier, ResourceKind } from './types'
+import type { CatalogEntry, CatalogOffer, CatalogOfferingDraft, CatalogOfferParam, CatalogParam, CatalogRange, CatalogTeam, CatalogTeams, EnvironmentCatalog, PolicyEffect, ProjectTier, ResourceKind } from './types'
 
 const enc = encodeURIComponent
 
 export const catalogKeys = {
   recipes: ['catalog', 'recipes'] as const,
+  teams: ['catalog', 'teams'] as const,
   env: (project: string, env: string) => [...releaseKeys.env(project, env), 'catalog'] as const,
 }
 
@@ -46,6 +47,15 @@ export function useEnvironmentCatalog(project: string, env: string | undefined, 
   })
 }
 
+/** The IAMKit groups an offering can be limited to (catalog:manage); `available` false without the directory. */
+export function useCatalogTeams(enabled = true) {
+  return useQuery({
+    queryKey: catalogKeys.teams,
+    queryFn: ({ signal }) => api<CatalogTeams>('/catalog/teams', { signal }),
+    enabled,
+  })
+}
+
 // --- IT's offering editor -------------------------------------------------
 
 /** An offering as the form edits it: every range filled in (no "absent = the schema's"). */
@@ -56,6 +66,9 @@ export interface OfferingForm {
   defaults: ProjectTier[]
   limits: Record<string, { min: number; max: number }>
   preapproved: Record<string, { min: number; max: number }>
+  /** Who can create it: everyone, or only the people in `teams`. */
+  creators: 'all' | 'teams'
+  teams: string[]
 }
 
 /** The server's `narrow` (internal/catalog): 0 is "absent", and an inner range only ever tightens. */
@@ -73,7 +86,8 @@ export function offeringForm(e: Pick<CatalogEntry, 'params' | 'offering'>): Offe
     limits[p.name] = narrow({ min: p.min, max: p.max }, o.limits[p.name])
     preapproved[p.name] = narrow(limits[p.name], o.preapproved[p.name])
   }
-  return { version: o.version, active: o.active, tiers: [...o.tiers], defaults: [...o.defaults], limits, preapproved }
+  return { version: o.version, active: o.active, tiers: [...o.tiers], defaults: [...o.defaults], limits, preapproved,
+    creators: o.teams.length > 0 ? 'teams' : 'all', teams: [...o.teams] }
 }
 
 /**
@@ -92,12 +106,15 @@ export function offeringDraft(params: readonly CatalogParam[], f: OfferingForm):
     if (Object.keys(lr).length) limits[p.name] = lr
     if (Object.keys(ar).length) preapproved[p.name] = ar
   }
-  return { version: f.version, active: f.active, tiers: [...f.tiers], defaults: f.active ? f.defaults.filter(t => f.tiers.includes(t)) : [], limits, preapproved }
+  return { version: f.version, active: f.active, tiers: [...f.tiers], defaults: f.active ? f.defaults.filter(t => f.tiers.includes(t)) : [], limits, preapproved,
+    teams: f.creators === 'teams' ? [...new Set(f.teams)].sort() : [] }
 }
 
 /** The first problem of the form, in plain words (undefined: it can be saved). */
 export function offeringProblem(params: readonly CatalogParam[], f: OfferingForm): string | undefined {
   if (f.active && f.tiers.length === 0) return 'Elige al menos un nivel de app donde se ofrece, o apágala.'
+  if (f.creators === 'teams' && f.teams.length === 0) return 'Elige al menos un equipo, o ofrécela a todos.'
+  if (f.creators === 'teams' && f.teams.length > maxTeams) return `Puedes elegir hasta ${maxTeams} equipos.`
   for (const p of params) {
     const l = f.limits[p.name]
     const a = f.preapproved[p.name]
@@ -122,10 +139,28 @@ export function defaultOf(e: Pick<CatalogEntry, 'offering'>, p: CatalogParam): n
 export const offeringUnchanged = (e: Pick<CatalogEntry, 'params' | 'offering'>, f: OfferingForm) =>
   JSON.stringify(offeringDraft(e.params, offeringForm(e))) === JSON.stringify(offeringDraft(e.params, f))
 
-/** The other offering of the same kind that is already the default in a tier (what the server answers 409 for). */
-export function defaultTakenBy(entries: readonly CatalogEntry[], recipe: string, tier: ProjectTier): CatalogEntry | undefined {
+/**
+ * The other offering of the same kind that is already the default in a tier
+ * for some of the same people (what the server answers 409 for, its `Ties`):
+ * two defaults clash when both are for everyone or their teams overlap; a
+ * team's default next to everyone's does not (the team's wins).
+ */
+export function defaultTakenBy(entries: readonly CatalogEntry[], recipe: string, tier: ProjectTier, teams: readonly string[] = []): CatalogEntry | undefined {
   const me = entries.find(e => e.recipe === recipe)
-  return entries.find(e => e.recipe !== recipe && e.kind === me?.kind && e.offering.active && e.offering.tiers.includes(tier) && e.offering.defaults.includes(tier))
+  const sameAudience = (other: readonly string[]) => (teams.length === 0 && other.length === 0) || other.some(t => teams.includes(t))
+  return entries.find(e => e.recipe !== recipe && e.kind === me?.kind && e.offering.active && e.offering.tiers.includes(tier) && e.offering.defaults.includes(tier) && sameAudience(e.offering.teams))
+}
+
+/** The server's MaxTeams. */
+export const maxTeams = 50
+
+/**
+ * The team names of an offering. Ids never reach the screen: without the
+ * names (still loading, or no directory) a team reads "un equipo"; one the
+ * directory no longer has, as such.
+ */
+export function teamNames(ids: readonly string[], teams: readonly CatalogTeam[] | undefined): string[] {
+  return ids.map(id => teams?.find(t => t.id === id)?.name ?? (teams ? 'un equipo que ya no existe' : 'un equipo'))
 }
 
 /** "GiB" reads as GB in the console (as the rest of it says). */

@@ -50,7 +50,13 @@ const (
 	// CodeRecipeChanged: the pinned recipe@version is no longer what is
 	// offered (an approval granted for it cannot run something else).
 	CodeRecipeChanged = "CATALOG_RECIPE_CHANGED"
+	// CodeTeamsUnavailable: an offering names teams but Odicea cannot read
+	// the organization's groups (no IAMKit directory configured). Business 422.
+	CodeTeamsUnavailable = "CATALOG_TEAMS_UNAVAILABLE"
 )
+
+// MaxTeams is how many teams one offering may name.
+const MaxTeams = 50
 
 // Mutability is what may happen to a parameter after the resource exists.
 type Mutability string
@@ -132,6 +138,9 @@ type OfferingDraft struct {
 	// Preapproved is the part of the limits created without asking IT
 	// (absent parameter: all of its limits).
 	Preapproved map[string]Range `json:"preapproved"`
+	// Teams are the IAMKit groups whose members may create it (empty: everyone
+	// in the organization). They narrow who creates, never what exists.
+	Teams []string `json:"teams"`
 }
 
 // Offering is an organization's offer of a recipe.
@@ -152,6 +161,60 @@ func (o Offering) Offers(tier project.Tier) bool { return o.Active && slices.Con
 // DefaultIn says whether the offering is its kind's default in tier.
 func (o Offering) DefaultIn(tier project.Tier) bool {
 	return o.Offers(tier) && slices.Contains(o.Defaults, tier)
+}
+
+// ForTeams says whether the offering is limited to teams.
+func (o Offering) ForTeams() bool { return len(o.Teams) > 0 }
+
+// For says whether a member of teams may create it: an offering for
+// everyone, or one of whose teams they are in.
+func (o Offering) For(teams []string) bool {
+	return !o.ForTeams() || slices.ContainsFunc(o.Teams, func(t string) bool { return slices.Contains(teams, t) })
+}
+
+// OffersTo says whether the offering is active in tier for a member of teams.
+func (o Offering) OffersTo(tier project.Tier, teams []string) bool {
+	return o.Offers(tier) && o.For(teams)
+}
+
+// sameAudience says whether a and b, defaults in the same tier, would tie:
+// both for everyone, or teams in common. A team's default over everyone's is
+// not a tie: the more specific one wins.
+func sameAudience(a, b Offering) bool {
+	if !a.ForTeams() || !b.ForTeams() {
+		return a.ForTeams() == b.ForTeams()
+	}
+	return slices.ContainsFunc(a.Teams, func(t string) bool { return slices.Contains(b.Teams, t) })
+}
+
+// Ties says whether a and b, of the same kind, are both the default in tier
+// for the same people: saving the second is CodeDefaultTaken.
+func Ties(a, b Offering, tier project.Tier) bool {
+	return a.DefaultIn(tier) && b.DefaultIn(tier) && sameAudience(a, b)
+}
+
+// DefaultAmong is the kind's default among offered (entries of one kind
+// offered in tier to the asker): a team's default wins over everyone's. ok
+// is false when there is none, or several of the asker's teams each have
+// one (the asker chooses).
+func DefaultAmong(offered []Entry, tier project.Tier) (Entry, bool) {
+	var teams, all []Entry
+	for _, e := range offered {
+		switch {
+		case !e.Offering.DefaultIn(tier):
+		case e.Offering.ForTeams():
+			teams = append(teams, e)
+		default:
+			all = append(all, e)
+		}
+	}
+	switch {
+	case len(teams) == 1:
+		return teams[0], true
+	case len(teams) == 0 && len(all) == 1:
+		return all[0], true
+	}
+	return Entry{}, false
 }
 
 // Bounds are the hard limits of param p in the offering.
@@ -197,6 +260,14 @@ func (d OfferingDraft) Validate(v RecipeVersion) error {
 			return errx.InvalidField("defaults", "an offering is the default only in tiers it is offered in")
 		}
 	}
+	if len(d.Teams) > MaxTeams {
+		return errx.InvalidField("teams", "an offering names at most "+strconv.Itoa(MaxTeams)+" teams")
+	}
+	for _, t := range d.Teams {
+		if t == "" || len(t) > 64 || strings.ContainsAny(t, " /?#%\\") {
+			return errx.InvalidField("teams", "a team is the id of an IAMKit group")
+		}
+	}
 	for _, field := range []struct {
 		name string
 		m    map[string]Range
@@ -234,6 +305,10 @@ func (d OfferingDraft) Normalize() OfferingDraft {
 		return slices.Compact(out)
 	}
 	d.Tiers, d.Defaults = order(d.Tiers), order(d.Defaults)
+	d.Teams = slices.Compact(slices.Sorted(slices.Values(d.Teams)))
+	if d.Teams == nil {
+		d.Teams = []string{}
+	}
 	if d.Tiers == nil {
 		d.Tiers = []project.Tier{}
 	}
@@ -275,12 +350,16 @@ type Entry struct {
 	Offering Offering `json:"offering"`
 }
 
-// Usable says why e cannot be created in tier on a cluster with caps (nil:
-// it can): a kind that is not available, a recipe not offered in the tier
-// (CodeUnavailable), or a cluster that cannot honour it (ClusterCannot).
-func (e Entry) Usable(tier project.Tier, caps []string) error {
+// Usable says why e cannot be created in tier on a cluster with caps by a
+// member of teams (nil: it can): a kind that is not available, a recipe not
+// offered in the tier (CodeUnavailable), offered only to other teams
+// (NotForTeams), or a cluster that cannot honour it (ClusterCannot).
+func (e Entry) Usable(tier project.Tier, caps, teams []string) error {
 	if c, known := resourcekind.Lookup(e.Kind); !known || !c.Available || !e.Offering.Offers(tier) {
 		return Unavailable(e.Kind, tier)
+	}
+	if !e.Offering.For(teams) {
+		return NotForTeams(e.RecipeVersion)
 	}
 	if missing := resourcespec.Missing(e.Requires, caps); len(missing) > 0 {
 		return ClusterCannot(e.RecipeVersion, missing)
@@ -301,6 +380,34 @@ type Request struct {
 	Tier    project.Tier
 	// Capabilities the environment's cluster announced.
 	Capabilities []string
+	// Asker is who creates it (the authenticated user, or who asked for an
+	// approved request): an offering for teams is theirs only if they are in
+	// one. Zero: nobody's team.
+	Asker identity.UserID
+}
+
+// Team is an IAMKit group of the organization an offering can be limited to.
+type Team struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Members is how many people it has.
+	Members int `json:"members"`
+	// Directory says it is synced from the company directory (SCIM), not
+	// made by hand in IAMKit.
+	Directory bool `json:"directory"`
+}
+
+// Teams are the teams IT can limit an offering to.
+type Teams struct {
+	// Available is false when Odicea cannot read them (no directory).
+	Available bool   `json:"available"`
+	Items     []Team `json:"items"`
+}
+
+// NeedsTeams says whether any active offering among entries is limited to
+// teams: only then are the asker's teams worth reading.
+func NeedsTeams(entries []Entry) bool {
+	return slices.ContainsFunc(entries, func(e Entry) bool { return e.Offering.Active && e.Offering.ForTeams() })
 }
 
 // Resolved is a request the catalog accepts: pinned, normalized, and what
@@ -384,6 +491,20 @@ func UnitLabel(unit string) string {
 func Unavailable(k resourcekind.Kind, tier project.Tier) error {
 	return errx.Business("Tu empresa no ofrece "+resourcekind.Of(k).The()+" en apps de nivel "+TierLabel(tier)+
 		" todavía. Pídeselo a TI.").WithCode(CodeUnavailable).WithDetail("kind", string(k))
+}
+
+// NotForTeams is the 422 for a recipe offered only to teams the person is
+// not in.
+func NotForTeams(v RecipeVersion) error {
+	return errx.Business("Tu empresa ofrece «"+v.Title+"» solo a algunos equipos, y no estás en ellos. Pídeselo a TI.").
+		WithCode(CodeUnavailable).WithDetail("kind", string(v.Kind)).WithDetail("recipe", v.Recipe)
+}
+
+// TeamsUnavailable is the 422 for naming teams when Odicea cannot read the
+// organization's groups.
+func TeamsUnavailable() error {
+	return errx.Business("Odicea no puede leer los equipos de tu empresa: falta conectarla al directorio de IAMKit.").
+		WithCode(CodeTeamsUnavailable).WithField("teams")
 }
 
 // ClusterCannot is the 422 for a recipe the environment's cluster cannot

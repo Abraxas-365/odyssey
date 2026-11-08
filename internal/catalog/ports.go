@@ -26,14 +26,23 @@ type Queries interface {
 	List(ctx context.Context, organization identity.OrganizationID) ([]Entry, error)
 	// Find is one recipe with the organization's offering (404 unknown).
 	Find(ctx context.Context, organization identity.OrganizationID, recipe string) (Entry, error)
-	// Available are the entries offered in tier, those the capabilities can
-	// honour, in kind order with each kind's default first.
-	Available(ctx context.Context, organization identity.OrganizationID, tier project.Tier, capabilities []string) ([]Entry, error)
+	// Available are the entries offered in tier to the asker's teams, those
+	// the capabilities can honour, in kind order with each kind's default
+	// first.
+	Available(ctx context.Context, organization identity.OrganizationID, tier project.Tier, capabilities []string, asker identity.UserID) ([]Entry, error)
+	// Teams are the organization's teams an offering can be limited to
+	// (Available false: Odicea has no IAMKit directory to read them).
+	Teams(ctx context.Context, organization identity.OrganizationID) (Teams, error)
+	// TeamsOf are the ids of the teams user is in, read only when an active
+	// offering is limited to teams (nil otherwise, and without a directory:
+	// such offerings are then nobody's).
+	TeamsOf(ctx context.Context, organization identity.OrganizationID, user identity.UserID) ([]string, error)
 	// Resolve picks the recipe for the request (its own, or the kind's
-	// default in the tier), checks it is offered and the cluster can honour
-	// it, and normalizes the parameters against the offering. Outside the
-	// hard limits is 422 CATALOG_OUT_OF_LIMITS; outside the pre-approved
-	// range is Resolved.OutOfRange.
+	// default in the tier for the asker's teams), checks it is offered to the
+	// asker and the cluster can honour it, and normalizes the parameters
+	// against the offering. Outside the hard limits is 422
+	// CATALOG_OUT_OF_LIMITS; outside the pre-approved range is
+	// Resolved.OutOfRange.
 	Resolve(ctx context.Context, organization identity.OrganizationID, request Request) (Resolved, error)
 	// ResolveChange checks a change of a resource's parameters against its
 	// pinned recipe@version as offered now: an immutable parameter that
@@ -58,4 +67,14 @@ type Repository interface {
 	// SeedFactory inserts the offerings whose recipe the organization lacks
 	// (ON CONFLICT DO NOTHING) and returns how many it added.
 	SeedFactory(ctx context.Context, offerings []Offering) (int, error)
+}
+
+// Directory is the organization's teams (IAMKit groups), read by the
+// catalogiam adapter as Odicea's service account. Optional: without it no
+// offering can name teams.
+type Directory interface {
+	// Teams are the organization's groups.
+	Teams(ctx context.Context, organization identity.OrganizationID) ([]Team, error)
+	// TeamsOf are the ids of the groups user is in.
+	TeamsOf(ctx context.Context, organization identity.OrganizationID, user identity.UserID) ([]string, error)
 }

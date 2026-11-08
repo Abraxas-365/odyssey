@@ -24,6 +24,9 @@ type OfferingUpdated struct {
 	Limits      map[string]Range `json:"limits"`
 	Preapproved map[string]Range `json:"preapproved"`
 	Revision    int              `json:"revision"`
+	// Teams are the IAMKit group ids it is limited to (empty: everyone).
+	// Added within v1.
+	Teams []string `json:"teams"`
 }
 
 type recipeName string
@@ -35,9 +38,13 @@ func NewOfferingUpdated(org identity.OrganizationID, actor identity.UserID, titl
 	if !o.Active {
 		summary = "Dejó de ofrecer «" + title + "» en el catálogo"
 	}
+	teams := o.Teams
+	if teams == nil {
+		teams = []string{}
+	}
 	return event.New(EventOfferingUpdated, 1, org, actor, event.Subject(SubjectKind, recipeName(o.Recipe)), summary,
 		OfferingUpdated{Recipe: o.Recipe, Version: o.Version, Active: o.Active, Tiers: tierNames(o.Tiers), Defaults: tierNames(o.Defaults),
-			Limits: o.Limits, Preapproved: o.Preapproved, Revision: o.Revision})
+			Limits: o.Limits, Preapproved: o.Preapproved, Revision: o.Revision, Teams: teams})
 }
 
 func tierNames[T ~string](ts []T) []string {

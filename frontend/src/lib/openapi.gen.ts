@@ -544,7 +544,9 @@ export interface paths {
          *     `POST …/resources` judges it, writing nothing. A value outside a
          *     parameter's pre-approved range asks IT whatever this says. The kinds
          *     nothing fulfils are in `unavailable` with why. Same view as the MCP
-         *     tool `list_catalog`.
+         *     tool `list_catalog`. It is the caller's catalog: an offering limited
+         *     to teams the caller is not in is left out (502 when the IAMKit
+         *     directory cannot be read and an active offering names teams).
          */
         get: operations["getEnvironmentCatalog"];
         put?: never;
@@ -582,7 +584,9 @@ export interface paths {
          *     else the kind's default in the app's tier; the parameters missing take
          *     the recipe's defaults. 422 `CATALOG_UNAVAILABLE` (nothing offered, or
          *     the cluster cannot honour the recipe), `CATALOG_OUT_OF_LIMITS`,
-         *     `CATALOG_CHOOSE_RECIPE`; nothing is stored. With `connect` the app is
+         *     `CATALOG_CHOOSE_RECIPE`; nothing is stored. An offering limited to
+         *     teams counts the teams of who asks (on approval, of who asked); 502
+         *     when the IAMKit directory cannot be read. With `connect` the app is
          *     connected in the same operation (the response carries the settings
          *     `revision` and the config `deployment_id`, when one started; 409
          *     `VARIABLE_TAKEN` if a variable it defines is already in use). An
@@ -1298,11 +1302,35 @@ export interface paths {
          *     hard limits and the pre-approved range of each parameter. Limits stay
          *     inside the parameter's schema and the pre-approved range inside the
          *     limits (400 otherwise). A tier where another offering of the kind is
-         *     already the default is 409 `CATALOG_DEFAULT_TAKEN`. Not retroactive:
-         *     resources keep their recipe@version and parameters. Event
-         *     `catalog.offering_updated`.
+         *     already the default for the same people (both for everyone, or teams
+         *     in common) is 409 `CATALOG_DEFAULT_TAKEN`; a team's default over
+         *     everyone's is not a tie. Not retroactive: resources keep their
+         *     recipe@version and parameters. Event `catalog.offering_updated`.
          */
         put: operations["updateCatalogOffering"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The teams an offering can be limited to
+         * @description The organization's IAMKit groups (made by hand or synced from the
+         *     company directory), read as Odicea's service account and cached a
+         *     minute. `available` is false when Odicea has no IAMKit directory:
+         *     offerings cannot then name teams.
+         */
+        get: operations["listCatalogTeams"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -3403,6 +3431,26 @@ export interface components {
             preapproved?: {
                 [key: string]: components["schemas"]["CatalogRange"];
             };
+            /**
+             * @description IAMKit group ids of the organization it is limited to (absent or
+             *     empty: everyone). Only who creates counts; what exists keeps
+             *     working. A team new to the offering must exist (400 otherwise);
+             *     naming teams without the IAMKit directory is 422
+             *     `CATALOG_TEAMS_UNAVAILABLE`.
+             */
+            teams?: string[];
+        };
+        CatalogTeams: {
+            /** @description False when Odicea has no IAMKit directory to read them. */
+            available: boolean;
+            items: {
+                /** @description The IAMKit group id. */
+                id: string;
+                name: string;
+                members: number;
+                /** @description Synced from the company directory (SCIM), not made by hand. */
+                directory: boolean;
+            }[];
         };
         CatalogOffering: {
             recipe: string;
@@ -3417,6 +3465,8 @@ export interface components {
             preapproved: {
                 [key: string]: components["schemas"]["CatalogRange"];
             };
+            /** @description IAMKit group ids it is limited to (empty — everyone). */
+            teams: string[];
             /** @description Moves up with each edit; 0 when the organization has no offering of it. */
             revision: number;
             /** @description Empty until IT changes the factory offering. */
@@ -4704,6 +4754,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
         };
     };
     listResources: {
@@ -4801,6 +4852,7 @@ export interface operations {
             409: components["responses"]["Conflict"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
         };
     };
     getResource: {
@@ -5957,7 +6009,32 @@ export interface operations {
             409: components["responses"]["Conflict"];
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
+        };
+    };
+    listCatalogTeams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The teams. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogTeams"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["External"];
         };
     };
     listApprovals: {

@@ -60,12 +60,13 @@ type Queries interface {
 	// without an offering; the resourceproject adapter answers project with
 	// it).
 	Stranded(ctx context.Context, organization identity.OrganizationID, project project.ID, tier project.Tier) ([]Resource, error)
-	// Offered is the catalog as the environment sees it: the recipes its
-	// app's tier is offered and its cluster can honour, each with its
-	// limits, the variables the app gets and the verdict IT's rules give
-	// the caller (on ctx) for creating it with its defaults; the kinds
-	// nothing fulfils, with why. It writes nothing.
-	Offered(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Offered, error)
+	// Offered is the catalog as the environment sees it for asker: the
+	// recipes its app's tier is offered (to the asker's teams) and its
+	// cluster can honour, each with its limits, the variables the app gets
+	// and the verdict IT's rules give the caller (on ctx) for creating it
+	// with its defaults; the kinds nothing fulfils, with why. It writes
+	// nothing.
+	Offered(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, asker identity.UserID) (Offered, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -118,6 +119,7 @@ type Catalog interface {
 	Resolve(ctx context.Context, organization identity.OrganizationID, request catalog.Request) (catalog.Resolved, error)
 	ResolveChange(ctx context.Context, organization identity.OrganizationID, change catalog.Change) (catalog.Resolved, error)
 	List(ctx context.Context, organization identity.OrganizationID) ([]catalog.Entry, error)
+	TeamsOf(ctx context.Context, organization identity.OrganizationID, user identity.UserID) ([]string, error)
 }
 
 // Policy is what resource asks IT's rules (the policyresource adapter;

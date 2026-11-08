@@ -59,7 +59,7 @@ func (q queries) List(context.Context, identity.OrganizationID, project.ID, proj
 	return q.list, nil
 }
 
-func (q queries) Offered(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID) (resource.Offered, error) {
+func (q queries) Offered(context.Context, identity.OrganizationID, project.ID, project.EnvironmentID, identity.UserID) (resource.Offered, error) {
 	return q.offered, nil
 }
 

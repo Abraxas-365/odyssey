@@ -791,7 +791,9 @@ paths:
         `POST …/resources` judges it, writing nothing. A value outside a
         parameter's pre-approved range asks IT whatever this says. The kinds
         nothing fulfils are in `unavailable` with why. Same view as the MCP
-        tool `list_catalog`.
+        tool `list_catalog`. It is the caller's catalog: an offering limited
+        to teams the caller is not in is left out (502 when the IAMKit
+        directory cannot be read and an active offering names teams).
       x-permissions: [odyssey:projects:read]
       responses:
         "200":
@@ -805,6 +807,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
 
   /api/v1/projects/{id}/environments/{environment}/resources:
     parameters:
@@ -854,7 +857,9 @@ paths:
         else the kind's default in the app's tier; the parameters missing take
         the recipe's defaults. 422 `CATALOG_UNAVAILABLE` (nothing offered, or
         the cluster cannot honour the recipe), `CATALOG_OUT_OF_LIMITS`,
-        `CATALOG_CHOOSE_RECIPE`; nothing is stored. With `connect` the app is
+        `CATALOG_CHOOSE_RECIPE`; nothing is stored. An offering limited to
+        teams counts the teams of who asks (on approval, of who asked); 502
+        when the IAMKit directory cannot be read. With `connect` the app is
         connected in the same operation (the response carries the settings
         `revision` and the config `deployment_id`, when one started; 409
         `VARIABLE_TAKEN` if a variable it defines is already in use). An
@@ -918,6 +923,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
 
   /api/v1/projects/{id}/environments/{environment}/resources/{name}:
     parameters:
@@ -2015,9 +2021,10 @@ paths:
         hard limits and the pre-approved range of each parameter. Limits stay
         inside the parameter's schema and the pre-approved range inside the
         limits (400 otherwise). A tier where another offering of the kind is
-        already the default is 409 `CATALOG_DEFAULT_TAKEN`. Not retroactive:
-        resources keep their recipe@version and parameters. Event
-        `catalog.offering_updated`.
+        already the default for the same people (both for everyone, or teams
+        in common) is 409 `CATALOG_DEFAULT_TAKEN`; a team's default over
+        everyone's is not a tie. Not retroactive: resources keep their
+        recipe@version and parameters. Event `catalog.offering_updated`.
       x-permissions: [odyssey:catalog:manage]
       requestBody:
         required: true
@@ -2037,7 +2044,30 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/Validation" }
         "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/catalog/teams:
+    get:
+      tags: [catalog]
+      operationId: listCatalogTeams
+      summary: The teams an offering can be limited to
+      description: |
+        The organization's IAMKit groups (made by hand or synced from the
+        company directory), read as Odicea's service account and cached a
+        minute. `available` is false when Odicea has no IAMKit directory:
+        offerings cannot then name teams.
+      x-permissions: [odyssey:catalog:manage]
+      responses:
+        "200":
+          description: The teams.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogTeams" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "502": { $ref: "#/components/responses/External" }
 
   /api/v1/approvals:
     get:
@@ -5036,11 +5066,39 @@ components:
           type: object
           description: The part of the limits created without asking IT (absent parameter, all of its limits).
           additionalProperties: { $ref: "#/components/schemas/CatalogRange" }
+        teams:
+          type: array
+          maxItems: 50
+          description: |
+            IAMKit group ids of the organization it is limited to (absent or
+            empty: everyone). Only who creates counts; what exists keeps
+            working. A team new to the offering must exist (400 otherwise);
+            naming teams without the IAMKit directory is 422
+            `CATALOG_TEAMS_UNAVAILABLE`.
+          items: { type: string, minLength: 1, maxLength: 64 }
+
+    CatalogTeams:
+      type: object
+      additionalProperties: false
+      required: [available, items]
+      properties:
+        available: { type: boolean, description: False when Odicea has no IAMKit directory to read them. }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, members, directory]
+            properties:
+              id: { type: string, description: The IAMKit group id. }
+              name: { type: string }
+              members: { type: integer }
+              directory: { type: boolean, description: "Synced from the company directory (SCIM), not made by hand." }
 
     CatalogOffering:
       type: object
       additionalProperties: false
-      required: [recipe, version, active, tiers, defaults, limits, preapproved, revision, updated_by, created_at, updated_at]
+      required: [recipe, version, active, tiers, defaults, limits, preapproved, teams, revision, updated_by, created_at, updated_at]
       properties:
         recipe: { type: string }
         version: { type: integer, description: 0 is never stored; an inactive offering still names a version. }
@@ -5049,6 +5107,10 @@ components:
         defaults: { type: array, items: { $ref: "#/components/schemas/ProjectTier" } }
         limits: { type: object, additionalProperties: { $ref: "#/components/schemas/CatalogRange" } }
         preapproved: { type: object, additionalProperties: { $ref: "#/components/schemas/CatalogRange" } }
+        teams:
+          type: array
+          description: IAMKit group ids it is limited to (empty — everyone).
+          items: { type: string }
         revision: { type: integer, description: Moves up with each edit; 0 when the organization has no offering of it. }
         updated_by: { type: string, pattern: "^([0-9a-f-]{36})?$", description: Empty until IT changes the factory offering. }
         created_at: { type: string, format: date-time }

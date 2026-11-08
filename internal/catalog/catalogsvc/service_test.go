@@ -142,7 +142,7 @@ func TestAvailableListsWhatTheTierAndClusterCanUseDefaultsFirst(t *testing.T) {
 	svc, _, _ := setup()
 	ctx, org := context.Background(), identity.NewOrganizationID()
 	recipes := func(tier project.Tier, caps []string) []string {
-		entries, err := svc.Available(ctx, org, tier, caps)
+		entries, err := svc.Available(ctx, org, tier, caps, identity.UserID{})
 		if err != nil {
 			t.Fatal(err)
 		}

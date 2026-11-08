@@ -17,6 +17,9 @@ import (
 type Deps struct {
 	DB     *sqlx.DB
 	Events event.Publisher
+	// Directory reads the organization's teams (catalogiam; nil: offerings
+	// cannot name teams).
+	Directory catalog.Directory
 }
 
 type Module struct {
@@ -27,6 +30,9 @@ type Module struct {
 
 func New(deps Deps) Module {
 	svc := catalogsvc.New(catalogpg.New(deps.DB), txn.Postgres{DB: deps.DB}, deps.Events)
+	if deps.Directory != nil {
+		svc.UseDirectory(deps.Directory)
+	}
 	return Module{Commands: svc, Queries: svc, HTTP: cataloghttp.New(svc, svc)}
 }
 

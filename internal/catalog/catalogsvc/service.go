@@ -23,6 +23,9 @@ type Service struct {
 	repo   catalog.Repository
 	tx     txn.Runner
 	events event.Publisher
+	// directory reads the organization's teams (nil: offerings cannot name
+	// teams, and one that does is nobody's).
+	directory catalog.Directory
 
 	// seeded remembers the organizations whose factory offerings this
 	// process already ensured (a restart forgets it: seeding is idempotent).
@@ -32,6 +35,9 @@ type Service struct {
 func New(repo catalog.Repository, tx txn.Runner, events event.Publisher) *Service {
 	return &Service{repo: repo, tx: tx, events: events}
 }
+
+// UseDirectory lets offerings name teams (IAMKit groups), read from d.
+func (s *Service) UseDirectory(d catalog.Directory) { s.directory = d }
 
 var (
 	_ catalog.Commands = (*Service)(nil)
@@ -120,30 +126,75 @@ func (s *Service) Find(ctx context.Context, org identity.OrganizationID, recipe 
 	return entries[i], nil
 }
 
-// usable says the entry can be created in tier on a cluster with caps.
-func usable(e catalog.Entry, tier project.Tier, caps []string) bool {
-	return e.Usable(tier, caps) == nil
+// teamsOf are the asker's teams when entries need them (an active offering
+// limited to teams): nil otherwise, or without a directory (such offerings
+// are then nobody's). A directory that fails is an error, not "no teams": a
+// team's default would silently become everyone's.
+func (s *Service) teamsOf(ctx context.Context, org identity.OrganizationID, user identity.UserID, entries []catalog.Entry) ([]string, error) {
+	if s.directory == nil || user.IsZero() || !catalog.NeedsTeams(entries) {
+		return nil, nil
+	}
+	return s.directory.TeamsOf(ctx, org, user)
 }
 
-func (s *Service) Available(ctx context.Context, org identity.OrganizationID, tier project.Tier, caps []string) ([]catalog.Entry, error) {
+func (s *Service) TeamsOf(ctx context.Context, org identity.OrganizationID, user identity.UserID) ([]string, error) {
 	entries, err := s.List(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	return s.teamsOf(ctx, org, user, entries)
+}
+
+func (s *Service) Teams(ctx context.Context, org identity.OrganizationID) (catalog.Teams, error) {
+	if s.directory == nil {
+		return catalog.Teams{Items: []catalog.Team{}}, nil
+	}
+	teams, err := s.directory.Teams(ctx, org)
+	if err != nil {
+		return catalog.Teams{}, err
+	}
+	if teams == nil {
+		teams = []catalog.Team{}
+	}
+	return catalog.Teams{Available: true, Items: teams}, nil
+}
+
+func (s *Service) Available(ctx context.Context, org identity.OrganizationID, tier project.Tier, caps []string, asker identity.UserID) ([]catalog.Entry, error) {
+	entries, err := s.List(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	teams, err := s.teamsOf(ctx, org, asker, entries)
 	if err != nil {
 		return nil, err
 	}
 	var out []catalog.Entry
 	for _, k := range resourcekind.Kinds {
+		offered := offeredTo(entries, k, tier, teams)
+		def, hasDefault := catalog.DefaultAmong(offered, tier)
 		var kind []catalog.Entry
-		for _, e := range entries {
-			if e.Kind == k && usable(e, tier, caps) {
+		for _, e := range offered {
+			if e.Usable(tier, caps, teams) == nil {
 				kind = append(kind, e)
 			}
 		}
 		slices.SortStableFunc(kind, func(a, b catalog.Entry) int {
-			return boolRank(b.Offering.DefaultIn(tier)) - boolRank(a.Offering.DefaultIn(tier))
+			return boolRank(hasDefault && b.Recipe == def.Recipe) - boolRank(hasDefault && a.Recipe == def.Recipe)
 		})
 		out = append(out, kind...)
 	}
 	return out, nil
+}
+
+// offeredTo are the entries of kind k offered in tier to a member of teams.
+func offeredTo(entries []catalog.Entry, k resourcekind.Kind, tier project.Tier, teams []string) []catalog.Entry {
+	var out []catalog.Entry
+	for _, e := range entries {
+		if e.Kind == k && e.Offering.OffersTo(tier, teams) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func boolRank(b bool) int {
@@ -161,6 +212,10 @@ func (s *Service) Resolve(ctx context.Context, org identity.OrganizationID, req 
 	if err != nil {
 		return catalog.Resolved{}, err
 	}
+	teams, err := s.teamsOf(ctx, org, req.Asker, entries)
+	if err != nil {
+		return catalog.Resolved{}, err
+	}
 	var e catalog.Entry
 	if req.Recipe != "" {
 		i := slices.IndexFunc(entries, func(e catalog.Entry) bool { return e.Recipe == req.Recipe })
@@ -174,19 +229,15 @@ func (s *Service) Resolve(ctx context.Context, org identity.OrganizationID, req 
 		if !e.Offering.Offers(req.Tier) {
 			return catalog.Resolved{}, catalog.Unavailable(req.Kind, req.Tier)
 		}
-	} else {
-		var offered, defaults []catalog.Entry
-		for _, c := range entries {
-			if c.Kind == req.Kind && c.Offering.Offers(req.Tier) {
-				offered = append(offered, c)
-				if c.Offering.DefaultIn(req.Tier) {
-					defaults = append(defaults, c)
-				}
-			}
+		if !e.Offering.For(teams) {
+			return catalog.Resolved{}, catalog.NotForTeams(e.RecipeVersion)
 		}
+	} else {
+		offered := offeredTo(entries, req.Kind, req.Tier, teams)
+		def, ok := catalog.DefaultAmong(offered, req.Tier)
 		switch {
-		case len(defaults) == 1:
-			e = defaults[0]
+		case ok:
+			e = def
 		case len(offered) == 1:
 			e = offered[0]
 		case len(offered) == 0:
@@ -285,6 +336,9 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 	if err := s.ensureFactory(ctx, org); err != nil {
 		return catalog.Entry{}, err
 	}
+	if err := s.teamsExist(ctx, org, recipe, draft.Teams); err != nil {
+		return catalog.Entry{}, err
+	}
 	var saved catalog.Offering
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.LockCatalog(ctx, org); err != nil {
@@ -321,8 +375,43 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 	return entry(v, saved), nil
 }
 
-// defaultsFree refuses a default tier another offering of the kind holds:
-// the most specific default must be unique, so a tie is an error on save.
+// teamsExist checks the teams the edit adds are groups of the organization.
+// A team already saved and since deleted in IAMKit is kept (it matches
+// nobody), so IT is never stuck editing an offering over it; the console
+// shows it as gone. Naming new teams without a directory is
+// CATALOG_TEAMS_UNAVAILABLE. Read outside the transaction: IAMKit is not
+// waited for while the catalog is locked.
+func (s *Service) teamsExist(ctx context.Context, org identity.OrganizationID, recipe string, teams []string) error {
+	if len(teams) == 0 {
+		return nil
+	}
+	cur, err := s.repo.Find(ctx, org, recipe)
+	if err != nil {
+		return err
+	}
+	added := slices.DeleteFunc(slices.Clone(teams), func(t string) bool { return slices.Contains(cur.Teams, t) })
+	if len(added) == 0 {
+		return nil
+	}
+	if s.directory == nil {
+		return catalog.TeamsUnavailable()
+	}
+	known, err := s.directory.Teams(ctx, org)
+	if err != nil {
+		return err
+	}
+	for _, t := range added {
+		if !slices.ContainsFunc(known, func(k catalog.Team) bool { return k.ID == t }) {
+			return errx.InvalidField("teams", "no team "+t+" in the organization")
+		}
+	}
+	return nil
+}
+
+// defaultsFree refuses a default tier another offering of the kind holds
+// for the same people (both for everyone, or teams in common): the most
+// specific default must be unique, so a tie is an error on save. A team's
+// default over everyone's is not a tie.
 func defaultsFree(all []catalog.Offering, next catalog.Offering, kind resourcekind.Kind) error {
 	for _, o := range all {
 		if o.Recipe == next.Recipe || !o.Active {
@@ -333,8 +422,8 @@ func defaultsFree(all []catalog.Offering, next catalog.Offering, kind resourceki
 			continue
 		}
 		for _, t := range next.Defaults {
-			if o.DefaultIn(t) {
-				return errx.Conflict("«"+v.Title+"» ya es la receta por defecto en nivel "+catalog.TierLabel(t)+": quítasela primero.").
+			if catalog.Ties(o, next, t) {
+				return errx.Conflict("«"+v.Title+"» ya es la receta por defecto en nivel "+catalog.TierLabel(t)+" para estas personas: quítasela primero.").
 					WithCode(catalog.CodeDefaultTaken).WithDetail("recipe", o.Recipe).WithDetail("tier", string(t))
 			}
 		}

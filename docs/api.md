@@ -414,7 +414,7 @@ never appear in the API: `variables` are the names the app reads.
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `…/resources` | projects:read | 200 `{items[resource], available_kinds}` (oldest first) |
-| `GET` | `/api/v1/projects/:id/environments/:environment/catalog` | projects:read | 200 `{tier, recipes[{kind, recipe, recipe_version, title, description, default, params[{name, label, unit, min, max, default, preapproved_min, preapproved_max, mutability}], variables[], verdict, rules[], rules_verdict}], unavailable[{kind, reason}]}` — what can be asked for here and how (`verdict` on its defaults, connected; `rules_verdict` the same without the catalog's pre-approved range, to forecast other values; writes nothing; docs/catalog.md «MCP», the same view as `list_catalog`); 422 `PROJECT_ARCHIVED` |
+| `GET` | `/api/v1/projects/:id/environments/:environment/catalog` | projects:read | 200 `{tier, recipes[{kind, recipe, recipe_version, title, description, default, params[{name, label, unit, min, max, default, preapproved_min, preapproved_max, mutability}], variables[], verdict, rules[], rules_verdict}], unavailable[{kind, reason}]}` — what can be asked for here and how (`verdict` on its defaults, connected; `rules_verdict` the same without the catalog's pre-approved range, to forecast other values; writes nothing; docs/catalog.md «MCP», the same view as `list_catalog`; the caller's catalog: offerings limited to teams the caller is not in are left out); 422 `PROJECT_ARCHIVED`; 502 when an active offering names teams and the IAMKit directory cannot be read |
 | `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, recipe?, params?, storage_gi?, connect?:{prefix, services?}}`); **202** `pending_approval` when IT's rules or the catalog's pre-approved range hold it (nothing created yet) |
 | `GET` | `…/resources/:name` | projects:read | 200 resource |
 | `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{params?, storage_gi?}`: only the parameters given; size only grows); **202** `pending_approval` when held |
@@ -881,6 +881,7 @@ pre-approved up to 50 GiB, not the default).
 | `GET` | `/api/v1/catalog/recipes` | any user | 200 `{items}` (every recipe at its offered version, with `versions` — every version IT can offer — and its offering) |
 | `GET` | `/api/v1/catalog/recipes/:recipe` | any user | 200 entry |
 | `PUT` | `/api/v1/catalog/recipes/:recipe/offering` | `catalog:manage` | 200 entry (replaces the offering) |
+| `GET` | `/api/v1/catalog/teams` | `catalog:manage` | 200 `{available, items[{id, name, members, directory}]}` — the organization's IAMKit groups an offering can be limited to (`available` false: no IAMKit directory); 502 when IAMKit fails |
 
 ```json
 {"recipe":"postgres-produccion","version":1,"kind":"postgres","title":"PostgreSQL de producción",
@@ -889,25 +890,35 @@ pre-approved up to 50 GiB, not the default).
  "spec":{"postgres":{"instances":2,"major":17,"cpu":"1","memory":"2Gi"}},
  "requires":["builtin:postgres","builtin:postgres:instances","builtin:postgres:resources","builtin:postgres:version","spec/v1"],
  "offering":{"recipe":"postgres-produccion","version":1,"active":true,"tiers":["production"],"defaults":[],
-  "limits":{"storage_gi":{"min":5}},"preapproved":{"storage_gi":{"max":50}},"revision":1,"updated_by":"",
+  "limits":{"storage_gi":{"min":5}},"preapproved":{"storage_gi":{"max":50}},"teams":[],"revision":1,"updated_by":"",
   "created_at":"…","updated_at":"…"}}
 ```
 
-- **Body** (`PUT`): `{version, active, tiers, defaults?, limits?, preapproved?}`.
+- **Body** (`PUT`): `{version, active, tiers, defaults?, limits?, preapproved?, teams?}`.
   `limits` and `preapproved` map a parameter to `{min?, max?}` (an absent bound
   is the parameter's own). Limits stay inside the parameter's `min`–`max`, the
   pre-approved range inside the limits, `defaults` inside `tiers` (400 otherwise);
   an inactive offering is nobody's default.
-- **One default per kind and tier**: a tier where another offering of the kind
-  is the default is 409 `CATALOG_DEFAULT_TAKEN` (`details.recipe`, `details.tier`).
+- **Teams**: `teams` limits who can create it to members of those IAMKit groups
+  (empty: everyone). Only the person creating counts (the one who asked, when
+  an approval runs it); what exists keeps working, and changing or resizing it
+  ignores teams. A team new to the offering must be a group of the
+  organization (400); one deleted later stays and matches nobody. Without the
+  IAMKit directory, naming teams is 422 `CATALOG_TEAMS_UNAVAILABLE` and an
+  offering with teams is offered to nobody.
+- **One default per kind, tier and people**: a tier where another offering of
+  the kind is the default for the same people (both for everyone, or teams in
+  common) is 409 `CATALOG_DEFAULT_TAKEN` (`details.recipe`, `details.tier`). A
+  team's default beats everyone's for its members.
 - **Not retroactive**: resources keep their `recipe@version` and parameters.
 - **Creating** a resource asks the catalog (§11 Resources): 422
-  `CATALOG_UNAVAILABLE` (nothing offered in the tier, or the cluster's agent
-  cannot honour the recipe: `details.missing`), `CATALOG_OUT_OF_LIMITS`
-  (`details.field` `params.<name>`), `CATALOG_CHOOSE_RECIPE` (several offered,
-  none the default: `details.recipes`), `CATALOG_RECIPE_CHANGED` (a pinned
-  version no longer offered).
-- Event: `catalog.offering_updated`.
+  `CATALOG_UNAVAILABLE` (nothing offered in the tier, offered only to teams the
+  person is not in, or the cluster's agent cannot honour the recipe:
+  `details.missing`), `CATALOG_OUT_OF_LIMITS` (`details.field` `params.<name>`),
+  `CATALOG_CHOOSE_RECIPE` (several offered, none the default — or the person's
+  teams have different defaults: `details.recipes`), `CATALOG_RECIPE_CHANGED`
+  (a pinned version no longer offered).
+- Event: `catalog.offering_updated` (with `teams`).
 
 ### Approvals (`GET/POST /api/v1/approvals…`; `docs/approvals.md`)
 

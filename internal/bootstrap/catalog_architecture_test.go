@@ -262,3 +262,50 @@ func TestRecipeVersionRuleCatchesViolations(t *testing.T) {
 		"widget/widgetsvc/s.go: a RecipeVersion is written only",
 	)
 }
+
+// machineTokenViolations: Odicea's IAMKit service-account secret is held by
+// one adapter, release/adapters/releaseiam, the only caller of IAMKit's
+// MachineToken. Other readers of the IAMKit directory (catalogiam's teams)
+// get the token from it through injected functions (catalogiam.Token), so
+// the secret has one owner and one cache to drop when IAMKit refuses it.
+func machineTokenViolations(files []goFile) []string {
+	const owner = "release/adapters/releaseiam"
+	var out []string
+	for _, f := range files {
+		if path.Dir(f.rel) == owner || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "MachineToken" {
+					out = append(out, f.fset.Position(call.Pos()).String()+": only "+owner+
+						" calls MachineToken (it owns the service-account secret); take its Token instead")
+				}
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestOneOwnerOfTheServiceAccountSecret(t *testing.T) {
+	report(t, machineTokenViolations(sources(t, false)))
+}
+
+func TestMachineTokenRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		"release/adapters/releaseiam/directory.go": `package releaseiam; func (d *D) t() { d.auth.MachineToken(ctx, d.secret) }`,
+		"catalog/adapters/catalogiam/directory.go": `package catalogiam; func (d *D) t() { d.token.Get(ctx) }`,
+		"catalog/adapters/catalogiam/x_test.go":    `package catalogiam; func f() { auth.MachineToken(ctx, "s") }`,
+	})
+	if v := machineTokenViolations(files); len(v) != 0 {
+		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))
+	}
+	files = parseFixtures(t, map[string]string{
+		"catalog/adapters/catalogiam/directory.go": `package catalogiam; func (d *D) t() { d.auth.MachineToken(ctx, d.secret) }`,
+	})
+	expectViolations(t, machineTokenViolations(files),
+		"catalog/adapters/catalogiam/directory.go: only release/adapters/releaseiam calls MachineToken",
+	)
+}

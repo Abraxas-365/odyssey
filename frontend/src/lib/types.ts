@@ -85,6 +85,9 @@ export type CatalogEntry = Schemas['CatalogEntry']
 export type CatalogParam = Schemas['CatalogParam']
 export type CatalogRange = Schemas['CatalogRange']
 export type CatalogOfferingDraft = Schemas['CatalogOfferingDraft']
+/** The IAMKit groups an offering can be limited to (`available` false without the directory). */
+export type CatalogTeams = Schemas['CatalogTeams']
+export type CatalogTeam = CatalogTeams['items'][number]
 /** What one environment's app can ask for, and how (at once, with IT's approval, not at all). */
 export type EnvironmentCatalog = Schemas['EnvironmentCatalog']
 export type CatalogOffer = Schemas['CatalogOffer']

@@ -165,7 +165,7 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 		return resource.Result{}, err
 	}
 	resolved, err := s.catalog.Resolve(ctx, org, catalog.Request{Kind: input.Kind, Recipe: input.Recipe, Version: input.RecipeVersion,
-		Params: input.Params, Tier: p.Tier, Capabilities: caps})
+		Params: input.Params, Tier: p.Tier, Capabilities: caps, Asker: input.RequestedBy})
 	if err != nil {
 		return resource.Result{}, err
 	}

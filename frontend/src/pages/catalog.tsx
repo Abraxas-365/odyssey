@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import { Lock, Pencil } from 'lucide-react'
+import { Lock, Pencil, Users } from 'lucide-react'
 import { toast } from 'sonner'
+import type { UseQueryResult } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -8,11 +9,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { EmptyState, ErrorNotice, ListSkeleton, PageHeader, Panel, PanelHeader, SwitchField } from '@/components/odyssey'
+import { EmptyState, ErrorNotice, ListSkeleton, OptionCards, PageHeader, Panel, PanelHeader, SwitchField } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
-import { defaultTakenBy, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, unitLabel, useCatalog, useUpdateOffering, type OfferingForm } from '@/lib/catalog'
+import { defaultTakenBy, maxTeams, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, teamNames, unitLabel, useCatalog, useCatalogTeams, useUpdateOffering, type OfferingForm } from '@/lib/catalog'
 import { permissions } from '@/lib/permissions'
-import type { CatalogEntry, ProjectTier, ResourceKind } from '@/lib/types'
+import type { CatalogEntry, CatalogTeam, CatalogTeams, ProjectTier, ResourceKind } from '@/lib/types'
 import { kindText } from '@/features/apps/resources'
 import { tierOptions } from '@/features/policy/rules'
 
@@ -42,6 +43,7 @@ export function CatalogPage() {
 
 function Catalog() {
   const catalog = useCatalog()
+  const teams = useCatalogTeams()
   const [editing, setEditing] = useState<CatalogEntry>()
   const items = catalog.data?.items ?? []
 
@@ -65,14 +67,14 @@ function Catalog() {
               <Panel key={k}>
                 <PanelHeader icon={kindText[k].icon} title={plural[k]} meta={String(of.length)} description={kindText[k].help} />
                 <ul className="flex flex-col divide-y" aria-label={plural[k]}>
-                  {of.map(e => <EntryRow key={e.recipe} entry={e} onEdit={() => setEditing(e)} />)}
+                  {of.map(e => <EntryRow key={e.recipe} entry={e} teams={teams.data?.available ? teams.data.items : undefined} onEdit={() => setEditing(e)} />)}
                 </ul>
               </Panel>
             )
           })}
         </div>
       )}
-      {editing && <OfferingDialog entry={editing} entries={items} onClose={() => setEditing(undefined)} />}
+      {editing && <OfferingDialog entry={editing} entries={items} teams={teams} onClose={() => setEditing(undefined)} />}
     </>
   )
 }
@@ -100,11 +102,19 @@ export function specLine(e: Pick<CatalogEntry, 'spec'>): string | undefined {
   ].filter(Boolean).join(' · ')
 }
 
-/** How the offering reads in one line: where, the default, and each parameter's ranges. */
-export function offeringSummary(e: CatalogEntry): string[] {
+/** How the offering reads in one line: where, for whom, the default, and each parameter's ranges. */
+export function offeringSummary(e: CatalogEntry, teams?: readonly CatalogTeam[]): string[] {
   if (!e.offering.active) return ['No se ofrece: ninguna app puede crearla.']
   const f = offeringForm(e)
   const out = [`Se ofrece en apps ${tierList(e.offering.tiers)}.`]
+  if (e.offering.teams.length > 0) {
+    const n = e.offering.teams.length
+    if (!teams) out.push(n === 1 ? 'Solo la crea un equipo.' : `Solo la crean ${n} equipos.`)
+    else {
+      const names = teamNames(e.offering.teams, teams)
+      out.push(n === 1 ? `Solo la crea el equipo ${names[0]}.` : `Solo la crean los equipos ${names.join(', ')}.`)
+    }
+  }
   const defaults = e.offering.defaults.filter(t => e.offering.tiers.includes(t))
   if (defaults.length > 0) out.push(`Es la opción por defecto en ${tierList(defaults)}.`)
   for (const p of e.params) {
@@ -120,7 +130,7 @@ export function offeringSummary(e: CatalogEntry): string[] {
   return out
 }
 
-function EntryRow({ entry, onEdit }: { entry: CatalogEntry; onEdit: () => void }) {
+function EntryRow({ entry, teams, onEdit }: { entry: CatalogEntry; teams?: readonly CatalogTeam[]; onEdit: () => void }) {
   const spec = specLine(entry)
   return (
     <li className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-start">
@@ -128,12 +138,13 @@ function EntryRow({ entry, onEdit }: { entry: CatalogEntry; onEdit: () => void }
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-semibold">{entry.title}</span>
           <Badge variant={entry.offering.active ? 'success' : 'secondary'}>{entry.offering.active ? 'Se ofrece' : 'Apagada'}</Badge>
+          {entry.offering.active && entry.offering.teams.length > 0 && <Badge variant="secondary"><Users /> Por equipo</Badge>}
           <span className="text-xs text-muted-foreground">Versión {entry.version}</span>
         </div>
         <p className="mt-0.5 text-[13px] text-muted-foreground">{entry.description}</p>
         {spec && <p className="mt-0.5 text-xs text-muted-foreground">{spec}</p>}
         <ul className="mt-1.5 flex flex-col gap-0.5 text-xs">
-          {offeringSummary(entry).map(line => <li key={line}>{line}</li>)}
+          {offeringSummary(entry, teams).map(line => <li key={line}>{line}</li>)}
         </ul>
       </div>
       <Button size="sm" variant="outline" onClick={onEdit} aria-label={`Editar ${entry.title}`}>
@@ -143,7 +154,7 @@ function EntryRow({ entry, onEdit }: { entry: CatalogEntry; onEdit: () => void }
   )
 }
 
-function OfferingDialog({ entry, entries, onClose }: { entry: CatalogEntry; entries: CatalogEntry[]; onClose: () => void }) {
+function OfferingDialog({ entry, entries, teams, onClose }: { entry: CatalogEntry; entries: CatalogEntry[]; teams: UseQueryResult<CatalogTeams>; onClose: () => void }) {
   const update = useUpdateOffering()
   const [form, setForm] = useState<OfferingForm>(() => offeringForm(entry))
   const problem = offeringProblem(entry.params, form)
@@ -153,6 +164,7 @@ function OfferingDialog({ entry, entries, onClose }: { entry: CatalogEntry; entr
   const range = (which: 'limits' | 'preapproved', name: string, end: 'min' | 'max', v: number) =>
     setForm(f => ({ ...f, [which]: { ...f[which], [name]: { ...f[which][name], [end]: v } } }))
   const versions = entry.versions.map(String)
+  const creators = form.creators === 'teams' ? form.teams : []
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -186,7 +198,7 @@ function OfferingDialog({ entry, entries, onClose }: { entry: CatalogEntry; entr
               <legend className="mb-1 text-[13px] font-medium">Niveles de app</legend>
               {tierOptions.map(o => {
                 const offered = form.tiers.includes(o.value)
-                const taken = defaultTakenBy(entries, entry.recipe, o.value)
+                const taken = defaultTakenBy(entries, entry.recipe, o.value, creators)
                 return (
                   <div key={o.value} className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[13px]">
                     <label className="flex w-32 items-center gap-2">
@@ -200,8 +212,9 @@ function OfferingDialog({ entry, entries, onClose }: { entry: CatalogEntry; entr
                   </div>
                 )
               })}
-              <FieldDescription>La opción por defecto es la que recibe quien pide «una base de datos» sin elegir. Hay una por tipo en cada nivel.</FieldDescription>
+              <FieldDescription>La opción por defecto es la que recibe quien pide «una base de datos» sin elegir. Hay una por tipo en cada nivel; la de un equipo gana a la de todos para sus miembros.</FieldDescription>
             </fieldset>
+            <TeamsField form={form} saved={entry.offering.teams} teams={teams} disabled={!form.active || update.isPending} onChange={set} />
             {entry.params.map(p => {
               const unit = p.unit ? ` (${unitLabel(p.unit)})` : ''
               const l = form.limits[p.name]
@@ -241,5 +254,70 @@ function OfferingDialog({ entry, entries, onClose }: { entry: CatalogEntry; entr
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * "Quién puede crearla": everyone, or only the people in some IAMKit groups
+ * (its teams). Without the directory a new team cannot be named (the server
+ * refuses it) but the ones already saved are kept; a team since deleted in
+ * IAMKit is shown as such and can be taken out.
+ */
+function TeamsField({ form, saved, teams, disabled, onChange }: {
+  form: OfferingForm
+  saved: readonly string[]
+  teams: UseQueryResult<CatalogTeams>
+  disabled: boolean
+  onChange: (patch: Partial<OfferingForm>) => void
+}) {
+  const known = teams.data?.items ?? []
+  const available = teams.data?.available ?? false
+  const gone = form.teams.filter(id => !known.some(t => t.id === id))
+  const canChoose = available || saved.length > 0
+  const pick = (id: string, on: boolean) => onChange({ teams: on ? [...form.teams, id] : form.teams.filter(x => x !== id) })
+
+  return (
+    <fieldset className="flex flex-col gap-2" disabled={disabled}>
+      <legend className="mb-1 text-[13px] font-medium">Quién puede crearla</legend>
+      <OptionCards
+        label="Quién puede crearla"
+        value={form.creators}
+        onChange={creators => onChange({ creators })}
+        options={[
+          { value: 'all', title: 'Todos', description: 'Cualquier persona de la organización que pueda crear en una app.' },
+          {
+            value: 'teams', title: 'Solo estos equipos', disabled: disabled || !canChoose,
+            description: canChoose ? 'Solo quienes estén en alguno de los equipos elegidos. Lo ya creado sigue funcionando para todos.'
+              : 'No disponible: Odicea no puede leer los equipos de tu organización.',
+          },
+        ]}
+      />
+      {form.creators === 'teams' && (
+        teams.isPending ? (
+          <ListSkeleton />
+        ) : teams.error ? (
+          <ErrorNotice error={teams.error} onRetry={() => teams.refetch()} />
+        ) : (
+          <div className="flex flex-col gap-1.5 rounded-lg border px-4 py-3" role="group" aria-label="Equipos">
+            {!available && <p className="text-xs text-muted-foreground">Odicea no puede leer los equipos ahora: se conservan los elegidos, pero no puedes agregar otros.</p>}
+            {available && known.length === 0 && <p className="text-xs text-muted-foreground">Tu organización aún no tiene equipos. Créalos en la administración de usuarios.</p>}
+            {available && known.map(t => (
+              <label key={t.id} className="flex items-center gap-2 text-[13px]">
+                <Checkbox checked={form.teams.includes(t.id)} disabled={!form.teams.includes(t.id) && form.teams.length >= maxTeams}
+                  onCheckedChange={v => pick(t.id, !!v)} />
+                <span className="min-w-0 flex-1 truncate">{t.name}</span>
+                <span className="text-xs text-muted-foreground">{t.members === 1 ? '1 persona' : `${t.members} personas`}{t.directory ? ' · del directorio de la empresa' : ''}</span>
+              </label>
+            ))}
+            {(available ? gone : form.teams).map(id => (
+              <label key={id} className="flex items-center gap-2 text-[13px] text-muted-foreground">
+                <Checkbox checked onCheckedChange={v => !v && pick(id, false)} />
+                <span className="min-w-0 flex-1 truncate">{teamNames([id], available ? known : undefined)[0]}</span>
+              </label>
+            ))}
+          </div>
+        )
+      )}
+    </fieldset>
   )
 }

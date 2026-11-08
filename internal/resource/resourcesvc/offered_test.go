@@ -78,6 +78,9 @@ type offerSetup struct {
 	status  project.Status
 	connect map[resourcekind.Kind]gate.Verdict
 	offer   func(*catalogsvc.Service)
+	// directory and asker: whose teams count (nil, zero: nobody's)
+	directory catalog.Directory
+	asker     identity.UserID
 }
 
 func offeredWith(t *testing.T, tier project.Tier, caps []string, s offerSetup) (resource.Offered, *rules, *connecting, error) {
@@ -89,13 +92,16 @@ func offeredWith(t *testing.T, tier project.Tier, caps []string, s offerSetup) (
 	e := project.Environment{ID: project.NewEnvironmentID(), Project: p.ID, Organization: org, Slug: "production"}
 	events := &eventtest.Recorder{}
 	cat := catalogsvc.New(catalogtest.NewRepo(), txn.Passthrough{}, &eventtest.Recorder{})
+	if s.directory != nil {
+		cat.UseDirectory(s.directory)
+	}
 	if s.offer != nil {
 		s.offer(cat)
 	}
 	pol, conn := &rules{}, &connecting{verdicts: s.connect}
 	svc := resourcesvc.New(&repo{}, announcing{caps: caps}, conn, projects{p: p, e: e}, cat, txn.Passthrough{}, events, pol)
 	svc.UseApprovals(holding{t})
-	o, err := svc.Offered(context.Background(), org, p.ID, e.ID)
+	o, err := svc.Offered(context.Background(), org, p.ID, e.ID, s.asker)
 	if n := len(events.Events()); n != 0 {
 		t.Fatalf("Offered published %d events", n)
 	}
@@ -274,5 +280,44 @@ func TestOfferedSeparatesTheCatalogFloor(t *testing.T) {
 				t.Fatalf("nothing asks: %+v", r)
 			}
 		}
+	}
+}
+
+// teamDirectory is a fake IAMKit directory: who is in which team.
+type teamDirectory map[identity.UserID][]string
+
+func (d teamDirectory) Teams(context.Context, identity.OrganizationID) ([]catalog.Team, error) {
+	return []catalog.Team{{ID: "grp_datos", Name: "Datos"}, {ID: "grp_ventas", Name: "Ventas"}}, nil
+}
+
+func (d teamDirectory) TeamsOf(_ context.Context, _ identity.OrganizationID, u identity.UserID) ([]string, error) {
+	return d[u], nil
+}
+
+// The catalog an environment shows is the asker's: a recipe for a team they
+// are not in is left out with its reason; a team's default is theirs.
+func TestOfferedIsTheAskersCatalog(t *testing.T) {
+	ana, bruno := identity.MustParseUserID("11111111-1111-4111-8111-111111111111"), identity.MustParseUserID("22222222-2222-4222-8222-222222222222")
+	dir := teamDirectory{ana: {"grp_datos"}, bruno: {"grp_ventas"}}
+	forDatos := func(cat *catalogsvc.Service) {
+		if _, err := cat.UpdateOffering(context.Background(), org, catalog.PostgresProduction, catalog.UpdateOffering{UpdatedBy: ana,
+			OfferingDraft: catalog.OfferingDraft{Version: 1, Active: true, Tiers: []project.Tier{project.TierProduction},
+				Defaults: []project.Tier{project.TierProduction}, Teams: []string{"grp_datos"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o, _, _, err := offeredWith(t, project.TierProduction, allCaps, offerSetup{directory: dir, asker: ana, offer: forDatos})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipes(o); len(got) < 2 || got[0] != catalog.PostgresProduction || !o.Recipes[0].Default || o.Recipes[1].Default {
+		t.Fatalf("Datos: %v %+v", got, o.Recipes[:2])
+	}
+	o, _, _, err = offeredWith(t, project.TierProduction, allCaps, offerSetup{directory: dir, asker: bruno, offer: forDatos})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipes(o); slices.Contains(got, catalog.PostgresProduction) || got[0] != catalog.PostgresBasic || !o.Recipes[0].Default {
+		t.Fatalf("Ventas: %v", got)
 	}
 }

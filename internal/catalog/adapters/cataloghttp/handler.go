@@ -26,6 +26,20 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Get("/recipes", h.list)
 	g.Get("/recipes/:recipe", h.get)
 	g.Put("/recipes/:recipe/offering", httpx.RequirePermissions(permission.CatalogManage), h.update)
+	g.Get("/teams", httpx.RequirePermissions(permission.CatalogManage), h.teams)
+}
+
+// teams are the organization's teams IT can limit an offering to.
+func (h *Handler) teams(c *fiber.Ctx) error {
+	org, err := httpx.Organization(c)
+	if err != nil {
+		return err
+	}
+	out, err := h.queries.Teams(c.UserContext(), org)
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
 }
 
 func (h *Handler) list(c *fiber.Ctx) error {

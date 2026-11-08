@@ -402,7 +402,7 @@ func (t tools) listCatalog(ctx context.Context, caller mcpx.Principal, in ListCa
 	if err != nil {
 		return ListCatalogOut{}, err
 	}
-	o, err := t.queries.Offered(ctx, caller.Organization, p.ID, env.ID)
+	o, err := t.queries.Offered(ctx, caller.Organization, p.ID, env.ID, caller.User)
 	if err != nil {
 		return ListCatalogOut{}, err
 	}

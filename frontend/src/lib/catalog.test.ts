@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CatalogOfferParam, EnvironmentCatalog } from './types'
-import { defaultOf, defaultTakenBy, growthOf, markOf, offeredKinds, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, offersOf, paramProblem, startingOffer } from './catalog'
+import { defaultOf, defaultTakenBy, growthOf, markOf, offeredKinds, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, offersOf, paramProblem, startingOffer, teamNames } from './catalog'
 import { catalogEntry as entry } from './catalog.fixture'
 
 const size = { name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'grows' as const }
@@ -20,9 +20,9 @@ describe('catalog offering form', () => {
   it('sends only what narrows, and drops defaults outside the tiers', () => {
     const e = entry()
     const f = offeringForm(e)
-    expect(offeringDraft(e.params, f)).toEqual({ version: 1, active: true, tiers: ['sandbox', 'internal', 'production'], defaults: ['sandbox', 'internal', 'production'], limits: {}, preapproved: {} })
+    expect(offeringDraft(e.params, f)).toEqual({ version: 1, active: true, tiers: ['sandbox', 'internal', 'production'], defaults: ['sandbox', 'internal', 'production'], limits: {}, preapproved: {}, teams: [] })
     const narrowed = { ...f, tiers: ['internal' as const], limits: { storage_gi: { min: 1, max: 50 } }, preapproved: { storage_gi: { min: 1, max: 50 } } }
-    expect(offeringDraft(e.params, narrowed)).toEqual({ version: 1, active: true, tiers: ['internal'], defaults: ['internal'], limits: { storage_gi: { max: 50 } }, preapproved: {} })
+    expect(offeringDraft(e.params, narrowed)).toEqual({ version: 1, active: true, tiers: ['internal'], defaults: ['internal'], limits: { storage_gi: { max: 50 } }, preapproved: {}, teams: [] })
     expect(offeringDraft(e.params, { ...f, preapproved: { storage_gi: { min: 1, max: 10 } } }).preapproved).toEqual({ storage_gi: { max: 10 } })
     // switched off: no default anywhere
     expect(offeringDraft(e.params, { ...f, active: false }).defaults).toEqual([])
@@ -54,6 +54,27 @@ describe('catalog offering form', () => {
     expect(defaultTakenBy([basic, prod, redis], 'postgres-produccion', 'production')?.recipe).toBe('postgres-basico')
     expect(defaultTakenBy([basic, prod, redis], 'postgres-basico', 'production')).toBeUndefined()
     expect(defaultTakenBy([entry({}, { active: false }), prod], 'postgres-produccion', 'production')).toBeUndefined()
+  })
+
+  it('teams: sent sorted only when chosen; defaults clash only for the same people', () => {
+    const e = entry({}, { teams: ['grp_b'] })
+    const f = offeringForm(e)
+    expect(f.creators).toBe('teams')
+    expect(offeringUnchanged(e, f)).toBe(true)
+    expect(offeringDraft(e.params, { ...f, teams: ['grp_b', 'grp_a', 'grp_a'] }).teams).toEqual(['grp_a', 'grp_b'])
+    // back to everyone: the chosen teams are dropped
+    expect(offeringDraft(e.params, { ...f, creators: 'all' }).teams).toEqual([])
+    expect(offeringProblem(e.params, { ...f, teams: [] })).toMatch(/al menos un equipo/)
+
+    const everyone = entry()
+    const datos = entry({ recipe: 'postgres-datos' }, { teams: ['grp_datos'] })
+    const prod = entry({ recipe: 'postgres-produccion' }, { defaults: [] })
+    // a team default next to everyone's: no clash; two for overlapping teams: clash
+    expect(defaultTakenBy([everyone, prod], 'postgres-produccion', 'production', ['grp_datos'])).toBeUndefined()
+    expect(defaultTakenBy([datos, prod], 'postgres-produccion', 'production', ['grp_datos', 'grp_x'])?.recipe).toBe('postgres-datos')
+    expect(defaultTakenBy([datos, prod], 'postgres-produccion', 'production', ['grp_ventas'])).toBeUndefined()
+    expect(defaultTakenBy([datos, prod], 'postgres-produccion', 'production')).toBeUndefined()
+    expect(teamNames(['grp_datos', 'grp_old'], [{ id: 'grp_datos', name: 'Datos', members: 1, directory: false }])).toEqual(['Datos', 'un equipo que ya no existe'])
   })
 
   it('keeps a default inside the limits', () => {

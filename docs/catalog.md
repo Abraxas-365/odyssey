@@ -46,10 +46,42 @@ organization's first catalog read (like IT's built-in rules). IT edits it with
   `CATALOG_OUT_OF_LIMITS`), not even IT's approval allows it. Inside the
   parameter's own range;
 - **preapproved** range: inside the limits; a value outside it needs IT's
-  approval whatever the rules say (`resource.out_of_range`, cut 3).
+  approval whatever the rules say (`resource.out_of_range`, cut 3);
+- **teams**: IAMKit group ids it is limited to (empty: everyone; at most 50).
+  See "Teams" below.
 
 Edits are not retroactive: resources keep their `recipe@version` and params.
-Event `catalog.offering_updated` (audit trail).
+Event `catalog.offering_updated` (audit trail; `teams` added within v1).
+
+### Teams
+
+An offering can be limited to some of the organization's **teams**, which are
+IAMKit's generic groups (made by hand or synced from the company directory by
+SCIM). Odicea reads them with its service account (`iam:members:read`) through
+`catalog/adapters/catalogiam`, which takes the token from `releaseiam` (the
+only holder of the service-account secret, `TestOneOwnerOfTheServiceAccountSecret`)
+and caches a person's teams for a minute (the organization's list, which only
+IT reads, is always fresh). Like `releaseiam`, any IAMKit error drops the
+token (the SDK does not tell a 401 apart). `GET /catalog/recipes`, open to the
+whole organization, carries an offering's team ids, never names or members.
+
+- **Whose teams:** the person who asks to create (never read from the body).
+  An approved request runs with the teams of who asked, read again when it
+  runs. Projects have no team.
+- **Only creating:** `Resolve`, `Available` and `Offered` filter by teams.
+  Changing or growing what exists (`ResolveChange`) and moving an app to
+  another tier (`Stranded`) do not: what exists keeps working for everyone.
+- **Defaults:** the most specific wins — a team's default over everyone's. Two
+  defaults clash on save (409 `CATALOG_DEFAULT_TAKEN`) only if both are for
+  everyone or their teams overlap; someone in two teams that each have a
+  default is asked to choose (`CATALOG_CHOOSE_RECIPE`).
+- **Fails closed:** teams are read only when an active offering names any.
+  Without the directory, offerings with teams are offered to nobody and naming
+  a new team is 422 `CATALOG_TEAMS_UNAVAILABLE` (the teams already saved are
+  kept on edit); a directory error is an error, never "no teams". A team new to
+  an offering must exist (400); one deleted later stays and matches nobody.
+- `GET /api/v1/catalog/teams` (`catalog:manage`) lists them for the console:
+  `{available, items: [{id, name, members, directory}]}`.
 
 ## Resolving a request
 
@@ -100,8 +132,8 @@ What an assistant sees of the catalog is one environment's view,
   fulfils are in `unavailable` with why (not offered in the tier, the
   cluster cannot, or no cluster that announces anything). Several defaults
   for one kind (`Resolve` would ask to choose) mark none. `can_create` says
-  whether the caller holds `projects:write`. Teams are not a filter yet:
-  offerings are per tier.
+  whether the caller holds `projects:write`. It is the caller's catalog: an
+  offering limited to teams the caller is not in is left out (see "Teams").
 - **`create_resource(app, kind?, name?, recipe?, params?, connect?, prefix?,
   services?)`** (`projects:read` + `projects:write`): `Commands.Create`, the
   same path as `POST …/resources`. It connects by default (`connect: false`
@@ -133,8 +165,14 @@ offered version (with the versions this Odicea knows, `versions`), what it
 fixes (`spec`) and the offering in sentences. Editing is the whole `PUT
 …/offering`; a range equal to its outer one is sent as absent. A tier's
 default already held by another recipe of the kind cannot be ticked (the
-server's 409 `CATALOG_DEFAULT_TAKEN` otherwise). The ranges shown are the
+server's 409 `CATALOG_DEFAULT_TAKEN` otherwise; a team's default does not
+clash with everyone's). The ranges shown are the
 offered version's: choosing another version locks them until it is saved.
+"Quién puede crearla" is Todos or Solo estos equipos (ticks over `GET
+/catalog/teams`, with each team's people and whether it comes from the
+company directory); without the directory the teams option is off unless the
+offering already has some, which are kept. Ids never reach the screen: a team
+deleted in IAMKit reads "un equipo que ya no existe".
 
 IT's "Probar" (dry run) tries `create_resource` with the recipe the catalog
 would resolve (the one picked among those offered in the tier, else the

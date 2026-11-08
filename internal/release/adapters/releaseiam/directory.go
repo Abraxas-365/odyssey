@@ -102,6 +102,22 @@ func (d *Directory) members(ctx context.Context, organization identity.Organizat
 	return names, nil
 }
 
+// Token is the service account's access token (cached), for other adapters
+// reading IAMKit as the backend (catalogiam): the secret has one owner.
+func (d *Directory) Token(ctx context.Context) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.tokenLocked(ctx)
+}
+
+// ForgetToken drops the cached token (a caller got 401 with it: revoked or
+// rotated), so the next Token asks for a new one.
+func (d *Directory) ForgetToken() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.token = ""
+}
+
 // tokenLocked is the service account's access token, renewed a minute
 // before it expires. The caller holds mu.
 func (d *Directory) tokenLocked(ctx context.Context) (string, error) {

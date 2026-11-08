@@ -16,5 +16,8 @@
       "max": 50
     }
   },
-  "revision": 3
+  "revision": 3,
+  "teams": [
+    "grp_datos"
+  ]
 }

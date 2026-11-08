@@ -12,7 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
-func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID) (resource.Offered, error) {
+func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, asker identity.UserID) (resource.Offered, error) {
 	p, e, err := s.place(ctx, org, id, env)
 	if err != nil {
 		return resource.Offered{}, err
@@ -28,17 +28,31 @@ func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id p
 	if err != nil {
 		return resource.Offered{}, err
 	}
+	// the asker's teams, as Resolve reads them when they create
+	teams, err := s.catalog.TeamsOf(ctx, org, asker)
+	if err != nil {
+		return resource.Offered{}, err
+	}
 	out := resource.Offered{Tier: p.Tier, Recipes: []resource.Offer{}, Unavailable: []resource.UnavailableKind{}}
 	for _, k := range resourcekind.Kinds {
 		var offers []resource.Offer
-		reason, defaults := "", 0
+		reason := ""
+		// the default Resolve picks for this asker (a team's over everyone's;
+		// none when several of their teams have one)
+		var mine []catalog.Entry
+		for _, entry := range entries {
+			if entry.Kind == k && entry.Offering.OffersTo(p.Tier, teams) {
+				mine = append(mine, entry)
+			}
+		}
+		def, hasDefault := catalog.DefaultAmong(mine, p.Tier)
 		for _, entry := range entries {
 			if entry.Kind != k {
 				continue
 			}
-			if err := entry.Usable(p.Tier, caps); err != nil {
-				// the cluster's reason says more than "not offered" when the
-				// tier does offer the kind
+			if err := entry.Usable(p.Tier, caps, teams); err != nil {
+				// the cluster's reason (or the teams') says more than "not
+				// offered" when the tier does offer the kind
 				if entry.Offering.Offers(p.Tier) || reason == "" {
 					reason = messageOf(err)
 				}
@@ -49,16 +63,11 @@ func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id p
 				return resource.Offered{}, err
 			}
 			o := resource.NewOffer(entry, p.Tier, v, rv)
+			o.Default = hasDefault && entry.Recipe == def.Recipe
 			if o.Default {
-				defaults++
 				offers = append([]resource.Offer{o}, offers...)
 			} else {
 				offers = append(offers, o)
-			}
-		}
-		if defaults > 1 { // Resolve asks to choose: none is the default
-			for i := range offers {
-				offers[i].Default = false
 			}
 		}
 		if len(offers) > 0 {

@@ -68,7 +68,7 @@ describe('CatalogPage', () => {
     await waitFor(() => expect(api.mock.calls.some(c => c[1]?.method === 'PUT')).toBe(true))
     const put = api.mock.calls.find(c => c[1]?.method === 'PUT')!
     expect(put[0]).toBe('/catalog/recipes/postgres-basico/offering')
-    expect(put[1].body).toEqual({ version: 1, active: true, tiers: ['sandbox', 'internal', 'production'], defaults: ['sandbox', 'internal', 'production'], limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 20 } } })
+    expect(put[1].body).toEqual({ version: 1, active: true, tiers: ['sandbox', 'internal', 'production'], defaults: ['sandbox', 'internal', 'production'], limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 20 } }, teams: [] })
   })
 
   it('refuses a pre-approved range outside the limits before sending', async () => {
@@ -86,6 +86,47 @@ describe('CatalogPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Editar PostgreSQL de producción' }))
     expect(screen.getAllByText(/ya lo es «PostgreSQL básico»/).length).toBeGreaterThan(0)
   })
+
+  const teams = { available: true, items: [{ id: 'grp_datos', name: 'Datos', members: 4, directory: false }, { id: 'grp_ventas', name: 'Ventas', members: 1, directory: true }] }
+  const serve = (items: unknown[], dir: unknown = teams) => api.mockImplementation((path: string, init?: { method?: string; body?: unknown }) =>
+    path === '/catalog/teams' ? Promise.resolve(dir)
+      : init?.method === 'PUT' ? Promise.resolve({ ...basic, offering: { ...basic.offering, ...(init.body as object) } })
+        : Promise.resolve({ items }))
+
+  it('limits an offering to some teams, by name', async () => {
+    serve([basic])
+    mount(true)
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar PostgreSQL básico' }))
+    await userEvent.click(screen.getByRole('radio', { name: /Solo estos equipos/ }))
+    const save = screen.getByRole('button', { name: 'Guardar' })
+    expect(screen.getByText('Elige al menos un equipo, o ofrécela a todos.')).toBeTruthy()
+    expect(save.hasAttribute('disabled')).toBe(true)
+    const group = screen.getByRole('group', { name: 'Equipos' })
+    expect(within(group).getByText('1 persona · del directorio de la empresa')).toBeTruthy()
+    await userEvent.click(within(group).getByRole('checkbox', { name: /Datos/ }))
+    await userEvent.click(save)
+    await waitFor(() => expect(api.mock.calls.some(c => c[1]?.method === 'PUT')).toBe(true))
+    expect(api.mock.calls.find(c => c[1]?.method === 'PUT')![1].body.teams).toEqual(['grp_datos'])
+    expect(document.body.textContent).not.toMatch(/grp_/)
+  })
+
+  it('without the directory: no new teams, the saved ones are kept', async () => {
+    serve([basic, redis], { available: false, items: [] })
+    mount(true)
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar PostgreSQL básico' }))
+    const teamsOnly = screen.getByRole('radio', { name: /Solo estos equipos/ })
+    expect(teamsOnly.hasAttribute('disabled') || teamsOnly.getAttribute('aria-disabled') === 'true' || teamsOnly.hasAttribute('data-disabled')).toBe(true)
+    expect(screen.getByText(/Odicea no puede leer los equipos de tu organización/)).toBeTruthy()
+  })
+
+  it('a team default does not clash with everyone’s; the summary names the team', async () => {
+    const forDatos = { ...prod, offering: { ...prod.offering, active: true, tiers: ['production' as const], teams: ['grp_datos'] } }
+    serve([basic, forDatos])
+    mount(true)
+    expect(await screen.findByText('Solo la crea el equipo Datos.')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar PostgreSQL de producción' }))
+    expect(screen.queryByText(/ya lo es «PostgreSQL básico»/)).toBeNull()
+  })
 })
 
 describe('catalog lines', () => {
@@ -94,5 +135,10 @@ describe('catalog lines', () => {
     expect(specLine(basic)).toBeUndefined()
     expect(offeringSummary(prod)).toEqual(['No se ofrece: ninguna app puede crearla.'])
     expect(offeringSummary(entry())).toEqual(['Se ofrece en apps Sandbox · Interna · Producción.', 'Es la opción por defecto en Sandbox · Interna · Producción.', 'Tamaño: de 1 a 100 GB, todo al instante.'])
+    // teams: by name; never an id, not even before the names arrive or without the directory
+    const forTeams = entry({}, { teams: ['grp_datos', 'grp_old'] })
+    expect(offeringSummary(forTeams, [{ id: 'grp_datos', name: 'Datos', members: 1, directory: false }])[1]).toBe('Solo la crean los equipos Datos, un equipo que ya no existe.')
+    expect(offeringSummary(forTeams)[1]).toBe('Solo la crean 2 equipos.')
+    expect(offeringSummary(entry({}, { teams: ['grp_datos'] }))[1]).toBe('Solo la crea un equipo.')
   })
 })

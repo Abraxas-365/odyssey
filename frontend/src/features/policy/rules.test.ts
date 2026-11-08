@@ -112,7 +112,7 @@ describe('policy rules mapping', () => {
   it('tries a create or a change with what the catalog would resolve', () => {
     const recipe = {
       recipe: 'postgres-basico', version: 2, engine: 'builtin' as const, params: [{ name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'grows' as const }],
-      offering: { recipe: 'postgres-basico', version: 2, active: true, tiers: ['production' as const], defaults: ['production' as const], limits: {}, preapproved: { storage_gi: { max: 10 } }, revision: 1, updated_by: '', created_at: '', updated_at: '' },
+      offering: { recipe: 'postgres-basico', version: 2, active: true, tiers: ['production' as const], defaults: ['production' as const], limits: {}, preapproved: { storage_gi: { max: 10 } }, teams: [], revision: 1, updated_by: '', created_at: '', updated_at: '' },
     }
     const create = { ...defaultScenario, action: 'create_resource' as const, size: 20 }
     expect(scenarioInput(create, undefined, recipe).resource).toEqual({ kind: 'postgres', recipe: 'postgres-basico', recipe_version: 2, engine: 'builtin', params: { storage_gi: 20 }, out_of_range: ['storage_gi'] })
@@ -129,7 +129,7 @@ describe('policy rules mapping', () => {
   it('says what the catalog refuses before the rules, so the dry run is not misleading', () => {
     const recipe = {
       recipe: 'postgres-basico', version: 1, engine: 'builtin' as const, params: [{ name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'grows' as const }],
-      offering: { recipe: 'postgres-basico', version: 1, active: true, tiers: ['production' as const], defaults: ['production' as const], limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 10 } }, revision: 1, updated_by: '', created_at: '', updated_at: '' },
+      offering: { recipe: 'postgres-basico', version: 1, active: true, tiers: ['production' as const], defaults: ['production' as const], limits: { storage_gi: { max: 50 } }, preapproved: { storage_gi: { max: 10 } }, teams: [], revision: 1, updated_by: '', created_at: '', updated_at: '' },
     }
     const change = { ...defaultScenario, action: 'change_resource' as const, current: 8, size: 20 }
     expect(scenarioProblem(change, recipe)).toBeUndefined()
@@ -156,7 +156,7 @@ describe('policy rules mapping', () => {
         { name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 5, max: 100, default: 5, mutability: 'grows' as const },
         { name: 'instances', label: 'Instancias', unit: '', min: 1, max: 3, default: 2, mutability: 'mutable' as const },
       ],
-      offering: { recipe: 'postgres-produccion', version: 1, active: true, tiers: ['production' as const], defaults: [], limits: {}, preapproved: { instances: { max: 1 } }, revision: 1, updated_by: '', created_at: '', updated_at: '' },
+      offering: { recipe: 'postgres-produccion', version: 1, active: true, tiers: ['production' as const], defaults: [], limits: {}, preapproved: { instances: { max: 1 } }, teams: [], revision: 1, updated_by: '', created_at: '', updated_at: '' },
     }
     const s = { ...defaultScenario, kind: 'postgres' as const, size: 6, current: 5 }
     expect(scenarioInput({ ...s, action: 'create_resource' }, undefined, recipe).resource?.out_of_range).toEqual(['instances'])

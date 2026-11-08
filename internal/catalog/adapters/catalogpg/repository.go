@@ -40,7 +40,7 @@ func New(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
 var _ catalog.Repository = (*Repository)(nil)
 
-const columns = `organization_id, recipe, version, active, tiers, defaults, limits, preapproved, revision, updated_by,
+const columns = `organization_id, recipe, version, active, tiers, defaults, limits, preapproved, teams, revision, updated_by,
 	created_at, updated_at`
 
 type row struct {
@@ -52,6 +52,7 @@ type row struct {
 	Defaults     pq.StringArray          `db:"defaults"`
 	Limits       []byte                  `db:"limits"`
 	Preapproved  []byte                  `db:"preapproved"`
+	Teams        pq.StringArray          `db:"teams"`
 	Revision     int                     `db:"revision"`
 	UpdatedBy    identity.UserID         `db:"updated_by"`
 	CreatedAt    time.Time               `db:"created_at"`
@@ -74,10 +75,19 @@ func strs(ts []project.Tier) []string {
 	return out
 }
 
+// teams is never nil: pq writes a nil slice as NULL, which the column refuses.
+func teams(ts []string) []string {
+	if ts == nil {
+		return []string{}
+	}
+	return ts
+}
+
 func (r row) offering() (catalog.Offering, error) {
 	o := catalog.Offering{Organization: r.Organization, Recipe: r.Recipe, Revision: r.Revision, UpdatedBy: r.UpdatedBy,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		OfferingDraft: catalog.OfferingDraft{Version: r.Version, Active: r.Active, Tiers: tiers(r.Tiers), Defaults: tiers(r.Defaults)}}
+		OfferingDraft: catalog.OfferingDraft{Version: r.Version, Active: r.Active, Tiers: tiers(r.Tiers), Defaults: tiers(r.Defaults),
+			Teams: []string(r.Teams)}}
 	if err := json.Unmarshal(r.Limits, &o.Limits); err != nil {
 		return o, pgerr.Map(err, "decode catalog limits")
 	}
@@ -144,10 +154,10 @@ func (r *Repository) Update(ctx context.Context, o catalog.Offering) error {
 	}
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
 		`UPDATE catalog.offerings SET version = $3, active = $4, tiers = $5, defaults = $6, limits = $7, preapproved = $8,
-		        revision = revision + 1, updated_by = $9, updated_at = $10
+		        teams = $11, revision = revision + 1, updated_by = $9, updated_at = $10
 		 WHERE organization_id = $1 AND recipe = $2`,
 		o.Organization, o.Recipe, o.Version, o.Active, pq.Array(strs(o.Tiers)), pq.Array(strs(o.Defaults)), limits, pre,
-		o.UpdatedBy, o.UpdatedAt)
+		o.UpdatedBy, o.UpdatedAt, pq.Array(teams(o.Teams)))
 	if err != nil {
 		return pgerr.Map(err, "update catalog offering")
 	}
@@ -170,10 +180,11 @@ func (r *Repository) SeedFactory(ctx context.Context, offerings []catalog.Offeri
 		}
 		res, err := txn.Q(ctx, r.db).ExecContext(ctx,
 			`INSERT INTO catalog.offerings (organization_id, recipe, version, active, tiers, defaults, limits, preapproved,
-			                                revision, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $9)
+			                                teams, revision, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $10, 1, $9, $9)
 			 ON CONFLICT (organization_id, recipe) DO NOTHING`,
-			o.Organization, o.Recipe, o.Version, o.Active, pq.Array(strs(o.Tiers)), pq.Array(strs(o.Defaults)), limits, pre, o.CreatedAt)
+			o.Organization, o.Recipe, o.Version, o.Active, pq.Array(strs(o.Tiers)), pq.Array(strs(o.Defaults)), limits, pre, o.CreatedAt,
+			pq.Array(teams(o.Teams)))
 		if err != nil {
 			return added, pgerr.Map(err, "seed catalog offerings")
 		}

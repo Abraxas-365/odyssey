@@ -74,6 +74,7 @@ func TestUpdate(t *testing.T) {
 	}
 	o.Active, o.Tiers, o.Defaults = true, []project.Tier{project.TierInternal}, []project.Tier{project.TierInternal}
 	o.Limits = map[string]catalog.Range{catalog.ParamStorage: {Max: 8}}
+	o.Teams = []string{"grp_datos", "grp_ventas"}
 	o.UpdatedBy, o.UpdatedAt = user, time.Now().UTC().Truncate(time.Microsecond)
 	err = tx.Do(ctx, func(ctx context.Context) error {
 		if err := repo.LockCatalog(ctx, org); err != nil {
@@ -86,8 +87,20 @@ func TestUpdate(t *testing.T) {
 	}
 	got, err := repo.Find(ctx, org, catalog.RedisBasic)
 	if err != nil || got.Revision != 2 || got.UpdatedBy != user || got.Limits[catalog.ParamStorage].Max != 8 ||
-		!slices.Equal(got.Tiers, []project.Tier{project.TierInternal}) {
+		!slices.Equal(got.Tiers, []project.Tier{project.TierInternal}) || !slices.Equal(got.Teams, []string{"grp_datos", "grp_ventas"}) {
 		t.Fatalf("updated: %+v %v", got, err)
+	}
+	// no teams (everyone) is stored as empty, never NULL
+	o.Teams = nil
+	if err := repo.Update(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.Find(ctx, org, catalog.RedisBasic); err != nil || got.Teams == nil || len(got.Teams) != 0 {
+		t.Fatalf("no teams: %#v %v", got.Teams, err)
+	}
+	// the other organization's offering is untouched
+	if theirs, err := repo.Find(ctx, other, catalog.RedisBasic); err == nil && len(theirs.Teams) != 0 {
+		t.Fatalf("leaked teams: %+v", theirs)
 	}
 	// another organization's offering is not reachable
 	o.Organization = other

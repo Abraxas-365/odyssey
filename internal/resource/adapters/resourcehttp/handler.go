@@ -83,7 +83,7 @@ func (h *Handler) offered(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.Offered(c.UserContext(), at.org, at.project, at.environment)
+	out, err := h.queries.Offered(c.UserContext(), at.org, at.project, at.environment, at.user)
 	if err != nil {
 		return err
 	}
