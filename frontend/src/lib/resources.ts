@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { releaseKeys } from './releases'
-import type { CreateResource, CreateResourceResult, PendingApproval, Resource, ResourceChange, ResourceList } from './types'
+import type { ChangeResourceResult, CreateResource, CreateResourceResult, PendingApproval, Resource, ResourceChange, ResourceList } from './types'
 
 /** While a resource is being prepared or erased the console asks again every 3 s. */
 export const RESOURCES_POLL_MS = 3000
@@ -37,7 +37,7 @@ export const useCreateResource = (project: string, env: string) =>
 
 export const useResizeResource = (project: string, env: string) =>
   useResourceWrite(project, env, ({ name, storage_gi }: { name: string; storage_gi: number }) =>
-    api<Resource>(`${path(project, env)}/${enc(name)}`, { method: 'PATCH', body: { storage_gi } }))
+    api<ChangeResourceResult>(`${path(project, env)}/${enc(name)}`, { method: 'PATCH', body: { storage_gi } }))
 
 export const useDeleteResource = (project: string, env: string) =>
   useResourceWrite(project, env, (name: string) => api<Resource | PendingApproval>(`${path(project, env)}/${enc(name)}`, { method: 'DELETE' }))

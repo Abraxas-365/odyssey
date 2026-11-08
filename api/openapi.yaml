@@ -773,6 +773,39 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/projects/{id}/environments/{environment}/catalog:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+      - $ref: "#/components/parameters/Environment"
+    get:
+      tags: [resources]
+      operationId: getEnvironmentCatalog
+      summary: What the environment's app can ask for
+      description: |
+        The catalog as this environment sees it (docs/catalog.md): the recipes
+        its app's tier is offered and its cluster can honour, each kind's
+        default first, with the offering's limits and pre-approved range, the
+        variables the app receives and `verdict` — what creating it with its
+        defaults and connected to the whole app gets for the caller now
+        (`allow`: at once, `approval`: held for IT, `deny`), judged as
+        `POST …/resources` judges it, writing nothing. A value outside a
+        parameter's pre-approved range asks IT whatever this says. The kinds
+        nothing fulfils are in `unavailable` with why. Same view as the MCP
+        tool `list_catalog`.
+      x-permissions: [odyssey:projects:read]
+      responses:
+        "200":
+          description: What can be created here.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentCatalog" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/projects/{id}/environments/{environment}/resources:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -5025,10 +5058,14 @@ components:
       type: object
       additionalProperties: false
       description: An immutable recipe version with the organization's offering of the recipe.
-      required: [recipe, version, kind, title, description, engine, params, spec, requires, offering]
+      required: [recipe, version, versions, kind, title, description, engine, params, spec, requires, offering]
       properties:
         recipe: { type: string }
         version: { type: integer }
+        versions:
+          type: array
+          description: Every version of the recipe this Odicea knows (what IT can offer), oldest first.
+          items: { type: integer }
         kind: { $ref: "#/components/schemas/ResourceKind" }
         title: { type: string }
         description: { type: string }
@@ -5052,6 +5089,77 @@ components:
           description: Capabilities the environment's cluster must announce.
           items: { type: string }
         offering: { $ref: "#/components/schemas/CatalogOffering" }
+
+    EnvironmentCatalog:
+      type: object
+      additionalProperties: false
+      description: What an environment's app can ask for (GET …/catalog, docs/catalog.md).
+      required: [tier, recipes, unavailable]
+      properties:
+        tier: { $ref: "#/components/schemas/ProjectTier" }
+        recipes:
+          type: array
+          description: In kind order, each kind's default first.
+          items: { $ref: "#/components/schemas/CatalogOffer" }
+        unavailable:
+          type: array
+          description: The kinds nothing fulfils here.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, reason]
+            properties:
+              kind: { $ref: "#/components/schemas/ResourceKind" }
+              reason: { type: string, description: "Why, in plain Spanish (not offered in the tier, the cluster cannot, no cluster)." }
+
+    CatalogOffer:
+      type: object
+      additionalProperties: false
+      description: One recipe that can be created in the environment.
+      required: [kind, recipe, recipe_version, title, description, default, params, variables, verdict, rules, rules_verdict]
+      properties:
+        kind: { $ref: "#/components/schemas/ResourceKind" }
+        recipe: { type: string }
+        recipe_version: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        default: { type: boolean, description: What a request naming only the kind gets (none when the offering names several). }
+        params:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, label, unit, min, max, default, preapproved_min, preapproved_max, mutability]
+            properties:
+              name: { type: string }
+              label: { type: string }
+              unit: { type: string }
+              min: { type: integer, description: The offering's hard limits; outside them it cannot be asked for. }
+              max: { type: integer }
+              default: { type: integer }
+              preapproved_min: { type: integer, description: Inside the pre-approved range it is created without asking IT. }
+              preapproved_max: { type: integer }
+              mutability: { type: string, enum: [immutable, grows, mutable] }
+        variables:
+          type: array
+          description: What the app receives once connected (values never leave the cluster).
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, secret, meaning]
+            properties:
+              name: { type: string }
+              secret: { type: boolean }
+              meaning: { type: string }
+        verdict: { $ref: "#/components/schemas/PolicyEffect" }
+        rules:
+          type: array
+          description: The names of what decided a verdict other than allow (IT's rules, or the catalog's pre-approved range).
+          items: { type: string }
+        # rules_verdict: verdict without the catalog's pre-approved range (what
+        # IT's rules say). Another value inside the range gets it; outside, at
+        # least approval.
+        rules_verdict: { $ref: "#/components/schemas/PolicyEffect" }
 
     PolicyRule:
       type: object

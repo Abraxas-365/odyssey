@@ -155,6 +155,15 @@ func TestCatalogGovernsResources(t *testing.T) {
 	offer("postgres-basico", map[string]any{"version": 1, "active": true, "tiers": tiers, "defaults": tiers,
 		"preapproved": map[string]any{"storage_gi": map[string]int{"max": 10}}})
 
+	// What the console's create dialog reads: the environment's catalog, with
+	// IT's pre-approved range and the verdict on the defaults.
+	res = checked(t, app, http.MethodGet, "/api/v1/projects/"+proj.ID.String()+"/environments/"+env.ID.String()+"/catalog", token, nil)
+	httpxtest.Want(t, res, http.StatusOK)
+	if o := httpxtest.JSON[resource.Offered](t, res); len(o.Recipes) == 0 || o.Recipes[0].Recipe != "postgres-basico" ||
+		!o.Recipes[0].Default || o.Recipes[0].Verdict != gate.Allow || o.Recipes[0].Params[0].PreapprovedMax != 10 {
+		t.Fatalf("catalog %+v", o)
+	}
+
 	// Inside the range: created at once, pinned to the recipe that made it.
 	res = checked(t, app, http.MethodPost, rbase, token, map[string]any{"name": "db", "kind": "postgres", "params": map[string]int{"storage_gi": 5}})
 	httpxtest.Want(t, res, http.StatusCreated)

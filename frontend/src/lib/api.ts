@@ -110,13 +110,21 @@ const messages: Record<string, string> = {
   SERVICE_SETTINGS_UNAVAILABLE: 'El servidor de esta app todavía no puede dar algo solo a algunas partes. Guárdalo para toda la app o pídele a TI que actualice su agente.',
   // resources (docs/resources.md): the destination's agent is older than a resource's recipe
   RESOURCES_UNSUPPORTED: 'El clúster de destino no puede preparar una base de datos (o caché o archivos) de estas apps como lo pide su receta. Actualiza su agente y vuelve a intentarlo.',
+  // the catalog (docs/catalog.md): CATALOG_OUT_OF_LIMITS and CATALOG_UNAVAILABLE keep the server's
+  // own Spanish (it names the limit, the level or what the cluster lacks)
+  CATALOG_CHOOSE_RECIPE: 'Hay varias opciones para esto en esta app y ninguna es la de por defecto. Elige una.',
+  CATALOG_RECIPE_CHANGED: 'TI cambió el catálogo desde que se pidió esto. Vuelve a pedirlo con la opción actual.',
   // a name another source (a variable, a secret, a database, the AI) already gives to the same part
   VARIABLE_TAKEN: 'Otra cosa de la app ya entrega una variable con ese nombre a la misma parte. Cámbiale el nombre o quita la otra primero.',
 }
 
+/** Codes whose server text is already the plain Spanish to show (it names what is in the way). */
+const ownWords = new Set(['CATALOG_DEFAULT_TAKEN'])
+
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (messages[error.code]) return messages[error.code]
+    if (ownWords.has(error.code)) return error.message
     switch (error.type) {
       case 'NOT_FOUND': return 'No encontramos lo que buscas. Puede que se haya borrado o que no tengas acceso.'
       case 'CONFLICT':

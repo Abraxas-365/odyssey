@@ -14,6 +14,7 @@ export const permissions = {
   resourcesDelete: 'odyssey:resources:delete',
   projectsTier: 'odyssey:projects:tier',
   policyManage: 'odyssey:policy:manage',
+  catalogManage: 'odyssey:catalog:manage',
   approvalsDecide: 'odyssey:approvals:decide',
   inventoryRead: 'odyssey:inventory:read',
   auditRead: 'odyssey:audit:read',

@@ -24,6 +24,8 @@ func New(commands resource.Commands, queries resource.Queries) *Handler {
 // takes projects:read; every change projects:write (like the rest of an
 // app's settings), and deleting, which erases data, its own permission.
 func (h *Handler) Register(r fiber.Router) {
+	// what can be asked for here: the catalog as this environment sees it
+	r.Get("/projects/:id/environments/:environment/catalog", httpx.RequirePermissions(permission.ProjectsRead), h.offered)
 	g := r.Group("/projects/:id/environments/:environment/resources")
 	g.Get("/", httpx.RequirePermissions(permission.ProjectsRead), h.list)
 	g.Post("/", httpx.RequirePermissions(permission.ProjectsWrite), h.create)
@@ -67,6 +69,21 @@ func (h *Handler) list(c *fiber.Ctx) error {
 		return err
 	}
 	out, err := h.queries.List(c.UserContext(), at.org, at.project, at.environment)
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
+}
+
+// offered answers what the environment's app can ask for (the recipes its
+// tier is offered and its cluster honours) and how: at once, with IT's
+// approval or not at all, for the caller (docs/catalog.md).
+func (h *Handler) offered(c *fiber.Ctx) error {
+	at, err := parse(c)
+	if err != nil {
+		return err
+	}
+	out, err := h.queries.Offered(c.UserContext(), at.org, at.project, at.environment)
 	if err != nil {
 		return err
 	}

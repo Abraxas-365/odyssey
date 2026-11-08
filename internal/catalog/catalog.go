@@ -270,6 +270,8 @@ type UpdateOffering struct {
 // Entry is a recipe version with the organization's offering of it.
 type Entry struct {
 	RecipeVersion
+	// Versions are every version of the recipe IT can offer, oldest first.
+	Versions []int    `json:"versions"`
 	Offering Offering `json:"offering"`
 }
 
@@ -358,14 +360,24 @@ func Check(v RecipeVersion, o Offering, params map[string]int) (map[string]int, 
 	return out, outside, nil
 }
 
-// OutOfLimits is the 422 for a value outside the hard limits.
+// OutOfLimits is the 422 for a value outside the hard limits, worded for
+// the person (UnitLabel).
 func OutOfLimits(p Param, b Range) error {
 	unit := ""
 	if p.Unit != "" {
-		unit = " " + p.Unit
+		unit = " " + UnitLabel(p.Unit)
 	}
 	return errx.Business(p.Label + ": tu empresa permite entre " + strconv.Itoa(b.Min) + " y " + strconv.Itoa(b.Max) + unit + ".").
 		WithCode(CodeOutOfLimits).WithField("params." + p.Name)
+}
+
+// UnitLabel words a parameter's unit as people read it: GiB is "GB" (the
+// console says the same).
+func UnitLabel(unit string) string {
+	if unit == "GiB" {
+		return "GB"
+	}
+	return unit
 }
 
 // Unavailable is the 422 for a kind nothing fulfils here.

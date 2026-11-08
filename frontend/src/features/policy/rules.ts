@@ -1,5 +1,6 @@
-import type { PolicyAction, PolicyDraft, PolicyEffect, PolicyEvaluation, PolicyInput, PolicyRule, ProjectTier, ResourceKind } from '@/lib/types'
+import type { CatalogEntry, PolicyAction, PolicyDraft, PolicyEffect, PolicyEvaluation, PolicyInput, PolicyRule, ProjectTier, ResourceKind } from '@/lib/types'
 import type { Tone } from '@/components/odyssey'
+import { defaultOf, offeringForm } from '@/lib/catalog'
 
 /** IT's rules in plain words (UX v3 §11): effects, tiers and actions are never shown by their ids. */
 export const effectInfo: Record<PolicyEffect, { label: string; tone: Tone }> = {
@@ -28,6 +29,8 @@ export const actionOptions: { value: PolicyAction; label: string }[] = [
   { value: 'set_access', label: 'Cambiar quién puede abrirla' },
   { value: 'connect_resource', label: 'Conectar una base de datos o archivos' },
   { value: 'delete_resource', label: 'Borrar una base de datos o archivos' },
+  { value: 'create_resource', label: 'Crear una base de datos, caché o archivos' },
+  { value: 'change_resource', label: 'Agrandar una base de datos o archivos' },
   { value: 'enable_ai', label: 'Activar la IA' },
   { value: 'rollback', label: 'Volver a una versión anterior' },
   { value: 'set_services', label: 'Cambiar los servicios de una app' },
@@ -47,7 +50,10 @@ export const resourceKindOptions: { value: ResourceKind; label: string }[] = [
 ]
 
 /** The actions whose input carries `resource.kind`. */
-export const onResource = (a: PolicyAction) => a === 'connect_resource' || a === 'delete_resource'
+export const onResource = (a: PolicyAction) => a === 'connect_resource' || a === 'delete_resource' || onRecipe(a)
+
+/** The actions the catalog resolves (`resource.recipe`, `params`, `out_of_range`). */
+export const onRecipe = (a: PolicyAction) => a === 'create_resource' || a === 'change_resource'
 
 export const actionLabel = (a: PolicyAction) => actionOptions.find(o => o.value === a)?.label ?? a
 
@@ -90,11 +96,51 @@ export interface Scenario {
   tier: ProjectTier
   mode: string
   kind: ResourceKind
+  /** create/change: the catalog recipe ('' = the kind's default here) and the size asked for. */
+  recipe: string
+  size: number
   scan: ScanScenario
   critical: number
 }
 
-export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', kind: 'postgres', scan: 'none', critical: 0 }
+export const defaultScenario: Scenario = { action: 'deploy', tier: 'production', mode: 'team', kind: 'postgres', recipe: '', size: 1, scan: 'none', critical: 0 }
+
+/** The recipe a create/change is tried with: what the catalog would resolve (its offered version and ranges). */
+export type ScenarioRecipe = Pick<CatalogEntry, 'recipe' | 'version' | 'engine' | 'params' | 'offering'>
+
+/**
+ * The recipes "Probar" can pick for a kind. A create: those offered in the
+ * tier (anything else is refused before any rule runs). A change: every
+ * recipe of the kind, offered or not — what exists keeps changing when IT
+ * withdraws its offering.
+ */
+export function scenarioRecipes<E extends Pick<CatalogEntry, 'kind' | 'offering'>>(entries: readonly E[], s: Pick<Scenario, 'action' | 'kind' | 'tier'>): E[] {
+  const of = entries.filter(e => e.kind === s.kind)
+  return s.action === 'change_resource' ? of : of.filter(e => e.offering.active && e.offering.tiers.includes(s.tier))
+}
+
+/**
+ * The recipe the scenario resolves to: the one picked, else the kind's
+ * default in the tier (as the server picks for a create; for a change, the
+ * likeliest one a resource has, else the kind's first).
+ */
+export function scenarioRecipe<E extends Pick<CatalogEntry, 'recipe' | 'kind' | 'offering'>>(entries: readonly E[], s: Pick<Scenario, 'action' | 'kind' | 'recipe' | 'tier'>): E | undefined {
+  const of = scenarioRecipes(entries, s)
+  if (s.recipe) return of.find(e => e.recipe === s.recipe)
+  const here = of.filter(e => e.offering.active && e.offering.tiers.includes(s.tier))
+  const picked = here.find(e => e.offering.defaults.includes(s.tier)) ?? (here.length === 1 ? here[0] : undefined)
+  return picked ?? (s.action === 'change_resource' ? of[0] : undefined)
+}
+
+/**
+ * What the catalog adds on its own to a create or a change, which the dry
+ * run (IT's rules only) does not show: outside the pre-approved range it
+ * asks for approval whatever the rules say.
+ */
+export function catalogNote(input: Pick<PolicyInput, 'action' | 'resource'>): string | undefined {
+  if (!onRecipe(input.action as PolicyAction) || !input.resource?.out_of_range?.length) return undefined
+  return 'Además, el tamaño pedido supera lo que TI dejó crear al instante en el catálogo: eso pide aprobación aunque ninguna regla lo diga.'
+}
 
 export const scanOptions: { value: ScanScenario; label: string }[] = [
   { value: 'none', label: 'Todavía no se analiza (antes de construir)' },
@@ -102,7 +148,13 @@ export const scanOptions: { value: ScanScenario; label: string }[] = [
   { value: 'done', label: 'Ya se analizó' },
 ]
 
-export function scenarioInput(s: Scenario, candidate?: Candidate): PolicyInput {
+/**
+ * The dry run's input. For a create or a change, `recipe` (when known) adds
+ * what the catalog resolves: the recipe, its version, every parameter (the
+ * size asked, the rest at their defaults) and which are outside IT's
+ * pre-approved range — what `catalog:preapproved` and IT's rules read.
+ */
+export function scenarioInput(s: Scenario, candidate?: Candidate, recipe?: ScenarioRecipe): PolicyInput {
   const input: PolicyInput = {
     action: s.action,
     project: { tier: s.tier },
@@ -113,6 +165,18 @@ export function scenarioInput(s: Scenario, candidate?: Candidate): PolicyInput {
       checked: s.scan !== 'none',
       critical: s.scan === 'done' ? Math.max(0, Math.trunc(s.critical) || 0) : 0,
     },
+  }
+  if (onRecipe(s.action) && recipe) {
+    const pre = offeringForm(recipe).preapproved
+    const params = Object.fromEntries(recipe.params.map(p => [p.name, p.name === 'storage_gi' ? Math.max(1, Math.trunc(s.size) || 1) : defaultOf(recipe, p)]))
+    input.resource = {
+      kind: s.kind,
+      recipe: recipe.recipe,
+      recipe_version: recipe.version,
+      engine: recipe.engine,
+      params,
+      out_of_range: recipe.params.filter(p => params[p.name] < pre[p.name].min || params[p.name] > pre[p.name].max).map(p => p.name),
+    }
   }
   if (candidate) input.rule = candidateRule(candidate)
   return input
@@ -135,14 +199,17 @@ export function candidateRule({ draft, replaces }: Candidate): NonNullable<Polic
 
 /** The variables a condition can read (docs/policy.md "The input"): shown under the editor. */
 export const expressionVariables: { name: string; description: string }[] = [
-  { name: 'action', description: "lo que se intenta: 'deploy', 'set_access', 'connect_resource', 'delete_resource', 'enable_ai', 'rollback' o 'set_services'" },
+  { name: 'action', description: "lo que se intenta: 'deploy', 'set_access', 'connect_resource', 'delete_resource', 'create_resource', 'change_resource', 'enable_ai', 'rollback' o 'set_services'" },
   { name: 'project.tier', description: "el nivel de la app: 'sandbox', 'internal' o 'production'" },
   { name: 'project.slug', description: 'el nombre corto de la app' },
   { name: 'env.name', description: 'el entorno' },
   { name: 'access.mode', description: "quién podrá abrirla, solo al cambiar el acceso: 'team', 'organization' o 'public'" },
   { name: 'actor.id', description: 'quién lo hace (una publicación por push de GitHub aparece como «github:usuario»)' },
   { name: 'actor.permissions', description: 'lista de permisos de quien lo hace; vacía en las publicaciones por push' },
-  { name: 'resource.kind', description: "el tipo de dato, al conectar o borrar: 'postgres', 'redis' o 'files'" },
+  { name: 'resource.kind', description: "el tipo de dato, al crear, agrandar, conectar o borrar: 'postgres', 'redis' o 'files'" },
+  { name: 'resource.recipe', description: "al crear o agrandar: la opción del catálogo (ej. 'postgres-produccion'); también resource.recipe_version" },
+  { name: 'resource.params', description: 'al crear o agrandar: los valores pedidos, con los no pedidos en su valor por defecto. Ej.: resource.params.storage_gi > 50' },
+  { name: 'resource.out_of_range', description: "al crear o agrandar: los valores fuera de lo que TI dejó crear al instante (eso ya pide aprobación por sí solo). Ej.: 'storage_gi' in resource.out_of_range" },
   { name: 'scan.known', description: 'si hay un análisis de vulnerabilidades hecho de esta imagen (false mientras no lo hay o si falló)' },
   { name: 'scan.critical', description: 'vulnerabilidades críticas (también scan.high); úsalo junto con scan.known' },
   { name: 'scan.checked', description: 'si ya se revisó el análisis: false al pedir la publicación (antes de construir), true después, haya salido bien o no. «scan.checked && !scan.known» es una imagen que no se pudo analizar' },

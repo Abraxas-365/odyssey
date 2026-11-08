@@ -18,7 +18,7 @@ describe('consoleTabs (UX v4 §6.1)', () => {
     const ti = role(...Object.values(permissions))
     expect(labels(consoleTabs(ti, 3))).toEqual(['Inicio', 'Bandeja', 'Inventario', 'Registro', 'Administración'])
     expect(consoleTabs(ti, 3)[1].count).toBe(3)
-    expect(labels(adminSections(ti))).toEqual(['Clústeres', 'GitHub', 'Reglas'])
+    expect(labels(adminSections(ti))).toEqual(['Clústeres', 'GitHub', 'Reglas', 'Catálogo'])
   })
 
   it('Administración shows only the sections one may open', () => {

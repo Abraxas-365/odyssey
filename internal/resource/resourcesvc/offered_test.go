@@ -226,8 +226,11 @@ func TestOfferedJudgesAsCreateDoes(t *testing.T) {
 	if basic.Verdict != gate.Approval || !slices.Contains(basic.Rules, "connect-review") {
 		t.Fatalf("connecting is judged too: %+v", basic)
 	}
-	if prod.Verdict != gate.Approval {
+	if prod.Verdict != gate.Approval || !slices.Contains(prod.Rules, catalog.RuleCatalogName) {
 		t.Fatalf("a default outside the pre-approved range asks IT: %+v", prod)
+	}
+	if basic.RulesVerdict != gate.Approval {
+		t.Fatalf("the rules on connecting are IT's rules: %+v", basic)
 	}
 	if files.Verdict != gate.Allow {
 		t.Fatalf("files judged without the connection the app's shape refuses: %+v", files)
@@ -238,5 +241,38 @@ func TestOfferedJudgesAsCreateDoes(t *testing.T) {
 
 	if _, _, _, err := offeredWith(t, project.TierProduction, allCaps, offerSetup{status: project.StatusArchived}); err == nil {
 		t.Fatal("an archived app was offered something")
+	}
+}
+
+// RulesVerdict is the verdict without the catalog's floor: a default outside
+// the pre-approved range asks IT (Verdict), but a value inside it gets only
+// what IT's rules say — the console's forecast for other values.
+func TestOfferedSeparatesTheCatalogFloor(t *testing.T) {
+	o, _, _, err := offeredWith(t, project.TierProduction, allCaps, offerSetup{
+		offer: func(cat *catalogsvc.Service) {
+			if _, err := cat.UpdateOffering(context.Background(), org, catalog.PostgresProduction, catalog.UpdateOffering{UpdatedBy: identity.MustParseUserID("11111111-1111-4111-8111-111111111111"),
+				OfferingDraft: catalog.OfferingDraft{Version: 1, Active: true, Tiers: []project.Tier{project.TierProduction},
+					Preapproved: map[string]catalog.Range{catalog.ParamStorage: {Min: 5, Max: 8}}}}); err != nil {
+				t.Fatal(err)
+			}
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range o.Recipes {
+		switch r.Recipe {
+		case catalog.PostgresProduction:
+			if r.Verdict != gate.Approval || r.RulesVerdict != gate.Allow || len(r.Rules) != 1 || r.Rules[0] != catalog.RuleCatalogName {
+				t.Fatalf("floor only: %+v", r)
+			}
+		case catalog.RedisBasic:
+			if r.Verdict != gate.Approval || r.RulesVerdict != gate.Approval {
+				t.Fatalf("a rule: %+v", r)
+			}
+		default:
+			if r.Verdict != gate.Allow || r.RulesVerdict != gate.Allow {
+				t.Fatalf("nothing asks: %+v", r)
+			}
+		}
 	}
 }

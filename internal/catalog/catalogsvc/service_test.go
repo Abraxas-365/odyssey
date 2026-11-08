@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/catalog"
@@ -105,7 +106,7 @@ func TestProductionTierHasTwoPostgresRecipesAndTheBasicIsTheDefault(t *testing.T
 	// below the hard limit: refused, not even with approval
 	_, err = svc.Resolve(ctx, org, catalog.Request{Kind: resourcekind.Postgres, Recipe: catalog.PostgresProduction,
 		Tier: project.TierProduction, Capabilities: modern, Params: map[string]int{catalog.ParamStorage: 2}})
-	if code(err) != catalog.CodeOutOfLimits {
+	if code(err) != catalog.CodeOutOfLimits || !strings.Contains(err.Error(), "entre 5 y 100 GB.") {
 		t.Fatalf("out of limits: %v", err)
 	}
 	// not offered in another tier

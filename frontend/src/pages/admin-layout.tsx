@@ -12,6 +12,7 @@ const sections: (NavTab & { permission: Permission })[] = [
   { to: '/administracion/clusteres', label: 'Clústeres', permission: permissions.clustersRead },
   { to: '/administracion/github', label: 'GitHub', permission: permissions.integrationsManage },
   { to: '/administracion/reglas', label: 'Reglas', permission: permissions.policyManage },
+  { to: '/administracion/catalogo', label: 'Catálogo', permission: permissions.catalogManage },
 ]
 
 /** The sections this person may open, in order. */

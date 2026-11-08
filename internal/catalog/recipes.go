@@ -57,6 +57,18 @@ var factory = func() []RecipeVersion {
 // version.
 func Versions() []RecipeVersion { return slices.Clone(factory) }
 
+// VersionsOf are the versions of recipe this binary knows, oldest first.
+func VersionsOf(recipe string) []int {
+	out := []int{}
+	for _, v := range factory {
+		if v.Recipe == recipe {
+			out = append(out, v.Version)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // Version is recipe@version (false: this binary does not know it).
 func Version(recipe string, version int) (RecipeVersion, bool) {
 	i := slices.IndexFunc(factory, func(v RecipeVersion) bool { return v.Recipe == recipe && v.Version == version })

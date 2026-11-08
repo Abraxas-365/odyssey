@@ -44,11 +44,11 @@ func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id p
 				}
 				continue
 			}
-			v, err := s.verdictOnDefaults(ctx, p, e, entry)
+			rv, v, err := s.verdictOnDefaults(ctx, p, e, entry)
 			if err != nil {
 				return resource.Offered{}, err
 			}
-			o := resource.NewOffer(entry, p.Tier, v)
+			o := resource.NewOffer(entry, p.Tier, v, rv)
 			if o.Default {
 				defaults++
 				offers = append([]resource.Offer{o}, offers...)
@@ -79,26 +79,32 @@ func (s *Service) Offered(ctx context.Context, org identity.OrganizationID, id p
 // verdictOnDefaults is what create_resource's default gets: entry with its
 // defaults, connected to the whole app, judged as Create judges it (IT's
 // rules under create_resource, the catalog's floor and the rules on
-// connecting). A connection the app's shape refuses (a files volume in an
-// app of several services must name one) is judged without it: the request
-// will name the service, and the rules on that one are asked then.
-func (s *Service) verdictOnDefaults(ctx context.Context, p project.Project, e project.Environment, entry catalog.Entry) (gate.Verdict, error) {
+// connecting): all of it, and the rules alone (without the floor, which
+// depends on the values asked). A connection the app's shape refuses (a
+// files volume in an app of several services must name one) is judged
+// without it: the request will name the service, and the rules on that one
+// are asked then.
+func (s *Service) verdictOnDefaults(ctx context.Context, p project.Project, e project.Environment, entry catalog.Entry) (rules, all gate.Verdict, err error) {
 	params, outside, err := catalog.Check(entry.RecipeVersion, entry.Offering, nil)
 	if err != nil {
-		return gate.Verdict{}, err
+		return gate.Verdict{}, gate.Verdict{}, err
 	}
 	r := catalog.Resolved{Kind: entry.Kind, Recipe: entry.Recipe, Version: entry.Version, Engine: entry.Engine, Params: params,
 		Spec: entry.Spec, OutOfRange: outside}
-	others := []gate.Verdict{catalog.Floor(r)}
+	var others []gate.Verdict
 	cv, err := s.usage.JudgeConnect(ctx, p.Organization, p.ID, e.ID, resource.Ask{Kind: entry.Kind})
 	var invalid *errx.Error
 	switch {
 	case err == nil:
 		others = append(others, cv)
 	case !errx.As(err, &invalid) || invalid.Type != errx.TypeValidation || invalid.Details["field"] != "services":
-		return gate.Verdict{}, err
+		return gate.Verdict{}, gate.Verdict{}, err
 	}
-	return s.judge(ctx, p, e, gate.Request{Action: gate.ActionCreateResource, ResourceKind: string(entry.Kind), Recipe: r.Gate()}, others...)
+	rules, err = s.judge(ctx, p, e, gate.Request{Action: gate.ActionCreateResource, ResourceKind: string(entry.Kind), Recipe: r.Gate()}, others...)
+	if err != nil {
+		return gate.Verdict{}, gate.Verdict{}, err
+	}
+	return rules, rules.With(catalog.Floor(r)), nil
 }
 
 func messageOf(err error) string {

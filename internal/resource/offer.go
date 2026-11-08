@@ -40,6 +40,10 @@ type Offer struct {
 	Verdict gate.Effect `json:"verdict"`
 	// Rules name what decided a verdict other than allow.
 	Rules []string `json:"rules"`
+	// RulesVerdict is Verdict without the catalog's own floor (a default
+	// outside the pre-approved range): what IT's rules say, so a client can
+	// forecast other values (outside that range → approval, inside → this).
+	RulesVerdict gate.Effect `json:"rules_verdict"`
 }
 
 // OfferParam is a parameter with the offering's limits: a value outside
@@ -76,13 +80,17 @@ type UnavailableKind struct {
 }
 
 // NewOffer words entry as offered in tier, with the verdict on creating it
-// with defaults (its parameters' defaults).
-func NewOffer(e catalog.Entry, tier project.Tier, v gate.Verdict) Offer {
+// with defaults (its parameters' defaults): v all of it, rules IT's rules
+// alone.
+func NewOffer(e catalog.Entry, tier project.Tier, v, rules gate.Verdict) Offer {
 	o := Offer{Kind: e.Kind, Recipe: e.Recipe, Version: e.Version, Title: e.Title, Description: e.Description,
 		Default: e.Offering.DefaultIn(tier), Params: make([]OfferParam, 0, len(e.Params)), Variables: []OfferVariable{},
-		Verdict: v.Effect, Rules: []string{}}
+		Verdict: v.Effect, Rules: []string{}, RulesVerdict: rules.Effect}
 	if o.Verdict == "" {
 		o.Verdict = gate.Allow
+	}
+	if o.RulesVerdict == "" {
+		o.RulesVerdict = gate.Allow
 	}
 	for _, p := range e.Params {
 		b, pre := e.Offering.Bounds(p), e.Offering.PreapprovedRange(p)

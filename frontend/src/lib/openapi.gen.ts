@@ -523,6 +523,38 @@ export interface paths {
         patch: operations["setEnvironmentVariables"];
         trace?: never;
     };
+    "/api/v1/projects/{id}/environments/{environment}/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        /**
+         * What the environment's app can ask for
+         * @description The catalog as this environment sees it (docs/catalog.md): the recipes
+         *     its app's tier is offered and its cluster can honour, each kind's
+         *     default first, with the offering's limits and pre-approved range, the
+         *     variables the app receives and `verdict` — what creating it with its
+         *     defaults and connected to the whole app gets for the caller now
+         *     (`allow`: at once, `approval`: held for IT, `deny`), judged as
+         *     `POST …/resources` judges it, writing nothing. A value outside a
+         *     parameter's pre-approved range asks IT whatever this says. The kinds
+         *     nothing fulfils are in `unavailable` with why. Same view as the MCP
+         *     tool `list_catalog`.
+         */
+        get: operations["getEnvironmentCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/environments/{environment}/resources": {
         parameters: {
             query?: never;
@@ -3398,6 +3430,8 @@ export interface components {
         CatalogEntry: {
             recipe: string;
             version: number;
+            /** @description Every version of the recipe this Odicea knows (what IT can offer), oldest first. */
+            versions: number[];
             kind: components["schemas"]["ResourceKind"];
             title: string;
             description: string;
@@ -3416,6 +3450,52 @@ export interface components {
             /** @description Capabilities the environment's cluster must announce. */
             requires: string[];
             offering: components["schemas"]["CatalogOffering"];
+        };
+        /** @description What an environment's app can ask for (GET …/catalog, docs/catalog.md). */
+        EnvironmentCatalog: {
+            tier: components["schemas"]["ProjectTier"];
+            /** @description In kind order, each kind's default first. */
+            recipes: components["schemas"]["CatalogOffer"][];
+            /** @description The kinds nothing fulfils here. */
+            unavailable: {
+                kind: components["schemas"]["ResourceKind"];
+                /** @description Why, in plain Spanish (not offered in the tier, the cluster cannot, no cluster). */
+                reason: string;
+            }[];
+        };
+        /** @description One recipe that can be created in the environment. */
+        CatalogOffer: {
+            kind: components["schemas"]["ResourceKind"];
+            recipe: string;
+            recipe_version: number;
+            title: string;
+            description: string;
+            /** @description What a request naming only the kind gets (none when the offering names several). */
+            default: boolean;
+            params: {
+                name: string;
+                label: string;
+                unit: string;
+                /** @description The offering's hard limits; outside them it cannot be asked for. */
+                min: number;
+                max: number;
+                default: number;
+                /** @description Inside the pre-approved range it is created without asking IT. */
+                preapproved_min: number;
+                preapproved_max: number;
+                /** @enum {string} */
+                mutability: "immutable" | "grows" | "mutable";
+            }[];
+            /** @description What the app receives once connected (values never leave the cluster). */
+            variables: {
+                name: string;
+                secret: boolean;
+                meaning: string;
+            }[];
+            verdict: components["schemas"]["PolicyEffect"];
+            /** @description The names of what decided a verdict other than allow (IT's rules, or the catalog's pre-approved range). */
+            rules: string[];
+            rules_verdict: components["schemas"]["PolicyEffect"];
         };
         PolicyRule: {
             /** Format: uuid */
@@ -4593,6 +4673,35 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getEnvironmentCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ID"];
+                environment: components["parameters"]["Environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What can be created here. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentCatalog"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["Business"];
             500: components["responses"]["Internal"];
         };

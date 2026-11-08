@@ -113,6 +113,40 @@ What an assistant sees of the catalog is one environment's view,
 - **`create_database`** stays as the short form: `create_resource` with the
   default recipe, always connected, `storage_gi` optional.
 
+## Console (stage 1b)
+
+The same view over HTTP is `GET …/environments/:environment/catalog`
+(`projects:read`, `resource.Offered`: `verdict` is the effect, `rules` what
+decided it, `rules_verdict` the effect without the catalog's own floor). The
+console uses it in "Agregar a la app": only the kinds offered here, the option
+to pick when IT offers more than one, each parameter inside the hard limits,
+and next to the button whether it is created **al instante** or **pide
+aprobación**. That mark is a forecast: `rules_verdict` (IT's rules on the
+defaults), made stricter by a value outside the pre-approved range (always
+approval) or the limits (refused) — not `verdict`, which a default outside
+the pre-approved range would turn to approval for every value. The POST has
+the last word (202 when held). The request sends `recipe` and `params`, never
+the `storage_gi` shorthand. Limit errors word GiB as "GB" (`catalog.UnitLabel`).
+
+**Administración → Catálogo** (`catalog:manage`) lists every recipe at its
+offered version (with the versions this Odicea knows, `versions`), what it
+fixes (`spec`) and the offering in sentences. Editing is the whole `PUT
+…/offering`; a range equal to its outer one is sent as absent. A tier's
+default already held by another recipe of the kind cannot be ticked (the
+server's 409 `CATALOG_DEFAULT_TAKEN` otherwise). The ranges shown are the
+offered version's: choosing another version locks them until it is saved.
+
+IT's "Probar" (dry run) tries `create_resource` with the recipe the catalog
+would resolve (the one picked among those offered in the tier, else the
+tier's default) and `change_resource` with any recipe of the kind, offered or
+not (a change uses the resource's pinned version, whatever the offering), and
+a size: `resource.recipe`, `recipe_version`, `engine`, `params` and
+`out_of_range` computed from the offering. A change is tried as if growing to
+that size from nothing (mutability and the current value are not modelled).
+The dry run evaluates IT's rules only, so when the size is outside the
+pre-approved range the console adds that the catalog's floor
+(`catalog:preapproved`) asks for approval on its own.
+
 ## Stage 1a cuts
 
 1. Kinds as a registry of contracts (`pkg/resourcekind`).

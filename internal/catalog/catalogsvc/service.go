@@ -86,7 +86,7 @@ func entry(v catalog.RecipeVersion, o catalog.Offering) catalog.Entry {
 	if offered, ok := catalog.Version(v.Recipe, o.Version); ok {
 		v = offered
 	}
-	return catalog.Entry{RecipeVersion: v, Offering: o}
+	return catalog.Entry{RecipeVersion: v, Versions: catalog.VersionsOf(v.Recipe), Offering: o}
 }
 
 func (s *Service) List(ctx context.Context, org identity.OrganizationID) ([]catalog.Entry, error) {

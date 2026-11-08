@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PolicyEvaluation, PolicyRule } from '@/lib/types'
-import { actionOptions, candidateOutcome, candidateRule, decisionText, defaultScenario, draftReady, draftUnchanged, effectInfo, expressionVariables, newRuleDraft, ruleOutcome, ruleSentence, scenarioInput, tierLabel, tierOptions, toDraft } from './rules'
+import { catalogEntry } from '@/lib/catalog.fixture'
+import { actionOptions, candidateOutcome, candidateRule, catalogNote, decisionText, defaultScenario, draftReady, draftUnchanged, effectInfo, expressionVariables, newRuleDraft, ruleOutcome, ruleSentence, scenarioInput, scenarioRecipe, scenarioRecipes, tierLabel, tierOptions, toDraft } from './rules'
 
 const rule = (patch: Partial<PolicyRule> = {}): PolicyRule => ({
   id: 'r1', name: 'Publicar en producción requiere aprobación de TI', description: '', expression: "action == 'deploy'", effect: 'approval',
@@ -105,7 +106,46 @@ describe('policy rules mapping', () => {
 
   it('lists what a condition can read', () => {
     const names = expressionVariables.map(v => v.name)
-    for (const n of ['action', 'project.tier', 'env.name', 'access.mode', 'actor.permissions', 'resource.kind', 'scan.known', 'scan.critical', 'scan.checked', 'services', 'changed', 'topology_changed']) expect(names).toContain(n)
+    for (const n of ['action', 'project.tier', 'env.name', 'access.mode', 'actor.permissions', 'resource.kind', 'resource.recipe', 'resource.params', 'resource.out_of_range', 'scan.known', 'scan.critical', 'scan.checked', 'services', 'changed', 'topology_changed']) expect(names).toContain(n)
+  })
+
+  it('tries a create or a change with what the catalog would resolve', () => {
+    const recipe = {
+      recipe: 'postgres-basico', version: 2, engine: 'builtin' as const, params: [{ name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 100, default: 1, mutability: 'grows' as const }],
+      offering: { recipe: 'postgres-basico', version: 2, active: true, tiers: ['production' as const], defaults: ['production' as const], limits: {}, preapproved: { storage_gi: { max: 10 } }, revision: 1, updated_by: '', created_at: '', updated_at: '' },
+    }
+    const create = { ...defaultScenario, action: 'create_resource' as const, size: 20 }
+    expect(scenarioInput(create, undefined, recipe).resource).toEqual({ kind: 'postgres', recipe: 'postgres-basico', recipe_version: 2, engine: 'builtin', params: { storage_gi: 20 }, out_of_range: ['storage_gi'] })
+    expect(scenarioInput({ ...create, size: 5 }, undefined, recipe).resource?.out_of_range).toEqual([])
+    expect(catalogNote(scenarioInput(create, undefined, recipe))).toMatch(/pide aprobación aunque ninguna regla/)
+    expect(catalogNote(scenarioInput({ ...create, size: 5 }, undefined, recipe))).toBeUndefined()
+    // without a recipe (none by default here) only the kind goes
+    expect(scenarioInput(create).resource).toEqual({ kind: 'postgres' })
+    // other actions never carry a recipe
+    expect(scenarioInput({ ...defaultScenario, action: 'connect_resource' }, undefined, recipe).resource).toEqual({ kind: 'postgres' })
+    expect(actionOptions.map(o => o.value)).toEqual(expect.arrayContaining(['create_resource', 'change_resource']))
+    for (const o of actionOptions) expect(o.label).not.toMatch(/_resource/)
+  })
+
+  it("resolves the scenario's recipe as the server picks it", () => {
+    const e = (recipe: string, defaults: ('internal' | 'production')[], active = true) =>
+      catalogEntry({ recipe }, { active, tiers: ['internal', 'production'], defaults })
+    const basic = e('postgres-basico', ['internal'])
+    const prod = e('postgres-produccion', ['production'])
+    const create = { action: 'create_resource' as const, kind: 'postgres' as const, tier: 'production' as const }
+    expect(scenarioRecipe([basic, prod], { ...create, recipe: '' })?.recipe).toBe('postgres-produccion')
+    expect(scenarioRecipe([basic, prod], { ...create, recipe: 'postgres-basico' })?.recipe).toBe('postgres-basico')
+    expect(scenarioRecipe([e('a', []), e('b', [])], { ...create, recipe: '' })).toBeUndefined()
+    // a create only picks what the tier is offered
+    const off = e('off', [], false)
+    expect(scenarioRecipes([basic, off], create).map(x => x.recipe)).toEqual(['postgres-basico'])
+    expect(scenarioRecipes([catalogEntry({}, { tiers: ['internal'] })], create)).toEqual([])
+    expect(scenarioRecipe([basic, off], { ...create, recipe: 'off' })).toBeUndefined()
+    // a change: what exists keeps changing when IT withdraws its offering
+    const change = { ...create, action: 'change_resource' as const }
+    expect(scenarioRecipes([basic, off], change).map(x => x.recipe)).toEqual(['postgres-basico', 'off'])
+    expect(scenarioRecipe([basic, off], { ...change, recipe: 'off' })?.recipe).toBe('off')
+    expect(scenarioRecipe([off], { ...change, recipe: '' })?.recipe).toBe('off')
   })
 
   it('offers rules on a change of services, in plain words', () => {

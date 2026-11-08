@@ -11,6 +11,7 @@ import { AppSharePage } from '@/pages/app-share'
 import { AssistantPage } from '@/pages/assistant'
 import { AuthCallbackPage } from '@/pages/auth-callback'
 import { BandejaPage } from '@/pages/bandeja'
+import { CatalogPage } from '@/pages/catalog'
 import { ClustersPage } from '@/pages/clusters'
 import { ConsoleLayout } from '@/pages/console-layout'
 import { GitHubSettingsPage } from '@/pages/github-settings'
@@ -52,6 +53,7 @@ export function App() {
             <Route path="clusteres" element={<ClustersPage />} />
             <Route path="github" element={<GitHubSettingsPage />} />
             <Route path="reglas" element={<PolicyRulesPage />} />
+            <Route path="catalogo" element={<CatalogPage />} />
           </Route>
           <Route path="infraestructura/clusteres" element={<Moved to="/administracion/clusteres" />} />
           <Route path="configuracion/github" element={<Moved to="/administracion/github" />} />

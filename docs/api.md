@@ -414,6 +414,7 @@ never appear in the API: `variables` are the names the app reads.
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `…/resources` | projects:read | 200 `{items[resource], available_kinds}` (oldest first) |
+| `GET` | `/api/v1/projects/:id/environments/:environment/catalog` | projects:read | 200 `{tier, recipes[{kind, recipe, recipe_version, title, description, default, params[{name, label, unit, min, max, default, preapproved_min, preapproved_max, mutability}], variables[], verdict, rules[], rules_verdict}], unavailable[{kind, reason}]}` — what can be asked for here and how (`verdict` on its defaults, connected; `rules_verdict` the same without the catalog's pre-approved range, to forecast other values; writes nothing; docs/catalog.md «MCP», the same view as `list_catalog`); 422 `PROJECT_ARCHIVED` |
 | `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, recipe?, params?, storage_gi?, connect?:{prefix, services?}}`); **202** `pending_approval` when IT's rules or the catalog's pre-approved range hold it (nothing created yet) |
 | `GET` | `…/resources/:name` | projects:read | 200 resource |
 | `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{params?, storage_gi?}`: only the parameters given; size only grows); **202** `pending_approval` when held |
@@ -877,7 +878,7 @@ pre-approved up to 50 GiB, not the default).
 
 | Method | Path | Permission | Success |
 |---|---|---|---|
-| `GET` | `/api/v1/catalog/recipes` | any user | 200 `{items}` (every recipe with its offering) |
+| `GET` | `/api/v1/catalog/recipes` | any user | 200 `{items}` (every recipe at its offered version, with `versions` — every version IT can offer — and its offering) |
 | `GET` | `/api/v1/catalog/recipes/:recipe` | any user | 200 entry |
 | `PUT` | `/api/v1/catalog/recipes/:recipe/offering` | `catalog:manage` | 200 entry (replaces the offering) |
 

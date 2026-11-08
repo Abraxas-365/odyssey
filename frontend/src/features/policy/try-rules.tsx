@@ -5,9 +5,10 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Callout, ErrorNotice } from '@/components/odyssey'
+import { useCatalog } from '@/lib/catalog'
 import { useEvaluatePolicy } from '@/lib/policy'
 import type { PolicyAction, PolicyEvaluation, ProjectTier, ResourceKind } from '@/lib/types'
-import { accessModeOptions, actionOptions, decisionText, defaultScenario, effectInfo, onResource, resourceKindOptions, scanOptions, scenarioInput, tierOptions, type Candidate, type Scenario, type ScanScenario } from './rules'
+import { accessModeOptions, actionOptions, catalogNote, decisionText, defaultScenario, effectInfo, onRecipe, onResource, resourceKindOptions, scanOptions, scenarioInput, scenarioRecipe, scenarioRecipes, tierOptions, type Candidate, type Scenario, type ScanScenario } from './rules'
 
 const labelOf = (opts: { value: string; label?: string; title?: string }[]) => Object.fromEntries(opts.map(o => [o.value, o.label ?? o.title ?? o.value]))
 
@@ -18,17 +19,29 @@ const labelOf = (opts: { value: string; label?: string; title?: string }[]) => O
  * With a `candidate` (the draft being typed, saved or not) it is tried among
  * the saved rules as if it were enabled.
  */
-export function TryRules({ outcome, onResult, candidate, disabled }: { outcome?: (e: PolicyEvaluation) => string; onResult?: (e: PolicyEvaluation) => void; candidate?: Candidate; disabled?: boolean }) {
-  const [scenario, setScenario] = useState<Scenario>(defaultScenario)
+export function TryRules({ outcome, onResult, candidate, disabled, initial = defaultScenario }: { outcome?: (e: PolicyEvaluation) => string; onResult?: (e: PolicyEvaluation) => void; candidate?: Candidate; disabled?: boolean; initial?: Scenario }) {
+  const [scenario, setScenario] = useState<Scenario>(initial)
   const evaluate = useEvaluatePolicy()
+  const catalog = useCatalog()
   const result = evaluate.data
-  const set = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setScenario(s => ({ ...s, [k]: v }))
-  const run = () => evaluate.mutate(scenarioInput(scenario, candidate), { onSuccess: onResult })
+  const [note, setNote] = useState<string>()
+  const set = <K extends keyof Scenario>(k: K, v: Scenario[K]) =>
+    setScenario(s => ({ ...s, [k]: v, ...(k === 'kind' || k === 'tier' || k === 'action' ? { recipe: '' } : {}) }))
+  const entries = catalog.data?.items ?? []
+  const recipe = scenarioRecipe(entries, scenario)
+  const run = () => {
+    const input = scenarioInput(scenario, candidate, recipe)
+    evaluate.mutate(input, { onSuccess: e => { setNote(catalogNote(input)); onResult?.(e) } })
+  }
   const actions = labelOf(actionOptions)
   const tiers = labelOf(tierOptions)
   const modes = labelOf(accessModeOptions)
   const kinds = labelOf(resourceKindOptions)
   const scans = labelOf(scanOptions)
+  const changing = scenario.action === 'change_resource'
+  const choices = scenarioRecipes(entries, scenario)
+  const fallback = changing ? 'La más probable' : 'La de por defecto'
+  const recipes: Record<string, string> = { '': fallback, ...Object.fromEntries(choices.map(e => [e.recipe, e.offering.active ? e.title : `${e.title} (ya no se ofrece)`])) }
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4">
@@ -59,12 +72,34 @@ export function TryRules({ outcome, onResult, candidate, disabled }: { outcome?:
         )}
         {onResource(scenario.action) && (
           <Field>
-            <FieldLabel>Qué se conecta o borra</FieldLabel>
+            <FieldLabel>{onRecipe(scenario.action) ? 'Qué se crea o agranda' : 'Qué se conecta o borra'}</FieldLabel>
             <Select value={scenario.kind} items={kinds} onValueChange={v => set('kind', (v ?? 'postgres') as ResourceKind)}>
-              <SelectTrigger className="w-full" aria-label="Qué se conecta o borra"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full" aria-label={onRecipe(scenario.action) ? 'Qué se crea o agranda' : 'Qué se conecta o borra'}><SelectValue /></SelectTrigger>
               <SelectContent>{resourceKindOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
+        )}
+        {onRecipe(scenario.action) && (
+          <>
+            <Field>
+              <FieldLabel>Opción del catálogo</FieldLabel>
+              <Select value={scenario.recipe} items={recipes} onValueChange={v => set('recipe', v ?? '')}>
+                <SelectTrigger className="w-full" aria-label="Opción del catálogo"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{fallback}</SelectItem>
+                  {choices.map(e => <SelectItem key={e.recipe} value={e.recipe}>{recipes[e.recipe]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {!recipe && catalog.data && <FieldDescription>No hay una opción por defecto para este nivel: se prueba sin receta.</FieldDescription>}
+            </Field>
+            {recipe?.params.some(p => p.name === 'storage_gi') && (
+              <Field>
+                <FieldLabel htmlFor="try-size">{changing ? 'Tamaño nuevo (GB)' : 'Tamaño (GB)'}</FieldLabel>
+                <Input id="try-size" type="number" min={1} value={Number.isNaN(scenario.size) ? '' : scenario.size} onChange={e => set('size', e.target.valueAsNumber)} />
+                {changing && <FieldDescription>Se prueba como si cambiara a este tamaño (solo puede crecer, dentro del límite de TI).</FieldDescription>}
+              </Field>
+            )}
+          </>
         )}
         {scenario.action === 'deploy' && (
           <>
@@ -95,6 +130,7 @@ export function TryRules({ outcome, onResult, candidate, disabled }: { outcome?:
       {result && (
         <Callout tone={effectInfo[result.effect].tone} title={decisionText(result)}>
           {outcome?.(result)}
+          {note && <p className={outcome ? 'mt-1' : undefined}>{note}</p>}
         </Callout>
       )}
     </div>

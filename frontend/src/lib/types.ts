@@ -76,6 +76,19 @@ export type CreateResource = operations['createResource']['requestBody']['conten
 /** What createResource answers: 201 the change, or 202 `pending_approval` (derived from the spec, so the two cannot drift). */
 type CreateResourceResponses = operations['createResource']['responses']
 export type CreateResourceResult = CreateResourceResponses[201]['content']['application/json'] | CreateResourceResponses[202]['content']['application/json']
+/** What PATCH …/resources/:name answers: 200 the resource, or 202 `pending_approval`. */
+type ChangeResourceResponses = operations['changeResource']['responses']
+export type ChangeResourceResult = ChangeResourceResponses[200]['content']['application/json'] | ChangeResourceResponses[202]['content']['application/json']
+
+/** The resource catalog (docs/catalog.md): recipes with the organization's offering (IT edits it). */
+export type CatalogEntry = Schemas['CatalogEntry']
+export type CatalogParam = Schemas['CatalogParam']
+export type CatalogRange = Schemas['CatalogRange']
+export type CatalogOfferingDraft = Schemas['CatalogOfferingDraft']
+/** What one environment's app can ask for, and how (at once, with IT's approval, not at all). */
+export type EnvironmentCatalog = Schemas['EnvironmentCatalog']
+export type CatalogOffer = Schemas['CatalogOffer']
+export type CatalogOfferParam = CatalogOffer['params'][number]
 /** The app's own access to the organization's AI (docs/api.md §11, docs/ai.md); never carries the key. */
 export type AppAI = Schemas['AI']
 export type SecretView = Schemas['SecretView']
