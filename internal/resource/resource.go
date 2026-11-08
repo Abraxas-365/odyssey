@@ -65,17 +65,7 @@ type Resource struct {
 }
 
 // KindLabel names a kind in the words people use (for activity summaries).
-func KindLabel(k resourcekind.Kind) string {
-	switch k {
-	case resourcekind.Postgres:
-		return "base de datos"
-	case resourcekind.Redis:
-		return "caché"
-	case resourcekind.Files:
-		return "volumen de archivos"
-	}
-	return string(k)
-}
+func KindLabel(k resourcekind.Kind) string { return resourcekind.Of(k).Noun }
 
 // Phase is how the cluster sees a resource (what the agent reported).
 type Phase string
@@ -228,7 +218,7 @@ func (in Create) Validate() error {
 		return errx.InvalidField("name", err.Error())
 	}
 	if !in.Kind.Valid() {
-		return errx.InvalidField("kind", "kind must be postgres, redis or files")
+		return errx.InvalidField("kind", "kind must be "+resourcekind.KindsLabel())
 	}
 	if err := CheckSize(in.StorageGi); err != nil {
 		return err

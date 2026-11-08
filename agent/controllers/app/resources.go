@@ -79,7 +79,7 @@ func resourceEnv(a *v1alpha1.OdysseyApp, w workload) []corev1.EnvVar {
 	for _, r := range resourcesOf(a, w) {
 		k := resourcekind.Kind(r.Kind)
 		names := resourcekind.Variables(k, r.Prefix)
-		if k == resourcekind.Files {
+		if resourcekind.Of(k).Mounted {
 			out = append(out, corev1.EnvVar{Name: names[0], Value: resourcekind.MountPath(r.Name)})
 			continue
 		}

@@ -3,6 +3,13 @@
 // and which variables an app reads a resource by. The control plane uses it
 // to validate and to show what an app gets; the agent to wire it. Keeping
 // one copy is what makes the console say exactly what the pod receives.
+//
+// A kind is a contract (Contract), registered here and nowhere else: what
+// the app receives (variables, a mount), which of those are credentials and
+// whether the resource holds data. How a contract is fulfilled (a recipe on
+// an engine) is the catalog's business; the app and its assistant only ever
+// name kinds. Code that needs something about a kind reads it from the
+// registry (Lookup) instead of switching on the kind.
 package resourcekind
 
 import (
@@ -15,23 +22,145 @@ import (
 	"time"
 )
 
-// Kind is what a resource is.
+// Kind is what a resource is: the name of a contract.
 type Kind string
 
 const (
-	// Postgres is a PostgreSQL database (CloudNativePG Cluster, one instance).
+	// Postgres is a PostgreSQL database.
 	Postgres Kind = "postgres"
-	// Redis is a cache (a Redis Deployment with a password and a volume).
+	// Redis is a cache.
 	Redis Kind = "redis"
-	// Files is a volume the app mounts (a PersistentVolumeClaim).
+	// Files is a volume the app mounts.
 	Files Kind = "files"
+	// ObjectStorage is an S3-compatible bucket. Declared, not available: no
+	// recipe fulfils it yet.
+	ObjectStorage Kind = "object-storage"
 )
 
-// Kinds are every kind, in the order the console lists them.
-var Kinds = []Kind{Postgres, Redis, Files}
+// Variable is one environment variable a contract gives the app.
+type Variable struct {
+	// Name, without the connection's prefix.
+	Name string
+	// Secret: a credential (its value lives only in the cluster).
+	Secret bool
+	// Meaning in plain Spanish, for the catalog.
+	Meaning string
+}
 
-// Valid says whether k is a known kind.
+// Contract is what a kind promises the app, whatever recipe fulfils it.
+type Contract struct {
+	Kind Kind
+	// Noun and Article word the kind in Spanish ("la" "base de datos").
+	Noun    string
+	Article string
+	// Variables, in the order the agent wires them.
+	Variables []Variable
+	// Mounted: the resource is a volume mounted at MountPath(name), whose
+	// path is the first variable. A mounted resource is written by one
+	// service of an app (its volume is ReadWriteOnce).
+	Mounted bool
+	// HoldsData: deleting it or fulfilling it with another recipe loses data.
+	HoldsData bool
+	// Available: this version can provision it. A declared contract that is
+	// not available is not a valid kind to ask for.
+	Available bool
+	// Unavailable is what to tell someone whose cluster cannot provision it.
+	Unavailable string
+}
+
+// The is the kind with its article: "la base de datos".
+func (c Contract) The() string { return c.Article + " " + c.Noun }
+
+// registry is every contract, in the order the console lists them.
+var registry = []Contract{
+	{
+		Kind: Postgres, Noun: "base de datos", Article: "la", HoldsData: true, Available: true,
+		Variables: []Variable{
+			{Name: "DATABASE_URL", Secret: true, Meaning: "la dirección completa de conexión, con usuario y contraseña"},
+			{Name: "PGHOST", Meaning: "el servidor"},
+			{Name: "PGPORT", Meaning: "el puerto"},
+			{Name: "PGDATABASE", Meaning: "el nombre de la base"},
+			{Name: "PGUSER", Meaning: "el usuario"},
+			{Name: "PGPASSWORD", Secret: true, Meaning: "la contraseña"},
+		},
+		Unavailable: "Este clúster no tiene bases de datos administradas. Pide a TI que instale CloudNativePG.",
+	},
+	{
+		Kind: Redis, Noun: "caché", Article: "la", Available: true,
+		Variables: []Variable{
+			{Name: "REDIS_URL", Secret: true, Meaning: "la dirección de conexión, con contraseña"},
+		},
+		Unavailable: "Este clúster no puede crear cachés. Pide a TI que actualice su agente y configure una clase de almacenamiento.",
+	},
+	{
+		Kind: Files, Noun: "espacio de archivos", Article: "el", Mounted: true, HoldsData: true, Available: true,
+		Variables: []Variable{
+			{Name: "FILES_DIR", Meaning: "la carpeta donde la app guarda sus archivos"},
+		},
+		Unavailable: "Este clúster no puede crear espacios de archivos. Pide a TI que configure una clase de almacenamiento por defecto.",
+	},
+	{
+		Kind: ObjectStorage, Noun: "almacenamiento de objetos", Article: "el", HoldsData: true,
+		Variables: []Variable{
+			{Name: "S3_BUCKET", Meaning: "el nombre del bucket"},
+			{Name: "S3_ENDPOINT", Meaning: "la dirección del servicio"},
+			{Name: "S3_REGION", Meaning: "la región"},
+			{Name: "AWS_ACCESS_KEY_ID", Secret: true, Meaning: "la llave de acceso"},
+			{Name: "AWS_SECRET_ACCESS_KEY", Secret: true, Meaning: "el secreto de la llave"},
+		},
+		Unavailable: "Este clúster no puede crear almacenamiento de objetos. Pide a TI que lo habilite.",
+	},
+}
+
+// Kinds are the available kinds, in the order the console lists them.
+var Kinds = available()
+
+func available() []Kind {
+	var out []Kind
+	for _, c := range registry {
+		if c.Available {
+			out = append(out, c.Kind)
+		}
+	}
+	return out
+}
+
+// Contracts are every declared contract (available or not), in order.
+func Contracts() []Contract { return slices.Clone(registry) }
+
+// Lookup is k's contract (false: no such kind is declared).
+func Lookup(k Kind) (Contract, bool) {
+	i := slices.IndexFunc(registry, func(c Contract) bool { return c.Kind == k })
+	if i < 0 {
+		return Contract{}, false
+	}
+	return registry[i], true
+}
+
+// Of is k's contract; an unknown kind gets a generic one (nouns only), so
+// wording code never has to handle a missing kind.
+func Of(k Kind) Contract {
+	if c, ok := Lookup(k); ok {
+		return c
+	}
+	return Contract{Kind: k, Noun: "recurso", Article: "el", Unavailable: "Este clúster no puede crear este tipo de recurso. Pide a TI que lo revise."}
+}
+
+// Valid says whether k is a kind this version can provision.
 func (k Kind) Valid() bool { return slices.Contains(Kinds, k) }
+
+// KindsLabel lists the available kinds for an error message: "postgres,
+// redis or files".
+func KindsLabel() string {
+	names := make([]string, len(Kinds))
+	for i, k := range Kinds {
+		names[i] = string(k)
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+}
 
 // MaxName bounds a resource's name: it prefixes the cluster objects made for
 // it (<name>-rw, <name>-app, …), which must stay DNS labels.
@@ -73,6 +202,8 @@ func CheckPrefix(prefix string) error {
 }
 
 // Storage sizes, in GiB: a volume is a whole number of GiB between these.
+// These are the wire bounds both planes accept; a recipe's offering narrows
+// them.
 const (
 	MinStorageGi     = 1
 	MaxStorageGi     = 100
@@ -92,28 +223,20 @@ func ParseStorage(s string) (int, error) {
 }
 
 // Variables are the environment variables an app reads a resource of kind
-// k by, with prefix (and "_") in front.
+// k by, with prefix (and "_") in front, in the contract's order.
 func Variables(k Kind, prefix string) []string {
-	var names []string
-	switch k {
-	case Postgres:
-		names = []string{"DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"}
-	case Redis:
-		names = []string{"REDIS_URL"}
-	case Files:
-		names = []string{"FILES_DIR"}
-	}
-	if prefix == "" {
-		return names
-	}
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = prefix + "_" + n
+	c, _ := Lookup(k)
+	out := make([]string, len(c.Variables))
+	for i, v := range c.Variables {
+		out[i] = v.Name
+		if prefix != "" {
+			out[i] = prefix + "_" + v.Name
+		}
 	}
 	return out
 }
 
-// MountPath is where a files resource named name is mounted in the app.
+// MountPath is where a mounted resource named name is mounted in the app.
 func MountPath(name string) string { return "/data/" + name }
 
 // Wait is how long the agent lets a revision wait for its resources (a first

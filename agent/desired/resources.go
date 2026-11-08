@@ -37,7 +37,7 @@ func ValidResource(r *fleetv1.Resource) error {
 		return err
 	}
 	if !resourcekind.Kind(r.GetKind()).Valid() {
-		return fmt.Errorf("resource kind %q is not postgres, redis or files", r.GetKind())
+		return fmt.Errorf("resource kind %q is not %s", r.GetKind(), resourcekind.KindsLabel())
 	}
 	if _, err := resourcekind.ParseStorage(r.GetStorage()); err != nil {
 		return err
@@ -55,7 +55,7 @@ func validResourceRefs(refs []*fleetv1.ResourceRef) error {
 			return err
 		}
 		if !resourcekind.Kind(r.GetKind()).Valid() {
-			return fmt.Errorf("resource %q has kind %q, not postgres, redis or files", r.GetName(), r.GetKind())
+			return fmt.Errorf("resource %q has kind %q, not %s", r.GetName(), r.GetKind(), resourcekind.KindsLabel())
 		}
 		if err := resourcekind.CheckPrefix(r.GetPrefix()); err != nil {
 			return fmt.Errorf("resource %q: %w", r.GetName(), err)

@@ -54,4 +54,41 @@ func TestVariables(t *testing.T) {
 	if Kind("mysql").Valid() {
 		t.Error("mysql valid")
 	}
+	if ObjectStorage.Valid() {
+		t.Error("object-storage is declared, not available")
+	}
+	if KindsLabel() != "postgres, redis or files" {
+		t.Errorf("label %q", KindsLabel())
+	}
+}
+
+// Every contract is complete and consistent: the registry is the one place a
+// kind is described, so a gap here is a gap everywhere.
+func TestContracts(t *testing.T) {
+	seen := map[Kind]bool{}
+	for _, c := range Contracts() {
+		if seen[c.Kind] || CheckName(string(c.Kind)) != nil {
+			t.Errorf("%q: repeated or not a DNS label", c.Kind)
+		}
+		seen[c.Kind] = true
+		if c.Noun == "" || (c.Article != "la" && c.Article != "el") || c.Unavailable == "" || len(c.Variables) == 0 {
+			t.Errorf("%s: incomplete contract %+v", c.Kind, c)
+		}
+		names := map[string]bool{}
+		for _, v := range c.Variables {
+			if CheckPrefix(v.Name) != nil || names[v.Name] || v.Meaning == "" {
+				t.Errorf("%s: variable %q is not an uppercase, unique, explained name", c.Kind, v.Name)
+			}
+			names[v.Name] = true
+		}
+		if c.Mounted && c.Variables[0].Secret {
+			t.Errorf("%s: a mounted kind's first variable is its path, not a secret", c.Kind)
+		}
+	}
+	if got := Of("nope"); got.The() != "el recurso" || got.Unavailable == "" {
+		t.Errorf("unknown kind %+v", got)
+	}
+	if Of(Files).The() != "el espacio de archivos" || !Of(Files).Mounted || Of(Redis).HoldsData {
+		t.Error("files/redis contract")
+	}
 }

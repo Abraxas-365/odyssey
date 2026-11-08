@@ -150,7 +150,7 @@ func Kept(in *Scope, current Scope) Scope {
 // two Deployments cannot mount it on different nodes. services are the
 // app's now.
 func CheckResourceScope(kind resourcekind.Kind, scope Scope, services []project.Service) error {
-	if kind != resourcekind.Files || len(services) < 2 || len(scope) == 1 {
+	if !resourcekind.Of(kind).Mounted || len(services) < 2 || len(scope) == 1 {
 		return nil
 	}
 	return errx.InvalidField("services", "un volumen de archivos lo monta un solo servicio: elige cuál")

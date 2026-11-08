@@ -42,15 +42,7 @@ const CodeResourcesUnavailable = "RESOURCES_UNAVAILABLE"
 // ResourcesUnavailableMessage is the plain-language text of
 // CodeResourcesUnavailable for kind.
 func ResourcesUnavailableMessage(kind resourcekind.Kind) string {
-	switch kind {
-	case resourcekind.Postgres:
-		return "Este clúster no tiene bases de datos administradas. Pide a TI que instale CloudNativePG."
-	case resourcekind.Redis:
-		return "Este clúster no puede crear cachés. Pide a TI que actualice su agente y configure una clase de almacenamiento."
-	case resourcekind.Files:
-		return "Este clúster no puede crear volúmenes de archivos. Pide a TI que configure una clase de almacenamiento por defecto."
-	}
-	return "Este clúster no puede crear este tipo de recurso. Pide a TI que lo revise."
+	return resourcekind.Of(kind).Unavailable
 }
 
 // CanProvision reports whether the cluster lists kind in ResourceKinds.
@@ -97,7 +89,7 @@ func (r DesiredResource) Validate() error {
 	case resourcekind.CheckName(r.Name) != nil:
 		return errx.Validation(resourcekind.CheckName(r.Name).Error())
 	case !r.Kind.Valid():
-		return errx.Validation("resource kind must be postgres, redis or files")
+		return errx.Validation("resource kind must be " + resourcekind.KindsLabel())
 	case r.Generation < 1:
 		return errx.Validation("resource generation must be positive")
 	case r.StorageGi < resourcekind.MinStorageGi || r.StorageGi > resourcekind.MaxStorageGi:

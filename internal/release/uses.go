@@ -399,17 +399,7 @@ func resourceState(all []ResourceState, name string) (ResourceState, bool) {
 	return all[i], true
 }
 
-func theKind(k resourcekind.Kind) string {
-	switch k {
-	case resourcekind.Postgres:
-		return "la base de datos"
-	case resourcekind.Redis:
-		return "la caché"
-	case resourcekind.Files:
-		return "el espacio de archivos"
-	}
-	return "el recurso"
-}
+func theKind(k resourcekind.Kind) string { return resourcekind.Of(k).The() }
 
 func capital(s string) string {
 	if s == "" {

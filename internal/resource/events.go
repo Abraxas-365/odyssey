@@ -88,11 +88,6 @@ func NewRemoved(org identity.OrganizationID, r Resource) event.Event {
 		Removed{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind)})
 }
 
-func withArticle(r Resource) string {
-	if r.Kind == resourcekind.Files {
-		return "el " + KindLabel(r.Kind)
-	}
-	return "la " + KindLabel(r.Kind)
-}
+func withArticle(r Resource) string { return resourcekind.Of(r.Kind).The() }
 
 func gi(n int) string { return strconv.Itoa(n) + " GiB" }
