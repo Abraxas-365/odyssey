@@ -38,6 +38,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/build"
 	"github.com/Abraxas-365/odyssey/internal/build/buildmodule"
 	"github.com/Abraxas-365/odyssey/internal/build/buildsvc"
+	"github.com/Abraxas-365/odyssey/internal/catalog/catalogmodule"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
@@ -280,6 +281,7 @@ func Migrations() []migrate.Set {
 		{Owner: resourcemodule.Schema, Files: resourcemodule.Migrations()},
 		{Owner: aimodule.Schema, Files: aimodule.Migrations()},
 		{Owner: policymodule.Schema, Files: policymodule.Migrations()},
+		{Owner: catalogmodule.Schema, Files: catalogmodule.Migrations()},
 		{Owner: approvalmodule.Schema, Files: approvalmodule.Migrations()},
 		{Owner: auditmodule.Schema, Files: auditmodule.Migrations()},
 		{Owner: workflowpg.Schema, Files: workflowpg.Migrations()},
@@ -317,6 +319,7 @@ type Platform struct {
 	AI        aimodule.Module
 	Audit     auditmodule.Module
 	Policy    policymodule.Module
+	Catalog   catalogmodule.Module
 	Approvals approvalmodule.Module
 	// Inventory only reads the other domains (docs/inventory.md).
 	Inventory inventorymodule.Module
@@ -411,6 +414,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	policies := policymodule.New(policymodule.Deps{DB: db, Events: events})
 	// project is built before policy, so it learns of IT's rules after.
 	projects.UsePolicy(policies.Project)
+	// the catalog depends on no other domain; resources ask it what can be created.
+	catalogs := catalogmodule.New(catalogmodule.Deps{DB: db, Events: events})
 	fleets := fleetmodule.New(fleetmodule.Deps{DB: db, Events: events, Authority: opts.Authority, Gateway: opts.Gateway,
 		CertificateTTL: opts.CertificateTTL})
 	// project is built before the fleet, so it learns of its clusters after.
@@ -468,6 +473,7 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		Events:    events,
 		Projects:  projects,
 		Policy:    policies,
+		Catalog:   catalogs,
 		Approvals: approvals,
 		Releases:  releases,
 		Access:    accesses,
@@ -632,6 +638,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		p.AI.HTTP,
 		p.Audit.HTTP,
 		p.Policy.HTTP,
+		p.Catalog.HTTP,
 		p.Approvals.HTTP,
 		p.Inventory.HTTP,
 		accounts.HTTP,

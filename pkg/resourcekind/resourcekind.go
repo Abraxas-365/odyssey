@@ -66,6 +66,9 @@ type Contract struct {
 	Available bool
 	// Unavailable is what to tell someone whose cluster cannot provision it.
 	Unavailable string
+	// Settings names the built-in engine's settings block the kind takes
+	// (pkg/resourcespec: "postgres"); "" takes none.
+	Settings string
 }
 
 // The is the kind with its article: "la base de datos".
@@ -84,6 +87,7 @@ var registry = []Contract{
 			{Name: "PGPASSWORD", Secret: true, Meaning: "la contraseña"},
 		},
 		Unavailable: "Este clúster no tiene bases de datos administradas. Pide a TI que instale CloudNativePG.",
+		Settings:    "postgres",
 	},
 	{
 		Kind: Redis, Noun: "caché", Article: "la", Available: true,

@@ -54,8 +54,17 @@ type Resource struct {
 	// Name is unique among the environment's resources.
 	Name string            `json:"name" db:"name"`
 	Kind resourcekind.Kind `json:"kind" db:"kind"`
-	// StorageGi is the volume's size in GiB; it only grows.
+	// StorageGi is the volume's size in GiB; it only grows. It is
+	// Params[catalog.ParamStorage], kept in its own column while consumers
+	// move to Params (the table checks they agree).
 	StorageGi int `json:"storage_gi" db:"storage_gi"`
+	// Recipe and RecipeVersion are the catalog recipe the resource is
+	// pinned to (docs/catalog.md); a resource from before the catalog is
+	// its kind's basic recipe, version 1.
+	Recipe        string `json:"recipe" db:"recipe"`
+	RecipeVersion int    `json:"recipe_version" db:"recipe_version"`
+	// Params are the recipe's parameters, normalized: the source of truth.
+	Params map[string]int `json:"params" db:"-"`
 	// Generation grows with every change; the cluster ignores an older one.
 	Generation int64           `json:"generation" db:"generation"`
 	Status     Status          `json:"status" db:"status"`

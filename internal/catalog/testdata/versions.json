@@ -1,0 +1,105 @@
+{
+  "files-basico@1": {
+    "recipe": "files-basico",
+    "version": 1,
+    "kind": "files",
+    "title": "Espacio de archivos",
+    "description": "Una carpeta persistente que monta una parte de la app.",
+    "engine": "builtin",
+    "params": [
+      {
+        "name": "storage_gi",
+        "label": "Tamaño",
+        "unit": "GiB",
+        "min": 1,
+        "max": 100,
+        "default": 1,
+        "mutability": "grows"
+      }
+    ],
+    "spec": {},
+    "requires": [
+      "builtin:files"
+    ]
+  },
+  "postgres-basico@1": {
+    "recipe": "postgres-basico",
+    "version": 1,
+    "kind": "postgres",
+    "title": "PostgreSQL básico",
+    "description": "Una base de datos PostgreSQL de una sola instancia. Para empezar y para apps que pueden esperar si se reinicia.",
+    "engine": "builtin",
+    "params": [
+      {
+        "name": "storage_gi",
+        "label": "Tamaño",
+        "unit": "GiB",
+        "min": 1,
+        "max": 100,
+        "default": 1,
+        "mutability": "grows"
+      }
+    ],
+    "spec": {},
+    "requires": [
+      "builtin:postgres"
+    ]
+  },
+  "postgres-produccion@1": {
+    "recipe": "postgres-produccion",
+    "version": 1,
+    "kind": "postgres",
+    "title": "PostgreSQL de producción",
+    "description": "PostgreSQL 17 con una réplica en espera (2 instancias) y CPU y memoria reservadas. Sin respaldos automáticos todavía.",
+    "engine": "builtin",
+    "params": [
+      {
+        "name": "storage_gi",
+        "label": "Tamaño",
+        "unit": "GiB",
+        "min": 1,
+        "max": 100,
+        "default": 10,
+        "mutability": "grows"
+      }
+    ],
+    "spec": {
+      "postgres": {
+        "instances": 2,
+        "major": 17,
+        "cpu": "1",
+        "memory": "2Gi"
+      }
+    },
+    "requires": [
+      "builtin:postgres",
+      "builtin:postgres:instances",
+      "builtin:postgres:resources",
+      "builtin:postgres:version",
+      "spec/v1"
+    ]
+  },
+  "redis-basico@1": {
+    "recipe": "redis-basico",
+    "version": 1,
+    "kind": "redis",
+    "title": "Redis",
+    "description": "Una caché Redis con contraseña.",
+    "engine": "builtin",
+    "params": [
+      {
+        "name": "storage_gi",
+        "label": "Tamaño",
+        "unit": "GiB",
+        "min": 1,
+        "max": 100,
+        "default": 1,
+        "mutability": "grows"
+      }
+    ],
+    "spec": {},
+    "requires": [
+      "builtin:redis"
+    ]
+  }
+}

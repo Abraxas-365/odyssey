@@ -9,10 +9,12 @@ package resourcesvc
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/gate"
@@ -118,8 +120,11 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 	if p.Archived() {
 		return resource.Result{}, project.ArchivedError()
 	}
+	// Stage 1a cut 2: every resource is still what its kind's basic recipe
+	// prepares (the catalog decides from cut 3 on); params mirror the size.
 	r := resource.Resource{ID: resource.NewID(), Organization: org, Project: id, Environment: e.ID, Name: input.Name, Kind: input.Kind,
-		StorageGi: input.StorageGi, Generation: 1, Status: resource.StatusActive, CreatedBy: input.RequestedBy}
+		StorageGi: input.StorageGi, Recipe: catalog.BasicRecipe(input.Kind), RecipeVersion: 1,
+		Params: map[string]int{catalog.ParamStorage: input.StorageGi}, Generation: 1, Status: resource.StatusActive, CreatedBy: input.RequestedBy}
 	// A create that connects is judged BEFORE anything is provisioned: the
 	// cluster object Apply creates is not undone by a rollback, so a refusal
 	// found after it would leave an orphan. The connection is then made
@@ -209,6 +214,11 @@ func (s *Service) Resize(ctx context.Context, org identity.OrganizationID, id pr
 		}
 		from := cur.StorageGi
 		r.StorageGi, r.Generation = input.StorageGi, cur.Generation+1
+		r.Params = maps.Clone(cur.Params)
+		if r.Params == nil {
+			r.Params = map[string]int{}
+		}
+		r.Params[catalog.ParamStorage] = input.StorageGi
 		if err := s.repo.Resize(ctx, org, e.ID, name, r.StorageGi, r.Generation); err != nil {
 			return err
 		}

@@ -833,6 +833,53 @@ state). The input carries the services an action brings (`services`,
   held as an approval request (§11 Approvals) when a rule asks for approval.
 - Events: `policy.rule_created`, `policy.rule_updated`, `policy.rule_deleted`.
 
+### Resource catalog (read: any user; edit: `odyssey:catalog:manage`; `docs/catalog.md`)
+
+What the organization offers to be created as a resource. A **recipe
+version** (`postgres-basico@1`) is immutable and ships with Odicea; the
+organization's **offering** of a recipe is IT's: the version offered, whether
+it is active, its tiers, the tiers where it is its kind's default, the **hard
+limits** of each parameter (outside them: refused, not even with approval) and
+the **pre-approved range** (inside it: created at once; outside, within the
+limits: IT approves whatever the rules say). The first read of an organization
+creates its factory offerings: `postgres-basico`, `redis-basico` and
+`files-basico` (every tier, default, 1–100 GiB pre-approved: what existed
+before the catalog) and `postgres-produccion` (production only, ≥ 5 GiB,
+pre-approved up to 50 GiB, not the default).
+
+| Method | Path | Permission | Success |
+|---|---|---|---|
+| `GET` | `/api/v1/catalog/recipes` | any user | 200 `{items}` (every recipe with its offering) |
+| `GET` | `/api/v1/catalog/recipes/:recipe` | any user | 200 entry |
+| `PUT` | `/api/v1/catalog/recipes/:recipe/offering` | `catalog:manage` | 200 entry (replaces the offering) |
+
+```json
+{"recipe":"postgres-produccion","version":1,"kind":"postgres","title":"PostgreSQL de producción",
+ "description":"…","engine":"builtin",
+ "params":[{"name":"storage_gi","label":"Tamaño","unit":"GiB","min":1,"max":100,"default":10,"mutability":"grows"}],
+ "spec":{"postgres":{"instances":2,"major":17,"cpu":"1","memory":"2Gi"}},
+ "requires":["builtin:postgres","builtin:postgres:instances","builtin:postgres:resources","builtin:postgres:version","spec/v1"],
+ "offering":{"recipe":"postgres-produccion","version":1,"active":true,"tiers":["production"],"defaults":[],
+  "limits":{"storage_gi":{"min":5}},"preapproved":{"storage_gi":{"max":50}},"revision":1,"updated_by":"",
+  "created_at":"…","updated_at":"…"}}
+```
+
+- **Body** (`PUT`): `{version, active, tiers, defaults?, limits?, preapproved?}`.
+  `limits` and `preapproved` map a parameter to `{min?, max?}` (an absent bound
+  is the parameter's own). Limits stay inside the parameter's `min`–`max`, the
+  pre-approved range inside the limits, `defaults` inside `tiers` (400 otherwise);
+  an inactive offering is nobody's default.
+- **One default per kind and tier**: a tier where another offering of the kind
+  is the default is 409 `CATALOG_DEFAULT_TAKEN` (`details.recipe`, `details.tier`).
+- **Not retroactive**: resources keep their `recipe@version` and parameters.
+- **Creating** a resource asks the catalog (§11 Resources): 422
+  `CATALOG_UNAVAILABLE` (nothing offered in the tier, or the cluster's agent
+  cannot honour the recipe: `details.missing`), `CATALOG_OUT_OF_LIMITS`
+  (`details.field` `params.<name>`), `CATALOG_CHOOSE_RECIPE` (several offered,
+  none the default: `details.recipes`), `CATALOG_RECIPE_CHANGED` (a pinned
+  version no longer offered).
+- Event: `catalog.offering_updated`.
+
 ### Approvals (`GET/POST /api/v1/approvals…`; `docs/approvals.md`)
 
 What an `approval` rule holds. No permission gates the routes: a request is

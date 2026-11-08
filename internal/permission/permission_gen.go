@@ -24,6 +24,7 @@ const (
 	ResourcesDelete     = "odyssey:resources:delete"     // Eliminar bases de datos, cachés y archivos de una app (borra sus datos)
 	ProjectsTier        = "odyssey:projects:tier"        // Cambiar el nivel de una app (sandbox, interna o producción)
 	PolicyManage        = "odyssey:policy:manage"        // Ver y editar las reglas de TI de la organización
+	CatalogManage       = "odyssey:catalog:manage"       // Elegir qué bases de datos, cachés y archivos ofrece la organización y con qué límites
 	ApprovalsDecide     = "odyssey:approvals:decide"     // Aprobar o rechazar acciones que las reglas de TI dejan pendientes
 	InventoryRead       = "odyssey:inventory:read"       // Ver el inventario de todas las apps de la organización y exportarlo
 )
@@ -44,6 +45,7 @@ var All = []string{
 	ResourcesDelete,
 	ProjectsTier,
 	PolicyManage,
+	CatalogManage,
 	ApprovalsDecide,
 	InventoryRead,
 }
@@ -64,6 +66,7 @@ var Labels = map[string]string{
 	ResourcesDelete:     "Eliminar bases de datos, cachés y archivos de una app (borra sus datos)",
 	ProjectsTier:        "Cambiar el nivel de una app (sandbox, interna o producción)",
 	PolicyManage:        "Ver y editar las reglas de TI de la organización",
+	CatalogManage:       "Elegir qué bases de datos, cachés y archivos ofrece la organización y con qué límites",
 	ApprovalsDecide:     "Aprobar o rechazar acciones que las reglas de TI dejan pendientes",
 	InventoryRead:       "Ver el inventario de todas las apps de la organización y exportarlo",
 }
@@ -85,13 +88,14 @@ var Names = map[string]string{
 	"ResourcesDelete":     ResourcesDelete,
 	"ProjectsTier":        ProjectsTier,
 	"PolicyManage":        PolicyManage,
+	"CatalogManage":       CatalogManage,
 	"ApprovalsDecide":     ApprovalsDecide,
 	"InventoryRead":       InventoryRead,
 }
 
 // Roles on the resource, in manifest order.
 var Roles = []Role{
-	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic, SecretsExternal, ResourcesDelete, ProjectsTier, PolicyManage, ApprovalsDecide, InventoryRead}},
+	{Name: "TI", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ClustersRead, ClustersManage, IntegrationsManage, AuditRead, AccessPublic, SecretsExternal, ResourcesDelete, ProjectsTier, PolicyManage, CatalogManage, ApprovalsDecide, InventoryRead}},
 	{Name: "Builder", Permissions: []string{ProjectsRead, ProjectsWrite, DeploymentsRead, DeploymentsCreate, DeploymentsRollback, ResourcesDelete}},
 	{Name: "Lector", Permissions: []string{ProjectsRead, DeploymentsRead}},
 }

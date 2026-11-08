@@ -1188,6 +1188,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the catalog
+         * @description Every recipe this Odicea knows, at the version the organization offers
+         *     (the latest when it offers none), with the organization's offering. The
+         *     first read of an organization creates its factory offerings
+         *     (docs/catalog.md). Anyone in the organization reads it: who creates a
+         *     resource sees the choices.
+         */
+        get: operations["listCatalogRecipes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/recipes/{recipe}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recipe: components["parameters"]["Recipe"];
+            };
+            cookie?: never;
+        };
+        /** One recipe of the catalog */
+        get: operations["getCatalogRecipe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/recipes/{recipe}/offering": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recipe: components["parameters"]["Recipe"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change what the organization offers of a recipe
+         * @description The whole offering: the version offered (one of the recipe's), whether
+         *     it is active, its tiers, the tiers where it is its kind's default, the
+         *     hard limits and the pre-approved range of each parameter. Limits stay
+         *     inside the parameter's schema and the pre-approved range inside the
+         *     limits (400 otherwise). A tier where another offering of the kind is
+         *     already the default is 409 `CATALOG_DEFAULT_TAKEN`. Not retroactive:
+         *     resources keep their recipe@version and parameters. Event
+         *     `catalog.offering_updated`.
+         */
+        put: operations["updateCatalogOffering"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/approvals": {
         parameters: {
             query?: never;
@@ -2524,8 +2596,16 @@ export interface components {
             environment_id: string;
             name: components["schemas"]["ResourceName"];
             kind: components["schemas"]["ResourceKind"];
-            /** @description Size in GiB; it only grows. */
+            /** @description Size in GiB; it only grows (the same as `params.storage_gi`). */
             storage_gi: number;
+            /** @description The catalog recipe it is pinned to (docs/catalog.md); one from before the catalog is `<kind>-basico`. */
+            recipe: string;
+            /** @description The recipe's immutable version that prepares it. */
+            recipe_version: number;
+            /** @description The recipe's parameters, normalized (every one, defaults filled in). */
+            params: {
+                [key: string]: number;
+            };
             /** @description Grows with every change; the cluster ignores an older one. */
             generation: number;
             /**
@@ -3237,6 +3317,86 @@ export interface components {
          * @enum {string}
          */
         PolicyEffect: "allow" | "deny" | "approval";
+        /** @description An inclusive range; an absent bound is the parameter's own. */
+        CatalogRange: {
+            min?: number;
+            max?: number;
+        };
+        CatalogParam: {
+            name: string;
+            label: string;
+            unit?: string;
+            /** @description The widest any offering may allow. */
+            min: number;
+            max: number;
+            default: number;
+            /**
+             * @description What may happen to the value after the resource exists.
+             * @enum {string}
+             */
+            mutability: "immutable" | "grows" | "mutable";
+        };
+        CatalogOfferingDraft: {
+            /** @description The recipe version offered. */
+            version: number;
+            active: boolean;
+            tiers: components["schemas"]["ProjectTier"][];
+            /** @description Tiers (of `tiers`) where it is its kind's default; ignored when not active. */
+            defaults?: components["schemas"]["ProjectTier"][];
+            /** @description Hard limits per parameter; outside them it cannot be asked for, not even with approval. */
+            limits?: {
+                [key: string]: components["schemas"]["CatalogRange"];
+            };
+            /** @description The part of the limits created without asking IT (absent parameter, all of its limits). */
+            preapproved?: {
+                [key: string]: components["schemas"]["CatalogRange"];
+            };
+        };
+        CatalogOffering: {
+            recipe: string;
+            /** @description 0 is never stored; an inactive offering still names a version. */
+            version: number;
+            active: boolean;
+            tiers: components["schemas"]["ProjectTier"][];
+            defaults: components["schemas"]["ProjectTier"][];
+            limits: {
+                [key: string]: components["schemas"]["CatalogRange"];
+            };
+            preapproved: {
+                [key: string]: components["schemas"]["CatalogRange"];
+            };
+            /** @description Moves up with each edit; 0 when the organization has no offering of it. */
+            revision: number;
+            /** @description Empty until IT changes the factory offering. */
+            updated_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description An immutable recipe version with the organization's offering of the recipe. */
+        CatalogEntry: {
+            recipe: string;
+            version: number;
+            kind: components["schemas"]["ResourceKind"];
+            title: string;
+            description: string;
+            /** @enum {string} */
+            engine: "builtin";
+            params: components["schemas"]["CatalogParam"][];
+            /** @description The engine settings the version fixes (empty for the basic resource). */
+            spec: {
+                postgres?: {
+                    instances?: number;
+                    major?: number;
+                    cpu?: string;
+                    memory?: string;
+                };
+            };
+            /** @description Capabilities the environment's cluster must announce. */
+            requires: string[];
+            offering: components["schemas"]["CatalogOffering"];
+        };
         PolicyRule: {
             /** Format: uuid */
             id: string;
@@ -3662,6 +3822,7 @@ export interface components {
         ID: string;
         Environment: string;
         ResourceName: components["schemas"]["ResourceName"];
+        Recipe: string;
         Deployment: string;
         Build: string;
         /** @description The id of a linked GitHub installation (Odyssey's, not GitHub's). */
@@ -5554,6 +5715,89 @@ export interface operations {
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listCatalogRecipes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every recipe. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["CatalogEntry"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getCatalogRecipe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recipe: components["parameters"]["Recipe"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The recipe with the organization's offering. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogEntry"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateCatalogOffering: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recipe: components["parameters"]["Recipe"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogOfferingDraft"];
+            };
+        };
+        responses: {
+            /** @description The recipe with its new offering. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogEntry"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
             500: components["responses"]["Internal"];
         };
     };

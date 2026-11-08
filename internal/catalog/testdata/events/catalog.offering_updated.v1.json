@@ -1,0 +1,20 @@
+{
+  "recipe": "postgres-produccion",
+  "version": 1,
+  "active": true,
+  "tiers": [
+    "production"
+  ],
+  "defaults": [],
+  "limits": {
+    "storage_gi": {
+      "min": 5
+    }
+  },
+  "preapproved": {
+    "storage_gi": {
+      "max": 50
+    }
+  },
+  "revision": 3
+}

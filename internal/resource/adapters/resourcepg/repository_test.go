@@ -3,7 +3,9 @@ package resourcepg_test
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
@@ -24,7 +26,10 @@ func errType(err error) errx.Type {
 	return ""
 }
 
-func sized(r resource.Resource, gi int) resource.Resource { r.StorageGi = gi; return r }
+func sized(r resource.Resource, gi int) resource.Resource {
+	r.StorageGi, r.Params = gi, map[string]int{"storage_gi": gi}
+	return r
+}
 
 func TestRepository(t *testing.T) {
 	db := pgtest.DB(t, migrate.Set{Owner: resourcepg.Schema, Files: resourcepg.Migrations()})
@@ -35,7 +40,8 @@ func TestRepository(t *testing.T) {
 	proj, env := project.NewID(), project.NewEnvironmentID()
 	mk := func(org identity.OrganizationID, env project.EnvironmentID, name string, kind resourcekind.Kind) resource.Resource {
 		return resource.Resource{ID: resource.NewID(), Organization: org, Project: proj, Environment: env, Name: name, Kind: kind,
-			StorageGi: 2, Generation: 1, Status: resource.StatusActive, CreatedBy: user}
+			StorageGi: 2, Recipe: string(kind) + "-basico", RecipeVersion: 1, Params: map[string]int{"storage_gi": 2},
+			Generation: 1, Status: resource.StatusActive, CreatedBy: user}
 	}
 
 	db1 := mk(org, env, "db", resourcekind.Postgres)
@@ -43,7 +49,8 @@ func TestRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := repo.Find(ctx, org, env, "db")
-	if err != nil || got.ID != db1.ID || got.Kind != resourcekind.Postgres || got.StorageGi != 2 || got.Status != resource.StatusActive || got.CreatedAt.IsZero() {
+	if err != nil || got.ID != db1.ID || got.Kind != resourcekind.Postgres || got.StorageGi != 2 || got.Status != resource.StatusActive || got.CreatedAt.IsZero() ||
+		got.Recipe != "postgres-basico" || got.RecipeVersion != 1 || got.Params["storage_gi"] != 2 || len(got.Params) != 1 {
 		t.Fatalf("find %+v %v", got, err)
 	}
 
@@ -65,6 +72,17 @@ func TestRepository(t *testing.T) {
 	}
 	if err := repo.Create(ctx, sized(mk(org, env, "big", resourcekind.Files), 101)); errType(err) != errx.TypeValidation {
 		t.Fatalf("size: %v", err)
+	}
+	// params.storage_gi and storage_gi never disagree; a recipe is named
+	drift := mk(org, env, "drift", resourcekind.Files)
+	drift.Params = map[string]int{"storage_gi": 3}
+	if err := repo.Create(ctx, drift); errType(err) != errx.TypeValidation {
+		t.Fatalf("params out of step: %v", err)
+	}
+	unnamed := mk(org, env, "unnamed", resourcekind.Files)
+	unnamed.Recipe = ""
+	if err := repo.Create(ctx, unnamed); errType(err) != errx.TypeValidation {
+		t.Fatalf("no recipe: %v", err)
 	}
 
 	cache := mk(org, env, "cache", resourcekind.Redis)
@@ -112,7 +130,7 @@ func TestRepository(t *testing.T) {
 	if err := repo.Resize(ctx, org, env, "db", 5, 2); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := repo.Find(ctx, org, env, "db"); got.StorageGi != 5 || got.Generation != 2 || !got.UpdatedAt.After(got.CreatedAt.Add(-1)) {
+	if got, _ := repo.Find(ctx, org, env, "db"); got.StorageGi != 5 || got.Params["storage_gi"] != 5 || got.Generation != 2 || !got.UpdatedAt.After(got.CreatedAt.Add(-1)) {
 		t.Fatalf("resized %+v", got)
 	}
 	if err := repo.Resize(ctx, org, env, "db", 3, 3); errType(err) != errx.TypeNotFound {
@@ -157,7 +175,7 @@ func TestRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	gone, ok, err := repo.Forget(ctx, org, env, "db")
-	if err != nil || !ok || gone.ID != db1.ID {
+	if err != nil || !ok || gone.ID != db1.ID || gone.Recipe != "postgres-basico" || gone.Params["storage_gi"] != 5 {
 		t.Fatalf("forget %+v %v %v", gone, ok, err)
 	}
 	if _, err := repo.Find(ctx, org, env, "db"); errType(err) != errx.TypeNotFound {
@@ -172,5 +190,47 @@ func TestRepository(t *testing.T) {
 	}
 	if got, err := repo.Find(ctx, other, env, "db"); err != nil || got.StorageGi != 9 {
 		t.Fatalf("other tenant %+v %v", got, err)
+	}
+}
+
+// Migration 002 on a database that already holds resources: each is pinned
+// to its kind's basic recipe, version 1, with its size as its parameters.
+func TestMigrationPinsEveryResourceToItsBasicRecipe(t *testing.T) {
+	all := resourcepg.Migrations()
+	first, err := fs.ReadFile(all, "001_resources.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := pgtest.DB(t, migrate.Set{Owner: resourcepg.Schema, Files: fstest.MapFS{"001_resources.up.sql": {Data: first}}})
+	ctx := context.Background()
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	env := project.NewEnvironmentID()
+	for i, x := range []struct {
+		org  identity.OrganizationID
+		name string
+		kind resourcekind.Kind
+		gi   int
+	}{{org, "db", resourcekind.Postgres, 7}, {org, "cache", resourcekind.Redis, 1}, {other, "files", resourcekind.Files, 100}} {
+		_, err := db.ExecContext(ctx, `INSERT INTO resource.resources (id, organization_id, project_id, environment_id, name, kind, storage_gi, generation, status, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 'active', '6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55')`,
+			resource.NewID(), x.org, project.NewID(), env, x.name, x.kind, x.gi)
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+	}
+	if err := migrate.Apply(ctx, db, migrate.Set{Owner: resourcepg.Schema, Files: all}); err != nil {
+		t.Fatal(err)
+	}
+	repo := resourcepg.New(db)
+	for o, want := range map[identity.OrganizationID]map[string]int{org: {"db": 7, "cache": 1}, other: {"files": 100}} {
+		list, err := repo.List(ctx, o, env)
+		if err != nil || len(list) != len(want) {
+			t.Fatalf("list %+v %v", list, err)
+		}
+		for _, r := range list {
+			if r.Recipe != string(r.Kind)+"-basico" || r.RecipeVersion != 1 || len(r.Params) != 1 || r.Params["storage_gi"] != want[r.Name] {
+				t.Fatalf("pinned %+v", r)
+			}
+		}
 	}
 }

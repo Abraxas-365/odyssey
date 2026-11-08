@@ -37,6 +37,8 @@ tags:
     description: The organization's tamper-evident activity trail.
   - name: policy
     description: IT's rules (CEL) that allow, block or ask approval for actions on apps.
+  - name: catalog
+    description: What the organization offers to be created as a resource (recipes, tiers, limits, pre-approved range).
   - name: approvals
     description: Actions IT's rules hold until someone with the permission approves them.
   - name: inventory
@@ -1885,6 +1887,89 @@ paths:
         "422": { $ref: "#/components/responses/Business" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/catalog/recipes:
+    get:
+      tags: [catalog]
+      operationId: listCatalogRecipes
+      summary: List the catalog
+      description: |
+        Every recipe this Odicea knows, at the version the organization offers
+        (the latest when it offers none), with the organization's offering. The
+        first read of an organization creates its factory offerings
+        (docs/catalog.md). Anyone in the organization reads it: who creates a
+        resource sees the choices.
+      x-permissions: []
+      responses:
+        "200":
+          description: Every recipe.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/catalog/recipes/{recipe}:
+    parameters:
+      - $ref: "#/components/parameters/Recipe"
+    get:
+      tags: [catalog]
+      operationId: getCatalogRecipe
+      summary: One recipe of the catalog
+      x-permissions: []
+      responses:
+        "200":
+          description: The recipe with the organization's offering.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/catalog/recipes/{recipe}/offering:
+    parameters:
+      - $ref: "#/components/parameters/Recipe"
+    put:
+      tags: [catalog]
+      operationId: updateCatalogOffering
+      summary: Change what the organization offers of a recipe
+      description: |
+        The whole offering: the version offered (one of the recipe's), whether
+        it is active, its tiers, the tiers where it is its kind's default, the
+        hard limits and the pre-approved range of each parameter. Limits stay
+        inside the parameter's schema and the pre-approved range inside the
+        limits (400 otherwise). A tier where another offering of the kind is
+        already the default is 409 `CATALOG_DEFAULT_TAKEN`. Not retroactive:
+        resources keep their recipe@version and parameters. Event
+        `catalog.offering_updated`.
+      x-permissions: [odyssey:catalog:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogOfferingDraft" }
+      responses:
+        "200":
+          description: The recipe with its new offering.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogEntry" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/approvals:
     get:
       tags: [approvals]
@@ -3030,6 +3115,11 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/ResourceName" }
+    Recipe:
+      name: recipe
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,62}$" }
     Deployment:
       name: deployment
       in: path
@@ -3935,7 +4025,7 @@ components:
         services: { $ref: "#/components/schemas/ServiceScope" }
     Resource:
       type: object
-      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, services, variables]
+      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, recipe, recipe_version, params, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, services, variables]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -3943,7 +4033,13 @@ components:
         environment_id: { type: string, format: uuid }
         name: { $ref: "#/components/schemas/ResourceName" }
         kind: { $ref: "#/components/schemas/ResourceKind" }
-        storage_gi: { type: integer, description: Size in GiB; it only grows. }
+        storage_gi: { type: integer, description: Size in GiB; it only grows (the same as `params.storage_gi`). }
+        recipe: { type: string, description: "The catalog recipe it is pinned to (docs/catalog.md); one from before the catalog is `<kind>-basico`." }
+        recipe_version: { type: integer, description: The recipe's immutable version that prepares it. }
+        params:
+          type: object
+          description: The recipe's parameters, normalized (every one, defaults filled in).
+          additionalProperties: { type: integer }
         generation: { type: integer, description: Grows with every change; the cluster ignores an older one. }
         status:
           type: string
@@ -4820,6 +4916,102 @@ components:
       type: string
       enum: [allow, deny, approval]
       description: What a rule does when it matches. `deny` beats `approval` beats `allow`.
+
+    CatalogRange:
+      type: object
+      additionalProperties: false
+      description: An inclusive range; an absent bound is the parameter's own.
+      properties:
+        min: { type: integer, minimum: 0 }
+        max: { type: integer, minimum: 0 }
+
+    CatalogParam:
+      type: object
+      additionalProperties: false
+      required: [name, label, min, max, default, mutability]
+      properties:
+        name: { type: string }
+        label: { type: string }
+        unit: { type: string }
+        min: { type: integer, description: The widest any offering may allow. }
+        max: { type: integer }
+        default: { type: integer }
+        mutability:
+          type: string
+          enum: [immutable, grows, mutable]
+          description: What may happen to the value after the resource exists.
+
+    CatalogOfferingDraft:
+      type: object
+      additionalProperties: false
+      required: [version, active, tiers]
+      properties:
+        version: { type: integer, minimum: 1, description: The recipe version offered. }
+        active: { type: boolean }
+        tiers:
+          type: array
+          items: { $ref: "#/components/schemas/ProjectTier" }
+        defaults:
+          type: array
+          description: Tiers (of `tiers`) where it is its kind's default; ignored when not active.
+          items: { $ref: "#/components/schemas/ProjectTier" }
+        limits:
+          type: object
+          description: Hard limits per parameter; outside them it cannot be asked for, not even with approval.
+          additionalProperties: { $ref: "#/components/schemas/CatalogRange" }
+        preapproved:
+          type: object
+          description: The part of the limits created without asking IT (absent parameter, all of its limits).
+          additionalProperties: { $ref: "#/components/schemas/CatalogRange" }
+
+    CatalogOffering:
+      type: object
+      additionalProperties: false
+      required: [recipe, version, active, tiers, defaults, limits, preapproved, revision, updated_by, created_at, updated_at]
+      properties:
+        recipe: { type: string }
+        version: { type: integer, description: 0 is never stored; an inactive offering still names a version. }
+        active: { type: boolean }
+        tiers: { type: array, items: { $ref: "#/components/schemas/ProjectTier" } }
+        defaults: { type: array, items: { $ref: "#/components/schemas/ProjectTier" } }
+        limits: { type: object, additionalProperties: { $ref: "#/components/schemas/CatalogRange" } }
+        preapproved: { type: object, additionalProperties: { $ref: "#/components/schemas/CatalogRange" } }
+        revision: { type: integer, description: Moves up with each edit; 0 when the organization has no offering of it. }
+        updated_by: { type: string, pattern: "^([0-9a-f-]{36})?$", description: Empty until IT changes the factory offering. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CatalogEntry:
+      type: object
+      additionalProperties: false
+      description: An immutable recipe version with the organization's offering of the recipe.
+      required: [recipe, version, kind, title, description, engine, params, spec, requires, offering]
+      properties:
+        recipe: { type: string }
+        version: { type: integer }
+        kind: { $ref: "#/components/schemas/ResourceKind" }
+        title: { type: string }
+        description: { type: string }
+        engine: { type: string, enum: [builtin] }
+        params: { type: array, items: { $ref: "#/components/schemas/CatalogParam" } }
+        spec:
+          type: object
+          description: The engine settings the version fixes (empty for the basic resource).
+          additionalProperties: false
+          properties:
+            postgres:
+              type: object
+              additionalProperties: false
+              properties:
+                instances: { type: integer }
+                major: { type: integer }
+                cpu: { type: string }
+                memory: { type: string }
+        requires:
+          type: array
+          description: Capabilities the environment's cluster must announce.
+          items: { type: string }
+        offering: { $ref: "#/components/schemas/CatalogOffering" }
 
     PolicyRule:
       type: object
