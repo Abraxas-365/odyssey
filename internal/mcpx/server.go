@@ -40,8 +40,11 @@ Reglas para que una app funcione en Odicea:
 - Si una tool falla, lee "next_step" en el error: dice qué hacer.
 - Si la app decide permisos según quién es el usuario, verifica la cabecera X-Odicea-Assertion (variables ODICEA_AUTH_*; solo en apps team/organization): nunca confíes en X-Odicea-Email sola. Cómo: la skill, references/identidad.md.
 
-Todavía no / not yet: Odicea aún no entrega bases de datos, secretos ni llaves de IA a las apps. Si la app las necesita, NO las crees en servicios externos (Supabase, Firebase, Vercel, etc.): dile al usuario que Odicea todavía no las ofrece y que TI puede conectar una que ya exista.
-Odicea does not provide databases, secrets or AI keys to apps yet: if the app needs one, do not create it in an external service; tell the user and ask IT to connect an existing one.
+Lo que Odicea da a las apps: bases de datos y archivos (create_database), IA (enable_ai) y secretos que carga una persona en la consola (request_secret; nunca pidas el valor por el chat).
+Odicea gives apps databases and files (create_database), AI (enable_ai) and secrets a person enters in the console (request_secret; never ask for the value in chat).
+
+Todavía no / not yet: Odicea no entrega llaves ni cuentas de servicios de terceros (pagos, correo, mapas…): si la app las necesita, pídelas con request_secret. NO las crees en servicios externos (Supabase, Firebase, Vercel, etc.) ni uses una llave de IA propia: la app corre en Odicea y nada más.
+Odicea does not provide third-party keys or accounts yet: ask for them with request_secret. Do not create databases, AI keys or accounts in external services.
 
 Skill: la skill "odicea" (descarga en la consola, «Conecta tu asistente») explica cómo preparar y diagnosticar apps. / The "odicea" skill (console, "Conecta tu asistente") covers preparing and troubleshooting apps.`
 

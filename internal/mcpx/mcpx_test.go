@@ -124,14 +124,16 @@ func TestInitializeCarriesTheInstructions(t *testing.T) {
 	if init.ServerInfo.Name != mcpx.ServerName || !strings.Contains(init.Instructions, "deploy_folder") {
 		t.Fatalf("initialize: %+v", init)
 	}
-	// honest about what Odicea does not give apps yet, and points at the skill
-	for _, want := range []string{"Todavía no", "bases de datos", "NO las crees en servicios externos", "skill", "Conecta tu asistente"} {
+	// honest about what Odicea gives apps and what not yet, and points at the skill
+	for _, want := range []string{"create_database", "enable_ai", "request_secret", "Todavía no", "NO las crees en servicios externos", "skill", "Conecta tu asistente"} {
 		if !strings.Contains(init.Instructions, want) {
 			t.Errorf("instructions do not say %q", want)
 		}
 	}
-	if strings.Contains(init.Instructions, "TI los configura aparte") {
-		t.Error("instructions still promise that IT configures secrets separately")
+	for _, stale := range []string{"TI los configura aparte", "no entrega bases de datos"} {
+		if strings.Contains(init.Instructions, stale) {
+			t.Errorf("instructions still say %q", stale)
+		}
 	}
 }
 
