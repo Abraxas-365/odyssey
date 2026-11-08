@@ -41,12 +41,40 @@ func (s *Service) ApplyResource(ctx context.Context, d fleet.DesiredResource) er
 	})
 }
 
+// ResourceStatus is what the agent last reported, unless its cluster can no
+// longer prepare the resource as its recipe asks (an older agent was
+// installed since: it would keep, or remake, a basic one). Then it is
+// failed, saying so, whatever the agent reports: "ready" would be a lie.
 func (s *Service) ResourceStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (fleet.ResourceStatus, error) {
 	st, err := s.repo.FindResourceStatus(ctx, organization, environment, name)
 	if errx.IsType(err, errx.TypeNotFound) {
-		return fleet.ResourceStatus{Environment: environment, Name: name}, nil
+		st, err = fleet.ResourceStatus{Environment: environment, Name: name}, nil
 	}
-	return st, err
+	if err != nil {
+		return fleet.ResourceStatus{}, err
+	}
+	c, ok, err := s.resourceCluster(ctx, organization, environment)
+	if err != nil || !ok {
+		return st, err
+	}
+	d, err := s.repo.FindResource(ctx, organization, c.ID, environment, name)
+	if errx.IsType(err, errx.TypeNotFound) {
+		return st, nil
+	}
+	if err != nil {
+		return fleet.ResourceStatus{}, err
+	}
+	if d.Deleted {
+		return st, nil
+	}
+	if err := c.Agent.Capabilities.CheckResource(d.Kind, d.Spec); err != nil {
+		var e *errx.Error
+		if !errx.As(err, &e) || e.Code != fleet.CodeResourcesUnsupported {
+			return st, nil // a kind the cluster lost: what the agent reports says it best
+		}
+		st.Phase, st.Message = fleet.ResourceFailed, e.Message
+	}
+	return st, nil
 }
 
 // ResourceKinds answers fleet.Resources.ResourceKinds without placing anything.

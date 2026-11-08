@@ -1,4 +1,4 @@
-.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-addons cluster-down test-kube test-kube-k3d test-build test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
+.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-addons cluster-down test-kube test-kube-k3d test-build test-cnpg test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
 
 # The Railpack library's version names the plans the builder writes (the
 # Dockerfile sets it the same way).
@@ -211,6 +211,22 @@ test-build:
 	k3d image import odyssey-agent:dev -c $(K3D_CLUSTER)
 	ODYSSEY_TEST_KUBECONFIG=$(KUBECONFIG_LOCAL) ODYSSEY_TEST_APPS_PORT=$(APPS_PORT) ODYSSEY_TEST_BUILD=1 \
 	go test -count=1 -timeout 20m -run '^TestKubeBuild$$' -v ./internal/bootstrap/
+
+# A recipe's database settings on a real CloudNativePG, in a throwaway k3d
+# cluster (created and deleted here): the pinned image, instances, resources,
+# a change of instances, a refused major, deletion.
+test-cnpg:
+	@mkdir -p .dev-secrets && chmod 700 .dev-secrets
+	-@k3d cluster delete odyssey-cnpg-test >/dev/null 2>&1
+	k3d cluster create odyssey-cnpg-test --agents 0 --no-lb --k3s-arg "--disable=traefik@server:0" \
+		--kubeconfig-update-default=false --kubeconfig-switch-context=false --wait && \
+	k3d kubeconfig get odyssey-cnpg-test > .dev-secrets/kubeconfig-cnpg-test && chmod 600 .dev-secrets/kubeconfig-cnpg-test && \
+	KUBECONFIG=.dev-secrets/kubeconfig-cnpg-test kubectl apply -f agent/install/crd && \
+	KUBECONFIG=.dev-secrets/kubeconfig-cnpg-test kubectl apply --server-side -f $(CNPG_URL) && \
+	KUBECONFIG=.dev-secrets/kubeconfig-cnpg-test kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=300s && \
+	ODYSSEY_TEST_CNPG_KUBECONFIG=$(CURDIR)/.dev-secrets/kubeconfig-cnpg-test \
+	go test -count=1 -timeout 15m -run '^TestRecipeSettingsOnRealCloudNativePG$$' -v ./agent/controllers/resource/; \
+	s=$$?; k3d cluster delete odyssey-cnpg-test; rm -f .dev-secrets/kubeconfig-cnpg-test; exit $$s
 
 # One-time: signing key, fleet CA + .env with random secrets.
 setup:

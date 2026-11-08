@@ -990,7 +990,7 @@ export interface paths {
         put?: never;
         /**
          * Disconnect a cluster for good (idempotent)
-         * @description Its certificate stops being accepted and its tunnel closes at once; no app is placed there again. Apps already running there keep running without changes (`apps` counts them; their deployments fail with `CLUSTER_REVOKED` until they move) unless `move_to` names another active cluster: then they are moved there in the same transaction (`cluster.apps_moved`). Nothing moves on its own: the other cluster may be on another network or far from the apps' data. `INVALID_MOVE_TARGET` (422) refuses the whole request, revocation included. Revoking a revoked cluster records nothing, except the move if `move_to` is given.
+         * @description Its certificate stops being accepted and its tunnel closes at once; no app is placed there again. Apps already running there keep running without changes (`apps` counts them; their deployments fail with `CLUSTER_REVOKED` until they move) unless `move_to` names another active cluster: then they are moved there in the same transaction (`cluster.apps_moved`). Nothing moves on its own: the other cluster may be on another network or far from the apps' data. `INVALID_MOVE_TARGET` (422) refuses the whole request, revocation included, as does `RESOURCES_UNSUPPORTED` (422; details `environment`, `resource`, `missing`) when `move_to`'s agent cannot prepare a resource as its recipe asks. Revoking a revoked cluster records nothing, except the move if `move_to` is given.
          */
         post: operations["revokeCluster"];
         delete?: never;
@@ -1012,7 +1012,7 @@ export interface paths {
         put?: never;
         /**
          * Move the apps of a revoked cluster to another
-         * @description Pins every environment of the revoked cluster to `to` (an active cluster of the organization), whose agent deploys their apps from scratch; what the old cluster reported is dropped. Moving an empty cluster changes nothing. `CLUSTER_NOT_REVOKED` (422) for a cluster still running them, `INVALID_MOVE_TARGET` (422) for a `to` that is not another active cluster.
+         * @description Pins every environment of the revoked cluster to `to` (an active cluster of the organization), whose agent deploys their apps from scratch; what the old cluster reported is dropped. Moving an empty cluster changes nothing. `CLUSTER_NOT_REVOKED` (422) for a cluster still running them, `INVALID_MOVE_TARGET` (422) for a `to` that is not another active cluster, `RESOURCES_UNSUPPORTED` (422; details `environment`, `resource`, `missing`) when `to`'s agent cannot prepare a resource as its recipe asks.
          */
         post: operations["moveClusterApps"];
         delete?: never;

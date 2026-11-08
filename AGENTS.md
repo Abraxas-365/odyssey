@@ -42,6 +42,7 @@ design (binaries, domains, build order) lives outside the repo, in
 | Agent on the host (does not build) / inside the cluster (builds; applies `deploy/k3d/agent`) (pick one) | `make agent` / `make agent-image` | 2s / 2-5m |
 | Fleet e2e: gateway + agent + releasefleet on a throwaway k3s (Docker) / on k3d (stop other agents first) | `make test-kube` / `make test-kube-k3d` | 90s / 45s |
 | Real builds e2e on k3d (needs `make cluster`; pauses the in-cluster agent; run alone) | `make test-build` | 5-10m |
+| Recipe database settings on real CloudNativePG (throwaway k3d cluster, created and deleted) | `make test-cnpg` | 3m |
 | Regenerate permissions, fleet protocol, agent deepcopy, CRD + RBAC | `make gen` (after editing `iam/permissions.json`, `proto/`, `agent/api` or `+kubebuilder` markers; needs `protoc`) | 5s |
 | Regenerate console wire types | `make api-types` (after editing `api/openapi.yaml`) | 2s |
 | First local run (secrets, IAMKit, seed, API) | `make dev` | 2-4m |

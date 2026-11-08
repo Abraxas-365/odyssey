@@ -101,7 +101,9 @@ type Resources interface {
 	// one changes nothing.
 	ApplyResource(ctx context.Context, resource DesiredResource) error
 	// ResourceStatus is what the agent last reported (ObservedGeneration 0
-	// and no phase when it has reported nothing yet).
+	// and no phase when it has reported nothing yet). A resource its
+	// cluster can no longer prepare as its recipe asks (an older agent was
+	// installed since) is failed with CodeResourcesUnsupported's message.
 	ResourceStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (ResourceStatus, error)
 	// ResourceKinds are the kinds the environment's cluster (or, unplaced,
 	// the organization's default) can provision; none when there is no

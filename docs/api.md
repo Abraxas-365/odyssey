@@ -787,6 +787,10 @@ agent dials out to the gateway over mutual TLS, so it needs no inbound port.
   reported is dropped). 422 `CLUSTER_NOT_REVOKED` for a cluster still
   running them, `INVALID_MOVE_TARGET` for a `to` that is not another active
   cluster. Moving an empty cluster changes nothing and records nothing.
+- Either move (and the revocation with it) is refused with 422
+  `RESOURCES_UNSUPPORTED` when the destination's agent cannot prepare a
+  resource as its recipe asks (details `environment`, `resource`, `missing`;
+  docs/resources.md).
 - Without a fleet CA configured (`FLEET_CA_CERT`), creating a cluster or a
   token answers 422 `FLEET_DISABLED`.
 - **Events**: `cluster.created`, `cluster.token_issued`, `cluster.enrolled`,

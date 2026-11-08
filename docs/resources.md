@@ -42,8 +42,9 @@ capability is missing (`RESOURCES_UNSUPPORTED`, "su agente necesita una
 actualización"): creating or changing a resource, moving an environment to
 another cluster (its resources are checked against the destination), and the
 agent itself, which refuses a `spec_schema_version` newer than it knows instead
-of making a basic resource. Known limit: downgrading an agent below what its
-resources need is not detected until they next change.
+of making a basic resource. An agent downgraded below what a resource needs
+is caught when the resource is read: its status is `failed` with that same
+message, whatever the agent reports, until the agent is updated again.
 
 Inside the agent each kind is one **engine** (`agent/controllers/resource/engines.go`:
 apply, remove, connection); the controller never switches on a kind elsewhere

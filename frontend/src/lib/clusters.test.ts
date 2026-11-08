@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { ApiError, errorMessage } from './api'
 import { AGENT_INSTALL, appCount, awaitingAgent, cidrProblem, clusterState, internalEntries, internalProblem, moveTargets, parseAllowList, secretCommand } from './clusters'
 import type { Cluster } from './types'
+
+describe('moving apps', () => {
+  it('a destination whose agent is too old for a recipe says to update it, in plain words', () => {
+    const text = errorMessage(new ApiError('raw', 422, 'BUSINESS', 'RESOURCES_UNSUPPORTED', { environment: 'e', resource: 'db', missing: 'spec/v1' }))
+    expect(text).toMatch(/Actualiza su agente/)
+    expect(text).not.toMatch(/spec\/v1|raw/)
+  })
+})
 
 describe('moveTargets', () => {
   const c = (id: string, status: Cluster['status']) => ({ id, status }) as Cluster

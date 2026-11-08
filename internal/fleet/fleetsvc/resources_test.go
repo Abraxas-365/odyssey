@@ -196,6 +196,48 @@ func TestARecipeGoesOnlyToAnAgentThatHonoursIt(t *testing.T) {
 	if err := e.svc.ApplyResource(ctx, bad); !errx.IsType(err, errx.TypeValidation) {
 		t.Fatalf("invalid spec: %v", err)
 	}
+
+	// An older agent installed since keeps (or remakes) a basic database:
+	// the resource is failed, saying so, whatever the agent reports.
+	session := fleet.NewSession()
+	if err := e.svc.Connect(ctx, agent, session, fleet.Agent{Version: "v0",
+		Capabilities: fleet.Capabilities{ResourceKinds: []string{"postgres"}}}, "10.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ReportResources(ctx, agent, session, fleet.ResourceReport{Resources: []fleet.ResourceStatus{
+		{Environment: envID, Name: "db", ObservedGeneration: 1, Phase: fleet.ResourceReady},
+		{Environment: envID, Name: "plain", ObservedGeneration: 1, Phase: fleet.ResourceReady},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.svc.ResourceStatus(ctx, e.org, envID, "db")
+	if err != nil || st.Phase != fleet.ResourceFailed || !strings.Contains(st.Message, "actualización") {
+		t.Fatalf("downgraded agent: %+v %v", st, err)
+	}
+	if st, _ := e.svc.ResourceStatus(ctx, e.org, envID, "plain"); st.Phase != fleet.ResourceReady {
+		t.Fatalf("a basic one is unaffected: %+v", st)
+	}
+	// A cluster that lost the kind altogether: its agent's report says it.
+	if err := e.svc.Connect(ctx, agent, fleet.NewSession(), fleet.Agent{Version: "v0"}, "10.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := e.svc.ResourceStatus(ctx, e.org, envID, "db"); st.Phase != fleet.ResourceReady {
+		t.Fatalf("a lost kind is left to the agent: %+v", st)
+	}
+	connect(specCaps...)
+	if st, _ := e.svc.ResourceStatus(ctx, e.org, envID, "db"); st.Phase != fleet.ResourceReady {
+		t.Fatalf("updated again: %+v", st)
+	}
+	// Being deleted, it is not failed for a capability it no longer needs.
+	gone := db
+	gone.Generation, gone.Deleted = 2, true
+	if err := e.svc.ApplyResource(ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	connect()
+	if st, _ := e.svc.ResourceStatus(ctx, e.org, envID, "db"); st.Phase == fleet.ResourceFailed {
+		t.Fatalf("a deleted one: %+v", st)
+	}
 }
 
 func TestAMoveRefusesAClusterThatCannotHonourARecipe(t *testing.T) {
