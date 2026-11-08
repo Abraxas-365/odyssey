@@ -196,21 +196,23 @@ type Desired struct {
 	Deleted bool
 }
 
-// DesiredOf is the cluster's desired state for r. Its spec is the one its
-// pinned recipe version fixes; a version this binary does not know is an
-// internal error, never a basic resource in its place (a database meant to
-// have replicas must not quietly lose them). A resource being deleted needs
-// no spec (the agent only removes it), so it can always be deleted.
-func DesiredOf(r Resource) (Desired, error) {
+// DesiredOf is the cluster's desired state for r, given its pinned recipe
+// version as the organization knows it (catalog.Queries.Version; ok false:
+// it knows no such version). Its spec is the one that version fixes; an
+// unknown version is an internal error, never a basic resource in its place
+// (a database meant to have replicas must not quietly lose them). A
+// resource being deleted needs no spec (the agent only removes it), so it
+// can always be deleted.
+func DesiredOf(r Resource, v catalog.RecipeVersion, ok bool) (Desired, error) {
 	d := Desired{Organization: r.Organization, Project: r.Project, Environment: r.Environment, Name: r.Name, Kind: r.Kind,
 		Generation: r.Generation, StorageGi: r.StorageGi, Deleted: r.Status == StatusDeleting}
-	v, ok := catalog.Version(r.Recipe, r.RecipeVersion)
+	ok = ok && v.Recipe == r.Recipe && v.Version == r.RecipeVersion
 	switch {
 	case ok:
 		d.Recipe, d.Spec = v.Ref(), v.Spec
 	case !d.Deleted:
 		return Desired{}, errx.Internal("resource " + r.Name + " is pinned to " + r.Recipe + "@" + strconv.Itoa(r.RecipeVersion) +
-			", which this version of Odicea does not know")
+			", which its organization's catalog does not know")
 	}
 	return d, nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/resource/resourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 var (
@@ -66,9 +67,14 @@ func (f *repo) Change(_ context.Context, _ identity.OrganizationID, _ project.En
 type cluster struct {
 	resource.Cluster
 	applied int
+	last    resource.Desired
 }
 
-func (c *cluster) Apply(context.Context, resource.Desired) error { c.applied++; return nil }
+func (c *cluster) Apply(_ context.Context, d resource.Desired) error {
+	c.applied++
+	c.last = d
+	return nil
+}
 
 func (c *cluster) Observed(context.Context, identity.OrganizationID, project.EnvironmentID, string) (resource.Observed, error) {
 	return resource.Observed{}, nil
@@ -81,8 +87,22 @@ func (usage) Connections(context.Context, identity.OrganizationID, project.ID, p
 }
 
 // cat resolves a change by taking the values asked over the current ones
-// (the real rules are catalogsvc's, tested there).
+// (the real rules are catalogsvc's, tested there). It knows the factory and
+// one organization's own recipe, org-reportes@1, as Queries.Version does.
 type cat struct{ resource.Catalog }
+
+var reportes = catalog.OrgRecipe{Organization: org, Recipe: "org-reportes", Version: 1, Kind: resourcekind.Postgres,
+	Title: "Reportes", Engine: resourcespec.EngineExisting, CreatedBy: user}
+
+func (cat) Version(_ context.Context, o identity.OrganizationID, recipe string, version int) (catalog.RecipeVersion, bool, error) {
+	if o == org {
+		if v, ok := catalog.Factory().With([]catalog.OrgRecipe{reportes}).Version(recipe, version); ok {
+			return v, true, nil
+		}
+	}
+	v, ok := catalog.Factory().Version(recipe, version)
+	return v, ok, nil
+}
 
 func (cat) ResolveChange(_ context.Context, _ identity.OrganizationID, ch catalog.Change) (catalog.Resolved, error) {
 	out := map[string]int{}
@@ -137,6 +157,23 @@ func TestChangeGrowsAtANewGeneration(t *testing.T) {
 	}
 	if got := f.events.Types(); len(got) != 1 || got[0] != resource.EventResized {
 		t.Fatalf("events: %v", got)
+	}
+	if f.cluster.last.Recipe != "postgres-basico@1" {
+		t.Fatalf("applied %+v", f.cluster.last)
+	}
+}
+
+// A resource pinned to its organization's own recipe is applied with that
+// version, read through the catalog for its organization (not the
+// factory's alone, which does not know it).
+func TestApplyReadsTheOrganizationsOwnRecipe(t *testing.T) {
+	f := setup()
+	f.repo.r.Recipe, f.repo.r.RecipeVersion = reportes.Recipe, reportes.Version
+	if _, err := f.change(map[string]int{catalog.ParamStorage: 8}); err != nil {
+		t.Fatal(err)
+	}
+	if f.cluster.applied != 1 || f.cluster.last.Recipe != "org-reportes@1" {
+		t.Fatalf("applied %d: %+v", f.cluster.applied, f.cluster.last)
 	}
 }
 

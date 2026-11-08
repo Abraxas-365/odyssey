@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/catalog"
@@ -12,6 +13,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 // Every factory version is sound: a known kind, a valid spec whose needs
@@ -19,11 +21,17 @@ import (
 // a factory offering that validates and keeps that default.
 func TestFactoryVersionsAreSound(t *testing.T) {
 	seen := map[string]bool{}
-	for _, v := range catalog.Versions() {
+	for _, v := range catalog.Factory() {
 		if seen[v.Ref()] {
 			t.Errorf("%s twice", v.Ref())
 		}
 		seen[v.Ref()] = true
+		if strings.HasPrefix(v.Recipe, catalog.OrgPrefix) {
+			t.Errorf("%s: %q is the prefix of the organizations' own recipes", v.Ref(), catalog.OrgPrefix)
+		}
+		if catalog.CheckRecipeID(v.Recipe) == nil {
+			t.Errorf("%s would be a valid organization recipe id", v.Ref())
+		}
 		if _, ok := resourcekind.Lookup(v.Kind); !ok {
 			t.Errorf("%s: unknown kind %s", v.Ref(), v.Kind)
 		}
@@ -56,7 +64,7 @@ func TestFactoryVersionsAreSound(t *testing.T) {
 		}
 	}
 	for _, k := range resourcekind.Kinds {
-		if _, ok := catalog.Version(catalog.BasicRecipe(k), 1); !ok {
+		if _, ok := catalog.Factory().Version(catalog.BasicRecipe(k), 1); !ok {
 			t.Errorf("%s has no basic recipe (what existing resources are pinned to)", k)
 		}
 	}
@@ -80,7 +88,7 @@ func equal(a, b []string) bool {
 func TestReleasedVersionsNeverChange(t *testing.T) {
 	path := filepath.Join("testdata", "versions.json")
 	current := map[string]json.RawMessage{}
-	for _, v := range catalog.Versions() {
+	for _, v := range catalog.Factory() {
 		raw, err := json.Marshal(v)
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +143,7 @@ func compact(t *testing.T, raw json.RawMessage) string {
 }
 
 func TestOfferingRanges(t *testing.T) {
-	v, _ := catalog.Version(catalog.PostgresProduction, 1)
+	v, _ := catalog.Factory().Version(catalog.PostgresProduction, 1)
 	p, _ := v.Param(catalog.ParamStorage)
 	o := catalog.Offering{OfferingDraft: v.Factory}
 	if b := o.Bounds(p); b != (catalog.Range{Min: 5, Max: resourcekind.MaxStorageGi}) {
@@ -158,7 +166,7 @@ func TestOfferingRanges(t *testing.T) {
 func TestEventContracts(t *testing.T) {
 	org := identity.MustParseOrganizationID("00000000-0000-4000-8000-000000000001")
 	user := identity.MustParseUserID("00000000-0000-4000-8000-000000000002")
-	v, _ := catalog.Version(catalog.PostgresProduction, 1)
+	v, _ := catalog.Factory().Version(catalog.PostgresProduction, 1)
 	o := catalog.Offering{Recipe: v.Recipe, OfferingDraft: v.Factory.Normalize(), Revision: 3}
 	o.Teams = []string{"grp_datos"}
 	for _, e := range []event.Event{catalog.NewOfferingUpdated(org, user, v.Title, o)} {
@@ -167,5 +175,32 @@ func TestEventContracts(t *testing.T) {
 	o.Active = false
 	if e := catalog.NewOfferingUpdated(org, user, v.Title, o); e.Summary != "Dejó de ofrecer «PostgreSQL de producción» en el catálogo" {
 		t.Fatalf("summary %q", e.Summary)
+	}
+}
+
+func TestOrgRecipeValidate(t *testing.T) {
+	ok := catalog.OrgRecipe{Organization: identity.NewOrganizationID(), Recipe: "org-rds-reportes", Version: 1,
+		Kind: resourcekind.Postgres, Title: "Reportes", Engine: resourcespec.EngineExisting,
+		CreatedBy: identity.MustParseUserID("00000000-0000-4000-8000-000000000002")}
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*catalog.OrgRecipe){
+		"factory-like id":  func(o *catalog.OrgRecipe) { o.Recipe = "rds-reportes" },
+		"uppercase id":     func(o *catalog.OrgRecipe) { o.Recipe = "org-RDS" },
+		"empty after org-": func(o *catalog.OrgRecipe) { o.Recipe = "org-" },
+		"long id":          func(o *catalog.OrgRecipe) { o.Recipe = "org-" + strings.Repeat("a", catalog.MaxRecipeID) },
+		"version 0":        func(o *catalog.OrgRecipe) { o.Version = 0 },
+		"unknown kind":     func(o *catalog.OrgRecipe) { o.Kind = "queue" },
+		"builtin engine":   func(o *catalog.OrgRecipe) { o.Engine = resourcespec.EngineBuiltin },
+		"no title":         func(o *catalog.OrgRecipe) { o.Title = "  " },
+		"long description": func(o *catalog.OrgRecipe) { o.Description = strings.Repeat("a", catalog.MaxRecipeDescription+1) },
+		"no author":        func(o *catalog.OrgRecipe) { o.CreatedBy = identity.UserID{} },
+	} {
+		o := ok
+		change(&o)
+		if err := o.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

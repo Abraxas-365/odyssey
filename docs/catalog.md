@@ -33,6 +33,24 @@ Factory recipes (v1):
 The basic recipes are exactly what existed before: nothing changes for anyone
 until IT edits the catalog.
 
+### The organization's own recipes (stage 2)
+
+An organization also publishes recipes of its own: today a resource the
+company **already has** (engine `existing`), which Odicea only connects. They
+live in `catalog.recipe_versions`, per organization, and follow the same rule
+as the factory's: a published version never changes (the table only takes
+inserts; triggers refuse updates, deletes and truncation) and a new connection
+is a new version. Their ids start with `org-`, which no factory recipe does
+(`TestFactoryVersionsAreSound`), so a later Odicea release never takes one.
+They have no parameters and no factory offering. Stage 2 lands in cuts: this
+one stores and reads them (the catalog lists one, inactive); publishing them
+(API, permission), offering them and the agent's `existing` engine come next.
+
+Because of them, a resource's pinned version is read through
+`catalog.Queries.Version(org, recipe, version)` (the factory's and the
+organization's own, never another organization's); `catalog.Factory()` alone
+is the catalog's (`TestOnlyTheCatalogReadsTheFactoryAlone`).
+
 ## Offerings
 
 One per organization and recipe, created lazily and idempotently on the

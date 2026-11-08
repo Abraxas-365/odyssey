@@ -120,6 +120,9 @@ type Catalog interface {
 	ResolveChange(ctx context.Context, organization identity.OrganizationID, change catalog.Change) (catalog.Resolved, error)
 	List(ctx context.Context, organization identity.OrganizationID) ([]catalog.Entry, error)
 	TeamsOf(ctx context.Context, organization identity.OrganizationID, user identity.UserID) ([]string, error)
+	// Version is a resource's pinned recipe version as its organization
+	// knows it (a factory version or one it published).
+	Version(ctx context.Context, organization identity.OrganizationID, recipe string, version int) (catalog.RecipeVersion, bool, error)
 }
 
 // Policy is what resource asks IT's rules (the policyresource adapter;

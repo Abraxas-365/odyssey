@@ -21,8 +21,9 @@ type Commands interface {
 // Queries read the catalog. The first read of an organization seeds the
 // factory offerings it lacks (lazy and idempotent, like IT's built-in rules).
 type Queries interface {
-	// List is every recipe the binary knows (its offered version, or the
-	// latest when not offered) with the organization's offering.
+	// List is every recipe the organization knows (the factory's and its
+	// own; its offered version, or the latest when not offered) with the
+	// organization's offering.
 	List(ctx context.Context, organization identity.OrganizationID) ([]Entry, error)
 	// Find is one recipe with the organization's offering (404 unknown).
 	Find(ctx context.Context, organization identity.OrganizationID, recipe string) (Entry, error)
@@ -52,10 +53,15 @@ type Queries interface {
 	// which is not a change). Change.Tier is not consulted: an offering
 	// withdrawn from the tier does not stop changing what exists.
 	ResolveChange(ctx context.Context, organization identity.OrganizationID, change Change) (Resolved, error)
+	// Version is recipe@version as the organization knows it: a factory
+	// version or one it published (false: neither). It is how a resource's
+	// pinned version is read; another organization's recipe is never found.
+	Version(ctx context.Context, organization identity.OrganizationID, recipe string, version int) (RecipeVersion, bool, error)
 }
 
-// Repository is the persistence contract of catalog.offerings; only the
-// service depends on it. Every statement filters by organization.
+// Repository is the persistence contract of catalog.offerings and
+// catalog.recipe_versions; only the service depends on it. Every statement
+// filters by organization.
 type Repository interface {
 	List(ctx context.Context, organization identity.OrganizationID) ([]Offering, error)
 	Find(ctx context.Context, organization identity.OrganizationID, recipe string) (Offering, error)
@@ -67,6 +73,12 @@ type Repository interface {
 	// SeedFactory inserts the offerings whose recipe the organization lacks
 	// (ON CONFLICT DO NOTHING) and returns how many it added.
 	SeedFactory(ctx context.Context, offerings []Offering) (int, error)
+	// Publish stores a version of the organization's recipe. A published
+	// version is never changed or removed (the table refuses it); one that
+	// already exists is a conflict.
+	Publish(ctx context.Context, recipe OrgRecipe) error
+	// Published are the organization's versions, by recipe then version.
+	Published(ctx context.Context, organization identity.OrganizationID) ([]OrgRecipe, error)
 }
 
 // Directory is the organization's teams (IAMKit groups), read by the

@@ -20,6 +20,7 @@ package catalog
 
 import (
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
+	"github.com/Abraxas-365/odyssey/internal/text"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
@@ -106,6 +108,75 @@ type RecipeVersion struct {
 
 // Ref is recipe@version.
 func (v RecipeVersion) Ref() string { return v.Recipe + "@" + strconv.Itoa(v.Version) }
+
+// OrgPrefix starts the id of every recipe an organization publishes
+// (OrgRecipe). No factory recipe starts with it, so a later release of
+// Odicea never takes an organization's recipe id.
+const OrgPrefix = "org-"
+
+// Bounds of what IT writes about its own recipe.
+const (
+	MaxRecipeID          = 48
+	MaxTitle             = 80
+	MaxRecipeDescription = 500
+)
+
+var orgRecipeID = regexp.MustCompile(`^org-[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// OrgRecipe is one version of a recipe an organization published: today a
+// resource the company already has (EngineExisting, docs/catalog.md). Like
+// the factory's, a published version never changes (the repository only
+// inserts): a new connection is a new version.
+type OrgRecipe struct {
+	Organization identity.OrganizationID `json:"-"`
+	Recipe       string                  `json:"recipe"`
+	Version      int                     `json:"version"`
+	Kind         resourcekind.Kind       `json:"kind"`
+	Title        string                  `json:"title"`
+	Description  string                  `json:"description"`
+	Engine       string                  `json:"engine"`
+	Spec         resourcespec.Spec       `json:"spec"`
+	CreatedBy    identity.UserID         `json:"created_by"`
+	CreatedAt    time.Time               `json:"created_at"`
+}
+
+// CheckRecipeID says why id cannot name an organization's recipe.
+func CheckRecipeID(id string) error {
+	if len(id) > MaxRecipeID || !orgRecipeID.MatchString(id) {
+		return errx.InvalidField("recipe", "a recipe of your organization starts with «"+OrgPrefix+"» and has up to "+
+			strconv.Itoa(MaxRecipeID)+" lowercase letters, digits and dashes (for example «org-rds-reportes»)")
+	}
+	return nil
+}
+
+// Validate checks a published version before it is stored.
+func (o OrgRecipe) Validate() error {
+	if o.Organization.IsZero() || o.CreatedBy.IsZero() {
+		return errx.Validation("a published recipe has an organization and an author")
+	}
+	if err := CheckRecipeID(o.Recipe); err != nil {
+		return err
+	}
+	if o.Version < 1 {
+		return errx.InvalidField("version", "a version is at least 1")
+	}
+	if _, known := resourcekind.Lookup(o.Kind); !known {
+		return errx.InvalidField("kind", "no kind "+string(o.Kind))
+	}
+	if o.Engine != resourcespec.EngineExisting {
+		return errx.InvalidField("engine", "an organization publishes only resources it already has (engine "+resourcespec.EngineExisting+")")
+	}
+	if err := text.Required("title", o.Title, MaxTitle); err != nil {
+		return err
+	}
+	if err := text.Optional("description", o.Description, MaxRecipeDescription); err != nil {
+		return err
+	}
+	if err := o.Spec.Validate(o.Kind); err != nil {
+		return errx.InvalidField("spec", err.Error())
+	}
+	return nil
+}
 
 // Param is the version's parameter called name.
 func (v RecipeVersion) Param(name string) (Param, bool) {
@@ -417,6 +488,8 @@ type Resolved struct {
 	Recipe  string            `json:"recipe"`
 	Version int               `json:"recipe_version"`
 	Engine  string            `json:"engine"`
+	// Title is the version's, for summaries.
+	Title string `json:"-"`
 	// Params are every parameter of the version, defaults filled in.
 	Params map[string]int    `json:"params"`
 	Spec   resourcespec.Spec `json:"-"`

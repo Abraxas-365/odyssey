@@ -98,7 +98,7 @@ func (s *Service) verdictOnDefaults(ctx context.Context, p project.Project, e pr
 	if err != nil {
 		return gate.Verdict{}, gate.Verdict{}, err
 	}
-	r := catalog.Resolved{Kind: entry.Kind, Recipe: entry.Recipe, Version: entry.Version, Engine: entry.Engine, Params: params,
+	r := catalog.Resolved{Kind: entry.Kind, Recipe: entry.Recipe, Version: entry.Version, Engine: entry.Engine, Title: entry.Title, Params: params,
 		Spec: entry.Spec, OutOfRange: outside}
 	var others []gate.Verdict
 	cv, err := s.usage.JudgeConnect(ctx, p.Organization, p.ID, e.ID, resource.Ask{Kind: entry.Kind})

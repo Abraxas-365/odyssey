@@ -26,7 +26,7 @@ func setup(t *testing.T) (*catalogpg.Repository, txn.Runner, context.Context) {
 func factory(org identity.OrganizationID) []catalog.Offering {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	var out []catalog.Offering
-	for _, v := range catalog.Latest() {
+	for _, v := range catalog.Factory().Latest() {
 		out = append(out, catalog.Offering{Organization: org, Recipe: v.Recipe, OfferingDraft: v.Factory.Normalize(),
 			Revision: 1, CreatedAt: now, UpdatedAt: now})
 	}

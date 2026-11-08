@@ -9,13 +9,15 @@ import (
 	"sync"
 
 	"github.com/Abraxas-365/odyssey/internal/catalog"
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 )
 
 // Repo is a catalog.Repository in memory, scoped by organization.
 type Repo struct {
-	mu   sync.Mutex
-	rows map[string]catalog.Offering // organization/recipe
+	mu       sync.Mutex
+	rows     map[string]catalog.Offering // organization/recipe
+	versions []catalog.OrgRecipe
 }
 
 func NewRepo() *Repo { return &Repo{rows: map[string]catalog.Offering{}} }
@@ -72,4 +74,35 @@ func (m *Repo) SeedFactory(_ context.Context, offerings []catalog.Offering) (int
 		}
 	}
 	return added, nil
+}
+
+// Publish keeps a version; one that exists is a conflict, as in Postgres.
+func (m *Repo) Publish(_ context.Context, o catalog.OrgRecipe) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, v := range m.versions {
+		if v.Organization == o.Organization && v.Recipe == o.Recipe && v.Version == o.Version {
+			return errx.Conflict("version exists")
+		}
+	}
+	m.versions = append(m.versions, o)
+	return nil
+}
+
+func (m *Repo) Published(_ context.Context, org identity.OrganizationID) ([]catalog.OrgRecipe, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []catalog.OrgRecipe{}
+	for _, v := range m.versions {
+		if v.Organization == org {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b catalog.OrgRecipe) int {
+		if c := strings.Compare(a.Recipe, b.Recipe); c != 0 {
+			return c
+		}
+		return a.Version - b.Version
+	})
+	return out, nil
 }

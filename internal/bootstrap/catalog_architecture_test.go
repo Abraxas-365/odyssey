@@ -242,12 +242,76 @@ func TestRecipeVersionsAreWrittenOnlyInTheFactory(t *testing.T) {
 	report(t, recipeVersionViolations(sources(t, false)))
 }
 
+// factoryLookupViolations: catalog.Factory is only the versions that ship
+// in the binary, not the ones an organization published. Whoever reads a
+// resource's pinned version outside the catalog asks Queries.Version
+// (which knows both), or an organization's own recipe would be "unknown"
+// to it: only the catalog root and its service call Factory.
+func factoryLookupViolations(files []goFile) []string {
+	const catalogPkg = modulePath + "catalog"
+	var out []string
+	for _, f := range files {
+		if dir := path.Dir(f.rel); dir == "catalog" || dir == "catalog/catalogsvc" {
+			continue
+		}
+		alias := ""
+		for _, imp := range f.file.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == catalogPkg {
+				alias = "catalog"
+				if imp.Name != nil {
+					alias = imp.Name.Name
+				}
+				if alias == "." {
+					// Factory() would be a bare identifier no selector check sees
+					out = append(out, f.fset.Position(imp.Pos()).String()+": catalog is never dot-imported (its lookups must stay visible)")
+				}
+			}
+		}
+		if alias == "" || alias == "." {
+			continue
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "Factory" {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == alias {
+					out = append(out, f.fset.Position(sel.Pos()).String()+
+						": catalog.Factory misses the organization's own recipes; ask catalog.Queries.Version")
+				}
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestOnlyTheCatalogReadsTheFactoryAlone(t *testing.T) {
+	report(t, factoryLookupViolations(sources(t, false)))
+}
+
+func TestFactoryLookupRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		"catalog/catalogsvc/s.go": `package catalogsvc; import "` + modulePath + `catalog"; var k = catalog.Factory()`,
+		"widget/widgetsvc/ok.go":  `package widgetsvc; import "` + modulePath + `catalog"; var r catalog.Resolved`,
+	})
+	if v := factoryLookupViolations(files); len(v) != 0 {
+		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))
+	}
+	files = parseFixtures(t, map[string]string{
+		"widget/widgetsvc/s.go":  `package widgetsvc; import c "` + modulePath + `catalog"; var v, _ = c.Factory().Version("x", 1)`,
+		"widget/widgethttp/h.go": `package widgethttp; import . "` + modulePath + `catalog"; var v = Factory()`,
+	})
+	expectViolations(t, factoryLookupViolations(files),
+		"widget/widgethttp/h.go: catalog is never dot-imported",
+		"widget/widgetsvc/s.go: catalog.Factory misses the organization's own recipes",
+	)
+}
+
 func TestRecipeVersionRuleCatchesViolations(t *testing.T) {
 	cat := `import "` + modulePath + `catalog"; `
 	files := parseFixtures(t, map[string]string{
 		"catalog/recipes.go": `package catalog; var f = []RecipeVersion{{Recipe: "x"}}; var g = RecipeVersion{}`,
 		"catalog/catalog.go": `package catalog; import _ "` + modulePath + `project"; func (v RecipeVersion) Ref() string { return "" }`,
-		"widget/ok.go":       `package widget; ` + cat + `var v, _ = catalog.Version("x", 1)`,
+		"widget/ok.go":       `package widget; ` + cat + `var v, _ = catalog.Factory().Version("x", 1)`,
 	})
 	if v := recipeVersionViolations(files); len(v) != 0 {
 		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))

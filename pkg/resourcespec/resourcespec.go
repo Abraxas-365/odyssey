@@ -28,13 +28,22 @@ const (
 	PostgresVersion = "builtin:postgres:version"
 	// PostgresResources: it sets the database's CPU and memory.
 	PostgresResources = "builtin:postgres:resources"
+	// Existing: it writes the connection of a resource the company already
+	// has (EngineExisting).
+	Existing = "existing"
 )
 
 // Builtin is the capability of preparing kind with the built-in engine.
 func Builtin(k resourcekind.Kind) string { return "builtin:" + string(k) }
 
 // Engines.
-const EngineBuiltin = "builtin"
+const (
+	// EngineBuiltin: the agent prepares the resource with its own operators.
+	EngineBuiltin = "builtin"
+	// EngineExisting: the resource already exists in the company; the agent
+	// only writes its connection (docs/catalog.md).
+	EngineExisting = "existing"
+)
 
 // Spec is how a resource is prepared beyond its kind and size. The zero
 // value is the basic resource every agent prepares.
@@ -64,6 +73,19 @@ var Majors = []int{16, 17, 18}
 
 // IsZero says the spec asks for nothing beyond the basic resource.
 func (s Spec) IsZero() bool { return s.Postgres == nil || *s.Postgres == Postgres{} }
+
+// Requires are the capabilities an agent needs to honour s for kind on
+// engine, sorted: the built-in engine's (Spec.Requires), or the existing
+// engine's. An unknown engine requires itself, which no agent announces.
+func Requires(engine string, k resourcekind.Kind, s Spec) []string {
+	switch engine {
+	case EngineBuiltin:
+		return s.Requires(k)
+	case EngineExisting:
+		return []string{Existing}
+	}
+	return []string{"engine:" + engine}
+}
 
 // Requires are the capabilities an agent needs to honour s for kind (the
 // built-in engine of the kind, plus what the spec asks for), sorted.

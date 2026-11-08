@@ -1,11 +1,13 @@
 // Package catalogsvc implements catalog.Commands and catalog.Queries over
-// the offerings repository and the recipe versions in the binary.
+// the catalog repository (offerings and the organization's own recipe
+// versions) and the factory versions in the binary.
 package catalogsvc
 
 import (
 	"context"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,8 +55,9 @@ func (s *Service) ensureFactory(ctx context.Context, org identity.OrganizationID
 	}
 	now := time.Now().UTC()
 	var offerings []catalog.Offering
-	for _, v := range catalog.Latest() {
-		first, _ := catalog.Version(v.Recipe, 1)
+	factory := catalog.Factory()
+	for _, v := range factory.Latest() {
+		first, _ := factory.Version(v.Recipe, 1)
 		offerings = append(offerings, catalog.Offering{Organization: org, Recipe: v.Recipe,
 			OfferingDraft: first.Factory.Normalize(), Revision: 1, CreatedAt: now, UpdatedAt: now})
 	}
@@ -86,13 +89,38 @@ func (s *Service) offerings(ctx context.Context, org identity.OrganizationID) (m
 	return out, nil
 }
 
-// entry is recipe v as offered (the offered version when the binary knows
-// it, else v).
-func entry(v catalog.RecipeVersion, o catalog.Offering) catalog.Entry {
-	if offered, ok := catalog.Version(v.Recipe, o.Version); ok {
+// known are the versions the organization can use: the factory's and the
+// ones it published.
+func (s *Service) known(ctx context.Context, org identity.OrganizationID) (catalog.Known, error) {
+	own, err := s.repo.Published(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	return catalog.Factory().With(own), nil
+}
+
+// Version reads the organization's published versions only for an id of
+// its own: a factory pin (most resources, on every apply) costs no query.
+func (s *Service) Version(ctx context.Context, org identity.OrganizationID, recipe string, version int) (v catalog.RecipeVersion, ok bool, err error) {
+	if !strings.HasPrefix(recipe, catalog.OrgPrefix) {
+		v, ok = catalog.Factory().Version(recipe, version)
+		return v, ok, nil
+	}
+	known, err := s.known(ctx, org)
+	if err != nil {
+		return v, false, err
+	}
+	v, ok = known.Version(recipe, version)
+	return v, ok, nil
+}
+
+// entry is recipe v as offered (the offered version when known holds it,
+// else v).
+func entry(known catalog.Known, v catalog.RecipeVersion, o catalog.Offering) catalog.Entry {
+	if offered, ok := known.Version(v.Recipe, o.Version); ok {
 		v = offered
 	}
-	return catalog.Entry{RecipeVersion: v, Versions: catalog.VersionsOf(v.Recipe), Offering: o}
+	return catalog.Entry{RecipeVersion: v, Versions: known.VersionsOf(v.Recipe), Offering: o}
 }
 
 func (s *Service) List(ctx context.Context, org identity.OrganizationID) ([]catalog.Entry, error) {
@@ -100,8 +128,12 @@ func (s *Service) List(ctx context.Context, org identity.OrganizationID) ([]cata
 	if err != nil {
 		return nil, err
 	}
+	known, err := s.known(ctx, org)
+	if err != nil {
+		return nil, err
+	}
 	var out []catalog.Entry
-	for _, v := range catalog.Latest() {
+	for _, v := range known.Latest() {
 		if _, known := resourcekind.Lookup(v.Kind); !known {
 			continue
 		}
@@ -109,7 +141,7 @@ func (s *Service) List(ctx context.Context, org identity.OrganizationID) ([]cata
 		if !ok {
 			o = catalog.Offering{Organization: org, Recipe: v.Recipe, OfferingDraft: catalog.OfferingDraft{Version: v.Version}.Normalize()}
 		}
-		out = append(out, entry(v, o))
+		out = append(out, entry(known, v, o))
 	}
 	return out, nil
 }
@@ -261,12 +293,15 @@ func (s *Service) Resolve(ctx context.Context, org identity.OrganizationID, req 
 	if err != nil {
 		return catalog.Resolved{}, err
 	}
-	return catalog.Resolved{Kind: e.Kind, Recipe: e.Recipe, Version: e.Version, Engine: e.Engine, Params: params,
+	return catalog.Resolved{Kind: e.Kind, Recipe: e.Recipe, Version: e.Version, Engine: e.Engine, Title: e.Title, Params: params,
 		Spec: e.Spec, OutOfRange: outside}, nil
 }
 
 func (s *Service) ResolveChange(ctx context.Context, org identity.OrganizationID, ch catalog.Change) (catalog.Resolved, error) {
-	v, ok := catalog.Version(ch.Recipe, ch.Version)
+	v, ok, err := s.Version(ctx, org, ch.Recipe, ch.Version)
+	if err != nil {
+		return catalog.Resolved{}, err
+	}
 	if !ok {
 		return catalog.Resolved{}, catalog.RecipeChanged(ch.Recipe + "@" + strconv.Itoa(ch.Version))
 	}
@@ -314,7 +349,7 @@ func (s *Service) ResolveChange(ctx context.Context, org identity.OrganizationID
 		params[p.Name] = want
 	}
 	slices.Sort(outside)
-	return catalog.Resolved{Kind: v.Kind, Recipe: v.Recipe, Version: v.Version, Engine: v.Engine, Params: params,
+	return catalog.Resolved{Kind: v.Kind, Recipe: v.Recipe, Version: v.Version, Engine: v.Engine, Title: v.Title, Params: params,
 		Spec: v.Spec, OutOfRange: outside}, nil
 }
 
@@ -322,10 +357,14 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 	if input.UpdatedBy.IsZero() {
 		return catalog.Entry{}, errx.Validation("editor is required")
 	}
-	if !slices.ContainsFunc(catalog.Latest(), func(v catalog.RecipeVersion) bool { return v.Recipe == recipe }) {
+	known, err := s.known(ctx, org)
+	if err != nil {
+		return catalog.Entry{}, err
+	}
+	if !slices.ContainsFunc(known.Latest(), func(v catalog.RecipeVersion) bool { return v.Recipe == recipe }) {
 		return catalog.Entry{}, catalog.NotFound(recipe)
 	}
-	v, ok := catalog.Version(recipe, input.Version)
+	v, ok := known.Version(recipe, input.Version)
 	if !ok {
 		return catalog.Entry{}, errx.InvalidField("version", recipe+" has no version "+strconv.Itoa(input.Version))
 	}
@@ -340,7 +379,7 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 		return catalog.Entry{}, err
 	}
 	var saved catalog.Offering
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.LockCatalog(ctx, org); err != nil {
 			return err
 		}
@@ -359,7 +398,7 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 			// an inactive offering is nobody's default
 			next.Defaults = []project.Tier{}
 		}
-		if err := defaultsFree(all, next, v.Kind); err != nil {
+		if err := defaultsFree(known, all, next, v.Kind); err != nil {
 			return err
 		}
 		next.UpdatedBy, next.UpdatedAt, next.Revision = input.UpdatedBy, time.Now().UTC(), cur.Revision+1
@@ -372,7 +411,7 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 	if err != nil {
 		return catalog.Entry{}, err
 	}
-	return entry(v, saved), nil
+	return entry(known, v, saved), nil
 }
 
 // teamsExist checks the teams the edit adds are groups of the organization.
@@ -412,12 +451,12 @@ func (s *Service) teamsExist(ctx context.Context, org identity.OrganizationID, r
 // for the same people (both for everyone, or teams in common): the most
 // specific default must be unique, so a tie is an error on save. A team's
 // default over everyone's is not a tie.
-func defaultsFree(all []catalog.Offering, next catalog.Offering, kind resourcekind.Kind) error {
+func defaultsFree(known catalog.Known, all []catalog.Offering, next catalog.Offering, kind resourcekind.Kind) error {
 	for _, o := range all {
 		if o.Recipe == next.Recipe || !o.Active {
 			continue
 		}
-		v, ok := catalog.Version(o.Recipe, o.Version)
+		v, ok := known.Version(o.Recipe, o.Version)
 		if !ok || v.Kind != kind {
 			continue
 		}

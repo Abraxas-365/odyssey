@@ -105,7 +105,11 @@ func (s *Service) place(ctx context.Context, org identity.OrganizationID, id pro
 
 // apply has the cluster hold r as it now is (in the caller's transaction).
 func (s *Service) apply(ctx context.Context, r resource.Resource) error {
-	d, err := resource.DesiredOf(r)
+	v, ok, err := s.catalog.Version(ctx, r.Organization, r.Recipe, r.RecipeVersion)
+	if err != nil {
+		return err
+	}
+	d, err := resource.DesiredOf(r, v, ok)
 	if err != nil {
 		return err
 	}
@@ -343,8 +347,8 @@ func unchanged(current, asked map[string]int) bool {
 
 // recipeTitle words what a recipe prepares in a summary.
 func recipeTitle(r catalog.Resolved) string {
-	if v, ok := catalog.Version(r.Recipe, r.Version); ok {
-		return v.Title
+	if r.Title != "" {
+		return r.Title
 	}
 	return string(r.Kind)
 }

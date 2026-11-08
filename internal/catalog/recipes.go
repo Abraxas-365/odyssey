@@ -8,7 +8,8 @@ import (
 	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
-// Factory recipe ids.
+// Factory recipe ids. None starts with OrgPrefix: the organization's own
+// recipes and the factory's never collide.
 const (
 	PostgresBasic      = "postgres-basico"
 	RedisBasic         = "redis-basico"
@@ -32,8 +33,7 @@ func basic(recipe string, k resourcekind.Kind, title, description string) Recipe
 		Factory: OfferingDraft{Version: 1, Active: true, Tiers: allTiers, Defaults: allTiers}}
 }
 
-// factory is every version that ships in the binary. A version is never
-// changed or removed once released: an update adds a new one.
+// factory is every version that ships in the binary (Factory).
 var factory = func() []RecipeVersion {
 	pg := resourcespec.Spec{Postgres: &resourcespec.Postgres{Instances: 2, Major: 17, CPU: "1", Memory: "2Gi"}}
 	return []RecipeVersion{
@@ -53,14 +53,30 @@ var factory = func() []RecipeVersion {
 	}
 }()
 
-// Versions are every recipe version this binary knows, by recipe then
-// version.
-func Versions() []RecipeVersion { return slices.Clone(factory) }
+// Known are the recipe versions an organization can use: the factory's, the
+// same for everyone, then the organization's own (OrgRecipe), by recipe then
+// version. Whoever resolves a resource's version needs the organization's:
+// outside the catalog it is asked through Queries.Version, never Factory
+// alone (an architecture test holds that).
+type Known []RecipeVersion
 
-// VersionsOf are the versions of recipe this binary knows, oldest first.
-func VersionsOf(recipe string) []int {
+// Factory are the versions that ship in this binary. A version is never
+// changed or removed once released: an update adds a new one.
+func Factory() Known { return Known(slices.Clone(factory)) }
+
+// With are k and the organization's published versions.
+func (k Known) With(own []OrgRecipe) Known {
+	out := slices.Clone(k)
+	for _, o := range own {
+		out = append(out, o.RecipeVersion())
+	}
+	return out
+}
+
+// VersionsOf are the versions of recipe k holds, oldest first.
+func (k Known) VersionsOf(recipe string) []int {
 	out := []int{}
-	for _, v := range factory {
+	for _, v := range k {
 		if v.Recipe == recipe {
 			out = append(out, v.Version)
 		}
@@ -69,19 +85,20 @@ func VersionsOf(recipe string) []int {
 	return out
 }
 
-// Version is recipe@version (false: this binary does not know it).
-func Version(recipe string, version int) (RecipeVersion, bool) {
-	i := slices.IndexFunc(factory, func(v RecipeVersion) bool { return v.Recipe == recipe && v.Version == version })
+// Version is recipe@version (false: k does not hold it).
+func (k Known) Version(recipe string, version int) (RecipeVersion, bool) {
+	i := slices.IndexFunc(k, func(v RecipeVersion) bool { return v.Recipe == recipe && v.Version == version })
 	if i < 0 {
 		return RecipeVersion{}, false
 	}
-	return factory[i], true
+	return k[i], true
 }
 
-// Latest are the newest version of each recipe, in factory order.
-func Latest() []RecipeVersion {
+// Latest are the newest version of each recipe, in k's order (the
+// factory's first).
+func (k Known) Latest() []RecipeVersion {
 	var out []RecipeVersion
-	for _, v := range factory {
+	for _, v := range k {
 		i := slices.IndexFunc(out, func(o RecipeVersion) bool { return o.Recipe == v.Recipe })
 		switch {
 		case i < 0:
@@ -91,6 +108,14 @@ func Latest() []RecipeVersion {
 		}
 	}
 	return out
+}
+
+// RecipeVersion is the version IT published, written here like the
+// factory's (a RecipeVersion is made in this file only). It has no
+// parameters and no factory offering: IT offers it after publishing.
+func (o OrgRecipe) RecipeVersion() RecipeVersion {
+	return RecipeVersion{Recipe: o.Recipe, Version: o.Version, Kind: o.Kind, Title: o.Title, Description: o.Description,
+		Engine: o.Engine, Params: []Param{}, Spec: o.Spec, Requires: resourcespec.Requires(o.Engine, o.Kind, o.Spec)}
 }
 
 // BasicRecipe is the recipe a resource created before the catalog is
