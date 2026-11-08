@@ -18,7 +18,9 @@ type Commands interface {
 	Update(ctx context.Context, organization identity.OrganizationID, project ID, input Update) error
 	Archive(ctx context.Context, organization identity.OrganizationID, project ID, input Archive) error
 	// SetTier is IT's change of the app's tier (permission projects:tier).
-	// The same tier again is a no-op.
+	// The same tier again is a no-op. A tier where a resource holding data
+	// would have no offering of its recipe is refused (409
+	// CodeTierResources, TierGuard): IT offers the recipe there first.
 	SetTier(ctx context.Context, organization identity.OrganizationID, project ID, input SetTier) error
 	// SetServices replaces the app's services (the next version of the app
 	// takes them). The same list again is a no-op. A list that is not Simple
@@ -51,6 +53,15 @@ type Runtime interface {
 	// one not placed yet, the organization's default) lists the services
 	// capability; false when one cannot, or there is no cluster.
 	CanRunServices(ctx context.Context, organization identity.OrganizationID, environments []EnvironmentID) (bool, error)
+}
+
+// TierGuard is what project asks the resources before the app changes tier
+// (the resourceproject adapter; the resource module is built after this
+// one, so it is wired late): the names of the resources holding data whose
+// recipe is not offered in tier. Moving there would leave them outside the
+// catalog.
+type TierGuard interface {
+	Stranded(ctx context.Context, organization identity.OrganizationID, project ID, tier Tier) ([]string, error)
 }
 
 // Queries are the read operations, implemented by projectsvc.Service.

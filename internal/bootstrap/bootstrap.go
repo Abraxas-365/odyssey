@@ -450,11 +450,15 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 	if err != nil {
 		return nil, err
 	}
-	resources := resourcemodule.New(resourcemodule.Deps{DB: db, Events: events, Projects: projects.Queries, Fleet: fleets.Resources,
-		ReleaseCommands: releases.Commands, ReleaseQueries: releases.Queries, ReleaseUsage: releases.Usage, Policy: policies.Resource})
+	resources := resourcemodule.New(resourcemodule.Deps{DB: db, Events: events, Projects: projects.Queries, Catalog: catalogs.Queries,
+		Fleet: fleets.Resources, ReleaseCommands: releases.Commands, ReleaseQueries: releases.Queries, ReleaseUsage: releases.Usage,
+		Policy: policies.Resource})
 	// release is built first (resources need its Usage), so it learns of
 	// resources afterwards.
 	releases.UseResources(releaseresource.New(resources.Queries))
+	// project is built first too: a tier change asks the resources whether
+	// it would strand one outside the catalog.
+	projects.UseTierGuard(resources.TierGuard())
 	ais := aimodule.New(aimodule.Deps{DB: db, Events: events, Projects: projects.Queries, Engine: engine, Release: releases.AI,
 		Config: opts.AI, Provider: opts.AIProvider, Policy: policies.AI, Options: opts.AIService})
 	// the ai module needs release.AI, so release learns of it afterwards

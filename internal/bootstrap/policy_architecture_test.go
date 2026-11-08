@@ -8,7 +8,8 @@ package bootstrap_test
 //     implements;
 //   - those adapters (and the policy assembler) are wired only in bootstrap;
 //   - the governed services ask IT's rules before a transaction, never inside
-//     one (authorize / AuthorizeConnect in a `.Do(func…)` literal).
+//     one (authorize / judge / settle / check / JudgeConnect in a
+//     `.Do(func…)` literal).
 
 import (
 	"go/ast"
@@ -132,14 +133,15 @@ func TestPolicyRulesCatchViolations(t *testing.T) {
 // IT's rules are asked BEFORE a transaction, never inside one: a refusal (and,
 // in 3b, the approval request a refusal stores) must not live in a transaction
 // that rolls back on that same refusal. The governed services therefore never
-// call authorize / AuthorizeConnect inside a function literal handed to a
-// `.Do(...)` (their tx.Do).
+// call authorize / judge / settle / check / JudgeConnect inside a function
+// literal handed to a `.Do(...)` (their tx.Do).
 func TestITRulesAreNotAskedInsideATransaction(t *testing.T) {
 	report(t, authorizeInTxViolations(sources(t, false)))
 }
 
-// txAskers are the calls that ask IT's rules.
-var txAskers = map[string]bool{"authorize": true, "AuthorizeConnect": true}
+// txAskers are the calls that ask IT's rules (or hold what they want
+// approved).
+var txAskers = map[string]bool{"authorize": true, "judge": true, "settle": true, "check": true, "JudgeConnect": true}
 
 func authorizeInTxViolations(files []goFile) []string {
 	var out []string
@@ -171,10 +173,16 @@ func authorizeInTxViolations(files []goFile) []string {
 					switch fn := inner.Fun.(type) {
 					case *ast.SelectorExpr:
 						name = fn.Sel.Name
+						// the Policy port itself (s.policy.Check) and gate's own
+						// helpers ask too, not only the service's wrappers
+						if (name == "Check" && isField(fn.X, "policy")) ||
+							((name == "Enforce" || name == "Settle") && isField(fn.X, "gate")) {
+							name = "policy " + name
+						}
 					case *ast.Ident:
 						name = fn.Name
 					}
-					if txAskers[name] {
+					if txAskers[name] || strings.HasPrefix(name, "policy ") {
 						out = append(out, f.fset.Position(inner.Pos()).String()+": "+f.rel+" calls "+name+
 							" inside a transaction; IT's rules are asked before it (a refusal must not live in a transaction it rolls back)")
 					}
@@ -187,17 +195,35 @@ func authorizeInTxViolations(files []goFile) []string {
 	return out
 }
 
+// isField reports whether x is `name` or `<something>.name`.
+func isField(x ast.Expr, name string) bool {
+	switch v := x.(type) {
+	case *ast.Ident:
+		return v.Name == name
+	case *ast.SelectorExpr:
+		return v.Sel.Name == name
+	}
+	return false
+}
+
 func TestITRulesInTxRuleCatchesViolations(t *testing.T) {
 	files := parseFixtures(t, map[string]string{
-		"release/releasesvc/ok.go":    `package releasesvc; func (s *S) A() { s.authorize(nil); s.tx.Do(nil, func(ctx C) error { return s.repo.X() }) }`,
-		"release/releasesvc/bad.go":   `package releasesvc; func (s *S) B() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
-		"resource/resourcesvc/bad.go": `package resourcesvc; func (s *S) C() { s.tx.Do(nil, func(ctx C) error { return s.usage.AuthorizeConnect(ctx) }) }`,
-		"ai/aisvc/ok.go":              `package aisvc; func (s *S) D() { s.authorize(nil); s.tx.Do(nil, func(ctx C) error { return nil }) }`,
-		"project/projectsvc/bad.go":   `package projectsvc; func (s *S) E() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
-		"fleet/fleetsvc/other.go":     `package fleetsvc; func (s *S) F() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
+		"release/releasesvc/ok.go":     `package releasesvc; func (s *S) A() { s.authorize(nil); s.tx.Do(nil, func(ctx C) error { return s.repo.X() }) }`,
+		"release/releasesvc/bad.go":    `package releasesvc; func (s *S) B() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
+		"resource/resourcesvc/bad.go":  `package resourcesvc; func (s *S) C() { s.tx.Do(nil, func(ctx C) error { return s.usage.JudgeConnect(ctx) }) }`,
+		"resource/resourcesvc/bad2.go": `package resourcesvc; func (s *S) G() { s.tx.Do(nil, func(ctx C) error { _, err := s.settle(ctx); return err }) }`,
+		"resource/resourcesvc/bad3.go": `package resourcesvc; func (s *S) H() { s.tx.Do(nil, func(ctx C) error { _, err := s.policy.Check(ctx); return err }) }`,
+		"resource/resourcesvc/bad4.go": `package resourcesvc; func (s *S) I() { s.tx.Do(nil, func(ctx C) error { _, err := gate.Settle(ctx); return err }) }`,
+		"resource/resourcesvc/ok.go":   `package resourcesvc; func (s *S) J() { s.tx.Do(nil, func(ctx C) error { return s.limits.Check(ctx) }) }`,
+		"ai/aisvc/ok.go":               `package aisvc; func (s *S) D() { s.authorize(nil); s.tx.Do(nil, func(ctx C) error { return nil }) }`,
+		"project/projectsvc/bad.go":    `package projectsvc; func (s *S) E() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
+		"fleet/fleetsvc/other.go":      `package fleetsvc; func (s *S) F() { s.tx.Do(nil, func(ctx C) error { return s.authorize(ctx) }) }`,
 	})
 	expectViolations(t, authorizeInTxViolations(files),
 		"release/releasesvc/bad.go: release/releasesvc/bad.go calls authorize inside a transaction",
-		"resource/resourcesvc/bad.go: resource/resourcesvc/bad.go calls AuthorizeConnect inside a transaction",
+		"resource/resourcesvc/bad.go: resource/resourcesvc/bad.go calls JudgeConnect inside a transaction",
+		"resource/resourcesvc/bad2.go: resource/resourcesvc/bad2.go calls settle inside a transaction",
+		"resource/resourcesvc/bad3.go: resource/resourcesvc/bad3.go calls policy Check inside a transaction",
+		"resource/resourcesvc/bad4.go: resource/resourcesvc/bad4.go calls policy Settle inside a transaction",
 		"project/projectsvc/bad.go: project/projectsvc/bad.go calls authorize inside a transaction")
 }

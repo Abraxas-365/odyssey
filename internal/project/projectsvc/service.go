@@ -27,6 +27,9 @@ type Service struct {
 	// approval module is built).
 	policy    project.Policy
 	approvals project.Approvals
+	// tierGuard refuses a tier that strands resources (nil: no resources
+	// to strand, as in tests without the resource domain).
+	tierGuard project.TierGuard
 }
 
 func New(repo project.Repository, tx txn.Runner, events event.Publisher) *Service {
@@ -43,6 +46,10 @@ func (s *Service) UsePolicy(p project.Policy) { s.policy = p }
 // UseApprovals wires where approvals are held (the approvalproject adapter;
 // the approval module is built after this one).
 func (s *Service) UseApprovals(a project.Approvals) { s.approvals = a }
+
+// UseTierGuard wires the resources' answer to "what would this tier leave
+// outside the catalog" (the resource module is built after this one).
+func (s *Service) UseTierGuard(g project.TierGuard) { s.tierGuard = g }
 
 var (
 	_ project.Commands = (*Service)(nil)
@@ -110,6 +117,27 @@ func (s *Service) Update(ctx context.Context, organization identity.Organization
 func (s *Service) SetTier(ctx context.Context, organization identity.OrganizationID, id project.ID, input project.SetTier) error {
 	if err := input.Validate(); err != nil {
 		return err
+	}
+	// The resources are asked before the transaction (another domain's
+	// reads do not belong in this one's lock). A resource created in the
+	// instant between both is judged by its own create, in the old tier.
+	if s.tierGuard != nil {
+		current, err := s.repo.Find(ctx, organization, id)
+		if err != nil {
+			return err
+		}
+		if current.Archived() {
+			return project.ArchivedError()
+		}
+		if current.Tier != input.Tier { // the same tier stays a no-op
+			stranded, err := s.tierGuard.Stranded(ctx, organization, id, input.Tier)
+			if err != nil {
+				return err
+			}
+			if len(stranded) > 0 {
+				return project.TierResourcesError(input.Tier, stranded)
+			}
+		}
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		current, err := s.repo.FindForUpdate(ctx, organization, id)

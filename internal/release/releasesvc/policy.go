@@ -3,6 +3,7 @@ package releasesvc
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -33,6 +34,16 @@ func (s *Service) authorize(ctx context.Context, p project.Project, e project.En
 	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
 	hold.Project, hold.Environment = p.ID.String(), e.ID.String()
 	return gate.Enforce(ctx, p.Organization, s.policy, s.approvals, request, hold)
+}
+
+// check is authorize's verdict alone (nothing is held): for an operation
+// another domain judges as a whole (JudgeConnect).
+func (s *Service) check(ctx context.Context, p project.Project, e project.Environment, request gate.Request) (gate.Verdict, error) {
+	if s.policy == nil {
+		return gate.Verdict{}, errx.Internal("IT's rules are not wired")
+	}
+	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
+	return s.policy.Check(ctx, p.Organization, request)
 }
 
 // denyOnly is the cheap check a deploy or rollback gets when it is asked

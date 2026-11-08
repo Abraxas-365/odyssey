@@ -45,6 +45,10 @@ func (m Module) UsePolicy(p project.Policy) { m.svc.UsePolicy(p) }
 // approval module is built last).
 func (m Module) UseApprovals(a project.Approvals) { m.svc.UseApprovals(a) }
 
+// UseTierGuard wires the resources' veto on a tier that would strand them
+// outside the catalog (the resource module is built after this one).
+func (m Module) UseTierGuard(g project.TierGuard) { m.svc.UseTierGuard(g) }
+
 // Schema is the module's Postgres schema and migration owner.
 const Schema = projectpg.Schema
 

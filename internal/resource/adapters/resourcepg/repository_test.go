@@ -126,24 +126,39 @@ func TestRepository(t *testing.T) {
 		t.Fatalf("count across tenants: %d", n)
 	}
 
-	// Resize only grows, bumps the generation, and is tenant-scoped
-	if err := repo.Resize(ctx, org, env, "db", 5, 2); err != nil {
+	// ListProject: every environment of the project, only the tenant's
+	if list, err := repo.ListProject(ctx, org, proj); err != nil || len(list) != 3 {
+		t.Fatalf("list project %+v %v", list, err)
+	}
+	if list, _ := repo.ListProject(ctx, org, project.NewID()); len(list) != 0 {
+		t.Fatalf("list another project: %+v", list)
+	}
+	if list, _ := repo.ListProject(ctx, identity.NewOrganizationID(), proj); len(list) != 0 {
+		t.Fatalf("list project across tenants: %+v", list)
+	}
+
+	// Change stores params whole, storage_gi only grows, bumps the
+	// generation, and is tenant-scoped
+	if err := repo.Change(ctx, org, env, "db", map[string]int{"storage_gi": 5}, 2); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := repo.Find(ctx, org, env, "db"); got.StorageGi != 5 || got.Params["storage_gi"] != 5 || got.Generation != 2 || !got.UpdatedAt.After(got.CreatedAt.Add(-1)) {
-		t.Fatalf("resized %+v", got)
+		t.Fatalf("changed %+v", got)
 	}
-	if err := repo.Resize(ctx, org, env, "db", 3, 3); errType(err) != errx.TypeNotFound {
+	if err := repo.Change(ctx, org, env, "db", map[string]int{"storage_gi": 3}, 3); errType(err) != errx.TypeNotFound {
 		t.Fatalf("shrink: %v", err)
 	}
-	if err := repo.Resize(ctx, other, env, "db", 9, 9); err != nil {
+	if err := repo.Change(ctx, org, env, "db", map[string]int{"max_connections": 3}, 3); err == nil {
+		t.Fatal("params without storage_gi")
+	}
+	if err := repo.Change(ctx, other, env, "db", map[string]int{"storage_gi": 9}, 9); err != nil {
 		t.Fatal(err) // the other tenant's own "db"
 	}
 	if got, _ := repo.Find(ctx, org, env, "db"); got.StorageGi != 5 {
-		t.Fatalf("another tenant resized mine: %+v", got)
+		t.Fatalf("another tenant changed mine: %+v", got)
 	}
-	if err := repo.Resize(ctx, other, env2, "db", 9, 9); errType(err) != errx.TypeNotFound {
-		t.Fatalf("resize across tenants: %v", err)
+	if err := repo.Change(ctx, other, env2, "db", map[string]int{"storage_gi": 9}, 9); errType(err) != errx.TypeNotFound {
+		t.Fatalf("change across tenants: %v", err)
 	}
 
 	// Forget only drops a deleting resource
@@ -162,8 +177,8 @@ func TestRepository(t *testing.T) {
 	if err := repo.MarkDeleting(ctx, org, env, "db", 4); errType(err) != errx.TypeNotFound {
 		t.Fatalf("mark twice: %v", err)
 	}
-	if err := repo.Resize(ctx, org, env, "db", 50, 4); errType(err) != errx.TypeNotFound {
-		t.Fatalf("resize deleting: %v", err)
+	if err := repo.Change(ctx, org, env, "db", map[string]int{"storage_gi": 50}, 4); errType(err) != errx.TypeNotFound {
+		t.Fatalf("change deleting: %v", err)
 	}
 	if n, _ := repo.Count(ctx, org, env); n != 2 {
 		t.Fatalf("deleting still counts: %d", n)

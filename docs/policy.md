@@ -117,12 +117,12 @@ fails for a missing field.
 
 | variable | fields |
 |---|---|
-| `action` | `deploy` · `set_access` · `connect_resource` · `delete_resource` · `enable_ai` · `rollback` · `set_services` (`set_secret` is accepted but not enforced in 3a) |
+| `action` | `deploy` · `set_access` · `connect_resource` · `delete_resource` · `create_resource` · `change_resource` · `enable_ai` · `rollback` · `set_services` (`set_secret` is accepted but not enforced in 3a) |
 | `project` | `tier`, `slug` |
 | `env` | `name` (empty for `set_services`: it is about the whole app) |
 | `access` | `mode` (`team` · `organization` · `public`; only for `set_access`) |
 | `actor` | `id`, `permissions` (list) — those of the **authenticated principal** (deferred work: see "Who asks, when the work is deferred") |
-| `resource` | `kind` (`postgres` · `redis` · `files`, for connect/delete) |
+| `resource` | `kind` (`postgres` · `redis` · `files`); for `create_resource` / `change_resource` also what the catalog resolved: `recipe`, `recipe_version`, `engine`, `params` (map, every parameter, defaults filled in; for a change, the result) and `out_of_range` (the parameters outside the offering's pre-approved range) |
 | `scan` | `known`, `checked`, `critical`, `high` |
 | `services` | list of `{name, kind, route, public}` — what the action brings (deploy, rollback, set_services) |
 | `changed` | list of service names that change against what the environment serves |
@@ -351,6 +351,8 @@ authenticated principal by `httpx` (REST) and `mcpx` (MCP).
 | `set_access` | release: change who can open the app | before the setting is stored |
 | `connect_resource` | release: connect an existing resource to an app | before connecting |
 | `delete_resource` | resource: delete | before deleting |
+| `create_resource` | resource: create (with its connection, when asked: ONE judgment that also asks `connect_resource`) | before anything is provisioned; the catalog's pre-approved range is a floor (`catalog:preapproved` wants approval outside it; a deny wins) |
+| `change_resource` | resource: change parameters (grow) | before changing; the same floor |
 | `enable_ai` | ai: turn the app's AI on | before turning on |
 | `set_services` | project: replace the app's services (the whole app, no environment) | before the list is stored; the same list again is not judged |
 

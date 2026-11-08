@@ -12,6 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/resource"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 type Cluster struct{ fleet fleet.Resources }
@@ -35,4 +36,20 @@ func (c *Cluster) Observed(ctx context.Context, org identity.OrganizationID, env
 
 func (c *Cluster) Kinds(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID) ([]resourcekind.Kind, error) {
 	return c.fleet.ResourceKinds(ctx, org, env)
+}
+
+// Capabilities: an agent that lists a kind honours its basic resource (the
+// kind's built-in engine). The finer capabilities a recipe may require
+// (resourcespec.SpecV1, …) are announced by agents from stage 1a cut 4 on;
+// until then none is, so only the basic recipes are available.
+func (c *Cluster) Capabilities(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID) ([]string, error) {
+	kinds, err := c.fleet.ResourceKinds(ctx, org, env)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(kinds))
+	for i, k := range kinds {
+		out[i] = resourcespec.Builtin(k)
+	}
+	return out, nil
 }

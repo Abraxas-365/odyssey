@@ -170,6 +170,12 @@ func KindsLabel() string {
 // it (<name>-rw, <name>-app, …), which must stay DNS labels.
 const MaxName = 30
 
+// CodeUnavailable is the error code of a kind the environment's cluster
+// cannot provision at all (its Contract.Unavailable is the message). The
+// fleet refuses with it when it is asked to run one; the catalog, before
+// anything is created.
+const CodeUnavailable = "RESOURCES_UNAVAILABLE"
+
 var nameRE = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
 
 // CheckName says why name cannot name a resource (nil: it can).

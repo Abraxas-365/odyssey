@@ -36,8 +36,8 @@ const MaxAppResources = 10
 
 // CodeResourcesUnavailable: the environment's cluster does not list the kind
 // of a resource in Capabilities.ResourceKinds (an agent older than 2b, no
-// CloudNativePG, no storage class).
-const CodeResourcesUnavailable = "RESOURCES_UNAVAILABLE"
+// CloudNativePG, no storage class). The catalog refuses with the same code.
+const CodeResourcesUnavailable = resourcekind.CodeUnavailable
 
 // ResourcesUnavailableMessage is the plain-language text of
 // CodeResourcesUnavailable for kind.

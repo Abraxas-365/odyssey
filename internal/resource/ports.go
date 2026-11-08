@@ -3,6 +3,7 @@ package resource
 import (
 	"context"
 
+	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -13,11 +14,18 @@ import (
 type Commands interface {
 	// Create adds the resource, has the environment's cluster prepare it and,
 	// when input.Connect is set, connects it to the app (a config deployment
-	// when something is online). A cluster that cannot prepare the kind
-	// refuses it (Business RESOURCES_UNAVAILABLE) and nothing is stored.
+	// when something is online). The catalog decides what fulfils it (recipe,
+	// version, parameters; docs/catalog.md): outside the hard limits it is
+	// refused (422), outside the pre-approved range it needs IT's approval
+	// (202), as when IT's rules ask (create_resource, and connect_resource
+	// when it connects: one request for the whole operation). A cluster that
+	// cannot prepare the recipe refuses it (Business RESOURCES_UNAVAILABLE or
+	// CATALOG_UNAVAILABLE) and nothing is stored.
 	Create(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, input Create) (Result, error)
-	// Resize grows the resource (it never shrinks). The same size changes nothing.
-	Resize(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, name string, input Resize) (View, error)
+	// Change changes the resource's parameters within its recipe@version
+	// (a size only grows; the same values change nothing), judged like Create
+	// under change_resource.
+	Change(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, name string, input Change) (View, error)
 	// Delete has the cluster erase the resource and its data. A resource the
 	// app uses is refused (409 RESOURCE_IN_USE): disconnect it first. The row
 	// stays, as deleting, until the cluster confirms (Forget).
@@ -47,6 +55,11 @@ type Queries interface {
 	Named(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, names []string) ([]View, error)
 	// Find is the stored resource of the environment (what release asks).
 	Find(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (Resource, error)
+	// Stranded are the resources of the project holding data whose pinned
+	// recipe is not offered in tier (what moving the app there would leave
+	// without an offering; the resourceproject adapter answers project with
+	// it).
+	Stranded(ctx context.Context, organization identity.OrganizationID, project project.ID, tier project.Tier) ([]Resource, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.
@@ -63,10 +76,14 @@ type Repository interface {
 	FindForUpdate(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (Resource, error)
 	// List returns the environment's resources, oldest first.
 	List(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]Resource, error)
+	// ListProject returns the resources of every environment of the project,
+	// oldest first.
+	ListProject(ctx context.Context, organization identity.OrganizationID, project project.ID) ([]Resource, error)
 	// Count is how many resources the environment has (deleting included).
 	Count(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (int, error)
-	// Resize stores a bigger size and the new generation.
-	Resize(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, storageGi int, generation int64) error
+	// Change stores the new parameters (and storage_gi, params' size) at a
+	// new generation. A size never goes down.
+	Change(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, params map[string]int, generation int64) error
 	// MarkDeleting sets the resource deleting at a new generation.
 	MarkDeleting(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, generation int64) error
 	// Forget deletes the row when (and only when) it is deleting, returning it.
@@ -83,12 +100,25 @@ type Cluster interface {
 	Observed(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (Observed, error)
 	// Kinds are the kinds the environment's cluster can prepare.
 	Kinds(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resourcekind.Kind, error)
+	// Capabilities are what the environment's cluster announced it can
+	// honour (resourcespec capabilities), what the catalog matches a recipe's
+	// Requires against.
+	Capabilities(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]string, error)
+}
+
+// Catalog is what resource asks the catalog (catalog.Queries, wired as is:
+// catalog depends on no other domain, so resource imports its root).
+type Catalog interface {
+	Resolve(ctx context.Context, organization identity.OrganizationID, request catalog.Request) (catalog.Resolved, error)
+	ResolveChange(ctx context.Context, organization identity.OrganizationID, change catalog.Change) (catalog.Resolved, error)
+	List(ctx context.Context, organization identity.OrganizationID) ([]catalog.Entry, error)
 }
 
 // Policy is what resource asks IT's rules (the policyresource adapter;
-// resource never imports policy): may this resource be deleted, or created
-// already connected? Connecting an existing resource is judged where it is
-// applied, in release (release.Policy).
+// resource never imports policy): may this resource be created, changed or
+// deleted? Connecting an existing resource is judged where it is applied,
+// in release (release.Policy); a create that connects asks release for that
+// verdict (Usage.JudgeConnect) and settles both as one request.
 type Policy interface {
 	// Check decides the request for the organization, as the actor on ctx.
 	Check(ctx context.Context, organization identity.OrganizationID, request gate.Request) (gate.Verdict, error)
@@ -111,13 +141,11 @@ type Usage interface {
 	// defines is taken); Disconnect removes the connection.
 	Connect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, l Link, by identity.UserID) (Applied, error)
 	Disconnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, name string, by identity.UserID) (Applied, error)
-	// AuthorizeConnect checks the services a connection would reach and asks
-	// IT's rules whether it may be made, writing nothing but, when a rule
-	// wants approval, the request (a Pending answer: nothing else may then
-	// happen). Create asks it before it provisions anything and then
-	// connects with Link.Judged; ask.Detail describes the operation that
-	// will re-run once approved.
-	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, ask Ask) (*gate.Pending, error)
+	// JudgeConnect checks the services a connection would reach and returns
+	// IT's rules' verdict on making it, changing nothing (not even an
+	// approval request): Create combines it with its own verdicts, settles
+	// the whole operation once and then connects with Link.Judged.
+	JudgeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, ask Ask) (gate.Verdict, error)
 	// WithConnectionsLocked runs fn holding the lock connecting takes, with
 	// the connections at that moment: a deletion that checks "not in use"
 	// inside fn cannot race a connection.

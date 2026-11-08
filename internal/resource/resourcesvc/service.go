@@ -22,6 +22,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/resource"
 	"github.com/Abraxas-365/odyssey/internal/txn"
+	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 type Service struct {
@@ -29,18 +30,20 @@ type Service struct {
 	cluster  resource.Cluster
 	usage    resource.Usage
 	projects project.Queries
+	catalog  resource.Catalog
 	tx       txn.Runner
 	events   event.Publisher
-	// policy is IT's rules (the policyresource adapter); nil refuses deleting.
+	// policy is IT's rules (the policyresource adapter); nil refuses every
+	// governed action.
 	policy resource.Policy
 	// approvals holds what a rule wants approved (the approvalresource
 	// adapter); nil fails an approval verdict closed.
 	approvals resource.Approvals
 }
 
-func New(repo resource.Repository, cluster resource.Cluster, usage resource.Usage, projects project.Queries,
+func New(repo resource.Repository, cluster resource.Cluster, usage resource.Usage, projects project.Queries, catalog resource.Catalog,
 	tx txn.Runner, events event.Publisher, policy resource.Policy) *Service {
-	return &Service{repo: repo, cluster: cluster, usage: usage, projects: projects, tx: tx, events: events, policy: policy}
+	return &Service{repo: repo, cluster: cluster, usage: usage, projects: projects, catalog: catalog, tx: tx, events: events, policy: policy}
 }
 
 // UseApprovals wires where approvals are held (the approvalresource adapter).
@@ -51,16 +54,40 @@ var (
 	_ resource.Queries  = (*Service)(nil)
 )
 
-// authorize is the one seam where resource asks IT's rules before deleting
-// (connecting is judged by release, where it is applied): nil, nil lets it go
-// on; a Pending means a rule wants IT's approval, the request was stored and
-// nothing may change (the caller answers 202); an error is POLICY_DENIED
-// (403). The approved action re-runs as the requester with the approval's
-// mark on ctx and redeems it here (gate.Enforce).
+// authorize is the seam where resource asks IT's rules about an action
+// judged on its own (deleting): nil, nil lets it go on; a Pending means a
+// rule wants IT's approval, the request was stored and nothing may change
+// (the caller answers 202); an error is POLICY_DENIED (403). The approved
+// action re-runs as the requester with the approval's mark on ctx and
+// redeems it here (gate.Settle).
 func (s *Service) authorize(ctx context.Context, p project.Project, e project.Environment, request gate.Request, hold gate.Hold) (*gate.Pending, error) {
+	v, err := s.judge(ctx, p, e, request)
+	if err != nil {
+		return nil, err
+	}
+	return s.settle(ctx, p, e, request.Action, v, hold)
+}
+
+// judge is IT's rules' verdict on request combined with the others (the
+// catalog's floor, the verdict on connecting): the strongest wins, so a
+// rule only tightens the catalog (gate.Verdict.With). It writes nothing.
+func (s *Service) judge(ctx context.Context, p project.Project, e project.Environment, request gate.Request, others ...gate.Verdict) (gate.Verdict, error) {
+	if s.policy == nil { // fail closed: nothing is allowed by accident
+		return gate.Verdict{}, errx.Internal("IT's rules are not wired")
+	}
 	request.Tier, request.ProjectSlug, request.Environment = string(p.Tier), p.Slug, e.Slug
+	v, err := s.policy.Check(ctx, p.Organization, request)
+	if err != nil {
+		return gate.Verdict{}, err
+	}
+	return v.With(others...), nil
+}
+
+// settle holds (or, re-running approved, redeems) the ONE request of an
+// operation judged by judge, under action.
+func (s *Service) settle(ctx context.Context, p project.Project, e project.Environment, action string, v gate.Verdict, hold gate.Hold) (*gate.Pending, error) {
 	hold.Project, hold.Environment = p.ID.String(), e.ID.String()
-	return gate.Enforce(ctx, p.Organization, s.policy, s.approvals, request, hold)
+	return gate.Settle(ctx, p.Organization, s.approvals, action, v, hold)
 }
 
 // place resolves the project and environment of a request.
@@ -120,29 +147,54 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 	if p.Archived() {
 		return resource.Result{}, project.ArchivedError()
 	}
-	// Stage 1a cut 2: every resource is still what its kind's basic recipe
-	// prepares (the catalog decides from cut 3 on); params mirror the size.
-	r := resource.Resource{ID: resource.NewID(), Organization: org, Project: id, Environment: e.ID, Name: input.Name, Kind: input.Kind,
-		StorageGi: input.StorageGi, Recipe: catalog.BasicRecipe(input.Kind), RecipeVersion: 1,
-		Params: map[string]int{catalog.ParamStorage: input.StorageGi}, Generation: 1, Status: resource.StatusActive, CreatedBy: input.RequestedBy}
-	// A create that connects is judged BEFORE anything is provisioned: the
+	// The catalog decides what fulfils the request on this cluster, in this
+	// tier (a refusal here stores nothing). A re-run of an approved request
+	// pins the version IT saw: a recipe changed since is refused, never
+	// silently upgraded.
+	caps, err := s.cluster.Capabilities(ctx, org, e.ID)
+	if err != nil {
+		return resource.Result{}, err
+	}
+	resolved, err := s.catalog.Resolve(ctx, org, catalog.Request{Kind: input.Kind, Recipe: input.Recipe, Version: input.RecipeVersion,
+		Params: input.Params, Tier: p.Tier, Capabilities: caps})
+	if err != nil {
+		return resource.Result{}, err
+	}
+	// The whole operation is judged BEFORE anything is provisioned (the
 	// cluster object Apply creates is not undone by a rollback, so a refusal
-	// found after it would leave an orphan. The connection is then made
-	// Judged (not asked again). A tier changed in the milliseconds between
-	// this check and the connection is ignored on purpose.
+	// found after it would leave an orphan) and held as ONE request: IT's
+	// rules on creating, the catalog's pre-approved range and, when it
+	// connects, the rules on connecting. The connection is then made Judged
+	// (not asked again). A tier changed in the milliseconds between this
+	// check and the connection is ignored on purpose.
+	others := []gate.Verdict{catalog.Floor(resolved)}
+	step := resource.CreateStep{Name: input.Name, Kind: string(input.Kind), Recipe: resolved.Recipe, RecipeVersion: resolved.Version,
+		Params: resolved.Params}
+	summary := "Crear " + recipeTitle(resolved) + " «" + input.Name + "» (" + paramsLabel(resolved.Params) + ") en " + where(p, e)
 	if input.Connect != nil {
-		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, resource.Ask{Name: input.Name, Kind: input.Kind, Services: input.Connect.Services,
-			Detail: gate.Detail{
-				Summary: "Crear " + string(input.Kind) + " «" + input.Name + "» y conectarla a " + where(p, e) + servicesLabel(input.Connect.Services),
-				Payload: resource.CreateApproval{Op: resource.OpCreate, Name: input.Name, Kind: string(input.Kind),
-					StorageGi: input.StorageGi, Prefix: input.Connect.Prefix, Services: input.Connect.Services}}})
+		cv, err := s.usage.JudgeConnect(ctx, org, id, e.ID, resource.Ask{Name: input.Name, Kind: input.Kind, Services: input.Connect.Services})
 		if err != nil {
 			return resource.Result{}, err
 		}
-		if pending != nil { // held for IT: nothing was created
-			return resource.Result{View: resource.View{Outcome: gate.Holding(*pending)}}, nil
-		}
+		others = append(others, cv)
+		step.Connect = &resource.CreateConnect{Prefix: input.Connect.Prefix, Services: input.Connect.Services}
+		summary += " y conectarla" + servicesLabel(input.Connect.Services)
 	}
+	verdict, err := s.judge(ctx, p, e, gate.Request{Action: gate.ActionCreateResource, ResourceKind: string(input.Kind), Recipe: resolved.Gate()}, others...)
+	if err != nil {
+		return resource.Result{}, err
+	}
+	pending, err := s.settle(ctx, p, e, gate.ActionCreateResource, verdict, gate.Hold{Summary: summary,
+		Payload: resource.CreateApproval{Op: resource.OpCreate, SchemaVersion: resource.PayloadVersion, Steps: []resource.CreateStep{step}}})
+	if err != nil {
+		return resource.Result{}, err
+	}
+	if pending != nil { // held for IT: nothing was created
+		return resource.Result{View: resource.View{Outcome: gate.Holding(*pending)}}, nil
+	}
+	r := resource.Resource{ID: resource.NewID(), Organization: org, Project: id, Environment: e.ID, Name: input.Name, Kind: input.Kind,
+		StorageGi: resolved.Params[catalog.ParamStorage], Recipe: resolved.Recipe, RecipeVersion: resolved.Version,
+		Params: resolved.Params, Generation: 1, Status: resource.StatusActive, CreatedBy: input.RequestedBy}
 	var applied resource.Applied
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.LockEnvironment(ctx, org, e.ID); err != nil {
@@ -186,7 +238,13 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 	return resource.Result{View: v, Revision: applied.Revision, Deployment: applied.Deployment}, nil
 }
 
-func (s *Service) Resize(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, input resource.Resize) (resource.View, error) {
+// Change changes a resource's parameters within its recipe@version. The
+// catalog checks them against the version (a size only grows) and the
+// offering's hard limits; IT's rules and the catalog's pre-approved range
+// judge the change as one request (change_resource), before the
+// transaction. Values that change nothing are a no-op, never held.
+func (s *Service) Change(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, input resource.Change) (resource.View, error) {
+	input = input.Normalize()
 	if err := input.Validate(); err != nil {
 		return resource.View{}, err
 	}
@@ -197,40 +255,89 @@ func (s *Service) Resize(ctx context.Context, org identity.OrganizationID, id pr
 	if p.Archived() {
 		return resource.View{}, project.ArchivedError()
 	}
-	var r resource.Resource
+	cur, err := s.repo.Find(ctx, org, e.ID, name)
+	if err != nil {
+		return resource.View{}, err
+	}
+	if cur.Status == resource.StatusDeleting {
+		return resource.View{}, resource.ErrDeleting(name)
+	}
+	// An approved change re-runs on the version IT saw.
+	if input.Recipe != "" && (input.Recipe != cur.Recipe || input.RecipeVersion != cur.RecipeVersion) {
+		return resource.View{}, catalog.RecipeChanged(input.Recipe + "@" + strconv.Itoa(input.RecipeVersion))
+	}
+	resolved, err := s.catalog.ResolveChange(ctx, org, catalog.Change{Recipe: cur.Recipe, Version: cur.RecipeVersion, Current: cur.Params,
+		Params: input.Params, Tier: p.Tier})
+	if err != nil {
+		return resource.View{}, err
+	}
+	if maps.Equal(resolved.Params, cur.Params) {
+		// Nothing to change (nor to judge). An approved change that became a
+		// no-op is used up by the approval module after it runs.
+		return s.viewOf(ctx, p, cur)
+	}
+	verdict, err := s.judge(ctx, p, e, gate.Request{Action: gate.ActionChangeResource, ResourceKind: string(cur.Kind), Recipe: resolved.Gate()},
+		catalog.Floor(resolved))
+	if err != nil {
+		return resource.View{}, err
+	}
+	pending, err := s.settle(ctx, p, e, gate.ActionChangeResource, verdict, gate.Hold{
+		Summary: "Cambiar " + recipeTitle(resolved) + " «" + name + "» de " + where(p, e) + " a " + paramsLabel(resolved.Params),
+		Payload: resource.ChangeApproval{Op: resource.OpChange, SchemaVersion: resource.PayloadVersion, Name: name, Recipe: cur.Recipe,
+			RecipeVersion: cur.RecipeVersion, Params: input.Params}})
+	if err != nil {
+		return resource.View{}, err
+	}
+	if pending != nil { // held for IT: nothing changed
+		return resource.View{Outcome: gate.Holding(*pending)}, nil
+	}
+	r := cur
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		cur, err := s.repo.FindForUpdate(ctx, org, e.ID, name)
+		locked, err := s.repo.FindForUpdate(ctx, org, e.ID, name)
 		if err != nil {
 			return err
 		}
-		r = cur
 		switch {
-		case cur.Status == resource.StatusDeleting:
+		case locked.Status == resource.StatusDeleting:
 			return resource.ErrDeleting(name)
-		case input.StorageGi == cur.StorageGi:
-			return nil
-		case input.StorageGi < cur.StorageGi:
-			return errx.InvalidField("storage_gi", "a resource only grows: it cannot go below "+resourceSize(cur.StorageGi))
+		case locked.Generation != cur.Generation: // what was judged is not what is there any more
+			return resource.ErrChangedMeanwhile(name)
 		}
-		from := cur.StorageGi
-		r.StorageGi, r.Generation = input.StorageGi, cur.Generation+1
-		r.Params = maps.Clone(cur.Params)
-		if r.Params == nil {
-			r.Params = map[string]int{}
-		}
-		r.Params[catalog.ParamStorage] = input.StorageGi
-		if err := s.repo.Resize(ctx, org, e.ID, name, r.StorageGi, r.Generation); err != nil {
+		r.Params, r.StorageGi, r.Generation = resolved.Params, resolved.Params[catalog.ParamStorage], cur.Generation+1
+		if err := s.repo.Change(ctx, org, e.ID, name, r.Params, r.Generation); err != nil {
 			return err
 		}
 		if err := s.cluster.Apply(ctx, resource.DesiredOf(r)); err != nil {
 			return err
 		}
-		return s.events.Publish(ctx, resource.NewResized(org, input.RequestedBy, r, from, names(p, e)))
+		// Every parameter today is the size: a change is a resize.
+		return s.events.Publish(ctx, resource.NewResized(org, input.RequestedBy, r, cur.StorageGi, names(p, e)))
 	})
 	if err != nil {
 		return resource.View{}, err
 	}
 	return s.viewOf(ctx, p, r)
+}
+
+// recipeTitle words what a recipe prepares in a summary.
+func recipeTitle(r catalog.Resolved) string {
+	if v, ok := catalog.Version(r.Recipe, r.Version); ok {
+		return v.Title
+	}
+	return string(r.Kind)
+}
+
+// paramsLabel words parameters in a summary, sorted by name.
+func paramsLabel(params map[string]int) string {
+	parts := make([]string, 0, len(params))
+	for _, name := range slices.Sorted(maps.Keys(params)) {
+		if name == catalog.ParamStorage {
+			parts = append(parts, resourceSize(params[name]))
+			continue
+		}
+		parts = append(parts, name+" "+strconv.Itoa(params[name]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func resourceSize(gi int) string { return strconv.Itoa(gi) + " GiB" }
@@ -306,10 +413,13 @@ func (s *Service) Connect(ctx context.Context, org identity.OrganizationID, id p
 		return resource.Result{}, err
 	}
 	if found.Status != resource.StatusDeleting {
-		pending, err := s.usage.AuthorizeConnect(ctx, org, id, e.ID, resource.Ask{Name: input.Name, Kind: found.Kind, Services: input.Services,
-			Detail: gate.Detail{
-				Summary: "Conectar " + string(found.Kind) + " «" + input.Name + "» a " + where(p, e) + servicesLabel(input.Services),
-				Payload: resource.ConnectApproval{Op: resource.OpConnect, Name: input.Name, Prefix: input.Prefix, Services: input.Services}}})
+		verdict, err := s.usage.JudgeConnect(ctx, org, id, e.ID, resource.Ask{Name: input.Name, Kind: found.Kind, Services: input.Services})
+		if err != nil {
+			return resource.Result{}, err
+		}
+		pending, err := s.settle(ctx, p, e, gate.ActionConnectResource, verdict, gate.Hold{
+			Summary: "Conectar " + string(found.Kind) + " «" + input.Name + "» a " + where(p, e) + servicesLabel(input.Services),
+			Payload: resource.ConnectApproval{Op: resource.OpConnect, Name: input.Name, Prefix: input.Prefix, Services: input.Services}})
 		if err != nil {
 			return resource.Result{}, err
 		}
@@ -446,4 +556,26 @@ func (s *Service) Named(ctx context.Context, org identity.OrganizationID, env pr
 
 func (s *Service) Find(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID, name string) (resource.Resource, error) {
 	return s.repo.Find(ctx, org, env, name)
+}
+
+func (s *Service) Stranded(ctx context.Context, org identity.OrganizationID, id project.ID, tier project.Tier) ([]resource.Resource, error) {
+	rows, err := s.repo.ListProject(ctx, org, id)
+	if err != nil || len(rows) == 0 {
+		return []resource.Resource{}, err
+	}
+	entries, err := s.catalog.List(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	out := []resource.Resource{}
+	for _, r := range rows {
+		if r.Status == resource.StatusDeleting || !resourcekind.Of(r.Kind).HoldsData {
+			continue // nothing to lose: it can be made again in the new tier
+		}
+		offered := slices.ContainsFunc(entries, func(e catalog.Entry) bool { return e.Recipe == r.Recipe && e.Offering.Offers(tier) })
+		if !offered {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }

@@ -244,16 +244,15 @@ type Usage interface {
 	// it waits and finds the resource deleting.
 	WithResourceUseLocked(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID,
 		fn func(ctx context.Context, connected []ResourceUse) error) error
-	// AuthorizeConnect asks IT's rules whether a resource may be connected
-	// to the environment's app (for the services connect names), as the
-	// actor on ctx, and changes nothing but the approval request. It checks
-	// the services first (the app's, a capable cluster, a files resource
-	// reaching one). Creating a resource that connects asks it before
-	// provisioning anything; ConnectResource (Judged) then does not ask
-	// again. A rule that wants approval holds the operation described by
-	// connect.Detail and returns the pending answer (nothing else may then
-	// happen); the approved operation re-runs and redeems it here.
-	AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, connect AuthorizeConnect) (*gate.Pending, error)
+	// JudgeConnect is IT's rules' verdict on connecting a resource to the
+	// environment's app (for the services connect names), as the actor on
+	// ctx. It checks the services first (the app's, a capable cluster, a
+	// files resource reaching one) and changes nothing, not even an approval
+	// request: the caller judges the whole operation (a create that also
+	// connects is one operation, held once: gate.Verdict.With) and settles
+	// it with its own approvals, then connects with Judged so
+	// ConnectResource does not ask again.
+	JudgeConnect(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID, connect JudgeConnect) (gate.Verdict, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.

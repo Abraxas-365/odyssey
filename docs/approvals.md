@@ -11,7 +11,7 @@ resource,ai,project}` implements (the same pattern as `policy`).
 
 | field | meaning |
 |---|---|
-| `action`, `project_id`, `environment_id` | what is held and where (`deploy`, `rollback`, `set_access`, `connect_resource`, `delete_resource`, `enable_ai`, `set_services`); `environment_id` is empty for an action about the whole app (`set_services`) |
+| `action`, `project_id`, `environment_id` | what is held and where (`deploy`, `rollback`, `set_access`, `connect_resource`, `delete_resource`, `create_resource`, `change_resource`, `enable_ai`, `set_services`); `environment_id` is empty for an action about the whole app (`set_services`) |
 | `summary` | the action in one plain Spanish sentence |
 | `payload` | the domain's own description of the action, as it re-runs |
 | `requested_by` (+ `requested_system`) and the requester's permissions | who asked, and what their token could do **when they asked** (a snapshot) |
@@ -40,8 +40,13 @@ action, same place) returns the request that exists.
 
 ## Direct actions
 
-`set_access`, `connect_resource`, `delete_resource`, `enable_ai`, `set_services` (and
-`create_database` / create-with-connect, which connect): the service answers a
+`set_access`, `connect_resource`, `delete_resource`, `create_resource`,
+`change_resource`, `enable_ai`, `set_services` (a create with `connect` is ONE
+`create_resource` request whose rules include the connection's; a create or
+change outside the catalog's pre-approved range is held by the synthetic rule
+`catalog:preapproved`; its payload is v2 — `schema_version` 2 with the pinned
+`recipe@version` and parameters — and a v1 payload fails with
+`APPROVAL_OUTDATED`): the service answers a
 typed **outcome** (`gate.Outcome`), not an error — HTTP **202**
 `{status:"pending_approval", request_id, message}`; MCP the same result with a
 `next_step`. Nothing changes yet.

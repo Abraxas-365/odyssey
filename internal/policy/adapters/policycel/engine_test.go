@@ -104,6 +104,45 @@ func TestMatches(t *testing.T) {
 	}
 }
 
+// The catalog's resolution as rules see it: the pinned recipe, its
+// normalized parameters and what falls outside IT's pre-approved range.
+// Absent is empty (no recipe, no params), never an error.
+func TestMatchesARecipe(t *testing.T) {
+	e := policycel.New(policycel.Options{})
+	in := policy.Input{Action: "create_resource", Resource: policy.ResourceInput{Kind: "postgres", Recipe: "postgres-produccion",
+		RecipeVersion: 1, Engine: "cnpg", Params: map[string]int{"storage_gi": 50, "instances": 3}, OutOfRange: []string{"storage_gi"}}}
+	for expr, want := range map[string]bool{
+		`resource.kind == 'postgres' && resource.recipe == 'postgres-produccion' && resource.recipe_version == 1`: true,
+		`resource.engine == 'cnpg'`:                    true,
+		`resource.params.storage_gi > 20`:              true,
+		`resource.params['instances'] >= 3`:            true,
+		`'cpu' in resource.params`:                     false,
+		`'storage_gi' in resource.out_of_range`:        true,
+		`size(resource.out_of_range) > 0`:              true,
+		`resource.params.exists(p, p == 'storage_gi')`: true,
+	} {
+		if got, err := e.Matches(context.Background(), rule(expr), in); err != nil || got != want {
+			t.Errorf("%q: got %v, %v want %v", expr, got, err, want)
+		}
+	}
+	for expr, want := range map[string]bool{
+		`size(resource.params) == 0 && size(resource.out_of_range) == 0 && resource.recipe == ''`: true,
+		`resource.recipe_version == 0`: true,
+	} {
+		if got, err := e.Matches(context.Background(), rule(expr), policy.Input{Action: "deploy"}); err != nil || got != want {
+			t.Errorf("absent %q: got %v, %v want %v", expr, got, err, want)
+		}
+	}
+	// a parameter the request does not carry is an evaluation error: the rule
+	// fails closed at its own strength (Decide), it is not silently false
+	if _, err := e.Matches(context.Background(), rule(`resource.params.cpu > 1`), in); err == nil {
+		t.Error("a missing parameter evaluated")
+	}
+	if err := e.Compile(`resource.params.storage_gi > 'big'`); err == nil {
+		t.Error("params are ints")
+	}
+}
+
 // services, changed and topology_changed (MS-3c): the same rule reads an app
 // of one service exactly like one of several, and absent means empty.
 func TestMatchesServices(t *testing.T) {

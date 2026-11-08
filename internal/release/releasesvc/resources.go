@@ -40,7 +40,7 @@ func (s *Service) ConnectResource(ctx context.Context, organization identity.Org
 	// approval request it stores) must never live in a transaction that rolls
 	// back on that same refusal. The resource's kind is read here; the
 	// transaction reads the resource again under the lock. A caller that
-	// already judged (Judged: resourcesvc.Create asks AuthorizeConnect before
+	// already judged (Judged: resourcesvc.Create asks JudgeConnect before
 	// it provisions anything) is not judged twice; a tier change in the
 	// milliseconds between its check and this connection is ignored on purpose.
 	if !input.Judged {
@@ -130,26 +130,24 @@ func scopeLabel(in *release.Scope) string {
 	return in.Normalize().Label()
 }
 
-// AuthorizeConnect is IT's rules' answer to connecting a resource (nil, nil:
-// allowed; a Pending: held, the detail describes what will re-run). It
-// checks the services the connection reaches and writes nothing but the
-// approval request; see release.Usage.
-func (s *Service) AuthorizeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, connect release.AuthorizeConnect) (*gate.Pending, error) {
+// JudgeConnect is IT's rules' verdict on connecting a resource, unsettled:
+// it checks the services the connection reaches and writes nothing; see
+// release.Usage.
+func (s *Service) JudgeConnect(ctx context.Context, organization identity.OrganizationID, id project.ID, env project.EnvironmentID, connect release.JudgeConnect) (gate.Verdict, error) {
 	if connect.Services != nil {
 		if err := connect.Services.CheckNames("services"); err != nil {
-			return nil, err
+			return gate.Verdict{}, err
 		}
 	}
 	p, e, err := s.placeWritable(ctx, organization, id, env)
 	if err != nil {
-		return nil, err
+		return gate.Verdict{}, err
 	}
 	_, reached, err := s.connectScope(ctx, p, e, connect.Kind, connect.Name, connect.Services)
 	if err != nil {
-		return nil, err
+		return gate.Verdict{}, err
 	}
-	return s.authorize(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(connect.Kind), Services: reached}, gate.Hold{
-		Summary: connect.Detail.Summary, Payload: connect.Detail.Payload})
+	return s.check(ctx, p, e, gate.Request{Action: gate.ActionConnectResource, ResourceKind: string(connect.Kind), Services: reached})
 }
 
 // DisconnectResource removes the connection; the resource keeps existing.

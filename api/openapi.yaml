@@ -222,6 +222,9 @@ paths:
         with `odyssey:projects:write` creates an app; only `odyssey:projects:tier`
         moves it. The tier it already has writes nothing. Event
         `project.tier_changed`. Archived apps refuse it (`PROJECT_ARCHIVED`).
+        An app does not move to a tier where the recipe of a resource holding
+        its data (a database, a file volume) is not offered: 409
+        `PROJECT_TIER_RESOURCES` (`details.resources`); a cache does not stop it.
       x-permissions: [odyssey:projects:tier]
       requestBody:
         required: true
@@ -243,6 +246,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/Validation" }
         "415": { $ref: "#/components/responses/Validation" }
         "422": { $ref: "#/components/responses/Business" }
@@ -812,16 +816,24 @@ paths:
       summary: Create a database, cache or file volume
       description: |
         Stores the resource and has the environment's cluster prepare it (the
-        environment is placed on the default cluster if it had none). A cluster
-        that cannot prepare the kind refuses with 422 `RESOURCES_UNAVAILABLE` and
-        nothing is stored. With `connect` the app is connected in the same
-        operation (the response carries the settings `revision` and the config
-        `deployment_id`, when one started; 409 `VARIABLE_TAKEN` if a variable it
-        defines is already in use). An environment has at most 10 resources
-        (409 `RESOURCE_LIMIT`); the name is unique among them (409). Event
-        `resource.created`. When IT's rules want approval for connecting it
-        (`connect_resource`), nothing is provisioned: 202 `PendingApproval`,
-        and the creation runs as the requester once approved.
+        environment is placed on the default cluster if it had none). The
+        catalog (docs/catalog.md) decides what fulfils it: `recipe` when given,
+        else the kind's default in the app's tier; the parameters missing take
+        the recipe's defaults. 422 `CATALOG_UNAVAILABLE` (nothing offered, or
+        the cluster cannot honour the recipe), `CATALOG_OUT_OF_LIMITS`,
+        `CATALOG_CHOOSE_RECIPE`; nothing is stored. With `connect` the app is
+        connected in the same operation (the response carries the settings
+        `revision` and the config `deployment_id`, when one started; 409
+        `VARIABLE_TAKEN` if a variable it defines is already in use). An
+        environment has at most 10 resources (409 `RESOURCE_LIMIT`); the name is
+        unique among them (409). Event `resource.created`.
+
+        The whole operation is judged once, before anything is provisioned, as
+        `create_resource` (and `connect_resource` when it connects); a
+        parameter outside the offering's pre-approved range wants approval
+        (rule `catalog:preapproved`), and a rule's deny wins. Held: 202
+        `PendingApproval`, nothing created, and it runs as the requester, as
+        approved (`recipe@version` and parameters pinned), once approved.
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -834,7 +846,13 @@ paths:
               properties:
                 name: { $ref: "#/components/schemas/ResourceName" }
                 kind: { $ref: "#/components/schemas/ResourceKind" }
-                storage_gi: { type: integer, minimum: 1, maximum: 100, description: "Size in GiB (default 1)." }
+                recipe: { type: string, description: "A recipe of the kind (absent: the kind's default in the app's tier)." }
+                params:
+                  type: object
+                  maxProperties: 32
+                  additionalProperties: { type: integer }
+                  description: "The recipe's parameters (absent: their defaults)."
+                storage_gi: { type: integer, minimum: 1, description: "Shorthand for `params.storage_gi` (both: they must agree)." }
                 connect:
                   type: object
                   additionalProperties: false
@@ -855,8 +873,8 @@ paths:
               schema: { $ref: "#/components/schemas/ResourceChange" }
         "202":
           description: |
-            `pending_approval` when IT's rules hold the connection that a create with
-            `connect` asks for (nothing was created yet).
+            `pending_approval` when IT's rules or the catalog's pre-approved range
+            hold the create (nothing was created yet).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PendingApproval" }
@@ -893,12 +911,19 @@ paths:
         "500": { $ref: "#/components/responses/Internal" }
     patch:
       tags: [resources]
-      operationId: resizeResource
-      summary: Grow a resource
+      operationId: changeResource
+      summary: Change a resource's parameters
       description: |
-        A resource only grows (1–100 GiB): a smaller size is 400, the same size
-        changes nothing. A resource being deleted is 409 `RESOURCE_DELETING`.
-        Event `resource.resized`.
+        Changes the parameters asked for (only those), on the recipe version
+        the resource is pinned to; today only `storage_gi`, which only grows (a
+        smaller size is 400; the same values change nothing). The offering's
+        limits apply (422 `CATALOG_OUT_OF_LIMITS`; 422
+        `CATALOG_RECIPE_CHANGED` when its version is no longer offered; an
+        offering withdrawn from the app's tier does not stop it). Judged
+        as `change_resource`: outside the pre-approved range it wants approval
+        (202 `PendingApproval`, nothing changed). A resource being deleted is
+        409 `RESOURCE_DELETING`; one changed meanwhile is 409
+        `RESOURCE_CHANGED`. Event `resource.resized`.
       x-permissions: [odyssey:projects:write]
       requestBody:
         required: true
@@ -907,15 +932,23 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [storage_gi]
               properties:
-                storage_gi: { type: integer, minimum: 1, maximum: 100 }
+                params:
+                  type: object
+                  maxProperties: 32
+                  additionalProperties: { type: integer }
+                storage_gi: { type: integer, minimum: 1, description: "Shorthand for `params.storage_gi`." }
       responses:
         "200":
-          description: The resource at its new size.
+          description: The resource with its new parameters.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Resource" }
+        "202":
+          description: "`pending_approval`: IT approves the change first (nothing changed yet)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingApproval" }
         "400": { $ref: "#/components/responses/Validation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -3637,7 +3670,7 @@ components:
                  decided_by, decided_at, decision_note, expires_at, consumed_at, created_at]
       properties:
         id: { type: string, format: uuid }
-        action: { type: string, enum: [deploy, rollback, set_access, connect_resource, delete_resource, enable_ai, set_services], description: The action held. }
+        action: { type: string, enum: [deploy, rollback, set_access, connect_resource, delete_resource, create_resource, change_resource, enable_ai, set_services], description: The action held. }
         project_id: { type: string, format: uuid }
         environment_id:
           type: string
@@ -5046,7 +5079,7 @@ components:
 
     PolicyAction:
       type: string
-      enum: [deploy, set_access, connect_resource, delete_resource, set_secret, enable_ai, rollback, set_services]
+      enum: [deploy, set_access, connect_resource, delete_resource, create_resource, change_resource, set_secret, enable_ai, rollback, set_services]
 
     PolicyInput:
       type: object
@@ -5084,6 +5117,19 @@ components:
           additionalProperties: false
           properties:
             kind: { type: string }
+            recipe: { type: string, description: "create_resource / change_resource: the recipe the catalog resolved." }
+            recipe_version: { type: integer, minimum: 0 }
+            engine: { type: string }
+            params:
+              type: object
+              maxProperties: 32
+              additionalProperties: { type: integer }
+              description: "Every parameter as resolved (the change's result for change_resource)."
+            out_of_range:
+              type: array
+              maxItems: 32
+              items: { type: string }
+              description: "The parameters outside the offering's pre-approved range."
         scan:
           type: object
           additionalProperties: false

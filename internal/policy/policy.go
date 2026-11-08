@@ -253,8 +253,20 @@ type ActorInput struct {
 }
 
 type ResourceInput struct {
-	// Kind is the resource's kind (database, cache, storage).
+	// Kind is the resource's kind: postgres, redis or files (the type of
+	// pkg/resourcekind).
 	Kind string `json:"kind"`
+	// Recipe, RecipeVersion, Engine and Params are what the catalog resolved
+	// (create_resource, change_resource): the pinned recipe and its
+	// parameters normalized (defaults filled in).
+	Recipe        string         `json:"recipe"`
+	RecipeVersion int            `json:"recipe_version"`
+	Engine        string         `json:"engine"`
+	Params        map[string]int `json:"params"`
+	// OutOfRange are the parameters outside what IT pre-approved in the
+	// catalog (computed by the server). Such a request is held for approval
+	// whatever the rules say; a rule may only add to it.
+	OutOfRange []string `json:"out_of_range"`
 }
 
 // ScanInput is the vulnerability scan of the image being published.
@@ -289,8 +301,14 @@ func (in Input) Validate() error {
 	if len(in.Services) > project.MaxServices || len(in.Changed) > 2*project.MaxServices {
 		return errx.InvalidField("services", "an app has at most "+strconv.Itoa(project.MaxServices)+" services")
 	}
+	if len(in.Resource.Params) > maxDryRunParams || len(in.Resource.OutOfRange) > maxDryRunParams {
+		return errx.InvalidField("resource.params", "a recipe has at most "+strconv.Itoa(maxDryRunParams)+" parameters")
+	}
 	return nil
 }
+
+// maxDryRunParams bounds the parameters a dry-run input may carry.
+const maxDryRunParams = 32
 
 // Decision is the verdict over all the enabled rules.
 type Decision struct {

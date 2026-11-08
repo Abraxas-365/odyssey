@@ -39,6 +39,11 @@ type Created struct {
 	Name        string `json:"name"`
 	Kind        string `json:"kind"`
 	StorageGi   int    `json:"storage_gi"`
+	// Recipe@RecipeVersion fulfils it, with Params (additive in v1: absent
+	// in events from before the catalog).
+	Recipe        string         `json:"recipe,omitempty"`
+	RecipeVersion int            `json:"recipe_version,omitempty"`
+	Params        map[string]int `json:"params,omitempty"`
 }
 
 // Resized v1.
@@ -50,6 +55,8 @@ type Resized struct {
 	Kind        string `json:"kind"`
 	FromGi      int    `json:"from_gi"`
 	ToGi        int    `json:"to_gi"`
+	// Params are all of them after the change (additive in v1).
+	Params map[string]int `json:"params,omitempty"`
 }
 
 // Deleted v1: the resource and its data are to be erased.
@@ -67,13 +74,15 @@ type Removed = Deleted
 func NewCreated(org identity.OrganizationID, actor identity.UserID, r Resource, n Names) event.Event {
 	return event.New(EventCreated, 1, org, actor, event.Subject(SubjectKind, r.ID),
 		"Creó "+withArticle(r)+" "+r.Name+" en "+n.where(),
-		Created{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind), StorageGi: r.StorageGi})
+		Created{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind), StorageGi: r.StorageGi,
+			Recipe: r.Recipe, RecipeVersion: r.RecipeVersion, Params: r.Params})
 }
 
 func NewResized(org identity.OrganizationID, actor identity.UserID, r Resource, from int, n Names) event.Event {
 	return event.New(EventResized, 1, org, actor, event.Subject(SubjectKind, r.ID),
 		"Agrandó "+r.Name+" de "+gi(from)+" a "+gi(r.StorageGi)+" en "+n.where(),
-		Resized{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind), FromGi: from, ToGi: r.StorageGi})
+		Resized{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind), FromGi: from, ToGi: r.StorageGi,
+			Params: r.Params})
 }
 
 func NewDeleted(org identity.OrganizationID, actor identity.UserID, r Resource, n Names) event.Event {

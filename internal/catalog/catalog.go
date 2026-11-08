@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
+	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
@@ -360,10 +361,43 @@ func Unavailable(k resourcekind.Kind, tier project.Tier) error {
 		" todavía. Pídeselo a TI.").WithCode(CodeUnavailable).WithDetail("kind", string(k))
 }
 
-// ClusterCannot is the 422 for a recipe the environment's cluster cannot honour.
+// ClusterCannot is the 422 for a recipe the environment's cluster cannot
+// honour. A cluster lacking the kind's built-in engine cannot provision the
+// kind at all: that is resourcekind.CodeUnavailable with the contract's own
+// words (what to install), as the fleet would say.
 func ClusterCannot(v RecipeVersion, missing []string) error {
+	if slices.Contains(missing, resourcespec.Builtin(v.Kind)) {
+		return errx.Business(resourcekind.Of(v.Kind).Unavailable).WithCode(resourcekind.CodeUnavailable).
+			WithDetail("kind", string(v.Kind))
+	}
 	return errx.Business("El clúster de esta app todavía no puede preparar «"+v.Title+"». Pide a TI que actualice su agente.").
 		WithCode(CodeUnavailable).WithDetail("recipe", v.Ref()).WithDetail("missing", strings.Join(missing, ","))
+}
+
+// RuleCatalog names the catalog's own reason to ask IT (Floor): it is not a
+// rule IT can switch off.
+const (
+	RuleCatalog     = "catalog:preapproved"
+	RuleCatalogName = "Fuera de lo que TI preaprobó en el catálogo"
+)
+
+// Floor is the catalog's verdict on what it resolved: outside the
+// pre-approved range IT must approve, whatever the rules say (approval,
+// with RuleCatalog); inside, it adds nothing (allow). The governed service
+// combines it with the rules' verdict (gate.Verdict.With), so a rule may
+// only tighten it. It names no approvers: the rules' approvers decide, or
+// approval's default (approvals:decide) when only the catalog asks.
+func Floor(r Resolved) gate.Verdict {
+	if !r.NeedsApproval() {
+		return gate.Verdict{Effect: gate.Allow}
+	}
+	return gate.Verdict{Effect: gate.Approval, Rules: []gate.Rule{{ID: RuleCatalog, Name: RuleCatalogName}}}
+}
+
+// Gate is r as IT's rules see it (gate.Request.Recipe).
+func (r Resolved) Gate() *gate.Recipe {
+	return &gate.Recipe{Name: r.Recipe, Version: r.Version, Engine: r.Engine, Params: maps.Clone(r.Params),
+		OutOfRange: slices.Clone(r.OutOfRange)}
 }
 
 // RecipeChanged is the 422 for a pinned version that is no longer offered.

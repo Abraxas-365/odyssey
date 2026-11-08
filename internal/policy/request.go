@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"maps"
 	"slices"
 
 	"github.com/Abraxas-365/odyssey/internal/actor"
@@ -20,7 +21,16 @@ func FromRequest(a actor.Actor, r gate.Request) Input {
 		Env:      EnvInput{Name: r.Environment},
 		Access:   AccessInput{Mode: r.AccessMode},
 		Actor:    ActorInput{ID: a.ID(), Permissions: a.Permissions},
-		Resource: ResourceInput{Kind: r.ResourceKind},
+		Resource: ResourceInput{Kind: r.ResourceKind, Params: map[string]int{}, OutOfRange: []string{}},
+	}
+	if c := r.Recipe; c != nil {
+		in.Resource.Recipe, in.Resource.RecipeVersion, in.Resource.Engine = c.Name, c.Version, c.Engine
+		if c.Params != nil {
+			in.Resource.Params = maps.Clone(c.Params)
+		}
+		if c.OutOfRange != nil {
+			in.Resource.OutOfRange = slices.Clone(c.OutOfRange)
+		}
 	}
 	if r.Scan != nil {
 		in.Scan = ScanInput{Known: true, Checked: true, Critical: r.Scan.Critical, High: r.Scan.High}

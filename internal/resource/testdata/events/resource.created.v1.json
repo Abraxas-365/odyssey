@@ -4,5 +4,10 @@
   "environment_id": "00000000-0000-4000-8000-0000000000bb",
   "name": "db",
   "kind": "postgres",
-  "storage_gi": 5
+  "storage_gi": 5,
+  "recipe": "postgres-basico",
+  "recipe_version": 1,
+  "params": {
+    "storage_gi": 5
+  }
 }

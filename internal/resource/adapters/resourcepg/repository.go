@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/pgerr"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -100,9 +101,17 @@ func (r *Repository) find(ctx context.Context, organization identity.Organizatio
 }
 
 func (r *Repository) List(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resource.Resource, error) {
+	return r.list(ctx, `environment_id = $2`, organization, environment)
+}
+
+func (r *Repository) ListProject(ctx context.Context, organization identity.OrganizationID, id project.ID) ([]resource.Resource, error) {
+	return r.list(ctx, `project_id = $2`, organization, id)
+}
+
+func (r *Repository) list(ctx context.Context, where string, organization identity.OrganizationID, scope any) ([]resource.Resource, error) {
 	rows := []row{}
 	err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT `+columns+` FROM resource.resources
-		WHERE organization_id = $1 AND environment_id = $2 ORDER BY created_at, name`, organization, environment)
+		WHERE organization_id = $1 AND `+where+` ORDER BY created_at, name`, organization, scope)
 	if err != nil {
 		return nil, pgerr.Map(err, "list resources")
 	}
@@ -124,11 +133,20 @@ func (r *Repository) Count(ctx context.Context, organization identity.Organizati
 	return n, pgerr.Map(err, "count resources")
 }
 
-func (r *Repository) Resize(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, storageGi int, generation int64) error {
-	return r.update(ctx, `UPDATE resource.resources SET storage_gi = $4, params = params || jsonb_build_object('storage_gi', $4::int),
-		generation = $5, updated_at = now()
-		WHERE organization_id = $1 AND environment_id = $2 AND name = $3 AND status = 'active' AND storage_gi < $4`,
-		organization, environment, name, storageGi, generation)
+// Change stores params whole; storage_gi follows params.storage_gi (the
+// table's CHECK keeps them equal) and never goes down.
+func (r *Repository) Change(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, params map[string]int, generation int64) error {
+	size, ok := params[catalog.ParamStorage]
+	if !ok {
+		return fmt.Errorf("resource %s: params without %s", name, catalog.ParamStorage)
+	}
+	b, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("resource %s params: %w", name, err)
+	}
+	return r.update(ctx, `UPDATE resource.resources SET storage_gi = $4, params = $5, generation = $6, updated_at = now()
+		WHERE organization_id = $1 AND environment_id = $2 AND name = $3 AND status = 'active' AND storage_gi <= $4`,
+		organization, environment, name, size, b, generation)
 }
 
 func (r *Repository) MarkDeleting(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string, generation int64) error {

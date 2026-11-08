@@ -124,6 +124,9 @@ export interface paths {
          *     with `odyssey:projects:write` creates an app; only `odyssey:projects:tier`
          *     moves it. The tier it already has writes nothing. Event
          *     `project.tier_changed`. Archived apps refuse it (`PROJECT_ARCHIVED`).
+         *     An app does not move to a tier where the recipe of a resource holding
+         *     its data (a database, a file volume) is not offered: 409
+         *     `PROJECT_TIER_RESOURCES` (`details.resources`); a cache does not stop it.
          */
         put: operations["setProjectTier"];
         post?: never;
@@ -542,16 +545,24 @@ export interface paths {
         /**
          * Create a database, cache or file volume
          * @description Stores the resource and has the environment's cluster prepare it (the
-         *     environment is placed on the default cluster if it had none). A cluster
-         *     that cannot prepare the kind refuses with 422 `RESOURCES_UNAVAILABLE` and
-         *     nothing is stored. With `connect` the app is connected in the same
-         *     operation (the response carries the settings `revision` and the config
-         *     `deployment_id`, when one started; 409 `VARIABLE_TAKEN` if a variable it
-         *     defines is already in use). An environment has at most 10 resources
-         *     (409 `RESOURCE_LIMIT`); the name is unique among them (409). Event
-         *     `resource.created`. When IT's rules want approval for connecting it
-         *     (`connect_resource`), nothing is provisioned: 202 `PendingApproval`,
-         *     and the creation runs as the requester once approved.
+         *     environment is placed on the default cluster if it had none). The
+         *     catalog (docs/catalog.md) decides what fulfils it: `recipe` when given,
+         *     else the kind's default in the app's tier; the parameters missing take
+         *     the recipe's defaults. 422 `CATALOG_UNAVAILABLE` (nothing offered, or
+         *     the cluster cannot honour the recipe), `CATALOG_OUT_OF_LIMITS`,
+         *     `CATALOG_CHOOSE_RECIPE`; nothing is stored. With `connect` the app is
+         *     connected in the same operation (the response carries the settings
+         *     `revision` and the config `deployment_id`, when one started; 409
+         *     `VARIABLE_TAKEN` if a variable it defines is already in use). An
+         *     environment has at most 10 resources (409 `RESOURCE_LIMIT`); the name is
+         *     unique among them (409). Event `resource.created`.
+         *
+         *     The whole operation is judged once, before anything is provisioned, as
+         *     `create_resource` (and `connect_resource` when it connects); a
+         *     parameter outside the offering's pre-approved range wants approval
+         *     (rule `catalog:preapproved`), and a rule's deny wins. Held: 202
+         *     `PendingApproval`, nothing created, and it runs as the requester, as
+         *     approved (`recipe@version` and parameters pinned), once approved.
          */
         post: operations["createResource"];
         delete?: never;
@@ -587,12 +598,19 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Grow a resource
-         * @description A resource only grows (1–100 GiB): a smaller size is 400, the same size
-         *     changes nothing. A resource being deleted is 409 `RESOURCE_DELETING`.
-         *     Event `resource.resized`.
+         * Change a resource's parameters
+         * @description Changes the parameters asked for (only those), on the recipe version
+         *     the resource is pinned to; today only `storage_gi`, which only grows (a
+         *     smaller size is 400; the same values change nothing). The offering's
+         *     limits apply (422 `CATALOG_OUT_OF_LIMITS`; 422
+         *     `CATALOG_RECIPE_CHANGED` when its version is no longer offered; an
+         *     offering withdrawn from the app's tier does not stop it). Judged
+         *     as `change_resource`: outside the pre-approved range it wants approval
+         *     (202 `PendingApproval`, nothing changed). A resource being deleted is
+         *     409 `RESOURCE_DELETING`; one changed meanwhile is 409
+         *     `RESOURCE_CHANGED`. Event `resource.resized`.
          */
-        patch: operations["resizeResource"];
+        patch: operations["changeResource"];
         trace?: never;
     };
     "/api/v1/projects/{id}/environments/{environment}/resources/{name}/connection": {
@@ -2283,7 +2301,7 @@ export interface components {
              * @description The action held.
              * @enum {string}
              */
-            action: "deploy" | "rollback" | "set_access" | "connect_resource" | "delete_resource" | "enable_ai" | "set_services";
+            action: "deploy" | "rollback" | "set_access" | "connect_resource" | "delete_resource" | "create_resource" | "change_resource" | "enable_ai" | "set_services";
             /** Format: uuid */
             project_id: string;
             /** @description Where it happens; empty for an action about the whole app (`set_services`). */
@@ -3432,7 +3450,7 @@ export interface components {
             enabled?: boolean;
         };
         /** @enum {string} */
-        PolicyAction: "deploy" | "set_access" | "connect_resource" | "delete_resource" | "set_secret" | "enable_ai" | "rollback" | "set_services";
+        PolicyAction: "deploy" | "set_access" | "connect_resource" | "delete_resource" | "create_resource" | "change_resource" | "set_secret" | "enable_ai" | "rollback" | "set_services";
         /** @description What an action looks like to the rules. What is left out is zero (empty text, false, 0). */
         PolicyInput: {
             action: components["schemas"]["PolicyAction"];
@@ -3453,6 +3471,16 @@ export interface components {
             };
             resource?: {
                 kind?: string;
+                /** @description create_resource / change_resource: the recipe the catalog resolved. */
+                recipe?: string;
+                recipe_version?: number;
+                engine?: string;
+                /** @description Every parameter as resolved (the change's result for change_resource). */
+                params?: {
+                    [key: string]: number;
+                };
+                /** @description The parameters outside the offering's pre-approved range. */
+                out_of_range?: string[];
             };
             scan?: {
                 /** @description Whether a vulnerability scan exists and was done (false until it runs, and when it failed). */
@@ -4068,6 +4096,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
@@ -4614,7 +4643,13 @@ export interface operations {
                 "application/json": {
                     name: components["schemas"]["ResourceName"];
                     kind: components["schemas"]["ResourceKind"];
-                    /** @description Size in GiB (default 1). */
+                    /** @description A recipe of the kind (absent: the kind's default in the app's tier). */
+                    recipe?: string;
+                    /** @description The recipe's parameters (absent: their defaults). */
+                    params?: {
+                        [key: string]: number;
+                    };
+                    /** @description Shorthand for `params.storage_gi` (both: they must agree). */
                     storage_gi?: number;
                     connect?: {
                         prefix?: components["schemas"]["ResourcePrefix"];
@@ -4637,8 +4672,8 @@ export interface operations {
                 };
             };
             /**
-             * @description `pending_approval` when IT's rules hold the connection that a create with
-             *     `connect` asks for (nothing was created yet).
+             * @description `pending_approval` when IT's rules or the catalog's pre-approved range
+             *     hold the create (nothing was created yet).
              */
             202: {
                 headers: {
@@ -4719,7 +4754,7 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
-    resizeResource: {
+    changeResource: {
         parameters: {
             query?: never;
             header?: never;
@@ -4733,18 +4768,31 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    storage_gi: number;
+                    params?: {
+                        [key: string]: number;
+                    };
+                    /** @description Shorthand for `params.storage_gi`. */
+                    storage_gi?: number;
                 };
             };
         };
         responses: {
-            /** @description The resource at its new size. */
+            /** @description The resource with its new parameters. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Resource"];
+                };
+            };
+            /** @description `pending_approval`: IT approves the change first (nothing changed yet). */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingApproval"];
                 };
             };
             400: components["responses"]["Validation"];

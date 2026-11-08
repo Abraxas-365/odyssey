@@ -62,6 +62,17 @@ func (s SetTier) Validate() error {
 // CodeArchived is the error code of a change refused because the project is archived.
 const CodeArchived = "PROJECT_ARCHIVED"
 
+// CodeTierResources is the 409 of a tier change that would leave resources
+// holding data outside the catalog of the new tier (TierGuard).
+const CodeTierResources = "PROJECT_TIER_RESOURCES"
+
+// TierResourcesError names the resources that keep the app from tier.
+func TierResourcesError(tier Tier, stranded []string) error {
+	return errx.Conflict("En el nivel "+string(tier)+" el catálogo no ofrece la receta de "+strings.Join(stranded, ", ")+
+		". Ofrécela en ese nivel en el catálogo antes de mover la app.").
+		WithCode(CodeTierResources).WithDetail("resources", stranded)
+}
+
 // Slug rules: a DNS label, because the slug becomes part of the app's
 // hostname (<slug>.<org domain>) and of Kubernetes object names.
 const (

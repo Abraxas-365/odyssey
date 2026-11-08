@@ -28,7 +28,7 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Get("/", httpx.RequirePermissions(permission.ProjectsRead), h.list)
 	g.Post("/", httpx.RequirePermissions(permission.ProjectsWrite), h.create)
 	g.Get("/:name", httpx.RequirePermissions(permission.ProjectsRead), h.find)
-	g.Patch("/:name", httpx.RequirePermissions(permission.ProjectsWrite), h.resize)
+	g.Patch("/:name", httpx.RequirePermissions(permission.ProjectsWrite), h.change)
 	g.Delete("/:name", httpx.RequirePermissions(permission.ResourcesDelete), h.delete)
 	g.Put("/:name/connection", httpx.RequirePermissions(permission.ProjectsWrite), h.connect)
 	g.Delete("/:name/connection", httpx.RequirePermissions(permission.ProjectsWrite), h.disconnect)
@@ -108,18 +108,22 @@ func (h *Handler) create(c *fiber.Ctx) error {
 	return httpx.Created(c, out.Name, out)
 }
 
-func (h *Handler) resize(c *fiber.Ctx) error {
+// change answers 200 with the resource, or 202 when IT must approve it.
+func (h *Handler) change(c *fiber.Ctx) error {
 	at, err := parse(c)
 	if err != nil {
 		return err
 	}
-	var in resource.Resize
+	var in resource.Change
 	if err := httpx.DecodeJSON(c, &in); err != nil {
 		return err
 	}
 	in.RequestedBy = at.user
-	out, err := h.commands.Resize(c.UserContext(), at.org, at.project, at.environment, c.Params("name"), in)
+	out, err := h.commands.Change(c.UserContext(), at.org, at.project, at.environment, c.Params("name"), in)
 	if err != nil {
+		return err
+	}
+	if done, err := httpx.Held(c, out.Outcome); done {
 		return err
 	}
 	return c.JSON(out)

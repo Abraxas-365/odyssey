@@ -69,8 +69,8 @@ func (u *Usage) Connect(ctx context.Context, org identity.OrganizationID, id pro
 	return applied(out), nil
 }
 
-func (u *Usage) AuthorizeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, ask resource.Ask) (*gate.Pending, error) {
-	return u.usage.AuthorizeConnect(ctx, org, id, env, release.AuthorizeConnect{Name: ask.Name, Kind: ask.Kind, Services: scope(ask.Services), Detail: ask.Detail})
+func (u *Usage) JudgeConnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, ask resource.Ask) (gate.Verdict, error) {
+	return u.usage.JudgeConnect(ctx, org, id, env, release.JudgeConnect{Name: ask.Name, Kind: ask.Kind, Services: scope(ask.Services)})
 }
 
 func (u *Usage) Disconnect(ctx context.Context, org identity.OrganizationID, id project.ID, env project.EnvironmentID, name string, by identity.UserID) (resource.Applied, error) {

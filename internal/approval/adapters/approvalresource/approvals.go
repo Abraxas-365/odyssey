@@ -13,7 +13,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/resource"
-	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
 
 type Approvals struct{ commands approval.Commands }
@@ -39,7 +38,7 @@ var _ approval.Executor = (*Executor)(nil)
 
 func (e *Executor) Handles(r approval.Request) bool {
 	switch approval.OpOf(r) {
-	case resource.OpDelete, resource.OpConnect, resource.OpCreate:
+	case resource.OpDelete, resource.OpConnect, resource.OpCreate, resource.OpChange:
 		return true
 	}
 	return false
@@ -66,13 +65,24 @@ func (e *Executor) Execute(ctx context.Context, r approval.Request) error {
 			resource.Connect{Name: p.Name, Prefix: p.Prefix, Services: p.Services, RequestedBy: r.RequestedBy})
 		return finished(out.Outcome, err)
 	case resource.OpCreate:
-		var p resource.CreateApproval
-		if err := json.Unmarshal(r.Payload, &p); err != nil {
+		p, err := resource.DecodeCreate(r.Payload)
+		if err != nil {
 			return err
 		}
-		out, err := e.resource.Create(ctx, r.Organization, r.Project, r.Environment, resource.Create{Name: p.Name,
-			Kind: resourcekind.Kind(p.Kind), StorageGi: p.StorageGi, Connect: &resource.ConnectOptions{Prefix: p.Prefix, Services: p.Services},
-			RequestedBy: r.RequestedBy})
+		if len(p.Steps) != 1 { // a template's steps run from stage 2 on
+			return fmt.Errorf("approvalresource: a create of %d resources is not supported yet", len(p.Steps))
+		}
+		in := p.Steps[0].Create()
+		in.RequestedBy = r.RequestedBy
+		out, err := e.resource.Create(ctx, r.Organization, r.Project, r.Environment, in)
+		return finished(out.Outcome, err)
+	case resource.OpChange:
+		p, err := resource.DecodeChange(r.Payload)
+		if err != nil {
+			return err
+		}
+		out, err := e.resource.Change(ctx, r.Organization, r.Project, r.Environment, p.Name, resource.Change{Params: p.Params,
+			Recipe: p.Recipe, RecipeVersion: p.RecipeVersion, RequestedBy: r.RequestedBy})
 		return finished(out.Outcome, err)
 	}
 	return fmt.Errorf("approvalresource: %q is not an action resource re-runs", approval.OpOf(r))

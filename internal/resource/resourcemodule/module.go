@@ -7,6 +7,7 @@ import (
 	"context"
 	"io/fs"
 
+	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
@@ -15,6 +16,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/resource/adapters/resourcefleet"
 	"github.com/Abraxas-365/odyssey/internal/resource/adapters/resourcehttp"
 	"github.com/Abraxas-365/odyssey/internal/resource/adapters/resourcepg"
+	"github.com/Abraxas-365/odyssey/internal/resource/adapters/resourceproject"
 	"github.com/Abraxas-365/odyssey/internal/resource/adapters/resourcerelease"
 	"github.com/Abraxas-365/odyssey/internal/resource/resourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/txn"
@@ -25,13 +27,17 @@ type Deps struct {
 	DB       *sqlx.DB
 	Events   event.Publisher
 	Projects project.Queries
+	// Catalog decides what fulfils each resource (catalog depends on no
+	// other domain: its Queries port is wired as is).
+	Catalog catalog.Queries
 	// Fleet runs the resources on the environment's cluster.
 	Fleet fleet.Resources
 	// The release module's ports: connections live in its settings.
 	ReleaseCommands release.Commands
 	ReleaseQueries  release.Queries
 	ReleaseUsage    release.Usage
-	// Policy is IT's rules for deleting (the policyresource adapter).
+	// Policy is IT's rules for creating, changing and deleting (the
+	// policyresource adapter).
 	Policy resource.Policy
 }
 
@@ -46,10 +52,14 @@ type Module struct {
 // approvalresource adapter; the approval module is built after this one).
 func (m Module) UseApprovals(a resource.Approvals) { m.svc.UseApprovals(a) }
 
+// TierGuard is the project.TierGuard project is wired with (the project
+// module is built before this one).
+func (m Module) TierGuard() project.TierGuard { return resourceproject.New(m.svc) }
+
 func New(deps Deps) Module {
 	svc := resourcesvc.New(resourcepg.New(deps.DB), resourcefleet.New(deps.Fleet),
 		resourcerelease.New(deps.ReleaseCommands, deps.ReleaseQueries, deps.ReleaseUsage),
-		deps.Projects, txn.Postgres{DB: deps.DB}, deps.Events, deps.Policy)
+		deps.Projects, deps.Catalog, txn.Postgres{DB: deps.DB}, deps.Events, deps.Policy)
 	return Module{Commands: svc, Queries: svc, HTTP: resourcehttp.New(svc, svc), svc: svc}
 }
 

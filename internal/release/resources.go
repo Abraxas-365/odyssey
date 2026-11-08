@@ -5,7 +5,6 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
-	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 )
@@ -78,9 +77,9 @@ type ConnectResource struct {
 	Services    *Scope          `json:"services"`
 	RequestedBy identity.UserID `json:"-"`
 	// Judged says the caller already asked IT's rules about connecting this
-	// kind (Usage.AuthorizeConnect), so ConnectResource does not ask again.
-	// Only the resource domain's Create sets it: it must judge before it
-	// provisions anything.
+	// kind (Usage.JudgeConnect) and settled the verdict, so ConnectResource
+	// does not ask again. Only the resource domain sets it: it judges a
+	// create (or a connection) as one operation, before it changes anything.
 	Judged bool `json:"-"`
 }
 
@@ -94,15 +93,13 @@ func (in ConnectResource) Validate() error {
 	return scopeNames(in.Services)
 }
 
-// AuthorizeConnect is a connection IT's rules are asked about before it is
-// made (Usage.AuthorizeConnect): the resource (it may not exist yet), the
-// services it would reach (nil: as the connection says, the whole app for
-// a new one) and what a held one re-runs.
-type AuthorizeConnect struct {
+// JudgeConnect is a connection IT's rules are asked about before it is made
+// (Usage.JudgeConnect): the resource (it may not exist yet) and the services
+// it would reach (nil: as the connection says, the whole app for a new one).
+type JudgeConnect struct {
 	Name     string
 	Kind     resourcekind.Kind
 	Services *Scope
-	Detail   gate.Detail
 }
 
 // DisconnectResource disconnects a resource from the app (it keeps existing).

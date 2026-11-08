@@ -10,6 +10,7 @@ import (
 
 	"github.com/Abraxas-365/odyssey/internal/audit"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
+	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/event/adapters/outboxpg"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
@@ -183,11 +184,13 @@ func TestResources(t *testing.T) {
 	for _, body := range []map[string]any{
 		{"name": "Bad Name", "kind": "postgres"},
 		{"name": "db", "kind": "mysql"},
-		{"name": "db", "kind": "postgres", "storage_gi": 101},
 		{"name": "db", "kind": "postgres", "connect": map[string]any{"prefix": "lower"}},
 	} {
 		httpxtest.Want(t, checked(t, app, http.MethodPost, rbase, token, body), http.StatusBadRequest)
 	}
+	// A size outside what the catalog allows is the catalog's 422.
+	errCode(checked(t, app, http.MethodPost, rbase, token, map[string]any{"name": "db", "kind": "postgres", "storage_gi": 101}),
+		http.StatusUnprocessableEntity, catalog.CodeOutOfLimits)
 	httpxtest.Want(t, checked(t, app, http.MethodPost, rbase, reader, map[string]any{"name": "db", "kind": "postgres"}), http.StatusForbidden)
 
 	// Create without connecting: desired in the fleet, nothing in the app.
@@ -227,7 +230,7 @@ func TestResources(t *testing.T) {
 
 	// Grow only.
 	httpxtest.Want(t, checked(t, app, http.MethodPatch, rbase+"/db", token, map[string]any{"storage_gi": 1}), http.StatusBadRequest)
-	httpxtest.Want(t, checked(t, app, http.MethodPatch, rbase+"/db", token, map[string]any{"storage_gi": 101}), http.StatusBadRequest)
+	errCode(checked(t, app, http.MethodPatch, rbase+"/db", token, map[string]any{"storage_gi": 101}), http.StatusUnprocessableEntity, catalog.CodeOutOfLimits)
 	res = checked(t, app, http.MethodPatch, rbase+"/db", token, map[string]any{"storage_gi": 5})
 	httpxtest.Want(t, res, http.StatusOK)
 	if v := httpxtest.JSON[resource.View](t, res); v.StorageGi != 5 || v.Generation != 2 {

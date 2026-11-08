@@ -212,7 +212,7 @@ func TestAFilesVolumeGoesToOneService(t *testing.T) {
 		t.Fatalf("judged %+v", got)
 	}
 	// Creating with connect asks the same.
-	_, err := r.svc.AuthorizeConnect(ctx, r.p.Organization, r.p.ID, r.e.ID, release.AuthorizeConnect{Name: "more", Kind: resourcekind.Files})
+	_, err := r.svc.JudgeConnect(ctx, r.p.Organization, r.p.ID, r.e.ID, release.JudgeConnect{Name: "more", Kind: resourcekind.Files})
 	if !errx.IsType(err, errx.TypeValidation) {
 		t.Fatalf("authorize the whole app: %v", err)
 	}

@@ -8,6 +8,7 @@
 package gate
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -25,11 +26,16 @@ const (
 	// ActionSetServices changes the app's services (the whole app: it has no
 	// environment).
 	ActionSetServices = "set_services"
+	// ActionCreateResource creates a resource (connected or not); the
+	// catalog has already resolved its recipe (Request.Resource).
+	ActionCreateResource = "create_resource"
+	// ActionChangeResource changes an existing resource's parameters.
+	ActionChangeResource = "change_resource"
 )
 
 // Actions lists every action a rule can name.
 var Actions = []string{ActionDeploy, ActionSetAccess, ActionConnectResource, ActionDeleteResource,
-	ActionSetSecret, ActionEnableAI, ActionRollback, ActionSetServices}
+	ActionSetSecret, ActionEnableAI, ActionRollback, ActionSetServices, ActionCreateResource, ActionChangeResource}
 
 // Effect is what the rules decided.
 type Effect string
@@ -71,7 +77,10 @@ type Request struct {
 	ProjectSlug  string
 	Environment  string // the environment's slug
 	AccessMode   string // set_access: the mode being set
-	ResourceKind string // connect_resource, delete_resource
+	ResourceKind string // connect_resource, delete_resource, create_resource, change_resource
+	// Recipe is what the catalog resolved for create_resource and
+	// change_resource (nil for the other actions).
+	Recipe *Recipe
 	// Scan is the vulnerability scan of what is being published; nil when
 	// there is none yet (deploy asks before building) or it is unknown.
 	Scan *Scan
@@ -111,6 +120,18 @@ type Service struct {
 // Scan is the count of findings of an image scan.
 type Scan struct{ Critical, High int }
 
+// Recipe is a resource's recipe as IT's rules see it: pinned and with its
+// parameters normalized by the catalog. OutOfRange are the parameters
+// outside what IT pre-approved, computed by the server (never sent by a
+// client).
+type Recipe struct {
+	Name       string
+	Version    int
+	Engine     string
+	Params     map[string]int
+	OutOfRange []string
+}
+
 // Rule names the rule that decided.
 type Rule struct {
 	ID   string `json:"id"`
@@ -128,6 +149,46 @@ type Verdict struct {
 
 // Allowed reports whether nothing stands in the way.
 func (v Verdict) Allowed() bool { return v.Effect == "" || v.Effect == Allow }
+
+// With combines verdicts about one operation (a create that connects, a
+// request outside the catalog's pre-approved range) into the one that
+// decides it: the strongest effect wins (deny > approval > allow), and the
+// rules and approvers of every verdict at that effect are kept, without
+// repeats. One operation is held once, whatever asked for approval.
+func (v Verdict) With(others ...Verdict) Verdict {
+	out := Verdict{Effect: v.effect()}
+	for _, o := range append([]Verdict{v}, others...) {
+		if e := o.effect(); e.Stronger(out.Effect) {
+			out.Effect = e
+		}
+	}
+	if out.Effect == Allow {
+		return out
+	}
+	for _, o := range append([]Verdict{v}, others...) {
+		if o.effect() != out.Effect {
+			continue
+		}
+		for _, r := range o.Rules {
+			if !slices.Contains(out.Rules, r) {
+				out.Rules = append(out.Rules, r)
+			}
+		}
+		for _, a := range o.Approvers {
+			if !slices.Contains(out.Approvers, a) {
+				out.Approvers = append(out.Approvers, a)
+			}
+		}
+	}
+	return out
+}
+
+func (v Verdict) effect() Effect {
+	if v.Effect == "" {
+		return Allow
+	}
+	return v.Effect
+}
 
 // Err is the refusal a verdict stands for: nil for allow, POLICY_DENIED (403)
 // for deny, APPROVAL_REQUIRED (409) for approval. Every governed service calls

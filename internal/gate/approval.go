@@ -190,6 +190,14 @@ func Enforce(ctx context.Context, organization identity.OrganizationID, policy C
 	if err != nil {
 		return nil, err
 	}
+	return Settle(ctx, organization, approvals, request.Action, verdict, hold)
+}
+
+// Settle is Enforce after the verdict is known: a caller that judges one
+// operation with several verdicts (Verdict.With: IT's rules about creating
+// and about connecting, the catalog's pre-approved range) settles their
+// combination once, so the operation is held as ONE request under action.
+func Settle(ctx context.Context, organization identity.OrganizationID, approvals Approver, action string, verdict Verdict, hold Hold) (*Pending, error) {
 	switch verdict.Effect {
 	case Deny:
 		return nil, verdict.Err()
@@ -197,7 +205,7 @@ func Enforce(ctx context.Context, organization identity.OrganizationID, policy C
 		if approvals == nil { // fail closed: nothing is allowed by accident
 			return nil, errx.Internal("approvals are not wired")
 		}
-		hold.Action, hold.Verdict = request.Action, verdict
+		hold.Action, hold.Verdict = action, verdict
 		if id, ok := ApprovalFrom(ctx); ok {
 			return nil, approvals.Redeem(ctx, organization, id,
 				Grant{Action: hold.Action, Project: hold.Project, Environment: hold.Environment, Payload: hold.Payload})

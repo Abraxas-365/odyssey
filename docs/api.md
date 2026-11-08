@@ -267,6 +267,9 @@ Rules:
   gated by `odyssey:projects:tier` (the TI role), is not a create or patch
   field, publishes `project.tier_changed`, and refuses an archived app with
   422 `PROJECT_ARCHIVED`. Setting the tier it already has changes nothing.
+  An app does not move to a tier where the catalog does not offer the recipe
+  of a resource holding its data (database, file volume): 409
+  `PROJECT_TIER_RESOURCES` (`details.resources`); caches do not stop it.
 - **Services** are the workloads the app is made of (its web, its API, a
   queue worker), in order: `{name, kind: web|worker, root, route,
   strip_prefix, updated_at}`. Every app has at least one; a new app (and
@@ -411,28 +414,48 @@ never appear in the API: `variables` are the names the app reads.
 | Method | Path | Permission | Success |
 |---|---|---|---|
 | `GET` | `…/resources` | projects:read | 200 `{items[resource], available_kinds}` (oldest first) |
-| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, storage_gi?, connect?:{prefix, services?}}`); **202** `pending_approval` when a rule holds the connection of a create with `connect` (nothing created yet) |
+| `POST` | `…/resources` | projects:write | **201** + `Location`, resource + `{revision, deployment_id\|null}` (`{name, kind, recipe?, params?, storage_gi?, connect?:{prefix, services?}}`); **202** `pending_approval` when IT's rules or the catalog's pre-approved range hold it (nothing created yet) |
 | `GET` | `…/resources/:name` | projects:read | 200 resource |
-| `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{storage_gi}`: it only grows) |
+| `PATCH` | `…/resources/:name` | projects:write | 200 resource (`{params?, storage_gi?}`: only the parameters given; size only grows); **202** `pending_approval` when held |
 | `DELETE` | `…/resources/:name` | `odyssey:resources:delete` | **202** resource, now `deleting` |
 | `PUT` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` (`{prefix?, services?}`) |
 | `DELETE` | `…/resources/:name/connection` | projects:write | **202** resource + `{revision, deployment_id\|null}` |
 
 The resource: `{id, organization_id, project_id, environment_id, name, kind
-(postgres\|redis\|files), storage_gi, generation, status (active\|deleting),
+(postgres\|redis\|files), storage_gi, recipe, recipe_version, params,
+generation, status (active\|deleting),
 created_by, created_at, updated_at, phase (provisioning\|ready\|failed\|deleted),
 message, connected, prefix, services[], variables[]}`. `phase` and `message` are what the
 cluster reported (read from the fleet, not stored; `provisioning` until the
-agent says otherwise).
+agent says otherwise). `recipe@recipe_version` is the catalog recipe it is
+pinned to and `params` its parameters, normalized (`storage_gi` is
+`params.storage_gi`).
 
 - **Limits.** Up to 10 resources per environment (409 `RESOURCE_LIMIT`; those
-  being deleted still count), names unique per environment (409), 1–100 GiB.
+  being deleted still count), names unique per environment (409); the sizes
+  are the offering's limits (§ Catalog).
   Names are lowercase letters, digits and hyphens (≤ 30); `prefix` is
   `[A-Z][A-Z0-9_]*` (≤ 40, no trailing `_`) and goes before the variable names.
 - **Creating** puts the environment on the default cluster if it has none and
-  refuses a kind the cluster cannot make with 422 `RESOURCES_UNAVAILABLE`
-  (nothing is stored). With `connect` the connection is made in the same
+  asks the catalog what fulfils it (`recipe`, else the kind's default in the
+  app's tier; missing parameters take the recipe's defaults): 422
+  `CATALOG_UNAVAILABLE` / `CATALOG_OUT_OF_LIMITS` / `CATALOG_CHOOSE_RECIPE`,
+  nothing stored. With `connect` the connection is made in the same
   transaction: a conflict (409 `VARIABLE_TAKEN`) leaves nothing behind.
+- **Judged once.** A create is judged before anything is provisioned as
+  `create_resource` (rules see `resource.recipe`, `recipe_version`, `engine`,
+  `params`, `out_of_range`) plus `connect_resource` when it connects; a change
+  as `change_resource`. A parameter outside the offering's pre-approved range
+  wants approval (rule `catalog:preapproved`) whatever the rules say; a deny
+  wins. A held operation is ONE request (202) and runs as approved
+  (`recipe@version` and parameters pinned); if the catalog no longer allows it
+  when it runs, it fails in words. An approval stored before the catalog
+  (payload v1) fails with `APPROVAL_OUTDATED`: ask again.
+- **Changing** (`PATCH`) touches only the parameters given, on the pinned
+  version (422 `CATALOG_RECIPE_CHANGED` when that version is no longer
+  offered; an offering withdrawn from the app's tier does not stop changing
+  an existing resource); the size only grows; the same values change nothing; 409
+  `RESOURCE_CHANGED` when it changed meanwhile.
 - **Connecting** is a settings revision like `PATCH …/env`: a `config`
   deployment when a release is online (`deployment_id`, `Location` is not set;
   follow it with `GET …/deployments/:id`). The variables are not written into
@@ -829,6 +852,7 @@ state). The input carries the services an action brings (`services`,
   a non-compiling one is 422 `POLICY_INVALID`.
 - **Enforcement** is not an endpoint: the governed actions (`deploy`,
   `rollback`, `set_access`, `connect_resource`, `delete_resource`,
+  `create_resource`, `change_resource`,
   `enable_ai`) fail with 403 `POLICY_DENIED` when a rule denies them, and are
   held as an approval request (§11 Approvals) when a rule asks for approval.
 - Events: `policy.rule_created`, `policy.rule_updated`, `policy.rule_deleted`.

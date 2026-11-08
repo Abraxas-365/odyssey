@@ -54,7 +54,12 @@ type (
 		Permissions []string `cel:"permissions"`
 	}
 	resourceVars struct {
-		Kind string `cel:"kind"`
+		Kind          string           `cel:"kind"`
+		Recipe        string           `cel:"recipe"`
+		RecipeVersion int64            `cel:"recipe_version"`
+		Engine        string           `cel:"engine"`
+		Params        map[string]int64 `cel:"params"`
+		OutOfRange    []string         `cel:"out_of_range"`
 	}
 	scanVars struct {
 		Known    bool  `cel:"known"`
@@ -201,13 +206,22 @@ func activation(in policy.Input) map[string]any {
 	if changed == nil {
 		changed = []string{}
 	}
+	params := make(map[string]int64, len(in.Resource.Params))
+	for k, v := range in.Resource.Params {
+		params[k] = int64(v)
+	}
+	outside := in.Resource.OutOfRange
+	if outside == nil {
+		outside = []string{}
+	}
 	return map[string]any{
-		"action":   in.Action,
-		"project":  projectVars{Tier: string(in.Project.Tier), Slug: in.Project.Slug},
-		"env":      envVars{Name: in.Env.Name},
-		"access":   accessVars{Mode: in.Access.Mode},
-		"actor":    actorVars{ID: in.Actor.ID, Permissions: perms},
-		"resource": resourceVars{Kind: in.Resource.Kind},
+		"action":  in.Action,
+		"project": projectVars{Tier: string(in.Project.Tier), Slug: in.Project.Slug},
+		"env":     envVars{Name: in.Env.Name},
+		"access":  accessVars{Mode: in.Access.Mode},
+		"actor":   actorVars{ID: in.Actor.ID, Permissions: perms},
+		"resource": resourceVars{Kind: in.Resource.Kind, Recipe: in.Resource.Recipe, RecipeVersion: int64(in.Resource.RecipeVersion),
+			Engine: in.Resource.Engine, Params: params, OutOfRange: outside},
 		// a known scan has been checked, whatever a dry-run input says
 		"scan":             scanVars{Known: in.Scan.Known, Checked: in.Scan.Checked || in.Scan.Known, Critical: int64(in.Scan.Critical), High: int64(in.Scan.High)},
 		"services":         services,
