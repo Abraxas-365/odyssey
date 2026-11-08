@@ -47,7 +47,8 @@ Para guardar archivos usa un recurso de tipo `files`: el disco de la app sin él
 | Cambiar quién puede abrir la app | `set_access` (y `get_app` muestra el modo) |
 | Poner o quitar variables (no secretas) | `set_env` |
 | Pedir un secreto (una persona lo carga en la consola) | `request_secret` |
-| Crear una base de datos (o caché, o volumen de archivos) y conectarla | `create_database` |
+| Ver qué bases, cachés o volúmenes puede pedir la app (recetas, límites, si pide aprobación) | `list_catalog` |
+| Crear una base de datos (o caché, o volumen de archivos) y conectarla | `create_resource` (o `create_database`, la forma corta) |
 | Ver las bases de datos de la app y si ya están listas | `list_resources` |
 | Darle IA a la app (llave propia, variables listas para las librerías de OpenAI y Anthropic) | `enable_ai` |
 | Ver cómo va algo que quedó esperando a TI | `get_request`, `list_requests` |
@@ -91,10 +92,12 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 
 ## Bases de datos
 
-- Si la app necesita guardar datos, llama a `create_database` con la app (y `kind`: `postgres` por defecto, `redis` para caché, `files` para archivos; `name` por defecto `db`). Crea el recurso **y lo conecta**: la app recibe sus variables (`DATABASE_URL`, `PGHOST`, …; `REDIS_URL`; `FILES_DIR`) en una versión nueva de la app que empieza sola (sigue con `get_deployment`). Los valores y contraseñas **nunca** se muestran: haz que la app lea esos nombres de variables de entorno.
+- TI define un **catálogo**: qué tipos de recurso ofrece para cada nivel de app (pruebas, interna, producción), con qué recetas (por ejemplo «PostgreSQL básico» o «PostgreSQL de producción», con réplica) y con qué límites. Antes de crear, llama a `list_catalog` con la app: muestra cada receta con sus parámetros (`min`/`max` permitidos y el rango preaprobado), las variables que recibe la app y `approval`: `instant` (con sus valores por defecto y conectada a toda la app, se crea al instante), `needs_approval` (TI tiene que aprobarla) o `denied`. Lo que no se puede pedir aparece en `unavailable` con el motivo: díselo al usuario tal cual, es de TI.
+- Si la app necesita guardar datos, llama a `create_resource` con la app y `kind` (`postgres` por defecto, `redis` para caché, `files` para archivos; `name` por defecto `db`). Sin `recipe` usa la receta por defecto del tipo; si hay varias y el usuario no eligió, pregúntale (`list_catalog` las describe). `params` (por ejemplo `{"storage_gi": 20}`) solo si el usuario lo pidió: fuera del rango preaprobado la creación queda **pendiente de TI** (`pending_approval`), así que avísale antes. `create_database` es la forma corta (receta por defecto y `storage_gi` opcional).
+- Crea el recurso **y lo conecta** (salvo `connect: false`): la app recibe sus variables (`DATABASE_URL`, `PGHOST`, …; `REDIS_URL`; `FILES_DIR`) en una versión nueva de la app que empieza sola (sigue con `get_deployment`). Los valores y contraseñas **nunca** se muestran: haz que la app lea esos nombres de variables de entorno.
 - La base tarda un momento en prepararse: `list_resources` dice `preparing`, `ready` o `failed` (con el motivo). No la publiques como lista hasta que diga `ready`.
 - Para tener varias bases (por ejemplo una de analítica) usa `prefix` en MAYÚSCULAS (`ANALYTICS` → `ANALYTICS_DATABASE_URL`).
-- Si falla con «El clúster no puede crear bases de datos todavía», es de TI (el clúster no las ofrece); díselo al usuario. Eliminar una base borra sus datos: eso lo hace una persona desde la consola, no tú.
+- Si falla con `CATALOG_UNAVAILABLE` («Tu empresa no ofrece … todavía») o «El clúster no puede crear …», es de TI; díselo al usuario. Con `CATALOG_OUT_OF_LIMITS` el valor está fuera de los límites: no pruebes otro sin preguntarle. Eliminar una base borra sus datos: eso lo hace una persona desde la consola, no tú.
 - Los datos viven en el clúster de la app; si TI mueve la app a otro clúster, la base se prepara vacía allí.
 
 ## IA en la app
@@ -106,7 +109,7 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 
 ## Reglas de TI (cuando algo «no se permite» o «necesita aprobación»)
 
-TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `set_services`, `create_database`, `enable_ai`) falla con `POLICY_DENIED`, o responde `pending_approval` (la solicitud quedó pendiente de TI y se hace sola cuando la aprueben), sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta). Con `get_request` ves cómo va. Antes de volver atrás en producción o hacer pública una app, pregunta al usuario y usa `confirm: true` solo si dijo que sí.
+TI puede poner reglas sobre las apps (por ejemplo: publicar en producción pide aprobación, una app de pruebas no puede ser pública). Si una herramienta (`deploy_folder`, `deploy_image`, `publish_now`, `rollback`, `set_access`, `set_services`, `create_resource`, `create_database`, `enable_ai`) falla con `POLICY_DENIED`, o responde `pending_approval` (la solicitud quedó pendiente de TI y se hace sola cuando la aprueben), sigue [references/reglas-ti.md](references/reglas-ti.md): **muestra el mensaje al usuario tal cual, no reintentes ni busques otra vía** (otro modo de acceso, otra app, otra herramienta). Con `get_request` ves cómo va. Antes de volver atrás en producción o hacer pública una app, pregunta al usuario y usa `confirm: true` solo si dijo que sí.
 
 ## Cómo hablar con el usuario
 

@@ -217,5 +217,6 @@ release wires it into the app.
   environments.
 - **Permissions.** Reading `odyssey:projects:read`; create, resize, connect and
   disconnect `odyssey:projects:write`; delete `odyssey:resources:delete` (it
-  erases data). The MCP tools `create_database` and `list_resources` use the
-  same checks (`create_database` never deletes).
+  erases data). The MCP tools `list_catalog`, `create_resource`,
+  `create_database` and `list_resources` use the same checks (none of them
+  deletes); see docs/catalog.md «MCP».

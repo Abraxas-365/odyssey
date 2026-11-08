@@ -122,8 +122,7 @@ func (s *Service) Find(ctx context.Context, org identity.OrganizationID, recipe 
 
 // usable says the entry can be created in tier on a cluster with caps.
 func usable(e catalog.Entry, tier project.Tier, caps []string) bool {
-	c, known := resourcekind.Lookup(e.Kind)
-	return known && c.Available && e.Offering.Offers(tier) && len(resourcespec.Missing(e.Requires, caps)) == 0
+	return e.Usable(tier, caps) == nil
 }
 
 func (s *Service) Available(ctx context.Context, org identity.OrganizationID, tier project.Tier, caps []string) ([]catalog.Entry, error) {

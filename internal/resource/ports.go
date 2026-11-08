@@ -60,6 +60,12 @@ type Queries interface {
 	// without an offering; the resourceproject adapter answers project with
 	// it).
 	Stranded(ctx context.Context, organization identity.OrganizationID, project project.ID, tier project.Tier) ([]Resource, error)
+	// Offered is the catalog as the environment sees it: the recipes its
+	// app's tier is offered and its cluster can honour, each with its
+	// limits, the variables the app gets and the verdict IT's rules give
+	// the caller (on ctx) for creating it with its defaults; the kinds
+	// nothing fulfils, with why. It writes nothing.
+	Offered(ctx context.Context, organization identity.OrganizationID, project project.ID, environment project.EnvironmentID) (Offered, error)
 }
 
 // Repository is the persistence contract; only the service depends on it.

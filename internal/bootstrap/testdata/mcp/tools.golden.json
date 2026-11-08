@@ -4,6 +4,7 @@
       "connect_repository",
       "create_app",
       "create_database",
+      "create_resource",
       "deploy_folder",
       "deploy_image",
       "detect_services",
@@ -14,6 +15,7 @@
       "get_deployment",
       "get_request",
       "list_apps",
+      "list_catalog",
       "list_repositories",
       "list_requests",
       "list_resources",
@@ -34,6 +36,7 @@
       "get_deployment",
       "get_request",
       "list_apps",
+      "list_catalog",
       "list_requests",
       "list_resources",
       "list_services",
@@ -44,6 +47,7 @@
       "connect_repository",
       "create_app",
       "create_database",
+      "create_resource",
       "deploy_folder",
       "deploy_image",
       "detect_services",
@@ -54,6 +58,7 @@
       "get_deployment",
       "get_request",
       "list_apps",
+      "list_catalog",
       "list_repositories",
       "list_requests",
       "list_resources",
@@ -232,7 +237,7 @@
         "readOnlyHint": false,
         "title": "Crear una base de datos"
       },
-      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una versión nueva de la app que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; prefix (like ANALYTICS) goes before the variable names so an app can use several. En una app de varias partes, services (nombres de list_services) limita qué partes reciben las variables; sin services las recibe toda la app. For an app with several services (parts), services (names from list_services) limits which parts receive the variables; without it the whole app does. A files volume of such an app must name exactly one part.",
+      "description": "Crea una base de datos (PostgreSQL por defecto; también un caché Redis o un volumen de archivos) para una app y la conecta: la app recibirá sus variables (DATABASE_URL, …) en una versión nueva de la app que empieza sola. Los datos y las contraseñas se quedan en el clúster: nunca se muestran. La base tarda un momento en estar lista; list_resources muestra su estado. Es la forma corta de create_resource con la receta por defecto (create_resource elige receta y parámetros; list_catalog los muestra). Creates a database (PostgreSQL by default; also a Redis cache or a files volume) for an app and connects it: the app will receive its variables (DATABASE_URL, …) in a new version of the app that starts by itself. Data and passwords stay in the cluster and are never shown. It takes a moment to be ready; list_resources shows its state. It is create_resource with the default recipe. app is the slug (see list_apps) or the id; environment defaults to production; kind is postgres, redis or files; name defaults to db; storage_gi is the size (the recipe's default when absent); prefix (like ANALYTICS) goes before the variable names so an app can use several. En una app de varias partes, services (nombres de list_services) limita qué partes reciben las variables; sin services las recibe toda la app. For an app with several services (parts), services (names from list_services) limits which parts receive the variables; without it the whole app does. A files volume of such an app must name exactly one part.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -265,6 +270,10 @@
               "null",
               "array"
             ]
+          },
+          "storage_gi": {
+            "description": "tamaño en GiB; el de la receta por defecto si no se indica (list_catalog muestra límites y rango preaprobado)",
+            "type": "integer"
           }
         },
         "required": [
@@ -281,7 +290,7 @@
             "type": "string"
           },
           "config_deployment_id": {
-            "description": "la versión nueva que conecta la base, si empezó una",
+            "description": "la versión nueva que conecta el recurso, si empezó una",
             "type": [
               "null",
               "string"
@@ -370,6 +379,171 @@
         "type": "object"
       },
       "title": "Crear una base de datos"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Crear un recurso"
+      },
+      "description": "Crea un recurso del catálogo de la empresa (una base de datos postgres, una caché redis o un volumen files) para una app y, salvo connect=false, lo conecta: la app recibe sus variables (DATABASE_URL, …) en una versión nueva que empieza sola. Sin recipe usa la receta por defecto del tipo para el nivel de la app; params (por ejemplo {\"storage_gi\": 20}) dentro del rango preaprobado se crea al instante; fuera de él queda pendiente de TI (pending_approval). list_catalog muestra recetas, límites y variables. Los datos y las contraseñas nunca se muestran. Creates a resource from the company's catalog (a postgres database, a redis cache or a files volume) for an app and, unless connect=false, connects it: the app receives its variables in a new version that starts by itself. Without recipe it uses the kind's default for the app's tier; params within the pre-approved range are created at once, outside it the request waits for IT (pending_approval). list_catalog shows recipes, limits and variables. app is the slug or the id; environment defaults to production; name defaults to db; prefix (like ANALYTICS) goes before the variable names; services (names from list_services) limits which parts of a multi-service app receive the variables (a files volume names exactly one).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "connect": {
+            "description": "false para crearlo sin conectarlo a la app (por defecto se conecta)",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "environment": {
+            "description": "entorno de la app; production por defecto",
+            "type": "string"
+          },
+          "kind": {
+            "description": "postgres (por defecto), redis o files",
+            "type": "string"
+          },
+          "name": {
+            "description": "nombre del recurso: minúsculas, números y guiones; db por defecto",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "parámetros de la receta por nombre, por ejemplo {\"storage_gi\": 20}; los que falten toman su valor por defecto",
+            "type": "object"
+          },
+          "prefix": {
+            "description": "prefijo en MAYÚSCULAS para las variables (ANALYTICS → ANALYTICS_DATABASE_URL), para tener varios recursos del mismo tipo",
+            "type": "string"
+          },
+          "recipe": {
+            "description": "receta del catálogo (list_catalog las muestra); sin recipe, la receta por defecto del tipo para el nivel de la app",
+            "type": "string"
+          },
+          "services": {
+            "description": "partes de la app que reciben las variables (nombres de list_services); vacío = toda la app. Un volumen files de una app de varias partes debe nombrar exactamente una",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "create_resource",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "config_deployment_id": {
+            "description": "la versión nueva que conecta el recurso, si empezó una",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "la solicitud de aprobación; get_request muestra cómo va",
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "connected": {
+                "description": "si la app recibe sus variables",
+                "type": "boolean"
+              },
+              "kind": {
+                "description": "postgres, redis o files",
+                "type": "string"
+              },
+              "message": {
+                "description": "por qué falló, si falló",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "services": {
+                "description": "partes de la app que reciben sus variables; ausente = toda la app",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "status": {
+                "description": "preparing (se está preparando), ready (lista), failed (falló: mira message) o deleting (se está eliminando)",
+                "type": "string"
+              },
+              "storage_gi": {
+                "description": "tamaño en GiB",
+                "type": "integer"
+              },
+              "variables": {
+                "description": "nombres de las variables que la app lee (sus valores nunca se muestran)",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "storage_gi",
+              "status",
+              "connected",
+              "variables"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "description": "pending_approval cuando la acción quedó esperando la aprobación de TI (no se hizo nada todavía)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "resource",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Crear un recurso"
     },
     {
       "annotations": {
@@ -2285,6 +2459,233 @@
         "type": "object"
       },
       "title": "Listar apps"
+    },
+    {
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Qué recursos puede pedir una app"
+      },
+      "description": "Muestra qué bases de datos, cachés y volúmenes puede pedir una app según lo que ofrece TI para su nivel y lo que su clúster puede preparar: cada receta con sus parámetros (límites y rango preaprobado), las variables que recibe la app y si se crea al instante o pide aprobación de TI; y los tipos que no se pueden pedir, con el motivo. Úsala antes de create_resource. Shows what databases, caches and volumes an app can ask for, given what IT offers for its tier and what its cluster can prepare: each recipe with its parameters (limits and pre-approved range), the variables the app receives and whether it is created at once or asks IT; and the kinds that cannot be asked for, with why. Use it before create_resource. app is the slug (see list_apps) or the id; environment defaults to production.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug o id de la app (list_apps los muestra)",
+            "type": "string"
+          },
+          "environment": {
+            "description": "entorno de la app; production por defecto",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "type": "object"
+      },
+      "name": "list_catalog",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "slug de la app",
+            "type": "string"
+          },
+          "can_create": {
+            "description": "si quien pregunta puede crear recursos en esta app (permiso de editar apps)",
+            "type": "boolean"
+          },
+          "console_url": {
+            "description": "enlace a la app en la consola",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "qué hacer ahora",
+            "type": "string"
+          },
+          "recipes": {
+            "description": "lo que se puede crear, por tipo y con la receta por defecto de cada tipo primero",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "approval": {
+                  "description": "instant (con los valores por defecto y conectada a toda la app se crea al instante; un volumen de archivos en una app de varias partes se juzga al nombrar la parte), needs_approval (TI tiene que aprobarla) o denied (una regla de TI no lo permite)",
+                  "type": "string"
+                },
+                "default": {
+                  "description": "la que se usa si no se indica recipe",
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "kind": {
+                  "description": "postgres, redis o files",
+                  "type": "string"
+                },
+                "params": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "default": {
+                        "type": "integer"
+                      },
+                      "fixed": {
+                        "description": "no se puede cambiar después de creado",
+                        "type": "boolean"
+                      },
+                      "grows_only": {
+                        "description": "solo puede crecer después de creado",
+                        "type": "boolean"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "max": {
+                        "description": "mayor valor permitido",
+                        "type": "integer"
+                      },
+                      "min": {
+                        "description": "menor valor permitido",
+                        "type": "integer"
+                      },
+                      "name": {
+                        "description": "la clave en create_resource.params",
+                        "type": "string"
+                      },
+                      "preapproved_max": {
+                        "description": "por encima (hasta max) TI tiene que aprobarlo",
+                        "type": "integer"
+                      },
+                      "preapproved_min": {
+                        "description": "desde aquí hasta preapproved_max se crea sin pedir aprobación",
+                        "type": "integer"
+                      },
+                      "unit": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label",
+                      "min",
+                      "max",
+                      "default",
+                      "preapproved_min",
+                      "preapproved_max"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "recipe": {
+                  "description": "lo que se pasa en create_resource.recipe",
+                  "type": "string"
+                },
+                "rules": {
+                  "description": "las reglas de TI que piden aprobación o lo impiden",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "variables": {
+                  "description": "las variables que la app recibe al conectarla (los valores nunca se muestran)",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "meaning": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "secret": {
+                        "description": "si es una contraseña o algo que la contiene",
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "secret",
+                      "meaning"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "recipe",
+                "title",
+                "description",
+                "default",
+                "params",
+                "variables",
+                "approval"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "tier": {
+            "description": "nivel de la app (sandbox, internal o production): TI ofrece recetas distintas por nivel",
+            "type": "string"
+          },
+          "unavailable": {
+            "description": "tipos que no se pueden crear en esta app, con el motivo",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "app",
+          "tier",
+          "recipes",
+          "unavailable",
+          "can_create",
+          "console_url",
+          "next_step"
+        ],
+        "type": "object"
+      },
+      "title": "Qué recursos puede pedir una app"
     },
     {
       "annotations": {

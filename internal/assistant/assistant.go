@@ -239,12 +239,12 @@ type Capability struct {
 var Capabilities = []Capability{
 	{Can: "Ver tus apps, su estado y lo que necesita atención", Tools: []string{"whoami", "list_apps", "get_app", "get_attention", "list_services"}},
 	{Can: "Ver las versiones publicadas y sus registros de construcción", Tools: []string{"list_versions", "get_deployment", "get_build_logs"}},
-	{Can: "Ver los datos que usan tus apps y tus solicitudes", Tools: []string{"list_resources", "list_requests", "get_request"}},
+	{Can: "Ver los datos que usan tus apps, lo que pueden pedir y tus solicitudes", Tools: []string{"list_resources", "list_catalog", "list_requests", "get_request"}},
 	{Can: "Crear apps y cambiar su configuración, sus partes, acceso y secretos", Tools: []string{"create_app", "detect_services", "set_services", "set_env", "set_access", "request_secret"}},
 	{Can: "Publicar versiones nuevas", Tools: []string{"deploy_folder", "deploy_image"}},
 	{Can: "Volver a una versión anterior", Tools: []string{"rollback"}},
 	{Can: "Conectar repositorios de GitHub y publicar desde ellos", Tools: []string{"list_repositories", "connect_repository", "publish_now"}},
-	{Can: "Crear bases de datos y activar IA en tus apps", Tools: []string{"create_database", "enable_ai"}},
+	{Can: "Crear bases de datos y activar IA en tus apps", Tools: []string{"create_resource", "create_database", "enable_ai"}},
 }
 
 // Abilities is what an assistant may and may not do with a set of

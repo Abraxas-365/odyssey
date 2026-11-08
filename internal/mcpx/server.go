@@ -40,8 +40,8 @@ Reglas para que una app funcione en Odicea:
 - Si una tool falla, lee "next_step" en el error: dice qué hacer.
 - Si la app decide permisos según quién es el usuario, verifica la cabecera X-Odicea-Assertion (variables ODICEA_AUTH_*; solo en apps team/organization): nunca confíes en X-Odicea-Email sola. Cómo: la skill, references/identidad.md.
 
-Lo que Odicea da a las apps: bases de datos y archivos (create_database), IA (enable_ai) y secretos que carga una persona en la consola (request_secret; nunca pidas el valor por el chat).
-Odicea gives apps databases and files (create_database), AI (enable_ai) and secrets a person enters in the console (request_secret; never ask for the value in chat).
+Lo que Odicea da a las apps: bases de datos, cachés y archivos del catálogo que define TI (list_catalog dice qué se puede pedir; create_resource o create_database lo crean), IA (enable_ai) y secretos que carga una persona en la consola (request_secret; nunca pidas el valor por el chat).
+Odicea gives apps databases, caches and files from IT's catalog (list_catalog shows what can be asked for; create_resource or create_database create it), AI (enable_ai) and secrets a person enters in the console (request_secret; never ask for the value in chat).
 
 Todavía no / not yet: Odicea no entrega llaves ni cuentas de servicios de terceros (pagos, correo, mapas…): si la app las necesita, pídelas con request_secret. NO las crees en servicios externos (Supabase, Firebase, Vercel, etc.) ni uses una llave de IA propia: la app corre en Odicea y nada más.
 Odicea does not provide third-party keys or accounts yet: ask for them with request_secret. Do not create databases, AI keys or accounts in external services.

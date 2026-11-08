@@ -79,6 +79,40 @@ resource to `<kind>-basico@1` with `{"storage_gi": <size>}`; `storage_gi`
 stays as a column in step with `params.storage_gi` (a CHECK) while consumers
 move to `params`.
 
+## MCP
+
+What an assistant sees of the catalog is one environment's view,
+`resource.Queries.Offered` (it writes nothing):
+
+- **`list_catalog(app, environment?)`** (`projects:read`): the recipes the
+  app's tier is offered and its cluster can honour (`catalog.Entry.Usable`,
+  the same test as `Resolve`), each kind's default first; per recipe its
+  params with hard limits, pre-approved range, default and mutability
+  (`grows_only` / `fixed`), the variables the app receives (from the kind's
+  contract) and `approval`: `instant`, `needs_approval` or `denied` — the
+  verdict `Create` would give the caller for `create_resource`'s default —
+  that recipe **with its defaults, connected to the whole app** (IT's rules
+  under `create_resource`, the catalog's floor and the rules on
+  `connect_resource`; a files volume in an app of several services, which
+  must name one, is judged without the connection). A param outside the
+  pre-approved range still asks IT. An archived app is refused, as `Create`
+  refuses it. The kinds nothing
+  fulfils are in `unavailable` with why (not offered in the tier, the
+  cluster cannot, or no cluster that announces anything). Several defaults
+  for one kind (`Resolve` would ask to choose) mark none. `can_create` says
+  whether the caller holds `projects:write`. Teams are not a filter yet:
+  offerings are per tier.
+- **`create_resource(app, kind?, name?, recipe?, params?, connect?, prefix?,
+  services?)`** (`projects:read` + `projects:write`): `Commands.Create`, the
+  same path as `POST …/resources`. It connects by default (`connect: false`
+  creates it alone; `prefix`/`services` then are refused). Held → the usual
+  `pending_approval` + `request_id`; catalog refusals (`CATALOG_*`,
+  `RESOURCES_UNAVAILABLE`, an unknown recipe or param) carry a `next_step`
+  that points at `list_catalog` (an agent too old for the recipe is told it
+  is IT's to update) and says not to retry another value without asking.
+- **`create_database`** stays as the short form: `create_resource` with the
+  default recipe, always connected, `storage_gi` optional.
+
 ## Stage 1a cuts
 
 1. Kinds as a registry of contracts (`pkg/resourcekind`).

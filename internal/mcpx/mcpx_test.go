@@ -125,7 +125,7 @@ func TestInitializeCarriesTheInstructions(t *testing.T) {
 		t.Fatalf("initialize: %+v", init)
 	}
 	// honest about what Odicea gives apps and what not yet, and points at the skill
-	for _, want := range []string{"create_database", "enable_ai", "request_secret", "Todavía no", "NO las crees en servicios externos", "skill", "Conecta tu asistente"} {
+	for _, want := range []string{"list_catalog", "create_resource", "create_database", "enable_ai", "request_secret", "Todavía no", "NO las crees en servicios externos", "skill", "Conecta tu asistente"} {
 		if !strings.Contains(init.Instructions, want) {
 			t.Errorf("instructions do not say %q", want)
 		}

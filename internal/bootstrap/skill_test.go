@@ -40,7 +40,9 @@ func TestSkillNamesRealTools(t *testing.T) {
 		// get_attention's result and the kinds the skill names
 		"all_in_order", "app_vulnerable", "deployment_failed",
 		// an app's parts: set_services' field and get_app's services[].state
-		"strip_prefix", "not_published"}
+		"strip_prefix", "not_published",
+		// the catalog: list_catalog's approval and limits, create_database's size
+		"needs_approval", "preapproved_max", "storage_gi"}
 	mentioned := map[string]bool{}
 	err := fs.WalkDir(skills.FS, "odicea", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

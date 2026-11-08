@@ -14,6 +14,7 @@ Ejemplos de lo que traen las reglas de serie:
 - Publicar una app de **Producción** necesita aprobación de TI.
 - Hacer **pública** una app necesita aprobación de TI; una app de **Sandbox** no puede ser pública.
 - Una app de Producción con vulnerabilidades críticas no se publica.
+- Crear un recurso con parámetros **fuera del rango preaprobado** del catálogo (por ejemplo una base más grande de lo que TI deja crear al instante) necesita aprobación de TI. `list_catalog` lo dice antes: `approval` y `preapproved_max` de cada parámetro.
 
 ## Cuando TI debe aprobar (`pending_approval`)
 

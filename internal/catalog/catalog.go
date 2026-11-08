@@ -273,6 +273,19 @@ type Entry struct {
 	Offering Offering `json:"offering"`
 }
 
+// Usable says why e cannot be created in tier on a cluster with caps (nil:
+// it can): a kind that is not available, a recipe not offered in the tier
+// (CodeUnavailable), or a cluster that cannot honour it (ClusterCannot).
+func (e Entry) Usable(tier project.Tier, caps []string) error {
+	if c, known := resourcekind.Lookup(e.Kind); !known || !c.Available || !e.Offering.Offers(tier) {
+		return Unavailable(e.Kind, tier)
+	}
+	if missing := resourcespec.Missing(e.Requires, caps); len(missing) > 0 {
+		return ClusterCannot(e.RecipeVersion, missing)
+	}
+	return nil
+}
+
 // Request is what someone asks the catalog for: a kind, maybe a recipe,
 // and parameters, in a tier, on a cluster with those capabilities.
 type Request struct {

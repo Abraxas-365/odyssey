@@ -43,4 +43,4 @@ Si `set_services` responde `pending_approval`, las reglas de TI piden aprobarlo:
 
 ## Dar algo solo a algunas partes
 
-`set_env`, `request_secret`, `create_database` y `enable_ai` aceptan `services`: la lista de partes que lo reciben (por ejemplo solo `api` recibe `DATABASE_URL` y solo `jobs` la llave de IA). Sin `services` lo recibe toda la app. Un volumen de archivos (`files`) en una app de varias partes va a una sola parte. Si falla con `SERVICE_SETTINGS_UNAVAILABLE`, el clúster todavía no puede darlo por parte: es de TI; mientras tanto, dáselo a toda la app si el usuario está de acuerdo.
+`set_env`, `request_secret`, `create_resource`, `create_database` y `enable_ai` aceptan `services`: la lista de partes que lo reciben (por ejemplo solo `api` recibe `DATABASE_URL` y solo `jobs` la llave de IA). Sin `services` lo recibe toda la app. Un volumen de archivos (`files`) en una app de varias partes va a una sola parte. Si falla con `SERVICE_SETTINGS_UNAVAILABLE`, el clúster todavía no puede darlo por parte: es de TI; mientras tanto, dáselo a toda la app si el usuario está de acuerdo.
