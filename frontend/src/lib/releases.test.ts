@@ -13,7 +13,7 @@ vi.mock('./api', async orig => ({
     return path.endsWith('/settings') ? settings : { settings: {}, deployment: null }
   }),
 }))
-const { loadSecretValue } = await import('./releases')
+const { loadSecretValue, currentPollMs, deploymentTurned, CURRENT_IDLE_POLL_MS, PUBLISHING_POLL_MS } = await import('./releases')
 
 // pkg/secretbox's fixed test key (vector_test.go).
 const PRIVATE = 'AAgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM01o='
@@ -68,5 +68,35 @@ describe('loadSecretValue', () => {
     settings = { secret_key: null, secrets: [] }
     await expect(loadSecretValue('p', 'e', 'X', 'x')).rejects.toMatchObject({ code: 'SECRETS_UNAVAILABLE' })
     expect(calls.some(c => c.options?.method === 'PUT')).toBe(false)
+  })
+})
+
+describe('currentPollMs', () => {
+  it('polls fast while a deployment is in progress', () => {
+    expect(currentPollMs({ active: { id: 'd-1' } } as never)).toBe(PUBLISHING_POLL_MS)
+  })
+
+  it('keeps polling slowly when nothing is in progress, so a deployment started elsewhere (an assistant, a push) shows up', () => {
+    expect(currentPollMs({ active: null } as never)).toBe(CURRENT_IDLE_POLL_MS)
+    expect(currentPollMs(undefined)).toBe(CURRENT_IDLE_POLL_MS)
+    expect(CURRENT_IDLE_POLL_MS).toBeGreaterThan(PUBLISHING_POLL_MS)
+  })
+})
+
+describe('deploymentTurned', () => {
+  const at = (id: string | null) => ({ active: id ? { id } : null }) as never
+
+  it('refreshes the environment when a deployment starts or settles, wherever it came from', () => {
+    expect(deploymentTurned(null, at('d-1'))).toBe(true)
+    expect(deploymentTurned('d-1', at(null))).toBe(true)
+    // one replaced by another between two answers
+    expect(deploymentTurned('d-1', at('d-2'))).toBe(true)
+  })
+
+  it('does nothing on the first answer or while nothing changes', () => {
+    expect(deploymentTurned(undefined, at('d-1'))).toBe(false)
+    expect(deploymentTurned(null, at(null))).toBe(false)
+    expect(deploymentTurned('d-1', at('d-1'))).toBe(false)
+    expect(deploymentTurned('d-1', undefined)).toBe(false)
   })
 })

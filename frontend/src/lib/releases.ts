@@ -25,6 +25,16 @@ import type {
 /** While something is being published the console polls every 2 s (plan 1a-a1). */
 export const PUBLISHING_POLL_MS = 2000
 
+/**
+ * How often an environment's current state is asked for: every 2 s while a
+ * deployment is in progress, otherwise every 15 s, because a deployment can
+ * start from elsewhere at any moment (an assistant over MCP, a GitHub push,
+ * another person) and the open page has to notice it without a reload.
+ * Background tabs do not poll (React Query's default).
+ */
+export const CURRENT_IDLE_POLL_MS = 15_000
+export const currentPollMs = (current: Pick<CurrentRelease, 'active'> | undefined) => (current?.active ? PUBLISHING_POLL_MS : CURRENT_IDLE_POLL_MS)
+
 const enc = encodeURIComponent
 const envPath = (project: string, env: string) => `/projects/${enc(project)}/environments/${enc(env)}`
 
@@ -44,14 +54,38 @@ export function useEnvironments(project: string) {
   })
 }
 
-/** What the environment serves; polls while a deployment is in progress. */
+/**
+ * Did a deployment start or settle since `prev` (the active deployment's id
+ * at the last answer; undefined before the first)? Then everything under the
+ * environment may have changed (its resources, settings, what it uses), even
+ * when nobody on this page did anything: an assistant over MCP or a GitHub
+ * push publishes from elsewhere.
+ */
+export const deploymentTurned = (prev: string | null | undefined, next: Pick<CurrentRelease, 'active'> | undefined) =>
+  prev !== undefined && !!next && (next.active?.id ?? null) !== prev
+
+/**
+ * What the environment serves; polls fast while a deployment is in progress,
+ * slowly otherwise (currentPollMs), and refreshes the whole environment when
+ * one starts or settles (deploymentTurned).
+ */
 export function useCurrent(project: string, env: string | undefined) {
-  return useQuery({
+  const qc = useQueryClient()
+  const query = useQuery({
     queryKey: releaseKeys.current(project, env ?? ''),
     queryFn: ({ signal }) => api<CurrentRelease>(`${envPath(project, env!)}/current`, { signal }),
     enabled: !!env,
-    refetchInterval: q => (q.state.data?.active ? PUBLISHING_POLL_MS : false),
+    refetchInterval: q => currentPollMs(q.state.data),
   })
+  const active = query.data ? (query.data.active?.id ?? null) : undefined
+  const prev = useRef<{ env: string | undefined; active: string | null | undefined }>({ env, active })
+  useEffect(() => {
+    // another environment starts from its own first answer
+    const was = prev.current.env === env ? prev.current.active : undefined
+    if (env && deploymentTurned(was, query.data)) void qc.invalidateQueries({ queryKey: releaseKeys.env(project, env) })
+    prev.current = { env, active }
+  }, [active, env, project, qc, query.data])
+  return query
 }
 
 /**
