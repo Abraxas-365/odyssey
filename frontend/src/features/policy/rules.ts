@@ -132,7 +132,9 @@ export function scenarioRecipe<E extends Pick<CatalogEntry, 'recipe' | 'kind' | 
   const of = scenarioRecipes(entries, s)
   if (s.recipe) return of.find(e => e.recipe === s.recipe)
   const here = of.filter(e => e.offering.active && e.offering.tiers.includes(s.tier))
-  const picked = here.find(e => e.offering.defaults.includes(s.tier)) ?? (here.length === 1 ? here[0] : undefined)
+  // the dry run asks for no one in particular: everyone's default, else a team's
+  const defaults = here.filter(e => e.offering.defaults.includes(s.tier))
+  const picked = (defaults.find(e => e.offering.teams.length === 0) ?? defaults[0]) ?? (here.length === 1 ? here[0] : undefined)
   return picked ?? (s.action === 'change_resource' ? of[0] : undefined)
 }
 

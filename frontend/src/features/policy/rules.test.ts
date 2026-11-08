@@ -173,6 +173,10 @@ describe('policy rules mapping', () => {
     expect(scenarioRecipe([basic, prod], { ...create, recipe: '' })?.recipe).toBe('postgres-produccion')
     expect(scenarioRecipe([basic, prod], { ...create, recipe: 'postgres-basico' })?.recipe).toBe('postgres-basico')
     expect(scenarioRecipe([e('a', []), e('b', [])], { ...create, recipe: '' })).toBeUndefined()
+    // a team's default and everyone's: the dry run asks for no one, so everyone's
+    const forTeam = catalogEntry({ recipe: 'team' }, { tiers: ['production'], defaults: ['production'], teams: ['grp_datos'] })
+    expect(scenarioRecipe([forTeam, prod], { ...create, recipe: '' })?.recipe).toBe('postgres-produccion')
+    expect(scenarioRecipe([forTeam, basic], { ...create, recipe: '' })?.recipe).toBe('team')
     // a create only picks what the tier is offered
     const off = e('off', [], false)
     expect(scenarioRecipes([basic, off], create).map(x => x.recipe)).toEqual(['postgres-basico'])
