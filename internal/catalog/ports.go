@@ -37,7 +37,11 @@ type Queries interface {
 	Resolve(ctx context.Context, organization identity.OrganizationID, request Request) (Resolved, error)
 	// ResolveChange checks a change of a resource's parameters against its
 	// pinned recipe@version as offered now: an immutable parameter that
-	// changes, or one that only grows going down, is refused.
+	// changes, or one that only grows going down, is refused. Only the
+	// values that change are judged (limits, pre-approved range); the rest
+	// stay as they are (a parameter the resource lacks takes its default,
+	// which is not a change). Change.Tier is not consulted: an offering
+	// withdrawn from the tier does not stop changing what exists.
 	ResolveChange(ctx context.Context, organization identity.OrganizationID, change Change) (Resolved, error)
 }
 

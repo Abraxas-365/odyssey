@@ -277,4 +277,37 @@ func TestResolveChangeFollowsMutability(t *testing.T) {
 	if _, err := svc.ResolveChange(ctx, org, catalog.Change{Recipe: catalog.PostgresProduction, Version: 7}); code(err) != catalog.CodeRecipeChanged {
 		t.Fatalf("unknown version: %v", err)
 	}
+	if _, err := svc.ResolveChange(ctx, org, catalog.Change{Recipe: catalog.PostgresProduction, Version: 1,
+		Current: map[string]int{catalog.ParamStorage: 10}, Params: map[string]int{"cpu": 2}}); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("unknown parameter: %v", err)
+	}
+}
+
+// Only what changes is judged: a value the resource already has stays even
+// when IT narrowed the offering since, and a parameter the resource lacks
+// (a version that added it) takes its default without being a change.
+func TestResolveChangeJudgesOnlyWhatChanges(t *testing.T) {
+	svc, _, _ := setup()
+	ctx, org := context.Background(), identity.NewOrganizationID()
+	if _, err := svc.UpdateOffering(ctx, org, catalog.PostgresProduction, catalog.UpdateOffering{UpdatedBy: user,
+		OfferingDraft: catalog.OfferingDraft{Version: 1, Active: true, Tiers: []project.Tier{project.TierProduction},
+			Limits: map[string]catalog.Range{catalog.ParamStorage: {Min: 5, Max: 30}}}}); err != nil {
+		t.Fatal(err)
+	}
+	// 60 GiB was fine when it was created; the limit is now 30
+	r, err := svc.ResolveChange(ctx, org, catalog.Change{Recipe: catalog.PostgresProduction, Version: 1,
+		Current: map[string]int{catalog.ParamStorage: 60}, Params: map[string]int{catalog.ParamStorage: 60}})
+	if err != nil || r.NeedsApproval() || r.Params[catalog.ParamStorage] != 60 {
+		t.Fatalf("unchanged value outside today's limits: %+v %v", r, err)
+	}
+	// growing past today's limit is refused
+	if _, err := svc.ResolveChange(ctx, org, catalog.Change{Recipe: catalog.PostgresProduction, Version: 1,
+		Current: map[string]int{catalog.ParamStorage: 60}, Params: map[string]int{catalog.ParamStorage: 70}}); code(err) != catalog.CodeOutOfLimits {
+		t.Fatalf("grow past the limit: %v", err)
+	}
+	// a resource without the parameter: it takes the default, nothing to approve
+	r, err = svc.ResolveChange(ctx, org, catalog.Change{Recipe: catalog.PostgresProduction, Version: 1, Current: map[string]int{}})
+	if err != nil || r.NeedsApproval() || r.Params[catalog.ParamStorage] != 10 {
+		t.Fatalf("missing parameter: %+v %v", r, err)
+	}
 }

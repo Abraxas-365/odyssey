@@ -34,7 +34,11 @@ func TestFactoryVersionsAreSound(t *testing.T) {
 			t.Errorf("%s requires %v, its spec needs %v", v.Ref(), got, want)
 		}
 		if _, ok := v.Param(catalog.ParamStorage); !ok {
-			t.Errorf("%s has no %s (the resource's size)", v.Ref(), catalog.ParamStorage)
+			// Today a resource's size is a column (resource.resources.storage_gi,
+			// with resources_params_check) and resourcepg.Change needs it. A
+			// recipe without one relaxes those first (a nullable column), then
+			// this check.
+			t.Errorf("%s has no %s (the resource's size, which resourcepg still requires)", v.Ref(), catalog.ParamStorage)
 		}
 		for _, p := range v.Params {
 			if p.Default < p.Min || p.Default > p.Max {

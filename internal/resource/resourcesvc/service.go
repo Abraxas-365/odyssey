@@ -271,7 +271,7 @@ func (s *Service) Change(ctx context.Context, org identity.OrganizationID, id pr
 	if err != nil {
 		return resource.View{}, err
 	}
-	if maps.Equal(resolved.Params, cur.Params) {
+	if unchanged(cur.Params, input.Params) {
 		// Nothing to change (nor to judge). An approved change that became a
 		// no-op is used up by the approval module after it runs.
 		return s.viewOf(ctx, p, cur)
@@ -317,6 +317,18 @@ func (s *Service) Change(ctx context.Context, org identity.OrganizationID, id pr
 		return resource.View{}, err
 	}
 	return s.viewOf(ctx, p, r)
+}
+
+// unchanged reports whether every value asked is what the resource already
+// has (a parameter it lacks, filled with its default by the catalog, is not
+// a change asked for).
+func unchanged(current, asked map[string]int) bool {
+	for name, v := range asked {
+		if c, ok := current[name]; !ok || c != v {
+			return false
+		}
+	}
+	return true
 }
 
 // recipeTitle words what a recipe prepares in a summary.

@@ -228,30 +228,42 @@ func (s *Service) ResolveChange(ctx context.Context, org identity.OrganizationID
 	// (they are about the parameter, not the version); an offering that is
 	// gone or inactive does not stop changing what already exists.
 	o := offs[ch.Recipe]
-	asked := make(map[string]int, len(v.Params))
+	for name := range ch.Params {
+		if _, ok := v.Param(name); !ok {
+			return catalog.Resolved{}, errx.InvalidField("params", v.Ref()+" has no parameter "+name)
+		}
+	}
+	// Only what changes is judged (limits, pre-approved range, mutability):
+	// a value the resource already has stays, even if IT narrowed the
+	// offering since, and a parameter it lacks takes its default without
+	// that counting as a change.
+	params := make(map[string]int, len(v.Params))
+	var outside []string
 	for _, p := range v.Params {
 		cur, has := ch.Current[p.Name]
-		want, changes := ch.Params[p.Name]
+		want, asked := ch.Params[p.Name]
 		switch {
-		case !changes && has:
-			asked[p.Name] = cur
-		case !changes:
+		case !asked || (has && want == cur):
+			if has {
+				params[p.Name] = cur
+			} else {
+				params[p.Name] = o.DefaultOf(p)
+			}
 			continue
-		case has && want != cur && p.Mutability == catalog.Immutable:
+		case has && p.Mutability == catalog.Immutable:
 			return catalog.Resolved{}, errx.InvalidField("params."+p.Name, p.Label+" no se puede cambiar después de crear el recurso")
 		case has && want < cur && p.Mutability == catalog.Grows:
 			return catalog.Resolved{}, errx.InvalidField("params."+p.Name, p.Label+" solo crece: no puede bajar de "+strconv.Itoa(cur))
-		default:
-			asked[p.Name] = want
 		}
+		if b := o.Bounds(p); want < b.Min || want > b.Max {
+			return catalog.Resolved{}, catalog.OutOfLimits(p, b)
+		}
+		if pre := o.PreapprovedRange(p); want < pre.Min || want > pre.Max {
+			outside = append(outside, p.Name)
+		}
+		params[p.Name] = want
 	}
-	params, outside, err := catalog.Check(v, o, asked)
-	if err != nil {
-		return catalog.Resolved{}, err
-	}
-	// Only what changes needs to be inside the pre-approved range: a value
-	// IT already accepted is not asked again.
-	outside = slices.DeleteFunc(outside, func(name string) bool { return ch.Current[name] == params[name] })
+	slices.Sort(outside)
 	return catalog.Resolved{Kind: v.Kind, Recipe: v.Recipe, Version: v.Version, Engine: v.Engine, Params: params,
 		Spec: v.Spec, OutOfRange: outside}, nil
 }
