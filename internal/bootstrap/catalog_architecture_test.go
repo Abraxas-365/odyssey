@@ -14,13 +14,19 @@ package bootstrap_test
 //	The control plane never branches on a resource kind: `case resourcekind.X` and `== / != resourcekind.X` are only in pkg/resourcekind; read the contract (`resourcekind.Of`)
 //	| `TestNoBranchOnResourceKind`
 //
+//	The agent's resource controller tells kinds apart only in its engine registry (agent/controllers/resource/engines.go)
+//	| `TestResourceEnginesAreTheOnlyKindSwitch`
+//
 //	A recipe version is written only in catalog/recipes.go and never changes once released; catalog imports no domain but the project kernel
 //	| `TestRecipeVersionsAreWrittenOnlyInTheFactory`, `TestReleasedVersionsNeverChange`
 
 import (
 	"go/ast"
+	"go/parser"
 	"go/token"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,6 +87,79 @@ func kindBranchViolations(files []goFile) []string {
 
 func TestNoBranchOnResourceKind(t *testing.T) {
 	report(t, kindBranchViolations(sources(t, false)))
+}
+
+// engineRegistryViolations: the agent's resource controller tells kinds
+// apart in one place, its engine registry (engines.go): a kind constant
+// (v1alpha1.ResourceX or resourcekind.X) named anywhere else in the package
+// is a switch the next kind would have to find. Tests may name kinds.
+func engineRegistryViolations(files []goFile) []string {
+	const dir = "agent/controllers/resource/"
+	agentKinds := map[string]bool{"ResourcePostgres": true, "ResourceRedis": true, "ResourceFiles": true, "ResourceObjectStorage": true}
+	var out []string
+	for _, f := range files {
+		if !strings.HasPrefix(f.rel, dir) || strings.Contains(strings.TrimPrefix(f.rel, dir), "/") ||
+			strings.HasSuffix(f.rel, "_test.go") || f.rel == dir+"engines.go" {
+			continue
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if x, ok := sel.X.(*ast.Ident); ok && (agentKinds[sel.Sel.Name] || (x.Name == "resourcekind" && kindConstants[sel.Sel.Name])) {
+				out = append(out, f.fset.Position(sel.Pos()).String()+": "+x.Name+"."+sel.Sel.Name+
+					" names a kind outside the engine registry (engines.go); add what the kind needs to its engine")
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestResourceEnginesAreTheOnlyKindSwitch(t *testing.T) {
+	dir := filepath.Join("..", "..", "agent", "controllers", "resource")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []goFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, goFile{rel: "agent/controllers/resource/" + e.Name(), file: f, fset: fset})
+	}
+	if len(files) == 0 {
+		t.Fatal("no sources in agent/controllers/resource")
+	}
+	report(t, engineRegistryViolations(files))
+}
+
+func TestEngineRegistryRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		"agent/controllers/resource/engines.go":  `package resource; var e = map[v1alpha1.ResourceKind]int{v1alpha1.ResourcePostgres: 1}`,
+		"agent/controllers/resource/x_test.go":   `package resource; var k = v1alpha1.ResourceRedis`,
+		"agent/controllers/app/a.go":             `package app; var k = v1alpha1.ResourceFiles`,
+		"agent/controllers/resource/postgres.go": `package resource; func f(o *v1alpha1.OdysseyResource) bool { return engines[o.Spec.Kind].apply != nil }`,
+	})
+	if v := engineRegistryViolations(files); len(v) != 0 {
+		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))
+	}
+	files = parseFixtures(t, map[string]string{
+		"agent/controllers/resource/teardown.go": `package resource; func f(k v1alpha1.ResourceKind) { switch k { case v1alpha1.ResourceRedis: } }`,
+		"agent/controllers/resource/names.go":    `package resource; func g(k resourcekind.Kind) bool { return k == resourcekind.Postgres }`,
+	})
+	expectViolations(t, engineRegistryViolations(files),
+		"agent/controllers/resource/names.go: resourcekind.Postgres names a kind outside the engine registry",
+		"agent/controllers/resource/teardown.go: v1alpha1.ResourceRedis names a kind outside the engine registry",
+	)
 }
 
 func TestKindBranchRuleCatchesViolations(t *testing.T) {

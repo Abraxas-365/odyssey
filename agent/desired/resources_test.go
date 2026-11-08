@@ -9,6 +9,7 @@ import (
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	"github.com/Abraxas-365/odyssey/agent/controllers/resource"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
@@ -214,6 +215,77 @@ func TestResourceKindsCapability(t *testing.T) {
 		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "std", Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"}}})
 	if got := s.Capabilities(context.Background()).GetResourceKinds(); strings.Join(got, ",") != "redis,files" {
 		t.Errorf("capabilities: %v", got)
+	}
+	if got := s.Capabilities(context.Background()).GetResourceCapabilities(); strings.Join(got, ",") != resourcespec.SpecV1 {
+		t.Errorf("without databases only the spec version: %v", got)
+	}
+}
+
+func TestResourceCapabilitiesFollowTheKinds(t *testing.T) {
+	if got := resourceCapabilities(nil); got == nil || len(got) != 0 {
+		t.Errorf("nothing to provision, nothing announced: %v", got)
+	}
+	got := resourceCapabilities([]string{"postgres", "redis", "files"})
+	want := []string{resourcespec.SpecV1, resourcespec.PostgresInstances, resourcespec.PostgresResources, resourcespec.PostgresVersion}
+	if !slices.IsSorted(got) || len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			t.Errorf("missing %s in %v", w, got)
+		}
+	}
+}
+
+func produccion() *fleetv1.Resource {
+	r := res(1)
+	r.Storage, r.Recipe, r.SpecSchemaVersion = "10Gi", "postgres-produccion@1", resourcespec.SchemaVersion
+	r.Spec = &fleetv1.Resource_BuiltinPostgres{BuiltinPostgres: &fleetv1.BuiltinPostgres{Instances: 2, Major: 17, Cpu: "1", Memory: "2Gi"}}
+	return r
+}
+
+func TestApplyResourceCarriesTheRecipeAndItsSettings(t *testing.T) {
+	s, c := newSyncer(t, interceptor.Funcs{})
+	if err := s.ApplyResource(context.Background(), produccion()); err != nil {
+		t.Fatal(err)
+	}
+	o := getRes(t, c)
+	p := o.Spec.Postgres
+	if o.Spec.Recipe != "postgres-produccion@1" || p == nil || p.Instances != 2 || p.Major != 17 || p.CPU != "1" || p.Memory != "2Gi" {
+		t.Fatalf("spec: %+v %+v", o.Spec, p)
+	}
+	// A basic resource says no settings.
+	if err := s.ApplyResource(context.Background(), res(2)); err != nil {
+		t.Fatal(err)
+	}
+	if o := getRes(t, c); o.Spec.Postgres != nil || o.Spec.Recipe != "" {
+		t.Errorf("basic: %+v", o.Spec)
+	}
+}
+
+func TestApplyResourceRefusesASpecItDoesNotKnow(t *testing.T) {
+	s, _ := newSyncer(t, interceptor.Funcs{})
+	for name, mut := range map[string]func(*fleetv1.Resource){
+		"newer spec":      func(r *fleetv1.Resource) { r.SpecSchemaVersion = resourcespec.SchemaVersion + 1 },
+		"no spec version": func(r *fleetv1.Resource) { r.SpecSchemaVersion = 0 },
+		"unknown spec":    func(r *fleetv1.Resource) { r.Spec = nil }, // a oneof arm newer than this agent
+		"kind mismatch":   func(r *fleetv1.Resource) { r.Kind = "redis" },
+		"major":           func(r *fleetv1.Resource) { r.GetBuiltinPostgres().Major = 15 },
+		"replicas":        func(r *fleetv1.Resource) { r.GetBuiltinPostgres().Instances = 9 },
+		"quantity":        func(r *fleetv1.Resource) { r.GetBuiltinPostgres().Memory = "much" },
+		"recipe":          func(r *fleetv1.Resource) { r.Recipe = strings.Repeat("x", MaxRecipe+1) },
+	} {
+		r := produccion()
+		mut(r)
+		var rej *Rejected
+		if err := s.ApplyResource(context.Background(), r); !errors.As(err, &rej) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	newer := produccion()
+	newer.SpecSchemaVersion = 2
+	if err := s.ApplyResource(context.Background(), newer); err == nil || !strings.Contains(err.Error(), "update the agent") {
+		t.Errorf("says the agent needs an update: %v", err)
 	}
 }
 

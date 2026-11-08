@@ -2,12 +2,16 @@ package fleetsvc_test
 
 import (
 	"context"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 func TestResourcesFailClosedWithoutTheKind(t *testing.T) {
@@ -126,5 +130,118 @@ func TestResourceReportedGoneIsForgottenAndAnnounced(t *testing.T) {
 	}
 	if got, _ := e.svc.DesiredResources(ctx, agent); len(got) != 0 {
 		t.Fatalf("still desired: %v", got)
+	}
+}
+
+// production is what postgres-produccion@1 resolves to.
+var production = resourcespec.Spec{Postgres: &resourcespec.Postgres{Instances: 2, Major: 17, CPU: "1", Memory: "2Gi"}}
+
+var specCaps = []string{resourcespec.SpecV1, resourcespec.PostgresInstances, resourcespec.PostgresVersion, resourcespec.PostgresResources}
+
+func TestARecipeGoesOnlyToAnAgentThatHonoursIt(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	agent := e.enrolled(t, "lima-1")
+	envID := project.NewEnvironmentID()
+	connect := func(caps ...string) {
+		t.Helper()
+		if err := e.svc.Connect(ctx, agent, fleet.NewSession(), fleet.Agent{Version: "v1",
+			Capabilities: fleet.Capabilities{ResourceKinds: []string{"postgres"}, ResourceCapabilities: caps}}, "10.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db := fleet.DesiredResource{Organization: e.org, Project: project.NewID(), Environment: envID, Name: "db", Kind: resourcekind.Postgres,
+		Generation: 1, StorageGi: 10, Recipe: "postgres-produccion@1", Spec: production}
+
+	// an agent older than the catalog would make a basic database instead
+	connect()
+	err := e.svc.ApplyResource(ctx, db)
+	if code(err) != fleet.CodeResourcesUnsupported || !errx.IsType(err, errx.TypeBusiness) || !strings.Contains(err.Error(), "actualización") {
+		t.Fatalf("recipe on an old agent: %v", err)
+	}
+	if d := err.(*errx.Error).Details["missing"]; d != "builtin:postgres:instances,builtin:postgres:resources,builtin:postgres:version,spec/v1" {
+		t.Fatalf("missing %v", d)
+	}
+	if caps, _ := e.svc.ResourceCapabilities(ctx, e.org, envID); !slices.Equal(caps, []string{"builtin:postgres"}) {
+		t.Fatalf("an old agent's capabilities %v", caps)
+	}
+	connect(resourcespec.SpecV1, resourcespec.PostgresInstances) // half of what it needs
+	if err := e.svc.ApplyResource(ctx, db); code(err) != fleet.CodeResourcesUnsupported {
+		t.Fatalf("recipe on an agent lacking some: %v", err)
+	}
+
+	connect(specCaps...)
+	if err := e.svc.ApplyResource(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := e.svc.DesiredResource(ctx, agent, envID, "db")
+	if err != nil || !ok || got.Recipe != "postgres-produccion@1" || !reflect.DeepEqual(got.Spec, production) {
+		t.Fatalf("stored %+v %v %v", got, ok, err)
+	}
+	if list, _ := e.svc.DesiredResources(ctx, agent); len(list) != 1 || !reflect.DeepEqual(list[0].Spec, production) {
+		t.Fatalf("listed %+v", list)
+	}
+	// a basic resource stays basic
+	basic := fleet.DesiredResource{Organization: e.org, Project: db.Project, Environment: envID, Name: "plain", Kind: resourcekind.Postgres,
+		Generation: 1, StorageGi: 1, Recipe: "postgres-basico@1"}
+	if err := e.svc.ApplyResource(ctx, basic); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := e.svc.DesiredResource(ctx, agent, envID, "plain"); !got.Spec.IsZero() || got.Spec.Postgres != nil {
+		t.Fatalf("basic spec %+v", got.Spec)
+	}
+	// an invalid spec never reaches the cluster
+	bad := db
+	bad.Name, bad.Spec = "bad", resourcespec.Spec{Postgres: &resourcespec.Postgres{Major: 12}}
+	if err := e.svc.ApplyResource(ctx, bad); !errx.IsType(err, errx.TypeValidation) {
+		t.Fatalf("invalid spec: %v", err)
+	}
+}
+
+func TestAMoveRefusesAClusterThatCannotHonourARecipe(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	first, second := e.enrolled(t, "lima-1"), e.enrolled(t, "lima-2")
+	connect := func(a fleet.AgentRef, caps ...string) {
+		t.Helper()
+		if err := e.svc.Connect(ctx, a, fleet.NewSession(), fleet.Agent{Version: "v1",
+			Capabilities: fleet.Capabilities{ResourceKinds: []string{"postgres"}, ResourceCapabilities: caps}}, "10.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connect(first, specCaps...)
+	connect(second) // older than the catalog
+	envID := project.NewEnvironmentID()
+	db := fleet.DesiredResource{Organization: e.org, Project: project.NewID(), Environment: envID, Name: "db", Kind: resourcekind.Postgres,
+		Generation: 1, StorageGi: 10, Recipe: "postgres-produccion@1", Spec: production}
+	if err := e.svc.ApplyResource(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := e.svc.DesiredResource(ctx, first, envID, "db"); got.Cluster != first.Cluster {
+		t.Fatalf("placed on %v", got.Cluster)
+	}
+	to := second.Cluster
+	err := e.svc.Revoke(ctx, e.org, first.Cluster, fleet.Revoke{MoveTo: &to, RevokedBy: e.user})
+	if code(err) != fleet.CodeResourcesUnsupported {
+		t.Fatalf("move to an agent that would make a basic database: %v", err)
+	}
+	var xe *errx.Error
+	if !errx.As(err, &xe) || xe.Details["environment"] != envID.String() || xe.Details["resource"] != "db" {
+		t.Errorf("the refusal says what holds the move back: %+v", xe)
+	}
+	if c, _ := e.svc.Find(ctx, e.org, first.Cluster); c.Status != fleet.StatusActive {
+		t.Fatal("a refused move still revoked the cluster")
+	}
+	if _, ok, _ := e.svc.DesiredResource(ctx, first, envID, "db"); !ok {
+		t.Fatal("a refused move moved the resource")
+	}
+
+	// once the target is updated, the move goes through
+	connect(second, specCaps...)
+	if err := e.svc.Revoke(ctx, e.org, first.Cluster, fleet.Revoke{MoveTo: &to, RevokedBy: e.user}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, _ := e.svc.DesiredResource(ctx, second, envID, "db"); !ok || !reflect.DeepEqual(got.Spec, production) {
+		t.Fatalf("moved %+v %v", got, ok)
 	}
 }

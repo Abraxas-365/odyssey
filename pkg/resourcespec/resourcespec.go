@@ -125,11 +125,15 @@ func quantity(s string) bool {
 	if len(s) > 16 {
 		return false
 	}
-	i := 0
-	for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '.') {
-		i++
+	i, dots, digits := 0, 0, 0
+	for ; i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '.'); i++ {
+		if s[i] == '.' {
+			dots++
+		} else {
+			digits++
+		}
 	}
-	if i == 0 {
+	if digits == 0 || dots > 1 {
 		return false
 	}
 	return slices.Contains([]string{"", "m", "Ki", "Mi", "Gi", "Ti", "k", "M", "G", "T"}, s[i:])

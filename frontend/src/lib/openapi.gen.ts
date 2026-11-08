@@ -2926,6 +2926,8 @@ export interface components {
                     storage_classes: string[];
                     /** @description The kinds of resources (`postgres`, `redis`, `files`) its agent can prepare; empty for an agent older than 2b. */
                     resource_kinds: string[];
+                    /** @description What its agent honours beyond a kind's basic resource (`spec/v1`, `builtin:postgres:instances`, `builtin:postgres:version`, `builtin:postgres:resources`; docs/resources.md); the catalog offers a recipe only where the cluster announces all it requires. Empty for an agent older than the catalog. */
+                    resource_capabilities: string[];
                 };
             };
             /** @description The client certificate its agent holds now. */

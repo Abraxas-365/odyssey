@@ -88,6 +88,9 @@ func (r clusterRow) cluster() (fleet.Cluster, error) {
 	if c.Agent.Capabilities.ResourceKinds == nil {
 		c.Agent.Capabilities.ResourceKinds = []string{}
 	}
+	if c.Agent.Capabilities.ResourceCapabilities == nil {
+		c.Agent.Capabilities.ResourceCapabilities = []string{}
+	}
 	return c, nil
 }
 

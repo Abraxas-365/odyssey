@@ -10,7 +10,7 @@ import (
 type ResourceKind string
 
 const (
-	ResourcePostgres ResourceKind = "postgres" // a CloudNativePG Cluster, one instance
+	ResourcePostgres ResourceKind = "postgres" // a CloudNativePG Cluster (spec.postgres)
 	ResourceRedis    ResourceKind = "redis"    // a Redis Deployment with a password and a volume
 	ResourceFiles    ResourceKind = "files"    // a PersistentVolumeClaim the app mounts
 )
@@ -32,6 +32,40 @@ type OdysseyResourceSpec struct {
 	// reports phase deleted and then removes this object.
 	// +optional
 	Deleted bool `json:"deleted,omitempty"`
+	// Recipe is the catalog recipe@version that resolved it
+	// ("postgres-produccion@1"), for people reading the cluster; the agent
+	// acts on the settings below only.
+	// +kubebuilder:validation:MaxLength=80
+	// +optional
+	Recipe string `json:"recipe,omitempty"`
+	// Postgres are the database's settings (kind postgres; none: one
+	// instance with the engine's defaults).
+	// +optional
+	Postgres *PostgresSettings `json:"postgres,omitempty"`
+}
+
+// PostgresSettings are how a CloudNativePG database runs. A zero field is
+// the engine's default.
+type PostgresSettings struct {
+	// Instances: 1 (no replica) to 5. They follow every change.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=5
+	// +optional
+	Instances int32 `json:"instances,omitempty"`
+	// Major is the PostgreSQL major version. It is fixed when the database
+	// is made: a different one later fails the resource (a major upgrade is
+	// a migration, not a setting).
+	// +kubebuilder:validation:Enum=0;16;17;18
+	// +optional
+	Major int32 `json:"major,omitempty"`
+	// CPU and Memory are Kubernetes quantities, each set as request and
+	// limit of every instance.
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	CPU string `json:"cpu,omitempty"`
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	Memory string `json:"memory,omitempty"`
 }
 
 // ResourcePhase is how the cluster sees the resource.
@@ -70,6 +104,7 @@ type OdysseyResourceStatus struct {
 // +kubebuilder:printcolumn:name="Observed",type=integer,JSONPath=`.status.observedGeneration`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Storage",type=string,JSONPath=`.spec.storage`
+// +kubebuilder:printcolumn:name="Recipe",type=string,JSONPath=`.spec.recipe`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type OdysseyResource struct {
 	metav1.TypeMeta   `json:",inline"`

@@ -55,7 +55,7 @@ func TestEventContracts(t *testing.T) {
 		fleet.NewSecretAcked(org, secretDelivery, ""),
 		fleet.NewSecretAcked(org, secretDelivery, "the value could not be opened with this cluster's key"),
 		fleet.NewResourceApplied(org, c, fleet.DesiredResource{Project: proj, Environment: env, Name: "db", Kind: resourcekind.Postgres,
-			Generation: 2, StorageGi: 5}, false),
+			Generation: 2, StorageGi: 5, Recipe: "postgres-produccion@1"}, false),
 		fleet.NewResourceRemoved(org, c, fleet.DesiredResource{Project: proj, Environment: env, Name: "db", Kind: resourcekind.Postgres}),
 		fleet.NewEgressChanged(org, user, c, fleet.EgressSetting{Egress: fleet.DefaultEgress(), Generation: 1},
 			fleet.EgressSetting{Egress: fleet.Egress{Mode: fleet.EgressRestricted, Allow: []string{"203.0.113.0/24"}}, Generation: 2}),

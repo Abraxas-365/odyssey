@@ -317,6 +317,9 @@ type ResourceApplied struct {
 	Deleted     bool      `json:"deleted"`
 	// Placed is true when this placed the environment on the cluster.
 	Placed bool `json:"placed"`
+	// Recipe is the recipe@version that resolved it (absent before the
+	// catalog).
+	Recipe string `json:"recipe,omitempty"`
 }
 
 func NewResourceApplied(org identity.OrganizationID, c Cluster, r DesiredResource, placed bool) event.Event {
@@ -327,7 +330,7 @@ func NewResourceApplied(org identity.OrganizationID, c Cluster, r DesiredResourc
 	return event.New(EventResourceApplied, 1, org, identity.UserID{}, event.Subject(SubjectKind, c.ID),
 		what+" el recurso "+r.Name+" al clúster "+c.Name,
 		ResourceApplied{Cluster: c.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind),
-			Generation: r.Generation, StorageGi: r.StorageGi, Deleted: r.Deleted, Placed: placed})
+			Generation: r.Generation, StorageGi: r.StorageGi, Deleted: r.Deleted, Placed: placed, Recipe: r.Recipe})
 }
 
 // ResourceRemoved v1: the cluster reported a resource that was being deleted

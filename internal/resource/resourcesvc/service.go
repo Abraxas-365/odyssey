@@ -103,6 +103,15 @@ func (s *Service) place(ctx context.Context, org identity.OrganizationID, id pro
 	return p, e, nil
 }
 
+// apply has the cluster hold r as it now is (in the caller's transaction).
+func (s *Service) apply(ctx context.Context, r resource.Resource) error {
+	d, err := resource.DesiredOf(r)
+	if err != nil {
+		return err
+	}
+	return s.cluster.Apply(ctx, d)
+}
+
 func names(p project.Project, e project.Environment) resource.Names {
 	return resource.Names{Project: p.Name, Environment: e.Slug}
 }
@@ -210,9 +219,10 @@ func (s *Service) Create(ctx context.Context, org identity.OrganizationID, id pr
 		if err := s.repo.Create(ctx, r); err != nil {
 			return err
 		}
-		// A cluster that cannot prepare the kind refuses here and the row
-		// above is rolled back: nothing waits for a resource that never comes.
-		if err := s.cluster.Apply(ctx, resource.DesiredOf(r)); err != nil {
+		// A cluster that cannot prepare the kind (or the recipe) refuses here
+		// and the row above is rolled back: nothing waits for a resource that
+		// never comes.
+		if err := s.apply(ctx, r); err != nil {
 			return err
 		}
 		if err := s.events.Publish(ctx, resource.NewCreated(org, input.RequestedBy, r, names(p, e))); err != nil {
@@ -307,7 +317,7 @@ func (s *Service) Change(ctx context.Context, org identity.OrganizationID, id pr
 		if err := s.repo.Change(ctx, org, e.ID, name, r.Params, r.Generation); err != nil {
 			return err
 		}
-		if err := s.cluster.Apply(ctx, resource.DesiredOf(r)); err != nil {
+		if err := s.apply(ctx, r); err != nil {
 			return err
 		}
 		// Every parameter today is the size: a change is a resize.
@@ -397,7 +407,7 @@ func (s *Service) Delete(ctx context.Context, org identity.OrganizationID, id pr
 		if err := s.repo.MarkDeleting(ctx, org, e.ID, name, r.Generation); err != nil {
 			return err
 		}
-		if err := s.cluster.Apply(ctx, resource.DesiredOf(r)); err != nil {
+		if err := s.apply(ctx, r); err != nil {
 			return err
 		}
 		return s.events.Publish(ctx, resource.NewDeleted(org, input.RequestedBy, r, names(p, e)))

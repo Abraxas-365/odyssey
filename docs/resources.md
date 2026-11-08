@@ -12,12 +12,42 @@ What the cluster needs, and what the agent says it can do (`Capabilities.resourc
 
 | Kind | Needs | Made as |
 |---|---|---|
-| `postgres` | the CloudNativePG operator (API group `postgresql.cnpg.io`) **and** a default StorageClass | a CNPG `Cluster` named after the resource (1 instance, database and owner `app`) |
+| `postgres` | the CloudNativePG operator (API group `postgresql.cnpg.io`) **and** a default StorageClass | a CNPG `Cluster` named after the resource (database and owner `app`; 1 instance unless its recipe says otherwise, see below) |
 | `redis` | a default StorageClass | Secret, PVC, Deployment (Recreate) and Service, all `<name>-redis` |
 | `files` | a default StorageClass | a PVC `<name>-files` (ReadWriteOnce) |
 
 A cluster without the operator or the class simply does not list the kind; the
 control plane refuses to create it there.
+
+### Recipe settings (catalog, stage 1a cut 4)
+
+A resource is made from a catalog recipe version (`recipe@N`). A basic recipe
+(`postgres-basico@1`, …) has no settings: the agent makes the resource as in the
+table above. Others carry a **spec** (`pkg/resourcespec`, schema version 1),
+sent in `Resource.builtin_postgres` with `spec_schema_version` and written to
+`OdysseyResource.spec.postgres` (+ `spec.recipe`, for people reading the
+cluster):
+
+| Setting | On create | On a running database |
+|---|---|---|
+| `instances` (1–5) | `spec.instances` | follows it (CloudNativePG rolls replicas) |
+| `major` (16, 17, 18) | `spec.imageName`: the CNPG image of that major, pinned by digest (`resource.PostgresImages`) | **never changes**: a different major fails the resource ("a major upgrade is a migration, not a setting"); the running major is read from `spec.imageName`, else `status.image`, and left alone when neither says |
+| `cpu`, `memory` | `spec.resources` (request = limit) | each one the recipe sets follows it; whatever else `spec.resources` holds stays |
+
+What an agent honours it announces in `Capabilities.resource_capabilities`
+(`spec/v1`, and `builtin:postgres:instances|version|resources` where it makes
+databases); the control plane adds `builtin:<kind>` for each of
+`resource_kinds`. It fails closed in three places, each saying which
+capability is missing (`RESOURCES_UNSUPPORTED`, "su agente necesita una
+actualización"): creating or changing a resource, moving an environment to
+another cluster (its resources are checked against the destination), and the
+agent itself, which refuses a `spec_schema_version` newer than it knows instead
+of making a basic resource. Known limit: downgrading an agent below what its
+resources need is not detected until they next change.
+
+Inside the agent each kind is one **engine** (`agent/controllers/resource/engines.go`:
+apply, remove, connection); the controller never switches on a kind elsewhere
+(`TestResourceEnginesAreTheOnlyKindSwitch`).
 
 ### Install the operator
 

@@ -10,9 +10,11 @@ import (
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
 	"github.com/Abraxas-365/odyssey/agent/controllers/resource"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	k8sresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -42,7 +44,58 @@ func ValidResource(r *fleetv1.Resource) error {
 	if _, err := resourcekind.ParseStorage(r.GetStorage()); err != nil {
 		return err
 	}
+	// A spec this agent does not know would be prepared as a basic resource:
+	// refuse it so the control plane says the agent needs an update.
+	if v := r.GetSpecSchemaVersion(); v < 0 || v > resourcespec.SchemaVersion {
+		return fmt.Errorf("resource spec version %d is newer than this agent knows (%d): update the agent", v, resourcespec.SchemaVersion)
+	}
+	if r.GetSpecSchemaVersion() == 0 && r.GetSpec() != nil {
+		return errors.New("resource has a spec but no spec version")
+	}
+	// A spec version with no spec this agent reads is a kind of settings it
+	// does not know (a newer arm of the oneof): never a basic resource.
+	if r.GetSpecSchemaVersion() > 0 && specOf(r).IsZero() {
+		return errors.New("resource has settings this agent does not know: update the agent")
+	}
+	if len(r.GetRecipe()) > MaxRecipe {
+		return fmt.Errorf("resource recipe is longer than %d characters", MaxRecipe)
+	}
+	spec := specOf(r)
+	if err := spec.Validate(resourcekind.Kind(r.GetKind())); err != nil {
+		return err
+	}
+	if p := spec.Postgres; p != nil {
+		for _, q := range []string{p.CPU, p.Memory} {
+			if _, err := k8sresource.ParseQuantity(q); q != "" && err != nil {
+				return fmt.Errorf("resource quantity %q: %w", q, err)
+			}
+		}
+	}
 	return nil
+}
+
+// MaxRecipe bounds Resource.recipe (the CRD says the same).
+const MaxRecipe = 80
+
+// specOf is the proto's spec as both planes describe it.
+func specOf(r *fleetv1.Resource) resourcespec.Spec {
+	p := r.GetBuiltinPostgres()
+	if p == nil {
+		return resourcespec.Spec{}
+	}
+	return resourcespec.Spec{Postgres: &resourcespec.Postgres{
+		Instances: int(p.GetInstances()), Major: int(p.GetMajor()), CPU: p.GetCpu(), Memory: p.GetMemory(),
+	}}
+}
+
+// postgresSettings is the CRD's form of the spec's database settings (nil:
+// the basic database).
+func postgresSettings(s resourcespec.Spec) *v1alpha1.PostgresSettings {
+	if s.IsZero() {
+		return nil
+	}
+	p := s.Postgres
+	return &v1alpha1.PostgresSettings{Instances: int32(p.Instances), Major: int32(p.Major), CPU: p.CPU, Memory: p.Memory}
 }
 
 func validResourceRefs(refs []*fleetv1.ResourceRef) error {
@@ -97,6 +150,23 @@ func resourceKinds(c *fleetv1.Capabilities) []string {
 	return append(out, string(resourcekind.Redis), string(resourcekind.Files))
 }
 
+// resourceCapabilities are what this agent honours beyond a kind's basic
+// resource, given the kinds it can provision: it reads a spec of
+// resourcespec.SchemaVersion, and the database settings when it makes
+// databases (sorted).
+func resourceCapabilities(kinds []string) []string {
+	out := []string{}
+	if len(kinds) == 0 {
+		return out
+	}
+	out = append(out, resourcespec.SpecV1)
+	if slices.Contains(kinds, string(resourcekind.Postgres)) {
+		out = append(out, resourcespec.PostgresInstances, resourcespec.PostgresVersion, resourcespec.PostgresResources)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // ApplyResource writes the desired resource unless the cluster already has a
 // newer generation, or the same one with the same spec. Errors are as
 // Apply's: a plain one is retried, a *Rejected is final. A resource whose
@@ -120,6 +190,7 @@ func (s *Syncer) ApplyResource(ctx context.Context, r *fleetv1.Resource) error {
 	}
 	spec := v1alpha1.OdysseyResourceSpec{
 		Kind: v1alpha1.ResourceKind(r.GetKind()), Generation: r.GetGeneration(), Storage: r.GetStorage(), Deleted: r.GetDeleted(),
+		Recipe: r.GetRecipe(), Postgres: postgresSettings(specOf(r)),
 	}
 	ns := Namespace(r.GetEnvironmentId())
 	var cur v1alpha1.OdysseyResource

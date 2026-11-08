@@ -761,6 +761,7 @@ func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
 	slices.Sort(out.IngressClasses)
 	slices.Sort(out.StorageClasses)
 	out.ResourceKinds = resourceKinds(out)
+	out.ResourceCapabilities = resourceCapabilities(out.ResourceKinds)
 	out.SecretStores = []string{}
 	if slices.Contains(out.Apis, ExternalSecretsGroup) {
 		out.SecretStores = s.secretStores(ctx, reader)

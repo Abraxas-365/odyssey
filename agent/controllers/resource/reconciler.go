@@ -145,14 +145,9 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		obs observation
 		err error
 	)
-	switch o.Spec.Kind {
-	case v1alpha1.ResourcePostgres:
-		obs, err = r.postgres(ctx, &o)
-	case v1alpha1.ResourceRedis:
-		obs, err = r.redis(ctx, &o)
-	case v1alpha1.ResourceFiles:
-		obs, err = r.files(ctx, &o)
-	default:
+	if e, ok := engines[o.Spec.Kind]; ok {
+		obs, err = e.apply(r, ctx, &o)
+	} else {
 		obs = failed(fmt.Sprintf("unknown resource kind %q", o.Spec.Kind))
 	}
 	if err != nil {

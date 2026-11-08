@@ -165,6 +165,10 @@ type Capabilities struct {
 	// ResourceKinds are the resources the cluster can provision (2b):
 	// "postgres", "redis", "files". An agent older than 2b lists none.
 	ResourceKinds []string `json:"resource_kinds"`
+	// ResourceCapabilities are what the agent honours beyond a kind's basic
+	// resource ("spec/v1", "builtin:postgres:instances"…; pkg/resourcespec).
+	// An agent older than the catalog lists none.
+	ResourceCapabilities []string `json:"resource_capabilities"`
 }
 
 // SecretKey is a cluster's public key for managed secrets (pkg/secretbox).
@@ -229,14 +233,14 @@ const (
 
 // Validate bounds what an agent says of itself.
 func (a Agent) Validate() error {
-	if len(a.Capabilities.ResourceKinds) > MaxReported {
+	if len(a.Capabilities.ResourceKinds) > MaxReported || len(a.Capabilities.ResourceCapabilities) > MaxReported {
 		return errx.Validation("too many capabilities reported")
 	}
 	if len(a.Capabilities.APIs) > MaxReported || len(a.Capabilities.IngressClasses) > MaxReported || len(a.Capabilities.StorageClasses) > MaxReported {
 		return errx.Validation("too many capabilities reported")
 	}
-	for _, s := range append(append(append([]string{a.Version, a.Capabilities.KubernetesVersion}, a.Capabilities.APIs...),
-		a.Capabilities.IngressClasses...), a.Capabilities.StorageClasses...) {
+	for _, s := range slices.Concat([]string{a.Version, a.Capabilities.KubernetesVersion}, a.Capabilities.APIs,
+		a.Capabilities.IngressClasses, a.Capabilities.StorageClasses, a.Capabilities.ResourceCapabilities) {
 		if utf8.RuneCountInString(s) > MaxReportedText || text.HasForbiddenControl(s) {
 			return errx.Validation("a reported capability is not valid")
 		}

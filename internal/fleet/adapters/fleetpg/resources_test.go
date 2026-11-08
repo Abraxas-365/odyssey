@@ -1,12 +1,14 @@
 package fleetpg_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 func TestDesiredResources(t *testing.T) {
@@ -147,6 +149,63 @@ func TestDesiredResources(t *testing.T) {
 	}
 	_, err = repo.FindResourceStatus(ctx, org, environment, "db")
 	notFound(t, "status after the move", err)
+}
+
+// A recipe's spec and ref are stored and read back as they went in, change
+// with a newer generation, and the environment's resources are listed for
+// one tenant and cluster only.
+func TestDesiredResourceSpec(t *testing.T) {
+	e := setup(t)
+	ctx, repo := e.ctx, e.repo
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	c, theirs := e.create(org, "lima"), e.create(other, "lima")
+	e.enrol(c, "s1")
+	e.enrol(theirs, "s2")
+	proj, environment, elsewhere := project.NewID(), project.NewEnvironmentID(), project.NewEnvironmentID()
+	for _, env := range []project.EnvironmentID{environment, elsewhere} {
+		if _, err := repo.Place(ctx, org, proj, env, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := resourcespec.Spec{Postgres: &resourcespec.Postgres{Instances: 2, Major: 17, CPU: "1", Memory: "2Gi"}}
+	db := fleet.DesiredResource{Organization: org, Project: proj, Environment: environment, Cluster: c.ID, Name: "db",
+		Kind: resourcekind.Postgres, Generation: 1, StorageGi: 10, Recipe: "postgres-produccion@1", Spec: spec}
+	plain := fleet.DesiredResource{Organization: org, Project: proj, Environment: elsewhere, Cluster: c.ID, Name: "cache",
+		Kind: resourcekind.Redis, Generation: 1, StorageGi: 1}
+	for _, d := range []fleet.DesiredResource{db, plain} {
+		if _, err := repo.PutResource(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := repo.FindResource(ctx, org, c.ID, environment, "db")
+	if err != nil || got.Recipe != db.Recipe || !reflect.DeepEqual(got.Spec, spec) {
+		t.Fatalf("find %+v %v", got, err)
+	}
+	if got, _ := repo.FindResource(ctx, org, c.ID, elsewhere, "cache"); got.Recipe != "" || got.Spec.Postgres != nil {
+		t.Fatalf("a resource without a recipe %+v", got)
+	}
+	grown := db
+	grown.Generation, grown.Spec = 2, resourcespec.Spec{Postgres: &resourcespec.Postgres{Instances: 3, Major: 17}}
+	if changed, err := repo.PutResource(ctx, grown); err != nil || !changed {
+		t.Fatalf("put %v %v", changed, err)
+	}
+	if got, _ := repo.FindResource(ctx, org, c.ID, environment, "db"); !reflect.DeepEqual(got.Spec, grown.Spec) {
+		t.Fatalf("spec after a change %+v", got.Spec)
+	}
+
+	list, err := repo.ListEnvironmentResources(ctx, org, c.ID, environment)
+	if err != nil || len(list) != 1 || list[0].Name != "db" || !reflect.DeepEqual(list[0].Spec, grown.Spec) {
+		t.Fatalf("environment resources %+v %v", list, err)
+	}
+	if list, err := repo.ListEnvironmentResources(ctx, other, c.ID, environment); err != nil || len(list) != 0 {
+		t.Fatalf("another tenant lists %v %v", list, err)
+	}
+	if list, _ := repo.ListEnvironmentResources(ctx, other, theirs.ID, environment); len(list) != 0 {
+		t.Fatalf("another tenant's cluster lists %v", list)
+	}
+	if list, _ := repo.ListEnvironmentResources(ctx, org, theirs.ID, environment); len(list) != 0 {
+		t.Fatalf("another cluster lists %v", list)
+	}
 }
 
 // A full report lists every resource of the cluster: the status of one it

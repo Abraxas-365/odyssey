@@ -7,5 +7,6 @@
   "generation": 2,
   "storage_gi": 5,
   "deleted": false,
-  "placed": false
+  "placed": false,
+  "recipe": "postgres-produccion@1"
 }

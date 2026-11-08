@@ -138,3 +138,26 @@ func TestView(t *testing.T) {
 		t.Fatalf("connected %+v", v)
 	}
 }
+
+func TestDesiredOfCarriesThePinnedSpec(t *testing.T) {
+	r := resource.Resource{Name: "db", Kind: resourcekind.Postgres, Recipe: "postgres-produccion", RecipeVersion: 1, StorageGi: 10, Generation: 1}
+	d, err := resource.DesiredOf(r)
+	if err != nil || d.Recipe != "postgres-produccion@1" || d.Spec.Postgres == nil || d.Spec.Postgres.Instances != 2 {
+		t.Fatalf("%+v %v", d, err)
+	}
+	r.Recipe, r.RecipeVersion = "postgres-basico", 1
+	if d, err = resource.DesiredOf(r); err != nil || !d.Spec.IsZero() || d.Recipe != "postgres-basico@1" {
+		t.Fatalf("basic: %+v %v", d, err)
+	}
+
+	// A version this binary does not know is never sent as a basic resource...
+	r.Recipe, r.RecipeVersion = "postgres-produccion", 99
+	if _, err := resource.DesiredOf(r); !errx.IsType(err, errx.TypeInternal) {
+		t.Fatalf("unknown version: %v", err)
+	}
+	// ...but it can still be deleted: the agent only removes it.
+	r.Status = resource.StatusDeleting
+	if d, err = resource.DesiredOf(r); err != nil || !d.Deleted || !d.Spec.IsZero() {
+		t.Fatalf("deleting: %+v %v", d, err)
+	}
+}

@@ -3,6 +3,7 @@ package fleet
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/text"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 // Resources (2b). A resource (a database, a cache, a files volume) belongs to
@@ -50,6 +52,40 @@ func (c Capabilities) CanProvision(kind resourcekind.Kind) bool {
 	return slices.Contains(c.ResourceKinds, string(kind))
 }
 
+// Resources are every resource capability the cluster announces: the
+// built-in engine of each kind it lists (resourcespec.Builtin, what an agent
+// older than the catalog means by listing a kind) and its
+// ResourceCapabilities, sorted and without repeats.
+func (c Capabilities) Resources() []string {
+	out := make([]string, 0, len(c.ResourceKinds)+len(c.ResourceCapabilities))
+	for _, k := range c.ResourceKinds {
+		out = append(out, resourcespec.Builtin(resourcekind.Kind(k)))
+	}
+	out = append(out, c.ResourceCapabilities...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// CheckResource is ApplyResource's guard (and a move's, for every resource
+// of the environment): the cluster must provision the kind and honour
+// everything the spec requires. A missing kind is CodeResourcesUnavailable
+// as always; a missing capability is CodeResourcesUnsupported, naming it.
+func (c Capabilities) CheckResource(kind resourcekind.Kind, spec resourcespec.Spec) error {
+	if !c.CanProvision(kind) {
+		return errx.Business(ResourcesUnavailableMessage(kind)).WithCode(CodeResourcesUnavailable).WithDetail("kind", string(kind))
+	}
+	if missing := resourcespec.Missing(spec.Requires(kind), c.Resources()); len(missing) > 0 {
+		return errx.Business("El clúster de este entorno no puede preparar "+resourcekind.Of(kind).The()+
+			" como lo pide su receta: su agente necesita una actualización ("+strings.Join(missing, ", ")+").").
+			WithCode(CodeResourcesUnsupported).WithDetail("kind", string(kind)).WithDetail("missing", strings.Join(missing, ","))
+	}
+	return nil
+}
+
+// CodeResourcesUnsupported: the cluster provisions the kind but not as the
+// resource's recipe asks (its agent lacks a capability the spec requires).
+const CodeResourcesUnsupported = "RESOURCES_UNSUPPORTED"
+
 // CheckResources is Apply's guard: a cluster that cannot provision a kind
 // must not get an app (or a resource) that waits for it.
 func (c Capabilities) CheckResources(refs []ResourceRef) error {
@@ -76,10 +112,19 @@ type DesiredResource struct {
 	Generation int64 `json:"generation" db:"generation"`
 	// StorageGi is the volume's size; it only grows.
 	StorageGi int `json:"storage_gi" db:"storage_gi"`
+	// Recipe is the catalog recipe@version that resolved it ("" before the
+	// catalog), shown in the cluster; the agent acts on Spec.
+	Recipe string `json:"recipe,omitempty" db:"recipe"`
+	// Spec is how the kind's engine prepares it (zero: the basic resource).
+	// The cluster must announce everything Spec.Requires(Kind).
+	Spec resourcespec.Spec `json:"spec" db:"-"`
 	// Deleted: the resource and its data are to be removed.
 	Deleted   bool      `json:"deleted" db:"deleted"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
+
+// MaxRecipeRef bounds DesiredResource.Recipe.
+const MaxRecipeRef = 80
 
 // Validate guards the fleet's invariants of a desired resource.
 func (r DesiredResource) Validate() error {
@@ -94,6 +139,11 @@ func (r DesiredResource) Validate() error {
 		return errx.Validation("resource generation must be positive")
 	case r.StorageGi < resourcekind.MinStorageGi || r.StorageGi > resourcekind.MaxStorageGi:
 		return errx.Validation(fmt.Sprintf("resource size is between %dGi and %dGi", resourcekind.MinStorageGi, resourcekind.MaxStorageGi))
+	case len(r.Recipe) > MaxRecipeRef || text.HasForbiddenControl(r.Recipe):
+		return errx.Validation("resource recipe is too long or has control characters")
+	}
+	if err := r.Spec.Validate(r.Kind); err != nil {
+		return errx.Validation(err.Error())
 	}
 	return nil
 }

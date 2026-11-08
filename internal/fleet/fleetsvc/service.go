@@ -214,6 +214,11 @@ func (s *Service) move(ctx context.Context, from fleet.Cluster, to fleet.Cluster
 	}
 	moved := fleet.Moved{Environments: []project.EnvironmentID{}}
 	for _, env := range envs {
+		// A cluster that cannot prepare a resource as its recipe asks must
+		// not get it (an older agent would make a basic one in its place).
+		if err := s.checkResourcesFit(ctx, from, env, target); err != nil {
+			return fleet.Moved{}, err
+		}
 		n, err := s.repo.MovePlacement(ctx, from.Organization, env, from.ID, target.ID)
 		if errx.IsType(err, errx.TypeNotFound) {
 			continue
@@ -227,6 +232,29 @@ func (s *Service) move(ctx context.Context, from fleet.Cluster, to fleet.Cluster
 		return moved, nil // nothing was there: nothing changed
 	}
 	return moved, s.events.Publish(ctx, fleet.NewAppsMoved(from.Organization, actor, from, target, moved))
+}
+
+// checkResourcesFit refuses a move that would send target a resource of env
+// it cannot prepare as desired (deleted ones it only removes).
+func (s *Service) checkResourcesFit(ctx context.Context, from fleet.Cluster, env project.EnvironmentID, target fleet.Cluster) error {
+	resources, err := s.repo.ListEnvironmentResources(ctx, from.Organization, from.ID, env)
+	if err != nil {
+		return err
+	}
+	for _, d := range resources {
+		if d.Deleted {
+			continue
+		}
+		if err := target.Agent.Capabilities.CheckResource(d.Kind, d.Spec); err != nil {
+			// Say which one, so whoever moves knows what holds it back.
+			var e *errx.Error
+			if errx.As(err, &e) {
+				return e.WithDetail("environment", env.String()).WithDetail("resource", d.Name)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // token builds an enrolment token with what the agent needs to reach and

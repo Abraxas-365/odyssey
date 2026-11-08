@@ -4,20 +4,22 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
+	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 )
 
 func agentFromProto(h *fleetv1.Hello) fleet.Agent {
 	c := h.GetCapabilities()
 	return fleet.Agent{Version: h.GetAgentVersion(), Capabilities: fleet.Capabilities{
-		KubernetesVersion: c.GetKubernetesVersion(),
-		APIs:              nonNil(c.GetApis()),
-		IngressClasses:    nonNil(c.GetIngressClasses()),
-		StorageClasses:    nonNil(c.GetStorageClasses()),
-		Builder:           builderFromProto(c.GetBuilder()),
-		SecretKey:         secretKeyFromProto(c.GetSecretKey()),
-		SecretStores:      nonNil(c.GetSecretStores()),
-		ResourceKinds:     nonNil(c.GetResourceKinds()),
+		KubernetesVersion:    c.GetKubernetesVersion(),
+		APIs:                 nonNil(c.GetApis()),
+		IngressClasses:       nonNil(c.GetIngressClasses()),
+		StorageClasses:       nonNil(c.GetStorageClasses()),
+		Builder:              builderFromProto(c.GetBuilder()),
+		SecretKey:            secretKeyFromProto(c.GetSecretKey()),
+		SecretStores:         nonNil(c.GetSecretStores()),
+		ResourceKinds:        nonNil(c.GetResourceKinds()),
+		ResourceCapabilities: nonNil(c.GetResourceCapabilities()),
 	}}
 }
 
@@ -176,10 +178,21 @@ func buildLogFromProto(l *fleetv1.BuildLog) (fleet.BuildLog, error) {
 }
 
 func resourceToProto(d fleet.DesiredResource) *fleetv1.ControlMessage {
-	return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_Resource{Resource: &fleetv1.Resource{
+	out := &fleetv1.Resource{
 		OrganizationId: d.Organization.String(), ProjectId: d.Project.String(), EnvironmentId: d.Environment.String(),
 		Name: d.Name, Kind: string(d.Kind), Generation: d.Generation, Storage: resourcekind.Storage(d.StorageGi), Deleted: d.Deleted,
-	}}}
+		Recipe: d.Recipe,
+	}
+	// A basic resource carries no spec: an agent older than the catalog
+	// reads exactly what it always did.
+	if !d.Spec.IsZero() {
+		out.SpecSchemaVersion = resourcespec.SchemaVersion
+		p := d.Spec.Postgres
+		out.Spec = &fleetv1.Resource_BuiltinPostgres{BuiltinPostgres: &fleetv1.BuiltinPostgres{
+			Instances: int32(p.Instances), Major: int32(p.Major), Cpu: p.CPU, Memory: p.Memory,
+		}}
+	}
+	return &fleetv1.ControlMessage{Message: &fleetv1.ControlMessage_Resource{Resource: out}}
 }
 
 // resourceReportFromProto rejects the whole report when a status is

@@ -28,7 +28,7 @@ func (s *Service) ApplyResource(ctx context.Context, d fleet.DesiredResource) er
 			return err
 		}
 		if !d.Deleted {
-			if err := c.Agent.Capabilities.CheckResources([]fleet.ResourceRef{{Name: d.Name, Kind: d.Kind}}); err != nil {
+			if err := c.Agent.Capabilities.CheckResource(d.Kind, d.Spec); err != nil {
 				return err
 			}
 		}
@@ -51,22 +51,10 @@ func (s *Service) ResourceStatus(ctx context.Context, organization identity.Orga
 
 // ResourceKinds answers fleet.Resources.ResourceKinds without placing anything.
 func (s *Service) ResourceKinds(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resourcekind.Kind, error) {
-	var c fleet.Cluster
-	id, err := s.repo.FindPlacement(ctx, organization, environment)
-	switch {
-	case errx.IsType(err, errx.TypeNotFound):
-		if c, err = s.repo.FindDefaultCluster(ctx, organization); errx.IsType(err, errx.TypeNotFound) {
-			return []resourcekind.Kind{}, nil
-		}
-	case err == nil:
-		c, err = s.repo.FindCluster(ctx, organization, id)
-	}
-	if err != nil {
-		return nil, err
-	}
+	c, ok, err := s.resourceCluster(ctx, organization, environment)
 	out := []resourcekind.Kind{}
-	if c.Status == fleet.StatusRevoked {
-		return out, nil
+	if err != nil || !ok {
+		return out, err
 	}
 	for _, k := range resourcekind.Kinds {
 		if c.Agent.Capabilities.CanProvision(k) {
@@ -74,6 +62,35 @@ func (s *Service) ResourceKinds(ctx context.Context, organization identity.Organ
 		}
 	}
 	return out, nil
+}
+
+// ResourceCapabilities answers fleet.Resources.ResourceCapabilities without
+// placing anything.
+func (s *Service) ResourceCapabilities(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]string, error) {
+	c, ok, err := s.resourceCluster(ctx, organization, environment)
+	if err != nil || !ok {
+		return []string{}, err
+	}
+	return c.Agent.Capabilities.Resources(), nil
+}
+
+// resourceCluster is the environment's cluster or, unplaced, the
+// organization's default (false: none, or revoked).
+func (s *Service) resourceCluster(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) (fleet.Cluster, bool, error) {
+	var c fleet.Cluster
+	id, err := s.repo.FindPlacement(ctx, organization, environment)
+	switch {
+	case errx.IsType(err, errx.TypeNotFound):
+		if c, err = s.repo.FindDefaultCluster(ctx, organization); errx.IsType(err, errx.TypeNotFound) {
+			return fleet.Cluster{}, false, nil
+		}
+	case err == nil:
+		c, err = s.repo.FindCluster(ctx, organization, id)
+	}
+	if err != nil {
+		return fleet.Cluster{}, false, err
+	}
+	return c, c.Status != fleet.StatusRevoked, nil
 }
 
 // ---- Agents -----------------------------------------------------------

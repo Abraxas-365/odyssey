@@ -4443,7 +4443,7 @@ components:
             capabilities:
               type: object
               additionalProperties: false
-              required: [kubernetes_version, apis, ingress_classes, storage_classes, resource_kinds]
+              required: [kubernetes_version, apis, ingress_classes, storage_classes, resource_kinds, resource_capabilities]
               properties:
                 kubernetes_version: { type: string }
                 apis: { type: array, items: { type: string } }
@@ -4452,6 +4452,10 @@ components:
                 resource_kinds:
                   type: array
                   description: The kinds of resources (`postgres`, `redis`, `files`) its agent can prepare; empty for an agent older than 2b.
+                  items: { type: string }
+                resource_capabilities:
+                  type: array
+                  description: What its agent honours beyond a kind's basic resource (`spec/v1`, `builtin:postgres:instances`, `builtin:postgres:version`, `builtin:postgres:resources`; docs/resources.md); the catalog offers a recipe only where the cluster announces all it requires. Empty for an agent older than the catalog.
                   items: { type: string }
         certificate:
           type: object

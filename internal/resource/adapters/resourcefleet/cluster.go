@@ -12,7 +12,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/resource"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
-	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
 )
 
 type Cluster struct{ fleet fleet.Resources }
@@ -23,7 +22,7 @@ var _ resource.Cluster = (*Cluster)(nil)
 
 func (c *Cluster) Apply(ctx context.Context, d resource.Desired) error {
 	return c.fleet.ApplyResource(ctx, fleet.DesiredResource{Organization: d.Organization, Project: d.Project, Environment: d.Environment,
-		Name: d.Name, Kind: d.Kind, Generation: d.Generation, StorageGi: d.StorageGi, Deleted: d.Deleted})
+		Name: d.Name, Kind: d.Kind, Generation: d.Generation, StorageGi: d.StorageGi, Recipe: d.Recipe, Spec: d.Spec, Deleted: d.Deleted})
 }
 
 func (c *Cluster) Observed(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID, name string) (resource.Observed, error) {
@@ -38,18 +37,8 @@ func (c *Cluster) Kinds(ctx context.Context, org identity.OrganizationID, env pr
 	return c.fleet.ResourceKinds(ctx, org, env)
 }
 
-// Capabilities: an agent that lists a kind honours its basic resource (the
-// kind's built-in engine). The finer capabilities a recipe may require
-// (resourcespec.SpecV1, …) are announced by agents from stage 1a cut 4 on;
-// until then none is, so only the basic recipes are available.
+// Capabilities are every resource capability the environment's cluster
+// announces (fleet's Capabilities.Resources).
 func (c *Cluster) Capabilities(ctx context.Context, org identity.OrganizationID, env project.EnvironmentID) ([]string, error) {
-	kinds, err := c.fleet.ResourceKinds(ctx, org, env)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, len(kinds))
-	for i, k := range kinds {
-		out[i] = resourcespec.Builtin(k)
-	}
-	return out, nil
+	return c.fleet.ResourceCapabilities(ctx, org, env)
 }

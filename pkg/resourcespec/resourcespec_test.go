@@ -41,6 +41,7 @@ func TestValidate(t *testing.T) {
 	bad := []resourcespec.Postgres{
 		{Instances: -1}, {Instances: resourcespec.MaxInstances + 1}, {Major: 12},
 		{CPU: "lots"}, {Memory: "1GB"}, {CPU: "m"}, {Memory: "12345678901234567Gi"},
+		{CPU: "."}, {CPU: ".m"}, {Memory: "1.5.2Gi"},
 	}
 	for _, p := range bad {
 		if err := (resourcespec.Spec{Postgres: &p}).Validate(resourcekind.Postgres); err == nil {

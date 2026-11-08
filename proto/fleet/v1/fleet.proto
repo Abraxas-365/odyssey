@@ -250,6 +250,12 @@ message Capabilities {
   // The capability "odicea.scan" (3c), among apis, says the agent scans the
   // images it builds. Without it, builds of the cluster have no scan.
   repeated string resource_kinds = 8;
+  // resource_capabilities are what the agent honours beyond preparing a
+  // kind's basic resource (stage 1a of the catalog): "spec/v1" (it reads
+  // Resource.spec), "builtin:postgres:instances", "builtin:postgres:version",
+  // "builtin:postgres:resources". A recipe goes only to a cluster announcing
+  // everything it requires; an agent that lists none gets basic resources.
+  repeated string resource_capabilities = 9;
 }
 
 // SecretKey is an HPKE (RFC 9180) public key.
@@ -564,6 +570,34 @@ message Resource {
   string storage = 7;
   // deleted: the resource and its data are to be removed.
   bool deleted = 8;
+  // recipe is the catalog recipe@version that resolved it
+  // ("postgres-produccion@1"), for people reading the cluster; the agent acts
+  // on the spec below only.
+  string recipe = 9;
+  // spec_schema_version is the version of the spec below (0: none, the basic
+  // resource every agent prepares). An agent sent a version it does not
+  // know rejects the resource: the control plane only sends a spec to an
+  // agent announcing "spec/v<n>" in Capabilities.resource_capabilities.
+  int32 spec_schema_version = 10;
+  // spec is how the kind's engine prepares it, resolved by the control
+  // plane (never the recipe itself). Unset: the basic resource.
+  oneof spec {
+    BuiltinPostgres builtin_postgres = 11;
+  }
+}
+
+// BuiltinPostgres are the settings of a CloudNativePG database. A zero field
+// is the engine's default (and needs no capability).
+message BuiltinPostgres {
+  // instances: 1 (no replica) to 5. Needs "builtin:postgres:instances".
+  int32 instances = 1;
+  // major: the PostgreSQL major version (16, 17 or 18), fixed once the
+  // database exists. Needs "builtin:postgres:version".
+  int32 major = 2;
+  // cpu and memory: Kubernetes quantities, each set as request and limit.
+  // Need "builtin:postgres:resources".
+  string cpu = 3;
+  string memory = 4;
 }
 
 // ResourceReport carries what the agent observes of resources. full: the

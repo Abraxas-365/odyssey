@@ -97,56 +97,73 @@ func (r *Reconciler) deleteChildren(ctx context.Context, o *v1alpha1.OdysseyReso
 		}
 		return client.IgnoreNotFound(r.Client.Delete(ctx, obj, client.PropagationPolicy(metav1.DeletePropagationBackground)))
 	}
-	key := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: name, Namespace: o.Namespace} }
-	switch o.Spec.Kind {
-	case v1alpha1.ResourceRedis:
-		for _, obj := range []client.Object{
-			&appsv1.Deployment{ObjectMeta: key(RedisName(o.Name))},
-			&corev1.Service{ObjectMeta: key(RedisName(o.Name))},
-			&corev1.Secret{ObjectMeta: key(RedisName(o.Name))},
-			&corev1.PersistentVolumeClaim{ObjectMeta: key(RedisName(o.Name))},
-		} {
-			if err := del(obj); err != nil {
+	e, ok := engines[o.Spec.Kind]
+	if !ok {
+		return gone, nil // an unknown kind made nothing
+	}
+	pending, err := e.remove(r, ctx, o, del)
+	if err != nil {
+		return false, err
+	}
+	return gone && !pending, nil
+}
+
+// objectKey is the name of a child of o.
+func objectKey(o *v1alpha1.OdysseyResource, name string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{Name: name, Namespace: o.Namespace}
+}
+
+func (r *Reconciler) removeRedis(_ context.Context, o *v1alpha1.OdysseyResource, del func(client.Object) error) (bool, error) {
+	for _, obj := range []client.Object{
+		&appsv1.Deployment{ObjectMeta: objectKey(o, RedisName(o.Name))},
+		&corev1.Service{ObjectMeta: objectKey(o, RedisName(o.Name))},
+		&corev1.Secret{ObjectMeta: objectKey(o, RedisName(o.Name))},
+		&corev1.PersistentVolumeClaim{ObjectMeta: objectKey(o, RedisName(o.Name))},
+	} {
+		if err := del(obj); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func (r *Reconciler) removeFiles(_ context.Context, o *v1alpha1.OdysseyResource, del func(client.Object) error) (bool, error) {
+	return false, del(&corev1.PersistentVolumeClaim{ObjectMeta: objectKey(o, FilesClaim(o.Name))})
+}
+
+func (r *Reconciler) removePostgres(ctx context.Context, o *v1alpha1.OdysseyResource, del func(client.Object) error) (bool, error) {
+	if !r.clusterAvailable() {
+		return false, nil // nothing could have been made
+	}
+	c := NewCluster()
+	c.SetName(o.Name)
+	c.SetNamespace(o.Namespace)
+	if err := del(c); err != nil {
+		return false, err
+	}
+	// CNPG's volumes go with the Cluster by owner reference, a moment
+	// later: the data is gone when they are. Once the Cluster is gone,
+	// a volume still carrying its label is deleted here, but only one
+	// that CloudNativePG made for this Cluster (owned by it): never an
+	// arbitrary labelled claim.
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := r.API.List(ctx, &pvcs, client.InNamespace(o.Namespace), client.MatchingLabels{cnpgCluster: o.Name}); err != nil {
+		return false, err
+	}
+	pending := false
+	for i := range pvcs.Items {
+		p := &pvcs.Items[i]
+		if !ownedByCluster(p, o.Name) {
+			continue
+		}
+		pending = true
+		if p.DeletionTimestamp == nil && clusterGone(ctx, r.API, c) {
+			if err := r.Client.Delete(ctx, p); client.IgnoreNotFound(err) != nil {
 				return false, err
 			}
 		}
-	case v1alpha1.ResourceFiles:
-		if err := del(&corev1.PersistentVolumeClaim{ObjectMeta: key(FilesClaim(o.Name))}); err != nil {
-			return false, err
-		}
-	case v1alpha1.ResourcePostgres:
-		if !r.clusterAvailable() {
-			break // nothing could have been made
-		}
-		c := NewCluster()
-		c.SetName(o.Name)
-		c.SetNamespace(o.Namespace)
-		if err := del(c); err != nil {
-			return false, err
-		}
-		// CNPG's volumes go with the Cluster by owner reference, a moment
-		// later: the data is gone when they are. Once the Cluster is gone,
-		// a volume still carrying its label is deleted here, but only one
-		// that CloudNativePG made for this Cluster (owned by it): never an
-		// arbitrary labelled claim.
-		var pvcs corev1.PersistentVolumeClaimList
-		if err := r.API.List(ctx, &pvcs, client.InNamespace(o.Namespace), client.MatchingLabels{cnpgCluster: o.Name}); err != nil {
-			return false, err
-		}
-		for i := range pvcs.Items {
-			p := &pvcs.Items[i]
-			if !ownedByCluster(p, o.Name) {
-				continue
-			}
-			gone = false
-			if p.DeletionTimestamp == nil && clusterGone(ctx, r.API, c) {
-				if err := r.Client.Delete(ctx, p); client.IgnoreNotFound(err) != nil {
-					return false, err
-				}
-			}
-		}
 	}
-	return gone, nil
+	return pending, nil
 }
 
 // ownedByCluster says p is owned by the CloudNativePG Cluster named name.

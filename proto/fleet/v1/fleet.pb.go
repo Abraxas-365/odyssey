@@ -1305,8 +1305,14 @@ type Capabilities struct {
 	// The capability "odicea.scan" (3c), among apis, says the agent scans the
 	// images it builds. Without it, builds of the cluster have no scan.
 	ResourceKinds []string `protobuf:"bytes,8,rep,name=resource_kinds,json=resourceKinds,proto3" json:"resource_kinds,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// resource_capabilities are what the agent honours beyond preparing a
+	// kind's basic resource (stage 1a of the catalog): "spec/v1" (it reads
+	// Resource.spec), "builtin:postgres:instances", "builtin:postgres:version",
+	// "builtin:postgres:resources". A recipe goes only to a cluster announcing
+	// everything it requires; an agent that lists none gets basic resources.
+	ResourceCapabilities []string `protobuf:"bytes,9,rep,name=resource_capabilities,json=resourceCapabilities,proto3" json:"resource_capabilities,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Capabilities) Reset() {
@@ -1391,6 +1397,13 @@ func (x *Capabilities) GetSecretStores() []string {
 func (x *Capabilities) GetResourceKinds() []string {
 	if x != nil {
 		return x.ResourceKinds
+	}
+	return nil
+}
+
+func (x *Capabilities) GetResourceCapabilities() []string {
+	if x != nil {
+		return x.ResourceCapabilities
 	}
 	return nil
 }
@@ -3053,7 +3066,23 @@ type Resource struct {
 	// may grow, never shrink.
 	Storage string `protobuf:"bytes,7,opt,name=storage,proto3" json:"storage,omitempty"`
 	// deleted: the resource and its data are to be removed.
-	Deleted       bool `protobuf:"varint,8,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	Deleted bool `protobuf:"varint,8,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	// recipe is the catalog recipe@version that resolved it
+	// ("postgres-produccion@1"), for people reading the cluster; the agent acts
+	// on the spec below only.
+	Recipe string `protobuf:"bytes,9,opt,name=recipe,proto3" json:"recipe,omitempty"`
+	// spec_schema_version is the version of the spec below (0: none, the basic
+	// resource every agent prepares). An agent sent a version it does not
+	// know rejects the resource: the control plane only sends a spec to an
+	// agent announcing "spec/v<n>" in Capabilities.resource_capabilities.
+	SpecSchemaVersion int32 `protobuf:"varint,10,opt,name=spec_schema_version,json=specSchemaVersion,proto3" json:"spec_schema_version,omitempty"`
+	// spec is how the kind's engine prepares it, resolved by the control
+	// plane (never the recipe itself). Unset: the basic resource.
+	//
+	// Types that are valid to be assigned to Spec:
+	//
+	//	*Resource_BuiltinPostgres
+	Spec          isResource_Spec `protobuf_oneof:"spec"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3144,6 +3173,121 @@ func (x *Resource) GetDeleted() bool {
 	return false
 }
 
+func (x *Resource) GetRecipe() string {
+	if x != nil {
+		return x.Recipe
+	}
+	return ""
+}
+
+func (x *Resource) GetSpecSchemaVersion() int32 {
+	if x != nil {
+		return x.SpecSchemaVersion
+	}
+	return 0
+}
+
+func (x *Resource) GetSpec() isResource_Spec {
+	if x != nil {
+		return x.Spec
+	}
+	return nil
+}
+
+func (x *Resource) GetBuiltinPostgres() *BuiltinPostgres {
+	if x != nil {
+		if x, ok := x.Spec.(*Resource_BuiltinPostgres); ok {
+			return x.BuiltinPostgres
+		}
+	}
+	return nil
+}
+
+type isResource_Spec interface {
+	isResource_Spec()
+}
+
+type Resource_BuiltinPostgres struct {
+	BuiltinPostgres *BuiltinPostgres `protobuf:"bytes,11,opt,name=builtin_postgres,json=builtinPostgres,proto3,oneof"`
+}
+
+func (*Resource_BuiltinPostgres) isResource_Spec() {}
+
+// BuiltinPostgres are the settings of a CloudNativePG database. A zero field
+// is the engine's default (and needs no capability).
+type BuiltinPostgres struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// instances: 1 (no replica) to 5. Needs "builtin:postgres:instances".
+	Instances int32 `protobuf:"varint,1,opt,name=instances,proto3" json:"instances,omitempty"`
+	// major: the PostgreSQL major version (16, 17 or 18), fixed once the
+	// database exists. Needs "builtin:postgres:version".
+	Major int32 `protobuf:"varint,2,opt,name=major,proto3" json:"major,omitempty"`
+	// cpu and memory: Kubernetes quantities, each set as request and limit.
+	// Need "builtin:postgres:resources".
+	Cpu           string `protobuf:"bytes,3,opt,name=cpu,proto3" json:"cpu,omitempty"`
+	Memory        string `protobuf:"bytes,4,opt,name=memory,proto3" json:"memory,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuiltinPostgres) Reset() {
+	*x = BuiltinPostgres{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuiltinPostgres) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuiltinPostgres) ProtoMessage() {}
+
+func (x *BuiltinPostgres) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuiltinPostgres.ProtoReflect.Descriptor instead.
+func (*BuiltinPostgres) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *BuiltinPostgres) GetInstances() int32 {
+	if x != nil {
+		return x.Instances
+	}
+	return 0
+}
+
+func (x *BuiltinPostgres) GetMajor() int32 {
+	if x != nil {
+		return x.Major
+	}
+	return 0
+}
+
+func (x *BuiltinPostgres) GetCpu() string {
+	if x != nil {
+		return x.Cpu
+	}
+	return ""
+}
+
+func (x *BuiltinPostgres) GetMemory() string {
+	if x != nil {
+		return x.Memory
+	}
+	return ""
+}
+
 // ResourceReport carries what the agent observes of resources. full: the
 // report holds every resource status the agent has (the control plane forgets
 // the statuses missing from it); a set too big for one message goes as
@@ -3158,7 +3302,7 @@ type ResourceReport struct {
 
 func (x *ResourceReport) Reset() {
 	*x = ResourceReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3170,7 +3314,7 @@ func (x *ResourceReport) String() string {
 func (*ResourceReport) ProtoMessage() {}
 
 func (x *ResourceReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3183,7 +3327,7 @@ func (x *ResourceReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceReport.ProtoReflect.Descriptor instead.
 func (*ResourceReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{39}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ResourceReport) GetFull() bool {
@@ -3217,7 +3361,7 @@ type ResourceStatus struct {
 
 func (x *ResourceStatus) Reset() {
 	*x = ResourceStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3229,7 +3373,7 @@ func (x *ResourceStatus) String() string {
 func (*ResourceStatus) ProtoMessage() {}
 
 func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3242,7 +3386,7 @@ func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceStatus.ProtoReflect.Descriptor instead.
 func (*ResourceStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{40}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ResourceStatus) GetEnvironmentId() string {
@@ -3368,7 +3512,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"h\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12:\n" +
-	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\xd0\x02\n" +
+	"\fcapabilities\x18\x02 \x01(\v2\x16.fleet.v1.CapabilitiesR\fcapabilities\"\x85\x03\n" +
 	"\fCapabilities\x12-\n" +
 	"\x12kubernetes_version\x18\x01 \x01(\tR\x11kubernetesVersion\x12\x12\n" +
 	"\x04apis\x18\x02 \x03(\tR\x04apis\x12'\n" +
@@ -3378,7 +3522,8 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\n" +
 	"secret_key\x18\x06 \x01(\v2\x13.fleet.v1.SecretKeyR\tsecretKey\x12#\n" +
 	"\rsecret_stores\x18\a \x03(\tR\fsecretStores\x12%\n" +
-	"\x0eresource_kinds\x18\b \x03(\tR\rresourceKinds\"W\n" +
+	"\x0eresource_kinds\x18\b \x03(\tR\rresourceKinds\x123\n" +
+	"\x15resource_capabilities\x18\t \x03(\tR\x14resourceCapabilities\"W\n" +
 	"\tSecretKey\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1d\n" +
 	"\n" +
@@ -3516,7 +3661,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
 	"\x06prefix\x18\x03 \x01(\tR\x06prefix\x12\x1a\n" +
-	"\bservices\x18\x04 \x03(\tR\bservices\"\xf5\x01\n" +
+	"\bservices\x18\x04 \x03(\tR\bservices\"\x8d\x03\n" +
 	"\bResource\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -3528,7 +3673,17 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"generation\x18\x06 \x01(\x03R\n" +
 	"generation\x12\x18\n" +
 	"\astorage\x18\a \x01(\tR\astorage\x12\x18\n" +
-	"\adeleted\x18\b \x01(\bR\adeleted\"\\\n" +
+	"\adeleted\x18\b \x01(\bR\adeleted\x12\x16\n" +
+	"\x06recipe\x18\t \x01(\tR\x06recipe\x12.\n" +
+	"\x13spec_schema_version\x18\n" +
+	" \x01(\x05R\x11specSchemaVersion\x12F\n" +
+	"\x10builtin_postgres\x18\v \x01(\v2\x19.fleet.v1.BuiltinPostgresH\x00R\x0fbuiltinPostgresB\x06\n" +
+	"\x04spec\"o\n" +
+	"\x0fBuiltinPostgres\x12\x1c\n" +
+	"\tinstances\x18\x01 \x01(\x05R\tinstances\x12\x14\n" +
+	"\x05major\x18\x02 \x01(\x05R\x05major\x12\x10\n" +
+	"\x03cpu\x18\x03 \x01(\tR\x03cpu\x12\x16\n" +
+	"\x06memory\x18\x04 \x01(\tR\x06memory\"\\\n" +
 	"\x0eResourceReport\x12\x12\n" +
 	"\x04full\x18\x01 \x01(\bR\x04full\x126\n" +
 	"\tresources\x18\x02 \x03(\v2\x18.fleet.v1.ResourceStatusR\tresources\"\xac\x01\n" +
@@ -3557,7 +3712,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -3598,11 +3753,12 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*ServiceStatus)(nil),      // 36: fleet.v1.ServiceStatus
 	(*ResourceRef)(nil),        // 37: fleet.v1.ResourceRef
 	(*Resource)(nil),           // 38: fleet.v1.Resource
-	(*ResourceReport)(nil),     // 39: fleet.v1.ResourceReport
-	(*ResourceStatus)(nil),     // 40: fleet.v1.ResourceStatus
-	nil,                        // 41: fleet.v1.App.EnvEntry
-	nil,                        // 42: fleet.v1.App.LabelsEntry
-	nil,                        // 43: fleet.v1.Service.EnvEntry
+	(*BuiltinPostgres)(nil),    // 39: fleet.v1.BuiltinPostgres
+	(*ResourceReport)(nil),     // 40: fleet.v1.ResourceReport
+	(*ResourceStatus)(nil),     // 41: fleet.v1.ResourceStatus
+	nil,                        // 42: fleet.v1.App.EnvEntry
+	nil,                        // 43: fleet.v1.App.LabelsEntry
+	nil,                        // 44: fleet.v1.Service.EnvEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
@@ -3613,7 +3769,7 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	23, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
 	27, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
 	15, // 7: fleet.v1.AgentMessage.secret_ack:type_name -> fleet.v1.SecretAck
-	39, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
+	40, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
 	13, // 9: fleet.v1.AgentMessage.policy_ack:type_name -> fleet.v1.PolicyAck
 	25, // 10: fleet.v1.AgentMessage.scan_report:type_name -> fleet.v1.ScanReport
 	29, // 11: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
@@ -3630,32 +3786,33 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	24, // 22: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
 	26, // 23: fleet.v1.ScanReport.scans:type_name -> fleet.v1.ScanStatus
 	28, // 24: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
-	41, // 25: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	42, // 26: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	42, // 25: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	43, // 26: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
 	33, // 27: fleet.v1.App.access:type_name -> fleet.v1.Access
 	32, // 28: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
 	37, // 29: fleet.v1.App.resources:type_name -> fleet.v1.ResourceRef
 	31, // 30: fleet.v1.App.ai:type_name -> fleet.v1.AI
 	30, // 31: fleet.v1.App.services:type_name -> fleet.v1.Service
-	43, // 32: fleet.v1.Service.env:type_name -> fleet.v1.Service.EnvEntry
+	44, // 32: fleet.v1.Service.env:type_name -> fleet.v1.Service.EnvEntry
 	35, // 33: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
 	36, // 34: fleet.v1.AppStatus.services:type_name -> fleet.v1.ServiceStatus
-	40, // 35: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
-	2,  // 36: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 37: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 38: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 39: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 40: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 41: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 42: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 43: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 44: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 45: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	41, // [41:46] is the sub-list for method output_type
-	36, // [36:41] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	39, // 35: fleet.v1.Resource.builtin_postgres:type_name -> fleet.v1.BuiltinPostgres
+	41, // 36: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
+	2,  // 37: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 38: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 39: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 40: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 41: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 42: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 43: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 44: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 45: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 46: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	42, // [42:47] is the sub-list for method output_type
+	37, // [37:42] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -3681,13 +3838,16 @@ func file_proto_fleet_v1_fleet_proto_init() {
 		(*ControlMessage_Resource)(nil),
 		(*ControlMessage_ClusterPolicy)(nil),
 	}
+	file_proto_fleet_v1_fleet_proto_msgTypes[38].OneofWrappers = []any{
+		(*Resource_BuiltinPostgres)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   44,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

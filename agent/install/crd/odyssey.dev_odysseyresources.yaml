@@ -34,6 +34,10 @@ spec:
     - jsonPath: .spec.storage
       name: Storage
       type: string
+    - jsonPath: .spec.recipe
+      name: Recipe
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -87,6 +91,47 @@ spec:
                 - postgres
                 - redis
                 - files
+                type: string
+              postgres:
+                description: |-
+                  Postgres are the database's settings (kind postgres; none: one
+                  instance with the engine's defaults).
+                properties:
+                  cpu:
+                    description: |-
+                      CPU and Memory are Kubernetes quantities, each set as request and
+                      limit of every instance.
+                    maxLength: 16
+                    type: string
+                  instances:
+                    description: 'Instances: 1 (no replica) to 5. They follow every
+                      change.'
+                    format: int32
+                    maximum: 5
+                    minimum: 0
+                    type: integer
+                  major:
+                    description: |-
+                      Major is the PostgreSQL major version. It is fixed when the database
+                      is made: a different one later fails the resource (a major upgrade is
+                      a migration, not a setting).
+                    enum:
+                    - 0
+                    - 16
+                    - 17
+                    - 18
+                    format: int32
+                    type: integer
+                  memory:
+                    maxLength: 16
+                    type: string
+                type: object
+              recipe:
+                description: |-
+                  Recipe is the catalog recipe@version that resolved it
+                  ("postgres-produccion@1"), for people reading the cluster; the agent
+                  acts on the settings below only.
+                maxLength: 80
                 type: string
               storage:
                 description: |-

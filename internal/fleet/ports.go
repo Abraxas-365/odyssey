@@ -95,8 +95,9 @@ type Resources interface {
 	// ApplyResource stores the desired resource for the cluster of its
 	// environment (placing the environment on the default cluster the first
 	// time, like Apply) and has it sent. It fails closed with Business
-	// CodeResourcesUnavailable when the cluster does not list the kind. It
-	// joins the caller's transaction; a generation older than the stored
+	// CodeResourcesUnavailable when the cluster does not list the kind, and
+	// CodeResourcesUnsupported when it lacks a capability the spec requires.
+	// It joins the caller's transaction; a generation older than the stored
 	// one changes nothing.
 	ApplyResource(ctx context.Context, resource DesiredResource) error
 	// ResourceStatus is what the agent last reported (ObservedGeneration 0
@@ -106,6 +107,10 @@ type Resources interface {
 	// the organization's default) can provision; none when there is no
 	// cluster or it was revoked. It changes nothing.
 	ResourceKinds(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]resourcekind.Kind, error)
+	// ResourceCapabilities are every resource capability of that same
+	// cluster (Capabilities.Resources: builtin:<kind> per kind, spec/v1,
+	// …); none when there is no cluster or it was revoked.
+	ResourceCapabilities(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID) ([]string, error)
 }
 
 // Builds is what the build domain uses to build in clusters (its buildfleet
@@ -379,6 +384,9 @@ type Repository interface {
 	// cluster's gateway; false when nothing changed.
 	PutResource(ctx context.Context, resource DesiredResource) (bool, error)
 	ListResources(ctx context.Context, organization identity.OrganizationID, cluster ClusterID) ([]DesiredResource, error)
+	// ListEnvironmentResources are the environment's desired resources on
+	// cluster (deleted ones too).
+	ListEnvironmentResources(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, environment project.EnvironmentID) ([]DesiredResource, error)
 	FindResource(ctx context.Context, organization identity.OrganizationID, cluster ClusterID, environment project.EnvironmentID, name string) (DesiredResource, error)
 	FindResourceStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (ResourceStatus, error)
 	// ObserveResources upserts the reported statuses of resources desired on

@@ -3,6 +3,7 @@ package fleetpg
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -14,22 +15,40 @@ import (
 	"github.com/lib/pq"
 )
 
-const resourceColumns = `organization_id, project_id, environment_id, cluster_id, name, kind, generation, storage_gi, deleted, updated_at`
+const resourceColumns = `organization_id, project_id, environment_id, cluster_id, name, kind, generation, storage_gi, recipe, spec, deleted, updated_at`
+
+// resourceRow reads spec, JSON in the table, into the desired resource.
+type resourceRow struct {
+	fleet.DesiredResource
+	Spec []byte `db:"spec"`
+}
+
+func (x resourceRow) desired() (fleet.DesiredResource, error) {
+	out := x.DesiredResource
+	if err := json.Unmarshal(x.Spec, &out.Spec); err != nil {
+		return fleet.DesiredResource{}, errx.Wrap(err, "decode resource spec", errx.TypeInternal)
+	}
+	return out, nil
+}
 
 // PutResource stores the desired resource unless the stored generation is
 // the same or newer, or the row is another cluster's (the environment moved),
 // and signals the cluster's gateway.
 func (r *Repository) PutResource(ctx context.Context, d fleet.DesiredResource) (bool, error) {
+	spec, err := json.Marshal(d.Spec)
+	if err != nil {
+		return false, errx.Wrap(err, "encode resource spec", errx.TypeInternal)
+	}
 	res, err := txn.Q(ctx, r.db).ExecContext(ctx,
-		`INSERT INTO fleet.desired_resources (environment_id, name, organization_id, project_id, cluster_id, kind, generation, storage_gi, deleted)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO fleet.desired_resources (environment_id, name, organization_id, project_id, cluster_id, kind, generation, storage_gi, recipe, spec, deleted)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (environment_id, name) DO UPDATE SET generation = EXCLUDED.generation,
-		        storage_gi = EXCLUDED.storage_gi, deleted = EXCLUDED.deleted, updated_at = now()
+		        storage_gi = EXCLUDED.storage_gi, recipe = EXCLUDED.recipe, spec = EXCLUDED.spec, deleted = EXCLUDED.deleted, updated_at = now()
 		 WHERE fleet.desired_resources.organization_id = EXCLUDED.organization_id
 		   AND fleet.desired_resources.cluster_id = EXCLUDED.cluster_id
 		   AND fleet.desired_resources.kind = EXCLUDED.kind
 		   AND fleet.desired_resources.generation < EXCLUDED.generation`,
-		d.Environment, d.Name, d.Organization, d.Project, d.Cluster, d.Kind, d.Generation, d.StorageGi, d.Deleted)
+		d.Environment, d.Name, d.Organization, d.Project, d.Cluster, d.Kind, d.Generation, d.StorageGi, d.Recipe, spec, d.Deleted)
 	if err != nil {
 		return false, pgerr.Map(err, "put resource")
 	}
@@ -40,20 +59,43 @@ func (r *Repository) PutResource(ctx context.Context, d fleet.DesiredResource) (
 }
 
 func (r *Repository) ListResources(ctx context.Context, organization identity.OrganizationID, cluster fleet.ClusterID) ([]fleet.DesiredResource, error) {
-	out := []fleet.DesiredResource{}
-	err := txn.Q(ctx, r.db).SelectContext(ctx, &out, `SELECT `+resourceColumns+` FROM fleet.desired_resources
-		WHERE organization_id = $1 AND cluster_id = $2 ORDER BY environment_id, name`, organization, cluster)
-	return out, pgerr.Map(err, "list resources")
+	return r.listResources(ctx, `cluster_id = $2`, organization, cluster)
+}
+
+// ListEnvironmentResources are the environment's desired resources on
+// cluster (what a move of the environment would send elsewhere).
+func (r *Repository) ListEnvironmentResources(ctx context.Context, organization identity.OrganizationID, cluster fleet.ClusterID, environment project.EnvironmentID) ([]fleet.DesiredResource, error) {
+	return r.listResources(ctx, `cluster_id = $2 AND environment_id = $3`, organization, cluster, environment)
+}
+
+func (r *Repository) listResources(ctx context.Context, where string, args ...any) ([]fleet.DesiredResource, error) {
+	var rows []resourceRow
+	if err := txn.Q(ctx, r.db).SelectContext(ctx, &rows, `SELECT `+resourceColumns+` FROM fleet.desired_resources
+		WHERE organization_id = $1 AND `+where+` ORDER BY environment_id, name`, args...); err != nil {
+		return nil, pgerr.Map(err, "list resources")
+	}
+	out := make([]fleet.DesiredResource, 0, len(rows))
+	for _, x := range rows {
+		d, err := x.desired()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func (r *Repository) FindResource(ctx context.Context, organization identity.OrganizationID, cluster fleet.ClusterID, environment project.EnvironmentID, name string) (fleet.DesiredResource, error) {
-	var d fleet.DesiredResource
-	err := txn.Q(ctx, r.db).GetContext(ctx, &d, `SELECT `+resourceColumns+` FROM fleet.desired_resources
+	var x resourceRow
+	err := txn.Q(ctx, r.db).GetContext(ctx, &x, `SELECT `+resourceColumns+` FROM fleet.desired_resources
 		WHERE organization_id = $1 AND cluster_id = $2 AND environment_id = $3 AND name = $4`, organization, cluster, environment, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fleet.DesiredResource{}, errx.NotFound("resource not found")
 	}
-	return d, pgerr.Map(err, "find resource")
+	if err != nil {
+		return fleet.DesiredResource{}, pgerr.Map(err, "find resource")
+	}
+	return x.desired()
 }
 
 func (r *Repository) FindResourceStatus(ctx context.Context, organization identity.OrganizationID, environment project.EnvironmentID, name string) (fleet.ResourceStatus, error) {
@@ -123,15 +165,23 @@ func (r *Repository) ObserveResources(ctx context.Context, organization identity
 	if !live {
 		return false, nil, nil
 	}
-	removed := []fleet.DesiredResource{}
-	err = q.SelectContext(ctx, &removed,
+	var gone []resourceRow
+	err = q.SelectContext(ctx, &gone,
 		`DELETE FROM fleet.desired_resources d USING unnest($3::uuid[], $4::text[], $5::bigint[], $6::text[]) AS r(env, name, gen, phase)
 		 WHERE d.organization_id = $1 AND d.cluster_id = $2 AND d.environment_id = r.env AND d.name = r.name
 		   AND d.deleted AND r.phase = 'deleted' AND r.gen >= d.generation
-		 RETURNING d.organization_id, d.project_id, d.environment_id, d.cluster_id, d.name, d.kind, d.generation, d.storage_gi, d.deleted, d.updated_at`,
+		 RETURNING d.organization_id, d.project_id, d.environment_id, d.cluster_id, d.name, d.kind, d.generation, d.storage_gi, d.recipe, d.spec, d.deleted, d.updated_at`,
 		organization, id, pq.Array(envs), pq.Array(names), pq.Array(gens), pq.Array(phases))
 	if err != nil {
 		return false, nil, pgerr.Map(err, "forget removed resources")
+	}
+	removed := make([]fleet.DesiredResource, 0, len(gone))
+	for _, x := range gone {
+		d, err := x.desired()
+		if err != nil {
+			return false, nil, err
+		}
+		removed = append(removed, d)
 	}
 	for _, d := range removed {
 		if _, err := q.ExecContext(ctx, `DELETE FROM fleet.resource_status WHERE organization_id = $1 AND environment_id = $2 AND name = $3`,
