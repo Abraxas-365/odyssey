@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { releaseKeys } from './releases'
-import type { CatalogEntry, CatalogOffer, CatalogOfferingDraft, CatalogOfferParam, CatalogParam, CatalogRange, CatalogTeam, CatalogTeams, EnvironmentCatalog, PolicyEffect, ProjectTier, ResourceKind } from './types'
+import type { CatalogEntry, CatalogKind, CatalogOffer, CatalogOfferingDraft, CatalogOfferParam, CatalogParam, CatalogRange, CatalogRecipeDraft, CatalogRecipeRegistration, CatalogStore, CatalogTeam, CatalogTeams, EnvironmentCatalog, PolicyEffect, ProjectTier, ResourceKind } from './types'
 
 const enc = encodeURIComponent
 
 export const catalogKeys = {
   recipes: ['catalog', 'recipes'] as const,
   teams: ['catalog', 'teams'] as const,
+  stores: ['catalog', 'stores'] as const,
+  kinds: ['catalog', 'kinds'] as const,
   env: (project: string, env: string) => [...releaseKeys.env(project, env), 'catalog'] as const,
 }
 
@@ -18,6 +20,47 @@ export function useCatalog() {
     queryFn: ({ signal }) => api<{ items: CatalogEntry[] }>('/catalog/recipes', { signal }),
   })
 }
+
+/** The kinds' contracts (GET /catalog/kinds): the same for everyone, so read once per session. */
+export function useCatalogKinds(enabled = true) {
+  return useQuery({
+    queryKey: catalogKeys.kinds,
+    queryFn: ({ signal }) => api<{ items: CatalogKind[] }>('/catalog/kinds', { signal }),
+    staleTime: Infinity,
+    enabled,
+  })
+}
+
+/** The secret stores the organization's clusters read from (catalog:manage). */
+export function useCatalogStores(enabled = true) {
+  return useQuery({
+    queryKey: catalogKeys.stores,
+    queryFn: ({ signal }) => api<{ items: CatalogStore[] }>('/catalog/stores', { signal }),
+    enabled,
+  })
+}
+
+/** A write that changes the catalog: IT's list and every environment's view of it are refreshed. */
+function useCatalogWrite<V>(fn: (v: V) => Promise<CatalogEntry>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: catalogKeys.recipes }),
+        qc.invalidateQueries({ predicate: q => q.queryKey.at(-1) === 'catalog' }),
+      ]),
+  })
+}
+
+/** Registers a resource the company already has: version 1 with an inactive offering (catalog:manage). */
+export const useRegisterRecipe = () =>
+  useCatalogWrite((body: CatalogRecipeRegistration) => api<CatalogEntry>('/catalog/recipes', { method: 'POST', body }))
+
+/** Publishes the next version of the organization's own recipe; the offering stays on its version until IT moves it. */
+export const usePublishRecipeVersion = () =>
+  useCatalogWrite(({ recipe, body }: { recipe: string; body: CatalogRecipeDraft }) =>
+    api<CatalogEntry>(`/catalog/recipes/${enc(recipe)}/versions`, { method: 'POST', body }))
 
 /**
  * IT's edit of an offering (catalog:manage). Every environment's view of the

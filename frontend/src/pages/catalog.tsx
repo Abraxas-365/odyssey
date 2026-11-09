@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Lock, Pencil, Users } from 'lucide-react'
+import { Building2, Lock, Pencil, Plus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
@@ -11,17 +11,21 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { EmptyState, ErrorNotice, ListSkeleton, OptionCards, PageHeader, Panel, PanelHeader, SwitchField } from '@/components/odyssey'
 import { useAuth } from '@/lib/auth'
-import { defaultTakenBy, maxTeams, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, teamNames, unitLabel, useCatalog, useCatalogTeams, useUpdateOffering, type OfferingForm } from '@/lib/catalog'
+import { defaultTakenBy, maxTeams, offeringDraft, offeringForm, offeringProblem, offeringUnchanged, teamNames, unitLabel, useCatalog, useCatalogKinds, useCatalogTeams, useUpdateOffering, type OfferingForm } from '@/lib/catalog'
+import { connectionLine, isOwn } from '@/lib/connection'
 import { permissions } from '@/lib/permissions'
-import type { CatalogEntry, CatalogTeam, CatalogTeams, ProjectTier, ResourceKind } from '@/lib/types'
+import { usePreferences } from '@/lib/preferences'
+import type { CatalogEntry, CatalogKind, CatalogTeam, CatalogTeams, ProjectTier, ResourceKind } from '@/lib/types'
 import { kindText } from '@/features/apps/resources'
+import { RecipeDialog } from '@/features/catalog/recipe-dialog'
 import { tierOptions } from '@/features/policy/rules'
 
-const kinds: ResourceKind[] = ['postgres', 'redis', 'files']
+const kinds: ResourceKind[] = ['postgres', 'redis', 'files', 'object-storage']
 
 /**
  * Administración → Catálogo (catalog:manage, docs/catalog.md): what apps can
- * create — the recipes Odicea ships — and, for each, what the organization
+ * create — the recipes Odicea ships and the resources the company already
+ * has, which IT registers here — and, for each, what the organization
  * offers: on or off, in which app levels, the default of its kind, the
  * limits of each parameter and the part of them created without asking IT.
  * Without catalog:manage there is nothing to do here: say who can.
@@ -44,15 +48,22 @@ export function CatalogPage() {
 function Catalog() {
   const catalog = useCatalog()
   const teams = useCatalogTeams()
+  const kindsQuery = useCatalogKinds()
+  const { technical } = usePreferences()
   const [editing, setEditing] = useState<CatalogEntry>()
+  // a resource of the company: a new one ('new') or the next version of one
+  const [registering, setRegistering] = useState<'new' | CatalogEntry>()
   const items = catalog.data?.items ?? []
+  const contracts = kindsQuery.data?.items ?? []
+  const canRegister = contracts.some(k => k.existing)
 
   return (
     <>
       <PageHeader
         breadcrumb="Administración"
         title="Catálogo"
-        description="Lo que las apps pueden crear. Tú eliges qué se ofrece en cada nivel de app, sus límites y hasta dónde se crea al instante; más allá, se pide tu aprobación."
+        description="Lo que las apps pueden crear o usar. Tú eliges qué se ofrece en cada nivel de app, sus límites y hasta dónde se crea al instante; más allá, se pide tu aprobación."
+        actions={canRegister && <Button variant="outline" size="sm" onClick={() => setRegistering('new')}><Plus /> Registrar un recurso que ya existe</Button>}
       />
       {catalog.isPending ? (
         <Panel><ListSkeleton /></Panel>
@@ -60,6 +71,7 @@ function Catalog() {
         <ErrorNotice error={catalog.error} onRetry={() => catalog.refetch()} />
       ) : (
         <div className="flex flex-col gap-6">
+          {kindsQuery.error && <ErrorNotice error={kindsQuery.error} onRetry={() => kindsQuery.refetch()} />}
           {kinds.map(k => {
             const of = items.filter(e => e.kind === k)
             if (of.length === 0) return null
@@ -67,7 +79,10 @@ function Catalog() {
               <Panel key={k}>
                 <PanelHeader icon={kindText[k].icon} title={plural[k]} meta={String(of.length)} description={kindText[k].help} />
                 <ul className="flex flex-col divide-y" aria-label={plural[k]}>
-                  {of.map(e => <EntryRow key={e.recipe} entry={e} teams={teams.data?.available ? teams.data.items : undefined} onEdit={() => setEditing(e)} />)}
+                  {of.map(e => (
+                    <EntryRow key={e.recipe} entry={e} contract={contracts.find(c => c.kind === e.kind)} teams={teams.data?.available ? teams.data.items : undefined}
+                      onEdit={() => setEditing(e)} onNewVersion={canRegister && isOwn(e) ? () => setRegistering(e) : undefined} />
+                  ))}
                 </ul>
               </Panel>
             )
@@ -75,6 +90,11 @@ function Catalog() {
         </div>
       )}
       {editing && <OfferingDialog entry={editing} entries={items} teams={teams} onClose={() => setEditing(undefined)} />}
+      {registering && (
+        <RecipeDialog kinds={contracts} entries={items} entry={registering === 'new' ? undefined : registering} technical={technical}
+          onClose={() => setRegistering(undefined)}
+          onDone={published => { setRegistering(undefined); if (registering === 'new') setEditing(published) }} />
+      )}
     </>
   )
 }
@@ -104,7 +124,7 @@ export function specLine(e: Pick<CatalogEntry, 'spec'>): string | undefined {
 
 /** How the offering reads in one line: where, for whom, the default, and each parameter's ranges. */
 export function offeringSummary(e: CatalogEntry, teams?: readonly CatalogTeam[]): string[] {
-  if (!e.offering.active) return ['No se ofrece: ninguna app puede crearla.']
+  if (!e.offering.active) return [isOwn(e) ? 'No se ofrece: ninguna app puede usarla.' : 'No se ofrece: ninguna app puede crearla.']
   const f = offeringForm(e)
   const out = [`Se ofrece en apps ${tierList(e.offering.tiers)}.`]
   if (e.offering.teams.length > 0) {
@@ -130,26 +150,35 @@ export function offeringSummary(e: CatalogEntry, teams?: readonly CatalogTeam[])
   return out
 }
 
-function EntryRow({ entry, teams, onEdit }: { entry: CatalogEntry; teams?: readonly CatalogTeam[]; onEdit: () => void }) {
+function EntryRow({ entry, contract, teams, onEdit, onNewVersion }: { entry: CatalogEntry; contract?: CatalogKind; teams?: readonly CatalogTeam[]; onEdit: () => void; onNewVersion?: () => void }) {
   const spec = specLine(entry)
+  const own = isOwn(entry)
+  const connection = own ? connectionLine(contract, entry) : undefined
   return (
     <li className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-start">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-semibold">{entry.title}</span>
           <Badge variant={entry.offering.active ? 'success' : 'secondary'}>{entry.offering.active ? 'Se ofrece' : 'Apagada'}</Badge>
+          {own && <Badge variant="info" title="Odicea no la crea ni la borra: solo la conecta."><Building2 /> Ya existe en la empresa</Badge>}
           {entry.offering.active && entry.offering.teams.length > 0 && <Badge variant="secondary"><Users /> Por equipo</Badge>}
-          <span className="text-xs text-muted-foreground">Versión {entry.version}</span>
+          <span className="text-xs text-muted-foreground">Versión {entry.version}{own && Math.max(...entry.versions) > entry.version ? ` (hay una más nueva sin ofrecer)` : ''}</span>
         </div>
-        <p className="mt-0.5 text-[13px] text-muted-foreground">{entry.description}</p>
+        {entry.description && <p className="mt-0.5 text-[13px] text-muted-foreground">{entry.description}</p>}
         {spec && <p className="mt-0.5 text-xs text-muted-foreground">{spec}</p>}
+        {connection && <p className="mt-0.5 text-xs text-muted-foreground">{connection}</p>}
         <ul className="mt-1.5 flex flex-col gap-0.5 text-xs">
           {offeringSummary(entry, teams).map(line => <li key={line}>{line}</li>)}
         </ul>
       </div>
-      <Button size="sm" variant="outline" onClick={onEdit} aria-label={`Editar ${entry.title}`}>
-        <Pencil /> Editar
-      </Button>
+      <div className="flex items-center gap-1.5">
+        {onNewVersion && (
+          <Button size="sm" variant="ghost" onClick={onNewVersion} aria-label={`Versión nueva de ${entry.title}`}>Versión nueva</Button>
+        )}
+        <Button size="sm" variant="outline" onClick={onEdit} aria-label={`Editar ${entry.title}`}>
+          <Pencil /> Editar
+        </Button>
+      </div>
     </li>
   )
 }
@@ -180,7 +209,7 @@ function OfferingDialog({ entry, entries, teams, onClose }: { entry: CatalogEntr
             <DialogTitle>{entry.title}</DialogTitle>
             <DialogDescription>Lo que cambies vale para lo que se cree desde ahora. Lo que ya existe se queda como está.</DialogDescription>
           </DialogHeader>
-          <SwitchField title="Se ofrece" description="Apagada, ninguna app puede crearla (las que ya la tienen la conservan)." checked={form.active} onCheckedChange={active => set({ active })} disabled={update.isPending} />
+          <SwitchField title="Se ofrece" description={isOwn(entry) ? 'Apagada, ninguna app puede agregarla (las que ya la usan la conservan).' : 'Apagada, ninguna app puede crearla (las que ya la tienen la conservan).'} checked={form.active} onCheckedChange={active => set({ active })} disabled={update.isPending} />
           <FieldGroup>
             {versions.length > 1 ? (
               <Field>
@@ -192,7 +221,7 @@ function OfferingDialog({ entry, entries, teams, onClose }: { entry: CatalogEntr
                 <FieldDescription>Lo ya creado sigue en la versión con que se creó. Los límites de abajo son los de la versión {entry.version}: guarda la versión primero y luego ajústalos.</FieldDescription>
               </Field>
             ) : (
-              <p className="text-xs text-muted-foreground">Versión {entry.version}: es la única que trae esta instalación de Odicea.</p>
+              <p className="text-xs text-muted-foreground">Versión {entry.version}: {isOwn(entry) ? 'la única publicada. «Versión nueva» publica otra si cambia la conexión.' : 'es la única que trae esta instalación de Odicea.'}</p>
             )}
             <fieldset className="flex flex-col gap-2" disabled={!form.active || update.isPending}>
               <legend className="mb-1 text-[13px] font-medium">Niveles de app</legend>

@@ -886,6 +886,7 @@ pre-approved up to 50 GiB, not the default).
 | `PUT` | `/api/v1/catalog/recipes/:recipe/offering` | `catalog:manage` | 200 entry (replaces the offering) |
 | `GET` | `/api/v1/catalog/teams` | `catalog:manage` | 200 `{available, items[{id, name, members, directory}]}` — the organization's IAMKit groups an offering can be limited to (`available` false: no IAMKit directory); 502 when IAMKit fails |
 | `GET` | `/api/v1/catalog/stores` | `catalog:manage` | 200 `{items[{name, clusters[{id, name}]}]}` — the secret stores (External Secrets `ClusterSecretStore`) the organization's active clusters announce, and on which clusters each is |
+| `GET` | `/api/v1/catalog/kinds` | any user | 200 `{items[{kind, existing, variables[{name, meaning, secret, optional, derived, format, choices, together}]}]}` — each kind's contract (`pkg/resourcekind`): what the console asks IT for when registering a resource the company already has (a `secret` one only from a store, a `derived` one never) |
 
 ```json
 {"recipe":"postgres-produccion","version":1,"kind":"postgres","title":"PostgreSQL de producción",

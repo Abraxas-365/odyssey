@@ -1380,6 +1380,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The kinds' contracts
+         * @description Every kind of resource with what an app receives of it (its
+         *     variables, which are credentials, which may be left out, which the
+         *     cluster builds) and whether a resource the company already has can
+         *     fulfil it: what the console asks IT for when registering one. The
+         *     same for every organization; anyone in it reads it.
+         */
+        get: operations["listCatalogKinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog/teams": {
         parameters: {
             query?: never;
@@ -3626,6 +3650,33 @@ export interface components {
                 /** Format: uuid */
                 id: string;
                 name: string;
+            }[];
+        };
+        /** @description A kind's contract (pkg/resourcekind) as the console reads it to register a resource the company already has. */
+        CatalogKind: {
+            kind: components["schemas"]["ResourceKind"];
+            /** @description A resource the company already has can fulfil it. */
+            existing: boolean;
+            /** @description What the app receives, in order. */
+            variables: {
+                name: string;
+                /** @description In plain Spanish. */
+                meaning: string;
+                /** @description A credential: only ever read from a secret store. */
+                secret: boolean;
+                /** @description May be left out (the app then does not get it). */
+                optional: boolean;
+                /** @description The cluster builds it from the others; nobody gives it. */
+                derived: boolean;
+                /**
+                 * @description What a written value looks like (empty: short text).
+                 * @enum {string}
+                 */
+                format: "" | "host" | "port" | "url";
+                /** @description The only values it takes (empty: any of its format). */
+                choices: string[];
+                /** @description Optional variables with the same name here are given all or none (empty: none). */
+                together: string;
             }[];
         };
         /** @description What an environment's app can ask for (GET …/catalog, docs/catalog.md). */
@@ -6235,6 +6286,30 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listCatalogKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The contracts, in the console's order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["CatalogKind"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             500: components["responses"]["Internal"];
         };
     };

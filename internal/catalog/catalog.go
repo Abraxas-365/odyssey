@@ -257,6 +257,49 @@ type StoreCluster struct {
 	Name string `json:"name"`
 }
 
+// KindContract is a kind's contract (pkg/resourcekind) as the console reads
+// it to register a resource the company already has (GET /catalog/kinds):
+// whether one can fulfil the kind, and how each variable may be given. The
+// console never keeps its own copy of the variables.
+type KindContract struct {
+	Kind resourcekind.Kind `json:"kind"`
+	// Existing: a resource the company already has can fulfil it.
+	Existing  bool           `json:"existing"`
+	Variables []KindVariable `json:"variables"`
+}
+
+// KindVariable is one variable of a contract (resourcekind.Variable).
+type KindVariable struct {
+	Name    string `json:"name"`
+	Meaning string `json:"meaning"`
+	// Secret: only ever read from a secret store.
+	Secret bool `json:"secret"`
+	// Optional: may be left out.
+	Optional bool `json:"optional"`
+	// Derived: built from the others; nobody gives it.
+	Derived bool `json:"derived"`
+	// Format of a written value: host, port, url or "" (short text).
+	Format string `json:"format"`
+	// Choices are the only values it takes (empty: any of its format).
+	Choices []string `json:"choices"`
+	// Together names the optional variables given all or none ("" none).
+	Together string `json:"together"`
+}
+
+// Kinds are every kind's contract, in the console's order.
+func Kinds() []KindContract {
+	out := []KindContract{}
+	for _, c := range resourcekind.Contracts() {
+		k := KindContract{Kind: c.Kind, Existing: c.Existing, Variables: make([]KindVariable, 0, len(c.Variables))}
+		for _, v := range c.Variables {
+			k.Variables = append(k.Variables, KindVariable{Name: v.Name, Meaning: v.Meaning, Secret: v.Secret, Optional: v.Optional,
+				Derived: v.Derived, Format: v.Format, Choices: append([]string{}, v.Choices...), Together: v.Together})
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
 // Redacted is the entry as someone who does not manage the catalog reads
 // it: the connection of a resource the company already has (its host, its
 // stores' keys) is IT's, and so are the stores it reads (the

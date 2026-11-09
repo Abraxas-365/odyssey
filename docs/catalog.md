@@ -45,8 +45,8 @@ is a new version. Their ids start with `org-`, which no factory recipe does
 They have no parameters and no factory offering. Stage 2 lands in cuts: they
 are stored and read, their connection is validated, the agent's `existing`
 engine writes it in the cluster (docs/resources.md, "A resource the company
-already has"), and IT publishes them over the API (below); the console's
-screens for it come next.
+already has"), and IT publishes them over the API (below) or in the
+console (Administración → Catálogo, below).
 
 **Publishing** (docs/api.md §11 "Resource catalog"). `POST /catalog/recipes`
 (`catalog:manage`) registers version 1 together with an **inactive**
@@ -71,6 +71,25 @@ A resource of such a recipe is marked `existing` (in the API, the MCP's
 `list_catalog` and `list_resources`): it has no size and deleting it removes
 only its connection — the trail says "Desconectó … (ya existía en la
 empresa: sus datos no se tocan)".
+
+**In the console.** Administración → Catálogo has "Registrar un recurso que
+ya existe" (and "Versión nueva" on each of the organization's recipes): the
+kind, a name and description for builders, and for each variable of the
+kind's contract whether it is written or read from a store (store, key,
+property). The console never copies the contracts: it reads them from `GET
+/catalog/kinds` (any signed-in user; it holds no connection), so a credential
+only offers "del almacén", a derived variable says it is built on its own,
+and a choice is a list (a vitest rule in `src/pages/app-pages.test.ts`
+refuses a contract variable named in the console's code, but for the
+design system's illustrations, and any connection built outside
+`src/lib/connection.ts`). The id is derived from the name
+(`org-…`). It says which clusters can use it (those that read all its
+stores) and warns about egress: a private address needs the cluster's
+allowed egress (docs/egress.md), and with restricted egress any address
+does. Once registered, the offering dialog opens to offer it. Builders see
+the option as "Ya existe en la empresa: Odicea solo la conecta", without a
+size and "Cambiar tamaño", and deleting reads "Quitar": it says the
+company's data is not touched and asks no typed name.
 
 **The connection** (`resourcespec.Existing`) lists where each variable of the
 type's contract comes from: a value written in the recipe, or a reference

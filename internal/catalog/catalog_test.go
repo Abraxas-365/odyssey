@@ -236,3 +236,31 @@ func TestEntryRedacted(t *testing.T) {
 		t.Fatal("redacting changed the original")
 	}
 }
+
+// TestKinds: the console's copy of the contracts is the registry, every
+// kind in its order with each variable's rules, and changing the result
+// does not change the registry.
+func TestKinds(t *testing.T) {
+	ks := catalog.Kinds()
+	if len(ks) != len(resourcekind.Kinds) {
+		t.Fatalf("kinds %+v", ks)
+	}
+	for i, k := range ks {
+		c := resourcekind.Of(resourcekind.Kinds[i])
+		if k.Kind != c.Kind || k.Existing != c.Existing || len(k.Variables) != len(c.Variables) {
+			t.Fatalf("%s: %+v", c.Kind, k)
+		}
+		for j, v := range k.Variables {
+			w := c.Variables[j]
+			if v.Name != w.Name || v.Secret != w.Secret || v.Optional != w.Optional || v.Derived != w.Derived || v.Format != w.Format ||
+				!slices.Equal(v.Choices, w.Choices) || v.Together != w.Together || v.Meaning != w.Meaning || v.Choices == nil {
+				t.Fatalf("%s.%s: %+v", c.Kind, w.Name, v)
+			}
+		}
+	}
+	pg := ks[0]
+	pg.Variables[len(pg.Variables)-1].Choices[0] = "changed"
+	if v, _ := resourcekind.Of(resourcekind.Postgres).Variable("PGSSLMODE"); v.Choices[0] == "changed" {
+		t.Fatal("Kinds shares the registry's choices")
+	}
+}

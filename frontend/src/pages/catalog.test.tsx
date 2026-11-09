@@ -142,3 +142,140 @@ describe('catalog lines', () => {
     expect(offeringSummary(entry({}, { teams: ['grp_datos'] }))[1]).toBe('Solo la crea un equipo.')
   })
 })
+
+// The kinds' contracts as GET /catalog/kinds answers them (Go's TestKinds keeps the shape the registry's).
+const v = (name: string, meaning: string, over: object = {}) => ({ name, meaning, secret: false, optional: false, derived: false, format: '', choices: [], together: '', ...over })
+const contracts = {
+  items: [
+    { kind: 'postgres', existing: true, variables: [
+      v('DATABASE_URL', 'la dirección completa de conexión', { secret: true, derived: true }),
+      v('PGHOST', 'el servidor', { format: 'host' }), v('PGPORT', 'el puerto', { format: 'port' }), v('PGDATABASE', 'el nombre de la base'),
+      v('PGUSER', 'el usuario'), v('PGPASSWORD', 'la contraseña', { secret: true }),
+      v('PGSSLMODE', 'cómo se cifra la conexión', { optional: true, choices: ['disable', 'require'] }),
+    ] },
+    { kind: 'redis', existing: true, variables: [v('REDIS_URL', 'la dirección de conexión', { secret: true })] },
+    { kind: 'files', existing: false, variables: [v('FILES_DIR', 'la carpeta')] },
+  ],
+}
+const stores = { items: [{ name: 'vault', clusters: [{ id: 'c1', name: 'Lima' }] }] }
+const own = entry(
+  { recipe: 'org-base-de-reportes', title: 'Base de reportes', description: '', engine: 'existing', params: [], requires: ['existing'],
+    spec: { existing: { values: [
+      { variable: 'PGHOST', value: 'db.empresa.com' }, { variable: 'PGPORT', value: '5432' }, { variable: 'PGDATABASE', value: 'reportes' },
+      { variable: 'PGUSER', value: 'app' }, { variable: 'PGPASSWORD', ref: { store: 'vault', key: 'rds/reportes', property: 'password' } },
+    ] } } },
+  { recipe: 'org-base-de-reportes', active: false, tiers: [], defaults: [] },
+)
+
+function serveOwn(items: unknown[], can: (p: string) => boolean = () => true) {
+  api.mockImplementation((path: string, init?: { method?: string; body?: Record<string, unknown> }) => {
+    if (path === '/catalog/kinds') return Promise.resolve(contracts)
+    if (path === '/catalog/stores') return Promise.resolve(stores)
+    if (path === '/catalog/teams') return Promise.resolve({ available: false, items: [] })
+    if (init?.method === 'POST' && path === '/catalog/recipes') return Promise.resolve({ ...own, recipe: init.body!.recipe, title: init.body!.title })
+    if (init?.method === 'POST') return Promise.resolve(own)
+    return Promise.resolve({ items })
+  })
+  const auth: Auth = { can: p => can(p), user: { id: 'u1' }, logout: () => {}, switchOrganization: () => {} }
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={qc}><AuthProvider value={auth}><MemoryRouter><CatalogPage /></MemoryRouter></AuthProvider></QueryClientProvider>)
+}
+const posts = () => api.mock.calls.filter(c => c[1]?.method === 'POST')
+
+describe('a resource the company already has (stage 2)', () => {
+  beforeEach(() => { api.mockReset() })
+
+  it('registers one: the id comes from the name, a credential only from a store, then IT offers it', async () => {
+    serveOwn([basic])
+    await userEvent.click(await screen.findByRole('button', { name: /Registrar un recurso que ya existe/ }))
+    const dialog = await screen.findByRole('dialog')
+    // only the kinds a company's resource can fulfil
+    expect(within(dialog).queryByRole('radio', { name: 'Archivos' })).toBeNull()
+    expect(within(dialog).getByText('Se arma sola con los datos de abajo.')).toBeTruthy()
+    // the password has no "write it" choice
+    const password = within(dialog).getByRole('group', { name: 'La contraseña' })
+    expect(within(password).queryByRole('radio', { name: 'Escribirlo' })).toBeNull()
+    expect(within(dialog).getByText(/Si la salida del clúster está restringida/)).toBeTruthy()
+
+    await userEvent.type(within(dialog).getByLabelText('Nombre'), 'Base de reportes')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'El servidor' }), '10.0.0.5')
+    expect(within(dialog).getByText(/10\.0\.0\.5 es una dirección de una red privada/)).toBeTruthy()
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'El puerto' }), '5432')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'El nombre de la base' }), 'reportes')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'El usuario' }), 'app')
+    await userEvent.type(within(password).getByLabelText('Llave en el almacén'), 'rds/reportes')
+    await userEvent.type(within(password).getByLabelText(/Propiedad/), 'password')
+    expect(within(dialog).getByText(/Lo pueden usar las apps de el clúster Lima/)).toBeTruthy()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(posts()[0][0]).toBe('/catalog/recipes')
+    expect(posts()[0][1].body).toEqual({
+      recipe: 'org-base-de-reportes', kind: 'postgres', title: 'Base de reportes',
+      existing: { values: [
+        { variable: 'PGHOST', value: '10.0.0.5' }, { variable: 'PGPORT', value: '5432' }, { variable: 'PGDATABASE', value: 'reportes' },
+        { variable: 'PGUSER', value: 'app' }, { variable: 'PGPASSWORD', ref: { store: 'vault', key: 'rds/reportes', property: 'password' } },
+      ] },
+    })
+    // registered switched off: the offering dialog opens to offer it
+    expect(await screen.findByRole('switch', { name: /Se ofrece/ })).toBeTruthy()
+  })
+
+  it('says what is missing before sending, and nothing is sent', async () => {
+    serveOwn([basic])
+    await userEvent.click(await screen.findByRole('button', { name: /Registrar un recurso que ya existe/ }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'El servidor' }), 'localhost')
+    expect(within(dialog).getByText(/No vale localhost/)).toBeTruthy()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Registrar' }))
+    expect(within(dialog).getByText(/Ponle un nombre/)).toBeTruthy()
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('another kind starts its own connection; a written piece may come from a store instead', async () => {
+    serveOwn([basic])
+    await userEvent.click(await screen.findByRole('button', { name: /Registrar un recurso que ya existe/ }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'El servidor' }), 'db.empresa.com')
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Caché' }))
+    expect(within(dialog).queryByRole('textbox', { name: 'El servidor' })).toBeNull()
+    expect(within(dialog).getByRole('group', { name: 'La dirección de conexión' })).toBeTruthy()
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Base de datos' }))
+    expect((within(dialog).getByRole('textbox', { name: 'El servidor' }) as HTMLInputElement).value).toBe('')
+    const user = within(dialog).getByRole('group', { name: 'El usuario' })
+    await userEvent.click(within(user).getByRole('radio', { name: 'Del almacén de secretos' }))
+    expect(within(user).getByLabelText('Llave en el almacén')).toBeTruthy()
+    expect(within(user).queryByRole('textbox', { name: 'El usuario' })).toBeNull()
+  })
+
+  it('without the vault permission, a connection that reads a store cannot be sent', async () => {
+    serveOwn([basic], p => p !== permissions.secretsExternal)
+    await userEvent.click(await screen.findByRole('button', { name: /Registrar un recurso que ya existe/ }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Tu cuenta no puede usar el almacén de secretos de la empresa.')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Registrar' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('lists one with its marking and where it connects; a new version starts from the current', async () => {
+    serveOwn([basic, own])
+    const dbs = await screen.findByRole('list', { name: 'Bases de datos' })
+    expect(within(dbs).getByText('Ya existe en la empresa')).toBeTruthy()
+    expect(within(dbs).getByText('Se conecta a db.empresa.com · credenciales del almacén «vault».')).toBeTruthy()
+    expect(within(dbs).getByText('No se ofrece: ninguna app puede usarla.')).toBeTruthy()
+    // a factory recipe has no new version here
+    expect(screen.queryByRole('button', { name: 'Versión nueva de PostgreSQL básico' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Versión nueva de Base de reportes' }))
+    const dialog = await screen.findByRole('dialog')
+    expect((within(dialog).getByRole('textbox', { name: 'El servidor' }) as HTMLInputElement).value).toBe('db.empresa.com')
+    const publish = within(dialog).getByRole('button', { name: 'Publicar versión 2' })
+    expect(publish.hasAttribute('disabled')).toBe(true)
+    const host = within(dialog).getByRole('textbox', { name: 'El servidor' })
+    await userEvent.clear(host)
+    await userEvent.type(host, 'db2.empresa.com')
+    await userEvent.click(publish)
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(posts()[0][0]).toBe('/catalog/recipes/org-base-de-reportes/versions')
+    expect(posts()[0][1].body.existing.values[0]).toEqual({ variable: 'PGHOST', value: 'db2.empresa.com' })
+    expect('recipe' in posts()[0][1].body).toBe(false)
+  })
+})

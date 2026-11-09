@@ -145,3 +145,57 @@ describe('ResizeDialog within the recipe offering', () => {
     expect((screen.getByRole('button', { name: 'Ampliar' }) as HTMLButtonElement).disabled).toBe(false)
   })
 })
+
+describe('a resource the company already has (stage 2)', () => {
+  beforeEach(() => { api.mockReset() })
+
+  const reportes = {
+    id: 'r2', organization_id: 'o', project_id: 'p', environment_id: 'e', name: 'reportes', kind: 'postgres', storage_gi: 0, recipe: 'org-base-de-reportes', recipe_version: 1, existing: true,
+    params: {}, generation: 1, status: 'active', created_by: 'u', created_at: '', updated_at: '', phase: 'ready', message: '', connected: false, prefix: '', services: [], variables: [],
+  }
+  function serveExisting(resource: Record<string, unknown> = reportes) {
+    api.mockImplementation((path: string, init?: { method?: string }) => {
+      if (init?.method === 'DELETE') return Promise.resolve({ status: 'applied' })
+      if (path === '/projects/p/services') return Promise.resolve({ items: [] })
+      if (path.endsWith('/catalog')) return Promise.resolve({ tier: 'internal', recipes: [offer({ recipe: 'org-base-de-reportes', title: 'Base de reportes', description: 'La de BI.', existing: true, params: [] })], unavailable: [] })
+      if (path.endsWith('/resources')) return Promise.resolve({ items: [resource], available_kinds: ['postgres'] })
+      if (path.endsWith('/ai')) return Promise.resolve({ status: 'off', available: true, enabled: false, services: [], scoped_settings: true, variables: [], base_url: '' })
+      return Promise.resolve({ scoped_settings: true })
+    })
+  }
+
+  it('shows it without a size and with nothing to resize', async () => {
+    serveExisting()
+    mount()
+    expect(await screen.findByText('Base de datos · Ya existe en la empresa')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Cambiar tamaño' })).toBeNull()
+    expect(screen.queryByText(/0 GB/)).toBeNull()
+  })
+
+  it('removes it from the app saying the company’s data is not touched, without typing its name', async () => {
+    serveExisting()
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Quitar reportes' }))
+    expect(await screen.findByText(/La base de datos de la empresa no se toca/)).toBeTruthy()
+    expect(screen.queryByText(/se borran para siempre/)).toBeNull()
+    expect(screen.queryByLabelText(/para confirmar/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar de la app' }))
+    await waitFor(() => expect(api.mock.calls.some(c => c[1]?.method === 'DELETE')).toBe(true))
+  })
+
+  it('says a failed connection is for IT, in plain words', async () => {
+    serveExisting({ ...reportes, phase: 'failed', message: 'SecretSyncedError: key rds/reportes not found' })
+    mount()
+    expect(await screen.findByText(/No se pudo conectar la base de datos de la empresa. Avísale a TI/)).toBeTruthy()
+    expect(screen.queryByText(/SecretSyncedError/)).toBeNull()
+  })
+
+  it('marks the option as one Odicea only connects when adding it', async () => {
+    serveExisting()
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: /Agregar/ }))
+    expect(await screen.findByText(/Ya existe en la empresa: Odicea solo la conecta/)).toBeTruthy()
+    expect(screen.queryByLabelText('Tamaño (GB)')).toBeNull()
+    expect(screen.getByRole('radio', { name: 'Solo agregarla' })).toBeTruthy()
+  })
+})

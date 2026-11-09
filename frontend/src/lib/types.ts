@@ -92,6 +92,14 @@ export type CatalogTeam = CatalogTeams['items'][number]
 export type EnvironmentCatalog = Schemas['EnvironmentCatalog']
 export type CatalogOffer = Schemas['CatalogOffer']
 export type CatalogOfferParam = CatalogOffer['params'][number]
+/** A kind's contract (GET /catalog/kinds): what IT gives for each variable of a resource the company already has. */
+export type CatalogKind = Schemas['CatalogKind']
+export type CatalogKindVariable = CatalogKind['variables'][number]
+/** A secret store the organization's clusters read from (GET /catalog/stores). */
+export type CatalogStore = Schemas['CatalogStore']
+export type ExistingConnection = Schemas['ExistingConnection']
+export type CatalogRecipeRegistration = Schemas['CatalogRecipeRegistration']
+export type CatalogRecipeDraft = Schemas['CatalogRecipeDraft']
 /** The app's own access to the organization's AI (docs/api.md §11, docs/ai.md); never carries the key. */
 export type AppAI = Schemas['AI']
 export type SecretView = Schemas['SecretView']

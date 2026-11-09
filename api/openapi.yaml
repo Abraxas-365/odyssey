@@ -2152,6 +2152,34 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/catalog/kinds:
+    get:
+      tags: [catalog]
+      operationId: listCatalogKinds
+      summary: The kinds' contracts
+      description: |
+        Every kind of resource with what an app receives of it (its
+        variables, which are credentials, which may be left out, which the
+        cluster builds) and whether a resource the company already has can
+        fulfil it: what the console asks IT for when registering one. The
+        same for every organization; anyone in it reads it.
+      x-permissions: []
+      responses:
+        "200":
+          description: The contracts, in the console's order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogKind" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/catalog/teams:
     get:
       tags: [catalog]
@@ -5338,6 +5366,31 @@ components:
             properties:
               id: { type: string, format: uuid }
               name: { type: string }
+
+    CatalogKind:
+      type: object
+      additionalProperties: false
+      description: A kind's contract (pkg/resourcekind) as the console reads it to register a resource the company already has.
+      required: [kind, existing, variables]
+      properties:
+        kind: { $ref: "#/components/schemas/ResourceKind" }
+        existing: { type: boolean, description: "A resource the company already has can fulfil it." }
+        variables:
+          type: array
+          description: What the app receives, in order.
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, meaning, secret, optional, derived, format, choices, together]
+            properties:
+              name: { type: string }
+              meaning: { type: string, description: "In plain Spanish." }
+              secret: { type: boolean, description: "A credential: only ever read from a secret store." }
+              optional: { type: boolean, description: "May be left out (the app then does not get it)." }
+              derived: { type: boolean, description: "The cluster builds it from the others; nobody gives it." }
+              format: { type: string, enum: ["", host, port, url], description: "What a written value looks like (empty: short text)." }
+              choices: { type: array, items: { type: string }, description: "The only values it takes (empty: any of its format)." }
+              together: { type: string, description: "Optional variables with the same name here are given all or none (empty: none)." }
 
     EnvironmentCatalog:
       type: object

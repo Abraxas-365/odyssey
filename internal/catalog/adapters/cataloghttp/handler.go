@@ -33,6 +33,13 @@ func (h *Handler) Register(r fiber.Router) {
 	g.Put("/recipes/:recipe/offering", httpx.RequirePermissions(permission.CatalogManage), h.update)
 	g.Get("/teams", httpx.RequirePermissions(permission.CatalogManage), h.teams)
 	g.Get("/stores", httpx.RequirePermissions(permission.CatalogManage), h.stores)
+	g.Get("/kinds", h.kinds)
+}
+
+// kinds are the kinds' contracts: what an app receives of each, the same
+// for everyone (no organization's data).
+func (h *Handler) kinds(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{"items": catalog.Kinds()})
 }
 
 // shown is e as the caller may read it.

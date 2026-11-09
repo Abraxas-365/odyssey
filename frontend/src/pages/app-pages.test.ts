@@ -188,3 +188,35 @@ describe('UX v4 §5.9: visual', () => {
     expect(files(src).map(rel).filter(scoped).filter(f => boxedList.test(readFileSync(join(src, f), 'utf8')))).toEqual([])
   })
 })
+
+describe('stage 2: resources the company already has', () => {
+  // The kinds' contracts (which variables, which are credentials, their
+  // formats and choices) live in pkg/resourcekind and reach the console
+  // through GET /catalog/kinds. A copy here would drift from the server's
+  // checks: no source file names a variable of a contract. The four main
+  // ones (DATABASE_URL, REDIS_URL, S3_BUCKET, FILES_DIR) may appear only as
+  // illustrations in the design system's components and gallery.
+  const contractVariable = /\b(DATABASE_URL|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD|PGSSLMODE|REDIS_URL|FILES_DIR|S3_BUCKET|S3_ENDPOINT|S3_REGION|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\b/
+  const illustrations = ['components/odyssey/resources.tsx', 'pages/design-system.tsx']
+  // A credential is only ever a reference to a secret store of the company's
+  // clusters: only lib/connection.ts builds a connection (any `ref` key or
+  // shorthand), and it never writes a secret variable as a value.
+  const storeRef = /\bref\s*:|[{,]\s*ref\s*[,}]/
+
+  it('the rules catch violations', () => {
+    expect(contractVariable.test("if (v.name === 'PGPASSWORD')")).toBe(true)
+    expect(contractVariable.test("{ name: 'REDIS_URL', secret: true }")).toBe(true)
+    expect(storeRef.test('values.push({ variable: v, ref: { store: s, key } })')).toBe(true)
+    expect(storeRef.test('values.push({ variable: v, ref: { key, store } })')).toBe(true)
+    expect(storeRef.test('values.push({ variable, ref })')).toBe(true)
+    expect(storeRef.test('const reference = 1; prefix: x')).toBe(false)
+  })
+
+  it('the console reads the contracts from the API, never a copy', () => {
+    expect(offenders(contractVariable, illustrations)).toEqual([])
+  })
+
+  it('only lib/connection.ts builds a connection', () => {
+    expect(offenders(storeRef, ['lib/connection.ts'])).toEqual([])
+  })
+})

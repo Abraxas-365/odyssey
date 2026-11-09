@@ -48,6 +48,15 @@ func TestCatalogOverHTTP(t *testing.T) {
 	}
 	httpxtest.Want(t, checked(t, app, http.MethodGet, "/api/v1/catalog/recipes/mysql", reader, nil), http.StatusNotFound)
 
+	// the kinds' contracts are anyone's: what the console asks IT for
+	res = checked(t, app, http.MethodGet, "/api/v1/catalog/kinds", reader, nil)
+	httpxtest.Want(t, res, http.StatusOK)
+	if kinds := httpxtest.JSON[struct {
+		Items []catalog.KindContract `json:"items"`
+	}](t, res).Items; len(kinds) != 4 || kinds[0].Kind != "postgres" || !kinds[0].Existing || kinds[2].Existing || !kinds[0].Variables[0].Derived {
+		t.Fatalf("kinds: %+v", kinds)
+	}
+
 	offer := func(tok string, body map[string]any) httpxtest.Response {
 		return checked(t, app, http.MethodPut, "/api/v1/catalog/recipes/"+catalog.PostgresProduction+"/offering", tok, body)
 	}

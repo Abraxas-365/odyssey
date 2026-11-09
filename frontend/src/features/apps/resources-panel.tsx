@@ -21,7 +21,7 @@ import { scopeField, scopeProblem } from './scope'
 import { ScopeBadge, ScopePicker } from './service-scope'
 import { isMulti } from './services'
 import { anchors } from './uses'
-import { atLimit, deleteBlock, deleteConfirmed, failureOf, isActive, kindText, MAX_GI, MAX_NAME, MAX_PREFIX, nameProblem, prefixProblem, sizeLabel, sizeProblem, stateOf, suggestName } from './resources'
+import { atLimit, deleteBlock, deleteConfirmed, deleteText, failureOf, isActive, kindText, MAX_GI, MAX_NAME, MAX_PREFIX, nameProblem, prefixProblem, resizable, sizeLabel, sizeLine, sizeProblem, stateOf, suggestName } from './resources'
 
 const applied = (deployment: unknown) => (deployment ? 'Aplicando el cambio a la app…' : 'Guardado. La app lo recibe con la próxima publicación.')
 
@@ -80,6 +80,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
           const state = stateOf(r)
           const failure = failureOf(r)
           const block = deleteBlock(r)
+          const verb = deleteText(r).verb
           return (
             <li key={r.id} className="flex flex-col gap-2 px-5 py-3.5">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -87,7 +88,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-[13px] font-medium">{r.name}</span>
-                    <span className="text-xs text-muted-foreground">{text.label} · {sizeLabel(r.storage_gi)}</span>
+                    <span className="text-xs text-muted-foreground" title={r.existing ? 'Odicea solo la conecta: no la crea ni la borra.' : undefined}>{sizeLine(r)}</span>
                     <Badge variant={state.tone}>{state.label}</Badge>
                     {r.status === 'active' && <Badge variant={r.connected ? 'success' : 'secondary'}>{r.connected ? 'Conectada a la app' : 'Sin conectar'}</Badge>}
                     {r.connected && <ScopeBadge scope={r.services} services={services} />}
@@ -95,12 +96,12 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
                 </div>
                 {canWrite && isActive(r) && (
                   <div className="flex items-center gap-1.5">
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setSizing(r)}>Cambiar tamaño</Button>
+                    {resizable(r) && <Button size="sm" variant="outline" disabled={busy} onClick={() => setSizing(r)}>Cambiar tamaño</Button>}
                     <Button size="sm" variant="outline" disabled={busy || connect.isPending || disconnect.isPending} onClick={() => change(r, !r.connected)}>
                       {r.connected ? 'Desconectar' : 'Conectar'}
                     </Button>
                     {mayDelete && (
-                      <Button size="icon-sm" variant="ghost" aria-label={`Eliminar ${r.name}`} title={block} disabled={busy} onClick={() => setRemoving(r)}>
+                      <Button size="icon-sm" variant="ghost" aria-label={`${verb} ${r.name}`} title={block} disabled={busy} onClick={() => setRemoving(r)}>
                         <Trash2 />
                       </Button>
                     )}
@@ -125,7 +126,7 @@ export function ResourcesPanel({ project, env, canWrite, busy, technical }: { pr
       </ul>
       {canWrite && (
         <PanelFooter>
-          <span>{full ? 'Llegaste al máximo de recursos de esta app.' : 'Al eliminar un recurso se borran sus datos para siempre.'}</span>
+          <span>{full ? 'Llegaste al máximo de recursos de esta app.' : items.some(r => r.existing) ? 'Al eliminar un recurso se borran sus datos para siempre; los que ya existían en la empresa solo se quitan de la app.' : 'Al eliminar un recurso se borran sus datos para siempre.'}</span>
           <Button size="sm" variant="outline" onClick={() => setAdding(true)} disabled={!list.data || kinds.length === 0 || full}>
             <Plus /> Agregar
           </Button>
@@ -277,11 +278,16 @@ function AddResourceForm({ project, env, catalog, taken, services, scoped, techn
       <FieldGroup>
         {choices.length > 1 || (!offer && choices.length > 0) ? (
           <>
-            <OptionCards label="Opción" value={recipe} onChange={r => choose(choices.find(c => c.recipe === r))} options={choices.map(c => ({ value: c.recipe, title: c.title, description: c.description }))} />
+            <OptionCards label="Opción" value={recipe} onChange={r => choose(choices.find(c => c.recipe === r))} options={choices.map(c => ({ value: c.recipe, title: c.title, description: <>{c.description}{c.existing && <span className="mt-1 block text-xs">{existingNote}</span>}</> }))} />
             {!offer && <FieldError>TI cambió las opciones mientras elegías: elige una de nuevo.</FieldError>}
           </>
         ) : (
-          offer && <p className="text-[13px] text-muted-foreground"><span className="font-medium text-foreground">{offer.title}.</span> {offer.description}</p>
+          offer && (
+            <div className="flex flex-col gap-1 text-[13px] text-muted-foreground">
+              <p><span className="font-medium text-foreground">{offer.title}.</span> {offer.description}</p>
+              {offer.existing && <p className="text-xs">{existingNote}</p>}
+            </div>
+          )
         )}
         <Field data-invalid={!!problem || undefined}>
           <FieldLabel htmlFor="resource-name">Nombre</FieldLabel>
@@ -304,7 +310,7 @@ function AddResourceForm({ project, env, catalog, taken, services, scoped, techn
             </Field>
           )
         })}
-        <ChipGroup label="Conexión" value={connectIt ? 'yes' : 'no'} onChange={v => setConnectIt(v === 'yes')} options={[{ value: 'yes', label: 'Conectarla a la app ahora' }, { value: 'no', label: 'Solo crearla' }]} />
+        <ChipGroup label="Conexión" value={connectIt ? 'yes' : 'no'} onChange={v => setConnectIt(v === 'yes')} options={[{ value: 'yes', label: 'Conectarla a la app ahora' }, { value: 'no', label: offer?.existing ? 'Solo agregarla' : 'Solo crearla' }]} />
         {connectIt && (
           <Field data-invalid={!!pProblem || undefined}>
             <FieldLabel htmlFor="resource-prefix">Prefijo <span className="font-normal text-muted-foreground">(opcional)</span></FieldLabel>
@@ -338,6 +344,9 @@ function AddResourceForm({ project, env, catalog, taken, services, scoped, techn
 }
 
 const effectTone = { allow: 'ok', approval: 'warn', deny: 'bad' } as const
+
+/** How a builder reads an option IT registered from the company (docs/catalog.md, stage 2). */
+const existingNote = 'Ya existe en la empresa: Odicea solo la conecta. No tiene tamaño y quitarla no borra sus datos.'
 
 function ResizeDialog({ project, env, resource, onClose }: { project: string; env: string; resource: Resource; onClose: () => void }) {
   const resize = useResizeResource(project, env)
@@ -379,39 +388,44 @@ function ResizeDialog({ project, env, resource, onClose }: { project: string; en
   )
 }
 
-/** Erasing is confirmed by typing the name; a resource the app still uses is not offered. */
+/**
+ * Erasing is confirmed by typing the name; a resource the app still uses is
+ * not offered. One the company already has is only removed from the app (its
+ * data stays where it is), so a plain confirmation is enough.
+ */
 function DeleteDialog({ project, env, resource, onClose }: { project: string; env: string; resource: Resource; onClose: () => void }) {
   const remove = useDeleteResource(project, env)
   const [typed, setTyped] = useState('')
   const block = deleteBlock(resource)
-  const ok = !block && deleteConfirmed(typed, resource.name)
+  const text = deleteText(resource)
+  const ok = !block && (!text.typed || deleteConfirmed(typed, resource.name))
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
-    remove.mutate(resource.name, { onSuccess: out => { afterWrite(out, () => toast.success('Eliminando…')); onClose() } })
+    remove.mutate(resource.name, { onSuccess: out => { afterWrite(out, () => toast.success(text.busy)); onClose() } })
   }
   return (
     <AlertDialog open onOpenChange={v => !v && !remove.isPending && onClose()}>
       <AlertDialogContent>
         <form onSubmit={submit} className="flex flex-col gap-5">
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar <span className="font-mono">{resource.name}</span>?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {kindText[resource.kind].noun} y todo lo que guarda se borran para siempre. No hay forma de recuperarlos.
-            </AlertDialogDescription>
+            <AlertDialogTitle>¿{text.verb} <span className="font-mono">{resource.name}</span>?</AlertDialogTitle>
+            <AlertDialogDescription>{text.body}</AlertDialogDescription>
           </AlertDialogHeader>
           {block ? (
             <Callout tone="warn" title={block}>Desconéctala de la app y vuelve a intentarlo.</Callout>
           ) : (
-            <Field>
-              <FieldLabel htmlFor="delete-confirm">Escribe <span className="font-mono">{resource.name}</span> para confirmar</FieldLabel>
-              <Input id="delete-confirm" className="font-mono" value={typed} autoComplete="off" spellCheck={false} autoFocus onChange={e => setTyped(e.target.value)} />
-            </Field>
+            text.typed && (
+              <Field>
+                <FieldLabel htmlFor="delete-confirm">Escribe <span className="font-mono">{resource.name}</span> para confirmar</FieldLabel>
+                <Input id="delete-confirm" className="font-mono" value={typed} autoComplete="off" spellCheck={false} autoFocus onChange={e => setTyped(e.target.value)} />
+              </Field>
+            )
           )}
           <ErrorNotice error={remove.error} />
           <AlertDialogFooter>
             <AlertDialogCancel type="button">Cancelar</AlertDialogCancel>
-            <Button type="submit" variant="destructive-solid" disabled={!ok || remove.isPending}>{remove.isPending ? 'Eliminando…' : 'Eliminar para siempre'}</Button>
+            <Button type="submit" variant={text.typed ? 'destructive-solid' : 'primary'} disabled={!ok || remove.isPending}>{remove.isPending ? text.busy : text.confirm}</Button>
           </AlertDialogFooter>
         </form>
       </AlertDialogContent>

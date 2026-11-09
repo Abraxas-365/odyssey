@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { atLimit, deleteBlock, deleteConfirmed, failureOf, isActive, nameProblem, prefixProblem, sizeProblem, stateOf, suggestName } from './resources'
+import { atLimit, deleteBlock, deleteConfirmed, deleteText, failureOf, isActive, nameProblem, prefixProblem, resizable, sizeLine, sizeProblem, stateOf, suggestName } from './resources'
 
 describe('resources', () => {
   it('says what a resource is doing in plain words', () => {
@@ -69,6 +69,23 @@ describe('resources', () => {
     expect(deleteBlock({ connected: true, status: 'active' })).toMatch(/Desconéctala/)
     expect(deleteBlock({ connected: false, status: 'deleting' })).toMatch(/eliminando/)
     expect(deleteBlock({ connected: false, status: 'active' })).toBeUndefined()
+  })
+
+  it('a resource the company already has: no size, removed not erased, its failure is IT’s', () => {
+    const own = { kind: 'postgres' as const, storage_gi: 0, existing: true }
+    expect(sizeLine(own)).toBe('Base de datos · Ya existe en la empresa')
+    expect(sizeLine({ ...own, storage_gi: 5, existing: false })).toBe('Base de datos · 5 GB')
+    expect(sizeLine({ kind: 'object-storage', storage_gi: 0, existing: false })).toBe('Almacenamiento de objetos')
+    expect(resizable(own)).toBe(false)
+    expect(resizable({ kind: 'object-storage', existing: false })).toBe(false)
+    expect(resizable({ kind: 'redis', existing: false })).toBe(true)
+    expect(deleteText(own)).toMatchObject({ verb: 'Quitar', typed: false, confirm: 'Quitar de la app' })
+    expect(deleteText(own).body).toContain('de la empresa no se toca')
+    expect(deleteText({ ...own, existing: false })).toMatchObject({ verb: 'Eliminar', typed: true })
+    expect(deleteBlock({ connected: false, status: 'deleting', existing: true })).toMatch(/quitando/)
+    expect(stateOf({ status: 'active', phase: 'provisioning', message: '', existing: true }).label).toBe('Conectando…')
+    expect(stateOf({ status: 'deleting', phase: 'ready', message: '', existing: true }).label).toBe('Quitando…')
+    expect(failureOf({ kind: 'postgres', status: 'active', phase: 'failed', message: 'x', existing: true })?.text).toMatch(/Avísale a TI/)
   })
 
   it('stops at the limit of ten', () => {
