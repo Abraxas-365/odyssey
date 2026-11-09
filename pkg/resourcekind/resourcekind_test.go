@@ -37,7 +37,7 @@ func TestStorage(t *testing.T) {
 }
 
 func TestVariables(t *testing.T) {
-	if got := Variables(Postgres, ""); !slices.Contains(got, "DATABASE_URL") || len(got) != 6 {
+	if got := Variables(Postgres, ""); !slices.Contains(got, "DATABASE_URL") || !slices.Contains(got, "PGSSLMODE") || len(got) != 7 {
 		t.Errorf("postgres %v", got)
 	}
 	if got := Variables(Redis, "CACHE"); !slices.Equal(got, []string{"CACHE_REDIS_URL"}) {

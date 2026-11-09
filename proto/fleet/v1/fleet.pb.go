@@ -2976,12 +2976,14 @@ type ResourceRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// name is the resource's name in its environment (a DNS label).
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// kind is "postgres", "redis" or "files".
+	// kind is a pkg/resourcekind contract ("postgres", "redis", "files",
+	// "object-storage").
 	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	// prefix goes before the variables the app reads it by (empty: none):
-	// postgres → DATABASE_URL, PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD;
-	// redis → REDIS_URL; files → FILES_DIR (the volume is mounted at
-	// /data/<name>). With prefix "ANALYTICS", ANALYTICS_DATABASE_URL, …
+	// prefix goes before the variables the app reads it by (empty: none),
+	// the contract's (pkg/resourcekind): postgres → DATABASE_URL, PGHOST, …;
+	// files → FILES_DIR (the volume is mounted at /data/<name>). With prefix
+	// "ANALYTICS", ANALYTICS_DATABASE_URL, … An optional variable the
+	// resource does not give is left out of the app's environment.
 	Prefix string `protobuf:"bytes,3,opt,name=prefix,proto3" json:"prefix,omitempty"`
 	// services are the services wired to it (MS-4); empty: every service of
 	// the app (a "files" volume, ReadWriteOnce: only the first one).
@@ -3058,12 +3060,14 @@ type Resource struct {
 	EnvironmentId  string                 `protobuf:"bytes,3,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
 	// name is unique in the environment (a DNS label, at most 30 characters).
 	Name string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
-	// kind is "postgres", "redis" or "files"; it never changes.
+	// kind is a pkg/resourcekind contract ("postgres", "redis", "files",
+	// "object-storage"); it never changes.
 	Kind string `protobuf:"bytes,5,opt,name=kind,proto3" json:"kind,omitempty"`
 	// generation grows with every change of the desired state.
 	Generation int64 `protobuf:"varint,6,opt,name=generation,proto3" json:"generation,omitempty"`
 	// storage is the volume's size (a Kubernetes quantity, e.g. "1Gi"); it
-	// may grow, never shrink.
+	// may grow, never shrink. Empty only for a resource the company already
+	// has (existing), which has no volume.
 	Storage string `protobuf:"bytes,7,opt,name=storage,proto3" json:"storage,omitempty"`
 	// deleted: the resource and its data are to be removed.
 	Deleted bool `protobuf:"varint,8,opt,name=deleted,proto3" json:"deleted,omitempty"`
@@ -3082,6 +3086,7 @@ type Resource struct {
 	// Types that are valid to be assigned to Spec:
 	//
 	//	*Resource_BuiltinPostgres
+	//	*Resource_Existing
 	Spec          isResource_Spec `protobuf_oneof:"spec"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3203,6 +3208,15 @@ func (x *Resource) GetBuiltinPostgres() *BuiltinPostgres {
 	return nil
 }
 
+func (x *Resource) GetExisting() *Existing {
+	if x != nil {
+		if x, ok := x.Spec.(*Resource_Existing); ok {
+			return x.Existing
+		}
+	}
+	return nil
+}
+
 type isResource_Spec interface {
 	isResource_Spec()
 }
@@ -3211,7 +3225,190 @@ type Resource_BuiltinPostgres struct {
 	BuiltinPostgres *BuiltinPostgres `protobuf:"bytes,11,opt,name=builtin_postgres,json=builtinPostgres,proto3,oneof"`
 }
 
+type Resource_Existing struct {
+	// existing: a resource the company already has. The agent only writes
+	// its connection (never makes, changes or deletes the resource itself)
+	// and needs "existing" plus "secretstore:<store>" for every store the
+	// values read from. It has no storage. An agent that does not know this
+	// arm sees a spec version with no spec it reads and rejects it.
+	Existing *Existing `protobuf:"bytes,12,opt,name=existing,proto3,oneof"`
+}
+
 func (*Resource_BuiltinPostgres) isResource_Spec() {}
+
+func (*Resource_Existing) isResource_Spec() {}
+
+// Existing is where each variable of the kind's contract (pkg/resourcekind)
+// comes from: a value written in the recipe or a reference to a secret
+// store. A credential is only ever a reference; a derived variable
+// (DATABASE_URL) is never listed: the agent builds it.
+type Existing struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Values        []*ExistingValue       `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Existing) Reset() {
+	*x = Existing{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Existing) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Existing) ProtoMessage() {}
+
+func (x *Existing) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Existing.ProtoReflect.Descriptor instead.
+func (*Existing) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *Existing) GetValues() []*ExistingValue {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+// ExistingValue is one variable: value or ref.
+type ExistingValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// variable is the contract's name, without the app's prefix ("PGHOST").
+	Variable      string       `protobuf:"bytes,1,opt,name=variable,proto3" json:"variable,omitempty"`
+	Value         string       `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Ref           *ExistingRef `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExistingValue) Reset() {
+	*x = ExistingValue{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExistingValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExistingValue) ProtoMessage() {}
+
+func (x *ExistingValue) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExistingValue.ProtoReflect.Descriptor instead.
+func (*ExistingValue) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *ExistingValue) GetVariable() string {
+	if x != nil {
+		return x.Variable
+	}
+	return ""
+}
+
+func (x *ExistingValue) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *ExistingValue) GetRef() *ExistingRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+// ExistingRef locates a value in a ClusterSecretStore (External Secrets
+// Operator): the store, the remote key and (optional) the property in it.
+type ExistingRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Store         string                 `protobuf:"bytes,1,opt,name=store,proto3" json:"store,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Property      string                 `protobuf:"bytes,3,opt,name=property,proto3" json:"property,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExistingRef) Reset() {
+	*x = ExistingRef{}
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExistingRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExistingRef) ProtoMessage() {}
+
+func (x *ExistingRef) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExistingRef.ProtoReflect.Descriptor instead.
+func (*ExistingRef) Descriptor() ([]byte, []int) {
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *ExistingRef) GetStore() string {
+	if x != nil {
+		return x.Store
+	}
+	return ""
+}
+
+func (x *ExistingRef) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *ExistingRef) GetProperty() string {
+	if x != nil {
+		return x.Property
+	}
+	return ""
+}
 
 // BuiltinPostgres are the settings of a CloudNativePG database. A zero field
 // is the engine's default (and needs no capability).
@@ -3232,7 +3429,7 @@ type BuiltinPostgres struct {
 
 func (x *BuiltinPostgres) Reset() {
 	*x = BuiltinPostgres{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3244,7 +3441,7 @@ func (x *BuiltinPostgres) String() string {
 func (*BuiltinPostgres) ProtoMessage() {}
 
 func (x *BuiltinPostgres) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[39]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3257,7 +3454,7 @@ func (x *BuiltinPostgres) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuiltinPostgres.ProtoReflect.Descriptor instead.
 func (*BuiltinPostgres) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{39}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *BuiltinPostgres) GetInstances() int32 {
@@ -3302,7 +3499,7 @@ type ResourceReport struct {
 
 func (x *ResourceReport) Reset() {
 	*x = ResourceReport{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3314,7 +3511,7 @@ func (x *ResourceReport) String() string {
 func (*ResourceReport) ProtoMessage() {}
 
 func (x *ResourceReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[40]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3327,7 +3524,7 @@ func (x *ResourceReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceReport.ProtoReflect.Descriptor instead.
 func (*ResourceReport) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{40}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ResourceReport) GetFull() bool {
@@ -3361,7 +3558,7 @@ type ResourceStatus struct {
 
 func (x *ResourceStatus) Reset() {
 	*x = ResourceStatus{}
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[41]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3373,7 +3570,7 @@ func (x *ResourceStatus) String() string {
 func (*ResourceStatus) ProtoMessage() {}
 
 func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[41]
+	mi := &file_proto_fleet_v1_fleet_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3386,7 +3583,7 @@ func (x *ResourceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceStatus.ProtoReflect.Descriptor instead.
 func (*ResourceStatus) Descriptor() ([]byte, []int) {
-	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{41}
+	return file_proto_fleet_v1_fleet_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ResourceStatus) GetEnvironmentId() string {
@@ -3661,7 +3858,7 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
 	"\x06prefix\x18\x03 \x01(\tR\x06prefix\x12\x1a\n" +
-	"\bservices\x18\x04 \x03(\tR\bservices\"\x8d\x03\n" +
+	"\bservices\x18\x04 \x03(\tR\bservices\"\xbf\x03\n" +
 	"\bResource\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -3677,8 +3874,19 @@ const file_proto_fleet_v1_fleet_proto_rawDesc = "" +
 	"\x06recipe\x18\t \x01(\tR\x06recipe\x12.\n" +
 	"\x13spec_schema_version\x18\n" +
 	" \x01(\x05R\x11specSchemaVersion\x12F\n" +
-	"\x10builtin_postgres\x18\v \x01(\v2\x19.fleet.v1.BuiltinPostgresH\x00R\x0fbuiltinPostgresB\x06\n" +
-	"\x04spec\"o\n" +
+	"\x10builtin_postgres\x18\v \x01(\v2\x19.fleet.v1.BuiltinPostgresH\x00R\x0fbuiltinPostgres\x120\n" +
+	"\bexisting\x18\f \x01(\v2\x12.fleet.v1.ExistingH\x00R\bexistingB\x06\n" +
+	"\x04spec\";\n" +
+	"\bExisting\x12/\n" +
+	"\x06values\x18\x01 \x03(\v2\x17.fleet.v1.ExistingValueR\x06values\"j\n" +
+	"\rExistingValue\x12\x1a\n" +
+	"\bvariable\x18\x01 \x01(\tR\bvariable\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x12'\n" +
+	"\x03ref\x18\x03 \x01(\v2\x15.fleet.v1.ExistingRefR\x03ref\"Q\n" +
+	"\vExistingRef\x12\x14\n" +
+	"\x05store\x18\x01 \x01(\tR\x05store\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12\x1a\n" +
+	"\bproperty\x18\x03 \x01(\tR\bproperty\"o\n" +
 	"\x0fBuiltinPostgres\x12\x1c\n" +
 	"\tinstances\x18\x01 \x01(\x05R\tinstances\x12\x14\n" +
 	"\x05major\x18\x02 \x01(\x05R\x05major\x12\x10\n" +
@@ -3712,7 +3920,7 @@ func file_proto_fleet_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_proto_fleet_v1_fleet_proto_rawDescData
 }
 
-var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_proto_fleet_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*FetchSourceRequest)(nil), // 0: fleet.v1.FetchSourceRequest
 	(*SourceChunk)(nil),        // 1: fleet.v1.SourceChunk
@@ -3753,12 +3961,15 @@ var file_proto_fleet_v1_fleet_proto_goTypes = []any{
 	(*ServiceStatus)(nil),      // 36: fleet.v1.ServiceStatus
 	(*ResourceRef)(nil),        // 37: fleet.v1.ResourceRef
 	(*Resource)(nil),           // 38: fleet.v1.Resource
-	(*BuiltinPostgres)(nil),    // 39: fleet.v1.BuiltinPostgres
-	(*ResourceReport)(nil),     // 40: fleet.v1.ResourceReport
-	(*ResourceStatus)(nil),     // 41: fleet.v1.ResourceStatus
-	nil,                        // 42: fleet.v1.App.EnvEntry
-	nil,                        // 43: fleet.v1.App.LabelsEntry
-	nil,                        // 44: fleet.v1.Service.EnvEntry
+	(*Existing)(nil),           // 39: fleet.v1.Existing
+	(*ExistingValue)(nil),      // 40: fleet.v1.ExistingValue
+	(*ExistingRef)(nil),        // 41: fleet.v1.ExistingRef
+	(*BuiltinPostgres)(nil),    // 42: fleet.v1.BuiltinPostgres
+	(*ResourceReport)(nil),     // 43: fleet.v1.ResourceReport
+	(*ResourceStatus)(nil),     // 44: fleet.v1.ResourceStatus
+	nil,                        // 45: fleet.v1.App.EnvEntry
+	nil,                        // 46: fleet.v1.App.LabelsEntry
+	nil,                        // 47: fleet.v1.Service.EnvEntry
 }
 var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	8,  // 0: fleet.v1.EnrollResponse.certificate:type_name -> fleet.v1.Certificate
@@ -3769,7 +3980,7 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	23, // 5: fleet.v1.AgentMessage.build_report:type_name -> fleet.v1.BuildReport
 	27, // 6: fleet.v1.AgentMessage.build_log:type_name -> fleet.v1.BuildLog
 	15, // 7: fleet.v1.AgentMessage.secret_ack:type_name -> fleet.v1.SecretAck
-	40, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
+	43, // 8: fleet.v1.AgentMessage.resource_report:type_name -> fleet.v1.ResourceReport
 	13, // 9: fleet.v1.AgentMessage.policy_ack:type_name -> fleet.v1.PolicyAck
 	25, // 10: fleet.v1.AgentMessage.scan_report:type_name -> fleet.v1.ScanReport
 	29, // 11: fleet.v1.ControlMessage.apply:type_name -> fleet.v1.App
@@ -3786,33 +3997,36 @@ var file_proto_fleet_v1_fleet_proto_depIdxs = []int32{
 	24, // 22: fleet.v1.BuildReport.builds:type_name -> fleet.v1.BuildStatus
 	26, // 23: fleet.v1.ScanReport.scans:type_name -> fleet.v1.ScanStatus
 	28, // 24: fleet.v1.BuildLog.lines:type_name -> fleet.v1.LogLine
-	42, // 25: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
-	43, // 26: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
+	45, // 25: fleet.v1.App.env:type_name -> fleet.v1.App.EnvEntry
+	46, // 26: fleet.v1.App.labels:type_name -> fleet.v1.App.LabelsEntry
 	33, // 27: fleet.v1.App.access:type_name -> fleet.v1.Access
 	32, // 28: fleet.v1.App.secrets:type_name -> fleet.v1.SecretRef
 	37, // 29: fleet.v1.App.resources:type_name -> fleet.v1.ResourceRef
 	31, // 30: fleet.v1.App.ai:type_name -> fleet.v1.AI
 	30, // 31: fleet.v1.App.services:type_name -> fleet.v1.Service
-	44, // 32: fleet.v1.Service.env:type_name -> fleet.v1.Service.EnvEntry
+	47, // 32: fleet.v1.Service.env:type_name -> fleet.v1.Service.EnvEntry
 	35, // 33: fleet.v1.AppReport.apps:type_name -> fleet.v1.AppStatus
 	36, // 34: fleet.v1.AppStatus.services:type_name -> fleet.v1.ServiceStatus
-	39, // 35: fleet.v1.Resource.builtin_postgres:type_name -> fleet.v1.BuiltinPostgres
-	41, // 36: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
-	2,  // 37: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
-	4,  // 38: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
-	6,  // 39: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
-	9,  // 40: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
-	0,  // 41: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
-	3,  // 42: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
-	5,  // 43: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
-	7,  // 44: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
-	10, // 45: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
-	1,  // 46: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
-	42, // [42:47] is the sub-list for method output_type
-	37, // [37:42] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	42, // 35: fleet.v1.Resource.builtin_postgres:type_name -> fleet.v1.BuiltinPostgres
+	39, // 36: fleet.v1.Resource.existing:type_name -> fleet.v1.Existing
+	40, // 37: fleet.v1.Existing.values:type_name -> fleet.v1.ExistingValue
+	41, // 38: fleet.v1.ExistingValue.ref:type_name -> fleet.v1.ExistingRef
+	44, // 39: fleet.v1.ResourceReport.resources:type_name -> fleet.v1.ResourceStatus
+	2,  // 40: fleet.v1.Fleet.Enroll:input_type -> fleet.v1.EnrollRequest
+	4,  // 41: fleet.v1.Fleet.Renew:input_type -> fleet.v1.RenewRequest
+	6,  // 42: fleet.v1.Fleet.Recover:input_type -> fleet.v1.RecoverRequest
+	9,  // 43: fleet.v1.Fleet.Connect:input_type -> fleet.v1.AgentMessage
+	0,  // 44: fleet.v1.Fleet.FetchSource:input_type -> fleet.v1.FetchSourceRequest
+	3,  // 45: fleet.v1.Fleet.Enroll:output_type -> fleet.v1.EnrollResponse
+	5,  // 46: fleet.v1.Fleet.Renew:output_type -> fleet.v1.RenewResponse
+	7,  // 47: fleet.v1.Fleet.Recover:output_type -> fleet.v1.RecoverResponse
+	10, // 48: fleet.v1.Fleet.Connect:output_type -> fleet.v1.ControlMessage
+	1,  // 49: fleet.v1.Fleet.FetchSource:output_type -> fleet.v1.SourceChunk
+	45, // [45:50] is the sub-list for method output_type
+	40, // [40:45] is the sub-list for method input_type
+	40, // [40:40] is the sub-list for extension type_name
+	40, // [40:40] is the sub-list for extension extendee
+	0,  // [0:40] is the sub-list for field type_name
 }
 
 func init() { file_proto_fleet_v1_fleet_proto_init() }
@@ -3840,6 +4054,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 	}
 	file_proto_fleet_v1_fleet_proto_msgTypes[38].OneofWrappers = []any{
 		(*Resource_BuiltinPostgres)(nil),
+		(*Resource_Existing)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3847,7 +4062,7 @@ func file_proto_fleet_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_fleet_v1_fleet_proto_rawDesc), len(file_proto_fleet_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   45,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

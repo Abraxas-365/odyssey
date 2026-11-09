@@ -540,12 +540,14 @@ message ServiceStatus {
 message ResourceRef {
   // name is the resource's name in its environment (a DNS label).
   string name = 1;
-  // kind is "postgres", "redis" or "files".
+  // kind is a pkg/resourcekind contract ("postgres", "redis", "files",
+  // "object-storage").
   string kind = 2;
-  // prefix goes before the variables the app reads it by (empty: none):
-  // postgres → DATABASE_URL, PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD;
-  // redis → REDIS_URL; files → FILES_DIR (the volume is mounted at
-  // /data/<name>). With prefix "ANALYTICS", ANALYTICS_DATABASE_URL, …
+  // prefix goes before the variables the app reads it by (empty: none),
+  // the contract's (pkg/resourcekind): postgres → DATABASE_URL, PGHOST, …;
+  // files → FILES_DIR (the volume is mounted at /data/<name>). With prefix
+  // "ANALYTICS", ANALYTICS_DATABASE_URL, … An optional variable the
+  // resource does not give is left out of the app's environment.
   string prefix = 3;
   // services are the services wired to it (MS-4); empty: every service of
   // the app (a "files" volume, ReadWriteOnce: only the first one).
@@ -561,12 +563,14 @@ message Resource {
   string environment_id = 3;
   // name is unique in the environment (a DNS label, at most 30 characters).
   string name = 4;
-  // kind is "postgres", "redis" or "files"; it never changes.
+  // kind is a pkg/resourcekind contract ("postgres", "redis", "files",
+  // "object-storage"); it never changes.
   string kind = 5;
   // generation grows with every change of the desired state.
   int64 generation = 6;
   // storage is the volume's size (a Kubernetes quantity, e.g. "1Gi"); it
-  // may grow, never shrink.
+  // may grow, never shrink. Empty only for a resource the company already
+  // has (existing), which has no volume.
   string storage = 7;
   // deleted: the resource and its data are to be removed.
   bool deleted = 8;
@@ -583,7 +587,37 @@ message Resource {
   // plane (never the recipe itself). Unset: the basic resource.
   oneof spec {
     BuiltinPostgres builtin_postgres = 11;
+    // existing: a resource the company already has. The agent only writes
+    // its connection (never makes, changes or deletes the resource itself)
+    // and needs "existing" plus "secretstore:<store>" for every store the
+    // values read from. It has no storage. An agent that does not know this
+    // arm sees a spec version with no spec it reads and rejects it.
+    Existing existing = 12;
   }
+}
+
+// Existing is where each variable of the kind's contract (pkg/resourcekind)
+// comes from: a value written in the recipe or a reference to a secret
+// store. A credential is only ever a reference; a derived variable
+// (DATABASE_URL) is never listed: the agent builds it.
+message Existing {
+  repeated ExistingValue values = 1;
+}
+
+// ExistingValue is one variable: value or ref.
+message ExistingValue {
+  // variable is the contract's name, without the app's prefix ("PGHOST").
+  string variable = 1;
+  string value = 2;
+  ExistingRef ref = 3;
+}
+
+// ExistingRef locates a value in a ClusterSecretStore (External Secrets
+// Operator): the store, the remote key and (optional) the property in it.
+message ExistingRef {
+  string store = 1;
+  string key = 2;
+  string property = 3;
 }
 
 // BuiltinPostgres are the settings of a CloudNativePG database. A zero field

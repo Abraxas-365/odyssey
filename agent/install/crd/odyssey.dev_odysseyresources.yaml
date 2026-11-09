@@ -75,6 +75,48 @@ spec:
                   Deleted asks for the resource and its data to be removed. The agent
                   reports phase deleted and then removes this object.
                 type: boolean
+              existing:
+                description: |-
+                  Existing is the connection of a resource the company already has:
+                  the agent only writes its connection Secret (through the External
+                  Secrets Operator) and never makes, changes or deletes the resource.
+                properties:
+                  values:
+                    items:
+                      description: |-
+                        ExistingValue is one variable: a value written in the recipe, or a
+                        reference to a secret store (a credential is only ever a reference).
+                      properties:
+                        ref:
+                          description: ExistingRef locates a value in a ClusterSecretStore.
+                          properties:
+                            key:
+                              maxLength: 255
+                              type: string
+                            property:
+                              maxLength: 128
+                              type: string
+                            store:
+                              maxLength: 253
+                              type: string
+                          required:
+                          - key
+                          - store
+                          type: object
+                        value:
+                          maxLength: 255
+                          type: string
+                        variable:
+                          maxLength: 64
+                          type: string
+                      required:
+                      - variable
+                      type: object
+                    maxItems: 16
+                    type: array
+                required:
+                - values
+                type: object
               generation:
                 description: |-
                   Generation grows with every change of the desired state. Whoever
@@ -91,6 +133,7 @@ spec:
                 - postgres
                 - redis
                 - files
+                - object-storage
                 type: string
               postgres:
                 description: |-
@@ -136,14 +179,23 @@ spec:
               storage:
                 description: |-
                   Storage is the volume's size ("5Gi"). It may grow, never shrink: a
-                  smaller value is ignored.
+                  smaller value is ignored. Empty only for a resource the company
+                  already has (Existing), which has no volume.
                 pattern: ^[1-9][0-9]*Gi$
                 type: string
             required:
             - generation
             - kind
-            - storage
             type: object
+            x-kubernetes-validations:
+            - message: a resource is made by Odicea or is the company's, not both
+              rule: '!(has(self.postgres) && has(self.existing))'
+            - message: a resource Odicea makes has a storage size; one the company
+                already has has none
+              rule: has(self.existing) != has(self.storage)
+            - message: 'a resource cannot change between made by Odicea and the company''s:
+                delete it and create another'
+              rule: has(self.existing) == has(oldSelf.existing)
           status:
             description: OdysseyResourceStatus is what the agent observed.
             properties:

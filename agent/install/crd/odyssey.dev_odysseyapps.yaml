@@ -173,6 +173,7 @@ spec:
                       - postgres
                       - redis
                       - files
+                      - object-storage
                       type: string
                     name:
                       description: Name of the OdysseyResource in the app's namespace.

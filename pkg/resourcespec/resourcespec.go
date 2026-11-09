@@ -258,6 +258,9 @@ func (e *Existing) validate(k resourcekind.Kind) error {
 			return fmt.Errorf("%s needs either a value or a reference to a secret store", v.Variable)
 		case cv.Secret && v.Ref == nil:
 			return fmt.Errorf("%s is a credential: read it from a secret store, never write it here", v.Variable)
+		case len(cv.Choices) > 0 && v.Ref != nil:
+			// a store could hold anything: only a written value is checked
+			return fmt.Errorf("%s is one of %s: write it here, it is not read from a secret store", v.Variable, strings.Join(cv.Choices, ", "))
 		}
 		seen[v.Variable] = true
 		if v.Ref != nil {
@@ -304,6 +307,9 @@ func (r Ref) validate(variable string) error {
 func checkValue(v resourcekind.Variable, s string) error {
 	if len(s) > MaxValue || strings.TrimSpace(s) != s || strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
 		return fmt.Errorf("%s: a value has up to %d printable characters, without spaces around it", v.Name, MaxValue)
+	}
+	if len(v.Choices) > 0 && !slices.Contains(v.Choices, s) {
+		return fmt.Errorf("%s is one of %s", v.Name, strings.Join(v.Choices, ", "))
 	}
 	switch v.Format {
 	case resourcekind.FormatHost:

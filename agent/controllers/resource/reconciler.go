@@ -33,6 +33,8 @@ import (
 // +kubebuilder:rbac:groups=odyssey.dev,resources=odysseyresources/finalizers,verbs=update
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
+// The connection of a resource the company already has (existing.go).
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;create;update;delete
 
 const (
 	// AnnotationReported is on an OdysseyResource whose deletion was
@@ -70,6 +72,15 @@ type Reconciler struct {
 	// the tunnel marks its deletion as reported (AnnotationReported). False
 	// (an agent with no tunnel) removes it at once.
 	AwaitReport bool
+	// Now is the clock (nil: time.Now).
+	Now func() time.Time
+}
+
+func (r *Reconciler) now() time.Time {
+	if r.Now == nil {
+		return time.Now()
+	}
+	return r.Now()
 }
 
 // SetupWithManager registers the controller.
@@ -145,10 +156,10 @@ func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		obs observation
 		err error
 	)
-	if e, ok := engines[o.Spec.Kind]; ok {
+	if e, ok := engineOf(&o); ok {
 		obs, err = e.apply(r, ctx, &o)
 	} else {
-		obs = failed(fmt.Sprintf("unknown resource kind %q", o.Spec.Kind))
+		obs = failed(fmt.Sprintf("this agent cannot prepare a %q resource: update the agent", o.Spec.Kind))
 	}
 	if err != nil {
 		if msg, permanent := permanentMessage(err); permanent {

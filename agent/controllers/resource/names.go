@@ -60,11 +60,17 @@ const (
 	RedisKeyURL      = "url"
 )
 
+// ObjectStorageSecret is the connection Secret of an object-storage
+// resource (only ever one the company already has).
+func ObjectStorageSecret(resource string) string { return resource + "-object-storage" }
+
 // Connection says which Secret an app reads a resource of kind k from, and
-// which key of it feeds each of resourcekind.Variables(k, …) (same order).
-// A files resource has no Secret (nil keys): the app mounts its claim.
+// which key of it feeds each of resourcekind.Variables(k, …) (same order),
+// whichever engine prepared it. A key may be absent when its variable is
+// optional (the app wires those as optional). A files resource has no
+// Secret (nil keys): the app mounts its claim.
 func Connection(k resourcekind.Kind, resource string) (secret string, keys []string) {
-	e, ok := engines[v1alpha1.ResourceKind(k)]
+	e, ok := kinds[v1alpha1.ResourceKind(k)]
 	if !ok || e.secret == nil {
 		return "", nil
 	}

@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
+	"github.com/Abraxas-365/odyssey/agent/externalsecret"
 	fleetv1 "github.com/Abraxas-365/odyssey/proto/fleet/v1"
 	"github.com/google/uuid"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -27,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -680,7 +680,7 @@ func clip(s string, n int) string {
 // Platform APIs the control plane may use when present.
 var knownAPIs = []string{
 	"postgresql.cnpg.io", "kyverno.io", "keda.sh", "gateway.networking.k8s.io",
-	"cert-manager.io", "external-secrets.io", "traefik.io",
+	"cert-manager.io", externalsecret.Group, "traefik.io",
 }
 
 // CapabilityAccess is reported among the APIs when the cluster can protect
@@ -770,13 +770,13 @@ func (s *Syncer) Capabilities(ctx context.Context) *fleetv1.Capabilities {
 }
 
 // ExternalSecretsGroup is the API group of the External Secrets Operator.
-const ExternalSecretsGroup = "external-secrets.io"
+const ExternalSecretsGroup = externalsecret.Group
 
 // secretStores names the ClusterSecretStores TI registered (sorted; empty
 // when they cannot be read: the agent may lack the permission or the CRD).
 func (s *Syncer) secretStores(ctx context.Context, reader client.Reader) []string {
 	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{Group: ExternalSecretsGroup, Version: "v1", Kind: "ClusterSecretStoreList"})
+	list.SetGroupVersionKind(externalsecret.StoreListGVK)
 	out := []string{}
 	if err := reader.List(ctx, list); err != nil {
 		return out

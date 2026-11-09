@@ -43,9 +43,10 @@ inserts; triggers refuse updates, deletes and truncation) and a new connection
 is a new version. Their ids start with `org-`, which no factory recipe does
 (`TestFactoryVersionsAreSound`), so a later Odicea release never takes one.
 They have no parameters and no factory offering. Stage 2 lands in cuts: so
-far they are stored and read (the catalog lists one, inactive) and their
-connection is validated; publishing them (API, permission), offering them and
-the agent's `existing` engine come next.
+far they are stored and read (the catalog lists one, inactive), their
+connection is validated, and the agent's `existing` engine writes it in the
+cluster (docs/resources.md, "A resource the company already has");
+publishing them (API, permission) and offering them come next.
 
 **The connection** (`resourcespec.Existing`) lists where each variable of the
 type's contract comes from: a value written in the recipe, or a reference
@@ -57,7 +58,8 @@ left out, and a key goes with its secret (both or neither). A written host may
 be a private address or an internal name, but never loopback, link-local (the
 cloud's metadata service), a single label (the pod's search domains would make
 it a Service), a number some resolvers read as an address, or a name under
-`*.svc`, `*.cluster.local` or `*.localhost`. `files`
+`*.svc`, `*.cluster.local` or `*.localhost`. `PGSSLMODE` is optional and one
+of libpq's modes (`disable` … `verify-full`). `files`
 can never be one (it is a volume of the cluster); `object-storage` is only
 ever one (no engine of Odicea makes it).
 

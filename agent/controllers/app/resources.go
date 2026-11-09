@@ -84,10 +84,14 @@ func resourceEnv(a *v1alpha1.OdysseyApp, w workload) []corev1.EnvVar {
 			continue
 		}
 		secret, keys := resource.Connection(k, r.Name)
+		vars := resourcekind.Of(k).Variables
 		for i, n := range names {
-			out = append(out, corev1.EnvVar{Name: n, ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secret}, Key: keys[i]},
-			}})
+			ref := &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secret}, Key: keys[i]}
+			if vars[i].Optional {
+				// A resource that does not give it leaves it unset.
+				ref.Optional = ptr(true)
+			}
+			out = append(out, corev1.EnvVar{Name: n, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: ref}})
 		}
 	}
 	return out

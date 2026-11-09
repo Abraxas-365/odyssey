@@ -180,6 +180,88 @@ func TestKindBranchRuleCatchesViolations(t *testing.T) {
 	)
 }
 
+// esoKinds are ESO's kinds and resources, as a string names them.
+var esoKinds = map[string]bool{
+	"ExternalSecret": true, "ExternalSecretList": true, "externalsecrets": true,
+	"ClusterSecretStore": true, "ClusterSecretStoreList": true, "clustersecretstores": true,
+	"SecretStore": true, "secretstores": true,
+}
+
+// externalSecretsViolations: the agent names the External Secrets
+// Operator's API (its group, its store kind) only in agent/externalsecret,
+// so the version it speaks (external-secrets.io/v1) and how a value goes
+// into its template safely are decided once for apps and resources alike.
+// Tests may name it.
+func externalSecretsViolations(files []goFile) []string {
+	const own = "agent/externalsecret/"
+	var out []string
+	for _, f := range files {
+		if strings.HasPrefix(f.rel, own) || strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err == nil && (strings.Contains(s, "external-secrets.io") || esoKinds[s]) {
+				out = append(out, f.fset.Position(lit.Pos()).String()+": "+strconv.Quote(s)+
+					" names ESO's API outside agent/externalsecret; use that package")
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestOnlyExternalSecretNamesESO(t *testing.T) {
+	root := filepath.Join("..", "..", "agent")
+	fset := token.NewFileSet()
+	var files []goFile
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") {
+			return err
+		}
+		f, err := parser.ParseFile(fset, p, nil, 0)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(filepath.Join("..", ".."), p)
+		files = append(files, goFile{rel: filepath.ToSlash(rel), file: f, fset: fset})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no sources in agent/")
+	}
+	report(t, externalSecretsViolations(files))
+}
+
+func TestExternalSecretsRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		"agent/externalsecret/e.go":       `package externalsecret; const Group = "external-secrets.io"; var k = "ClusterSecretStore"`,
+		"agent/controllers/app/x_test.go": `package app; var g = "external-secrets.io/v1"`,
+		"agent/controllers/app/ok.go":     `package app; var m = "a ExternalSecret named x already exists"`,
+	})
+	if v := externalSecretsViolations(files); len(v) != 0 {
+		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))
+	}
+	files = parseFixtures(t, map[string]string{
+		"agent/desired/a.go":              `package desired; var g = "external-secrets.io"`,
+		"agent/controllers/resource/b.go": `package resource; var s = map[string]any{"kind": "ClusterSecretStore"}`,
+		"agent/controllers/resource/c.go": `package resource; var k = "ExternalSecret"`,
+	})
+	expectViolations(t, externalSecretsViolations(files),
+		`agent/desired/a.go: "external-secrets.io" names ESO's API`,
+		`agent/controllers/resource/b.go: "ClusterSecretStore" names ESO's API`,
+		`agent/controllers/resource/c.go: "ExternalSecret" names ESO's API`,
+	)
+}
+
 // recipeVersionViolations: a recipe version is a released, immutable thing
 // (frozen by testdata/versions.json), so it is written only in
 // catalog/recipes.go: a catalog.RecipeVersion literal anywhere else

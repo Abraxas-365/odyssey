@@ -6,17 +6,21 @@ import (
 
 // ResourceKind is what an OdysseyResource provisions (the same names as
 // pkg/resourcekind: the control plane and the agent share them).
-// +kubebuilder:validation:Enum=postgres;redis;files
+// +kubebuilder:validation:Enum=postgres;redis;files;object-storage
 type ResourceKind string
 
 const (
-	ResourcePostgres ResourceKind = "postgres" // a CloudNativePG Cluster (spec.postgres)
-	ResourceRedis    ResourceKind = "redis"    // a Redis Deployment with a password and a volume
-	ResourceFiles    ResourceKind = "files"    // a PersistentVolumeClaim the app mounts
+	ResourcePostgres      ResourceKind = "postgres"       // a CloudNativePG Cluster (spec.postgres), or the company's own
+	ResourceRedis         ResourceKind = "redis"          // a Redis Deployment with a password and a volume, or the company's own
+	ResourceFiles         ResourceKind = "files"          // a PersistentVolumeClaim the app mounts
+	ResourceObjectStorage ResourceKind = "object-storage" // only ever the company's own (spec.existing)
 )
 
 // OdysseyResourceSpec is the desired state of one resource of an environment.
 // The CR is named after the resource and lives in the environment's namespace.
+// +kubebuilder:validation:XValidation:rule="!(has(self.postgres) && has(self.existing))",message="a resource is made by Odicea or is the company's, not both"
+// +kubebuilder:validation:XValidation:rule="has(self.existing) != has(self.storage)",message="a resource Odicea makes has a storage size; one the company already has has none"
+// +kubebuilder:validation:XValidation:rule="has(self.existing) == has(oldSelf.existing)",message="a resource cannot change between made by Odicea and the company's: delete it and create another"
 type OdysseyResourceSpec struct {
 	Kind ResourceKind `json:"kind"`
 	// Generation grows with every change of the desired state. Whoever
@@ -25,9 +29,11 @@ type OdysseyResourceSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Generation int64 `json:"generation"`
 	// Storage is the volume's size ("5Gi"). It may grow, never shrink: a
-	// smaller value is ignored.
+	// smaller value is ignored. Empty only for a resource the company
+	// already has (Existing), which has no volume.
 	// +kubebuilder:validation:Pattern=`^[1-9][0-9]*Gi$`
-	Storage string `json:"storage"`
+	// +optional
+	Storage string `json:"storage,omitempty"`
 	// Deleted asks for the resource and its data to be removed. The agent
 	// reports phase deleted and then removes this object.
 	// +optional
@@ -42,6 +48,41 @@ type OdysseyResourceSpec struct {
 	// instance with the engine's defaults).
 	// +optional
 	Postgres *PostgresSettings `json:"postgres,omitempty"`
+	// Existing is the connection of a resource the company already has:
+	// the agent only writes its connection Secret (through the External
+	// Secrets Operator) and never makes, changes or deletes the resource.
+	// +optional
+	Existing *ExistingConnection `json:"existing,omitempty"`
+}
+
+// ExistingConnection is where each variable of the kind's contract comes
+// from (pkg/resourcespec.Existing: the agent validates it again).
+type ExistingConnection struct {
+	// +kubebuilder:validation:MaxItems=16
+	Values []ExistingValue `json:"values"`
+}
+
+// ExistingValue is one variable: a value written in the recipe, or a
+// reference to a secret store (a credential is only ever a reference).
+type ExistingValue struct {
+	// +kubebuilder:validation:MaxLength=64
+	Variable string `json:"variable"`
+	// +kubebuilder:validation:MaxLength=255
+	// +optional
+	Value string `json:"value,omitempty"`
+	// +optional
+	Ref *ExistingRef `json:"ref,omitempty"`
+}
+
+// ExistingRef locates a value in a ClusterSecretStore.
+type ExistingRef struct {
+	// +kubebuilder:validation:MaxLength=253
+	Store string `json:"store"`
+	// +kubebuilder:validation:MaxLength=255
+	Key string `json:"key"`
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	Property string `json:"property,omitempty"`
 }
 
 // PostgresSettings are how a CloudNativePG database runs. A zero field is

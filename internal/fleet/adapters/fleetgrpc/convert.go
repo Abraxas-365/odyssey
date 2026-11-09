@@ -187,11 +187,22 @@ func resourceToProto(d fleet.DesiredResource) *fleetv1.ControlMessage {
 		out.Storage = resourcekind.Storage(d.StorageGi)
 	}
 	// A basic resource carries no spec: an agent older than the catalog
-	// reads exactly what it always did. A resource the company already has
-	// is not carried until the proto has its arm (stage 2, cut 3); no agent
-	// announces the existing engine before then, so CheckResource refuses it
-	// first.
-	if p := d.Spec.Postgres; p != nil && !d.Spec.IsZero() {
+	// reads exactly what it always did. One the company already has goes
+	// only to an agent announcing the existing engine (CheckResource).
+	switch s := d.Spec; {
+	case s.Existing != nil:
+		values := make([]*fleetv1.ExistingValue, 0, len(s.Existing.Values))
+		for _, v := range s.Existing.Values {
+			x := &fleetv1.ExistingValue{Variable: v.Variable, Value: v.Value}
+			if v.Ref != nil {
+				x.Ref = &fleetv1.ExistingRef{Store: v.Ref.Store, Key: v.Ref.Key, Property: v.Ref.Property}
+			}
+			values = append(values, x)
+		}
+		out.SpecSchemaVersion = resourcespec.SchemaVersion
+		out.Spec = &fleetv1.Resource_Existing{Existing: &fleetv1.Existing{Values: values}}
+	case s.Postgres != nil && !s.IsZero():
+		p := s.Postgres
 		out.SpecSchemaVersion = resourcespec.SchemaVersion
 		out.Spec = &fleetv1.Resource_BuiltinPostgres{BuiltinPostgres: &fleetv1.BuiltinPostgres{
 			Instances: int32(p.Instances), Major: int32(p.Major), Cpu: p.CPU, Memory: p.Memory,

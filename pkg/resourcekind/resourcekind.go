@@ -54,6 +54,8 @@ type Variable struct {
 	// Format is what a value written for it must look like (FormatHost…;
 	// "" any short text).
 	Format string
+	// Choices are the only values it takes (none: any value of its format).
+	Choices []string
 	// Together names a set of optional variables a resource gives all of
 	// or none of (a key and its secret): "" for none.
 	Together string
@@ -113,6 +115,8 @@ var registry = []Contract{
 			{Name: "PGDATABASE", Meaning: "el nombre de la base"},
 			{Name: "PGUSER", Meaning: "el usuario"},
 			{Name: "PGPASSWORD", Secret: true, Meaning: "la contraseña"},
+			{Name: "PGSSLMODE", Optional: true, Choices: []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"},
+				Meaning: "cómo se cifra la conexión (vacía: lo que decida el cliente)"},
 		},
 		Unavailable: "Este clúster no tiene bases de datos administradas. Pide a TI que instale CloudNativePG.",
 		Settings:    "postgres",

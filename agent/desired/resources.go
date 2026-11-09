@@ -51,7 +51,10 @@ func ValidResource(r *fleetv1.Resource) error {
 		return fmt.Errorf("resource kind %q is only ever one the company already has: update the agent", r.GetKind())
 	}
 	// one the company already has has no size
-	if r.GetStorage() != "" || !existing {
+	switch {
+	case existing && r.GetStorage() != "":
+		return errors.New("a resource the company already has has no storage size")
+	case !existing:
 		if _, err := resourcekind.ParseStorage(r.GetStorage()); err != nil {
 			return err
 		}
@@ -91,6 +94,17 @@ const MaxRecipe = 80
 
 // specOf is the proto's spec as both planes describe it.
 func specOf(r *fleetv1.Resource) resourcespec.Spec {
+	if e := r.GetExisting(); e != nil {
+		out := resourcespec.Existing{Values: make([]resourcespec.Value, 0, len(e.GetValues()))}
+		for _, v := range e.GetValues() {
+			x := resourcespec.Value{Variable: v.GetVariable(), Value: v.GetValue()}
+			if ref := v.GetRef(); ref != nil {
+				x.Ref = &resourcespec.Ref{Store: ref.GetStore(), Key: ref.GetKey(), Property: ref.GetProperty()}
+			}
+			out.Values = append(out.Values, x)
+		}
+		return resourcespec.Spec{Existing: &out}
+	}
 	p := r.GetBuiltinPostgres()
 	if p == nil {
 		return resourcespec.Spec{}
@@ -100,10 +114,27 @@ func specOf(r *fleetv1.Resource) resourcespec.Spec {
 	}}
 }
 
+// existingConnection is the CRD's form of the connection of a resource the
+// company already has (nil: a built-in one).
+func existingConnection(s resourcespec.Spec) *v1alpha1.ExistingConnection {
+	if s.Existing == nil {
+		return nil
+	}
+	out := &v1alpha1.ExistingConnection{Values: make([]v1alpha1.ExistingValue, 0, len(s.Existing.Values))}
+	for _, v := range s.Existing.Values {
+		x := v1alpha1.ExistingValue{Variable: v.Variable, Value: v.Value}
+		if v.Ref != nil {
+			x.Ref = &v1alpha1.ExistingRef{Store: v.Ref.Store, Key: v.Ref.Key, Property: v.Ref.Property}
+		}
+		out.Values = append(out.Values, x)
+	}
+	return out
+}
+
 // postgresSettings is the CRD's form of the spec's database settings (nil:
-// the basic database).
+// the basic database, or one the company already has).
 func postgresSettings(s resourcespec.Spec) *v1alpha1.PostgresSettings {
-	if s.IsZero() {
+	if s.IsZero() || s.Postgres == nil {
 		return nil
 	}
 	p := s.Postgres
@@ -121,10 +152,6 @@ func validResourceRefs(refs []*fleetv1.ResourceRef) error {
 		}
 		if !resourcekind.Kind(r.GetKind()).Valid() {
 			return fmt.Errorf("resource %q has kind %q, not %s", r.GetName(), r.GetKind(), resourcekind.KindsLabel())
-		}
-		// This agent connects only what a built-in engine prepares.
-		if !resourcekind.Of(resourcekind.Kind(r.GetKind())).Builtin {
-			return fmt.Errorf("resource %q has kind %q, which this agent cannot connect: update the agent", r.GetName(), r.GetKind())
 		}
 		if err := resourcekind.CheckPrefix(r.GetPrefix()); err != nil {
 			return fmt.Errorf("resource %q: %w", r.GetName(), err)
@@ -168,14 +195,15 @@ func resourceKinds(c *fleetv1.Capabilities) []string {
 
 // resourceCapabilities are what this agent honours beyond a kind's basic
 // resource, given the kinds it can provision: it reads a spec of
-// resourcespec.SchemaVersion, and the database settings when it makes
-// databases (sorted).
+// resourcespec.SchemaVersion, the database settings when it makes
+// databases, and always the connection of a resource the company already
+// has (one that reads a secret store needs that store too, which only a
+// cluster with External Secrets lists) (sorted).
 func resourceCapabilities(kinds []string) []string {
-	out := []string{}
-	if len(kinds) == 0 {
-		return out
+	out := []string{resourcespec.ConnectExisting}
+	if len(kinds) > 0 {
+		out = append(out, resourcespec.SpecV1)
 	}
-	out = append(out, resourcespec.SpecV1)
 	if slices.Contains(kinds, string(resourcekind.Postgres)) {
 		out = append(out, resourcespec.PostgresInstances, resourcespec.PostgresVersion, resourcespec.PostgresResources)
 	}
@@ -206,7 +234,7 @@ func (s *Syncer) ApplyResource(ctx context.Context, r *fleetv1.Resource) error {
 	}
 	spec := v1alpha1.OdysseyResourceSpec{
 		Kind: v1alpha1.ResourceKind(r.GetKind()), Generation: r.GetGeneration(), Storage: r.GetStorage(), Deleted: r.GetDeleted(),
-		Recipe: r.GetRecipe(), Postgres: postgresSettings(specOf(r)),
+		Recipe: r.GetRecipe(), Postgres: postgresSettings(specOf(r)), Existing: existingConnection(specOf(r)),
 	}
 	ns := Namespace(r.GetEnvironmentId())
 	var cur v1alpha1.OdysseyResource
@@ -234,6 +262,10 @@ func (s *Syncer) ApplyResource(ctx context.Context, r *fleetv1.Resource) error {
 		return nil
 	case cur.Spec.Kind != spec.Kind:
 		return &Rejected{Message: fmt.Sprintf("resource %s is a %s and cannot become a %s", r.GetName(), cur.Spec.Kind, spec.Kind)}
+	case (cur.Spec.Existing == nil) != (spec.Existing == nil):
+		// Odicea's own data and the company's resource are never swapped
+		// under one name (the teardown of one would not undo the other).
+		return &Rejected{Message: fmt.Sprintf("resource %s cannot switch between one Odicea prepares and one the company already has", r.GetName())}
 	case cur.Spec.Generation > spec.Generation:
 		return nil // a newer generation already got here
 	case cur.Spec.Generation == spec.Generation && equality.Semantic.DeepEqual(cur.Spec, spec):

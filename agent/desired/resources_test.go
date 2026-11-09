@@ -98,7 +98,7 @@ func TestApplyResourceRefusesWhatItCannotName(t *testing.T) {
 		"storage":    func(r *fleetv1.Resource) { r.Storage = "lots" },
 		"no storage": func(r *fleetv1.Resource) { r.Storage = "" },
 		// object storage has no engine of its own: only a connection of the
-		// company's, which this proto cannot carry yet
+		// company's (spec.existing)
 		"object storage": func(r *fleetv1.Resource) { r.Kind = "object-storage" },
 		"env":            func(r *fleetv1.Resource) { r.EnvironmentId = "../x" },
 		"generation":     func(r *fleetv1.Resource) { r.Generation = 0 },
@@ -220,17 +220,19 @@ func TestResourceKindsCapability(t *testing.T) {
 	if got := s.Capabilities(context.Background()).GetResourceKinds(); strings.Join(got, ",") != "redis,files" {
 		t.Errorf("capabilities: %v", got)
 	}
-	if got := s.Capabilities(context.Background()).GetResourceCapabilities(); strings.Join(got, ",") != resourcespec.SpecV1 {
-		t.Errorf("without databases only the spec version: %v", got)
+	if got := s.Capabilities(context.Background()).GetResourceCapabilities(); strings.Join(got, ",") != resourcespec.ConnectExisting+","+resourcespec.SpecV1 {
+		t.Errorf("without databases only the spec version and existing connections: %v", got)
 	}
 }
 
 func TestResourceCapabilitiesFollowTheKinds(t *testing.T) {
-	if got := resourceCapabilities(nil); got == nil || len(got) != 0 {
-		t.Errorf("nothing to provision, nothing announced: %v", got)
+	// A connection the company already has needs no engine of the cluster
+	// (one that reads a secret store needs the store, listed apart).
+	if got := resourceCapabilities(nil); !slices.Equal(got, []string{resourcespec.ConnectExisting}) {
+		t.Errorf("nothing to provision, only existing connections: %v", got)
 	}
 	got := resourceCapabilities([]string{"postgres", "redis", "files"})
-	want := []string{resourcespec.SpecV1, resourcespec.PostgresInstances, resourcespec.PostgresResources, resourcespec.PostgresVersion}
+	want := []string{resourcespec.ConnectExisting, resourcespec.SpecV1, resourcespec.PostgresInstances, resourcespec.PostgresResources, resourcespec.PostgresVersion}
 	if !slices.IsSorted(got) || len(got) != len(want) {
 		t.Fatalf("got %v", got)
 	}
@@ -264,6 +266,78 @@ func TestApplyResourceCarriesTheRecipeAndItsSettings(t *testing.T) {
 	}
 	if o := getRes(t, c); o.Spec.Postgres != nil || o.Spec.Recipe != "" {
 		t.Errorf("basic: %+v", o.Spec)
+	}
+}
+
+// reportes is a database the company already has (no size, a connection
+// read partly from a store).
+func reportes() *fleetv1.Resource {
+	r := res(1)
+	r.Storage, r.Recipe, r.SpecSchemaVersion = "", "org-rds-reportes@1", resourcespec.SchemaVersion
+	var values []*fleetv1.ExistingValue
+	for _, v := range resourcespec.ExamplePostgres("vault").Existing.Values {
+		x := &fleetv1.ExistingValue{Variable: v.Variable, Value: v.Value}
+		if v.Ref != nil {
+			x.Ref = &fleetv1.ExistingRef{Store: v.Ref.Store, Key: v.Ref.Key, Property: v.Ref.Property}
+		}
+		values = append(values, x)
+	}
+	r.Spec = &fleetv1.Resource_Existing{Existing: &fleetv1.Existing{Values: values}}
+	return r
+}
+
+func TestApplyResourceCarriesAConnectionOfTheCompany(t *testing.T) {
+	ctx := context.Background()
+	s, c := newSyncer(t, interceptor.Funcs{})
+	if err := s.ApplyResource(ctx, reportes()); err != nil {
+		t.Fatal(err)
+	}
+	o := getRes(t, c)
+	if o.Spec.Storage != "" || o.Spec.Postgres != nil || o.Spec.Existing == nil || o.Spec.Recipe != "org-rds-reportes@1" {
+		t.Fatalf("spec: %+v", o.Spec)
+	}
+	want := resourcespec.ExamplePostgres("vault").Existing.Values
+	if len(o.Spec.Existing.Values) != len(want) {
+		t.Fatalf("values %+v", o.Spec.Existing.Values)
+	}
+	for i, w := range want {
+		g := o.Spec.Existing.Values[i]
+		if g.Variable != w.Variable || g.Value != w.Value || (g.Ref == nil) != (w.Ref == nil) ||
+			(w.Ref != nil && (g.Ref.Store != w.Ref.Store || g.Ref.Key != w.Ref.Key || g.Ref.Property != w.Ref.Property)) {
+			t.Errorf("value %d: %+v, want %+v", i, g, w)
+		}
+	}
+	// One name never swaps Odicea's data for the company's resource.
+	built := res(2)
+	var rej *Rejected
+	if err := s.ApplyResource(ctx, built); !errors.As(err, &rej) {
+		t.Errorf("existing → built-in: %v", err)
+	}
+	// Object storage is always the company's.
+	s3 := reportes()
+	s3.Name, s3.Kind = "archivos", "object-storage"
+	s3.Spec = &fleetv1.Resource_Existing{Existing: &fleetv1.Existing{Values: []*fleetv1.ExistingValue{
+		{Variable: "S3_BUCKET", Value: "facturas"}, {Variable: "S3_REGION", Value: "us-east-1"},
+	}}}
+	if err := s.ApplyResource(ctx, s3); err != nil {
+		t.Errorf("object storage: %v", err)
+	}
+	// What the contract refuses, the agent refuses too.
+	for name, mut := range map[string]func(*fleetv1.Resource){
+		"written credential": func(r *fleetv1.Resource) {
+			r.GetExisting().Values[4] = &fleetv1.ExistingValue{Variable: "PGPASSWORD", Value: "hunter2"}
+		},
+		"missing variable": func(r *fleetv1.Resource) { r.GetExisting().Values = r.GetExisting().Values[1:] },
+		"files":            func(r *fleetv1.Resource) { r.Kind = "files" },
+		"bad size":         func(r *fleetv1.Resource) { r.Storage = "lots" },
+		"a size":           func(r *fleetv1.Resource) { r.Storage = "5Gi" },
+	} {
+		r := reportes()
+		r.Name = "otro"
+		mut(r)
+		if err := s.ApplyResource(ctx, r); !errors.As(err, &rej) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

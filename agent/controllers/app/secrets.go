@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,12 +11,12 @@ import (
 	"time"
 
 	v1alpha1 "github.com/Abraxas-365/odyssey/agent/api/v1alpha1"
+	"github.com/Abraxas-365/odyssey/agent/externalsecret"
 	"github.com/Abraxas-365/odyssey/agent/secretstore"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -41,7 +40,7 @@ const (
 	AnnotationSecrets = "odicea.dev/secrets"
 	// annotationFingerprint is on an ExternalSecret: a hash of the spec the
 	// agent wrote (ESO fills in defaults, so the live spec is not compared).
-	annotationFingerprint = "odicea.dev/fingerprint"
+	annotationFingerprint = externalsecret.AnnotationFingerprint
 	// annotationSecretsWaiting is on the OdysseyApp: "<revision>/<generation>/<RFC 3339>",
 	// when that revision first waited for a secret (it survives restarts).
 	annotationSecretsWaiting = "odicea.dev/secrets-waiting"
@@ -64,20 +63,12 @@ const (
 	NoExternalSecretsMessage = "Este clúster no tiene un gestor de secretos externos (External Secrets Operator). Pide a TI que lo instale."
 )
 
-var externalSecretGVK = schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret"}
+var externalSecretGVK = externalsecret.GVK
 
 // NewExternalSecret is an empty ExternalSecret (to watch or read).
-func NewExternalSecret() *unstructured.Unstructured {
-	e := &unstructured.Unstructured{}
-	e.SetGroupVersionKind(externalSecretGVK)
-	return e
-}
+func NewExternalSecret() *unstructured.Unstructured { return externalsecret.New() }
 
-func newExternalSecretList() *unstructured.UnstructuredList {
-	l := &unstructured.UnstructuredList{}
-	l.SetGroupVersionKind(schema.GroupVersionKind{Group: externalSecretGVK.Group, Version: externalSecretGVK.Version, Kind: "ExternalSecretList"})
-	return l
-}
+func newExternalSecretList() *unstructured.UnstructuredList { return externalsecret.NewList() }
 
 // externalName is the ExternalSecret of app a for store, and the Secret it
 // makes.
@@ -148,8 +139,7 @@ func (r *Reconciler) externalSecretsAvailable() bool {
 	if m == nil {
 		m = r.Client.RESTMapper()
 	}
-	_, err := m.RESTMapping(externalSecretGVK.GroupKind(), externalSecretGVK.Version)
-	return err == nil
+	return externalsecret.Served(m)
 }
 
 // externalSecret is the ExternalSecret that reads refs (all of one store).
@@ -167,18 +157,14 @@ func externalSecret(a *v1alpha1.OdysseyApp, store string, refs []v1alpha1.Secret
 	e.SetNamespace(a.Namespace)
 	e.Object["spec"] = map[string]any{
 		"refreshInterval": "1h",
-		"secretStoreRef":  map[string]any{"kind": "ClusterSecretStore", "name": store},
+		"secretStoreRef":  externalsecret.StoreRef(store),
 		"target":          map[string]any{"name": externalName(a, store), "creationPolicy": "Owner"},
 		"data":            data,
 	}
 	return e
 }
 
-func fingerprint(e *unstructured.Unstructured) string {
-	raw, _ := json.Marshal(e.Object["spec"]) // maps and strings always marshal
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])[:32]
-}
+func fingerprint(e *unstructured.Unstructured) string { return externalsecret.Fingerprint(e) }
 
 // notOurs is an object in the way: it has the name of one of a's but the
 // agent does not manage it.
@@ -204,7 +190,7 @@ func (r *Reconciler) putExternal(ctx context.Context, a *v1alpha1.OdysseyApp, st
 	case err != nil:
 		return err
 	case !metav1.IsControlledBy(cur, a):
-		return &notOurs{"ExternalSecret", cur.GetName(), cur.GetNamespace()}
+		return &notOurs{externalsecret.GVK.Kind, cur.GetName(), cur.GetNamespace()}
 	case cur.GetAnnotations()[annotationFingerprint] == want.GetAnnotations()[annotationFingerprint]:
 		return nil
 	}

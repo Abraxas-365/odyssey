@@ -50,6 +50,66 @@ Inside the agent each kind is one **engine** (`agent/controllers/resource/engine
 apply, remove, connection); the controller never switches on a kind elsewhere
 (`TestResourceEnginesAreTheOnlyKindSwitch`).
 
+### A resource the company already has (catalog stage 2)
+
+A recipe can name a database or a bucket TI already runs (an RDS, an S3
+bucket) instead of making one: `Resource.existing` in the proto,
+`OdysseyResource.spec.existing` in the cluster, engine `existing`. Kinds that
+allow it say so in their contract (`resourcekind.Contract.Existing`):
+`postgres` and `object-storage` (which has no built-in engine at all). The
+agent dispatches on the spec: `spec.existing` → `existing`, otherwise the
+kind's built-in engine; deletion uses the same dispatch, so deleting such a
+resource removes only the connection the agent wrote, **never the company's
+data**.
+
+- **Values.** One per variable of the kind (`resourcespec.Existing`): written
+  (`PGHOST`, `S3_BUCKET`, …) or read from a store (`{store, key, property}`, a
+  `ClusterSecretStore` TI registered). A credential (`PGPASSWORD`, AWS keys) is
+  never written: it must be a reference. `PGSSLMODE` must be one of
+  libpq's modes and is always written (a variable with choices is never read
+  from a store, which could hold anything). `DATABASE_URL` is never given: the agent builds it from the
+  pieces (user and password URL-escaped, IPv6 host bracketed, `?sslmode=` when
+  `PGSSLMODE` is set). Values read from a store are used exactly as stored
+  (not trimmed: a password may legitimately end in a space).
+- **Without references** the agent writes the connection Secret itself
+  (`<name>-app` / `<name>-object-storage`), owned by the `OdysseyResource`.
+- **With references** it writes one `ExternalSecret` (`external-secrets.io/v1`,
+  only from `agent/externalsecret`: `TestOnlyExternalSecretNamesESO`) of the
+  same name: one `data` entry per reference, each with its own
+  `sourceRef.storeRef` (one resource may read from several stores), and a
+  `target.template` (engine v2) with one key per variable. Written values go
+  into the template as quoted Go strings, so a value that looks like a
+  template is text, never run. `creationPolicy: Owner`: deleting the
+  `ExternalSecret` deletes the Secret. The resource is `ready` once ESO has
+  synced the current spec, and stays `ready` if a later refresh fails (a store
+  briefly unreachable: the Secret keeps what it read). A failure before the
+  current spec ever synced is believed only 20 s after the agent wrote that
+  spec (`externalsecret.Grace`; ESO's status does not say which spec it is
+  about), and is reported in one fixed phrase
+  ("the secret store did not give every value of the connection: …"), never
+  ESO's own words. A cluster without ESO fails the resource ("this cluster has
+  no External Secrets Operator …"); the control plane normally refuses before
+  that, from the capabilities (`existing`, `secretstore:<name>`). The agent
+  does not check the store names itself: which stores a recipe may read is the
+  control plane's decision.
+- **Validation in the cluster.** The CRD refuses a spec that is both built-in
+  settings and an existing connection, a size on an existing resource (or none
+  on a built-in one), and a change between built-in and existing under the
+  same name (delete it and create another).
+- **Switching** between a version with and without references replaces one
+  object with the other (the old one is deleted first). An object of the same
+  name the agent did not make is never taken over.
+- **Rotation.** A value changed in the store reaches the Secret at ESO's
+  refresh (1 h by default), but **reaches the pods only at the next
+  deployment**: environment variables are read when a pod starts.
+- **Apps** read optional variables (`PGSSLMODE`, `S3_ENDPOINT`, the AWS keys)
+  with `secretKeyRef.optional: true`: a Secret without them (CloudNativePG's,
+  or a bucket read with the pod's own identity) leaves them unset.
+
+`make cluster-addons` also installs ESO for dev (Helm chart `ESO_VERSION`,
+pinned; a customer installs its own). `make test-eso` runs the engine against
+a real ESO with its dev-only `fake` provider in a throwaway k3d cluster.
+
 ### Install the operator
 
 `make cluster` (the local k3d) runs `make cluster-addons`, which installs
@@ -101,7 +161,9 @@ Destructive verbs live **only inside environment namespaces**, like Secrets:
 
 - **CRD `OdysseyResource`** (`agent/api/v1alpha1`, `agent/install/crd`), in the
   environment's namespace, named after the resource. `spec`: `kind`, `generation`,
-  `storage`, `deleted`. `status`: `observedGeneration`, `phase`
+  `storage` (none for an existing one), `deleted`, `recipe`, and at most one of
+  `postgres` (built-in settings) or `existing` (the company's connection).
+  `status`: `observedGeneration`, `phase`
   (`provisioning|ready|failed|deleted`), `message`.
 - **Apply** (`desired.Syncer.ApplyResource`): validates with `resourcekind`,
   ensures the namespace, creates or updates the CR. An older `generation` never
@@ -150,7 +212,9 @@ Destructive verbs live **only inside environment namespaces**, like Secrets:
   minutes (`resourcekind.Wait`), fails with reason `resource`
   (`v1alpha1.ReasonResource`): `resource <name> is not ready: <why>`.
   The pod gets, via `secretKeyRef`: postgres `DATABASE_URL`, `PGHOST`, `PGPORT`,
-  `PGDATABASE`, `PGUSER`, `PGPASSWORD`; redis `REDIS_URL`; with a prefix `P` they
+  `PGDATABASE`, `PGUSER`, `PGPASSWORD` (+ optional `PGSSLMODE`); redis
+  `REDIS_URL`; object storage `S3_BUCKET`, `S3_REGION` (+ optional
+  `S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`); with a prefix `P` they
   are `P_DATABASE_URL`, … A files resource is mounted at `/data/<name>` and
   `FILES_DIR` is that path. Resource variables win over plain env of the same
   name; changing the list rolls the pods. An app with any files resource uses the

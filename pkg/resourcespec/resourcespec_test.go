@@ -149,6 +149,8 @@ func TestValidateExisting(t *testing.T) {
 		"key with space":     set("PGUSER", resourcespec.Value{Ref: &resourcespec.Ref{Store: "vault", Key: "rds reportes"}}),
 		"key with braces":    set("PGUSER", resourcespec.Value{Ref: &resourcespec.Ref{Store: "vault", Key: "{{x}}"}}),
 		"property with path": set("PGUSER", resourcespec.Value{Ref: &resourcespec.Ref{Store: "vault", Key: "k", Property: "a/b"}}),
+		"sslmode not a mode": add(resourcespec.Value{Variable: "PGSSLMODE", Value: "on"}),
+		"sslmode from store": add(resourcespec.Value{Variable: "PGSSLMODE", Ref: ref}),
 	} {
 		s := resourcespec.ExamplePostgres("vault")
 		change(s.Existing)

@@ -105,11 +105,17 @@ func TestReadyResourcesWireTheDeployment(t *testing.T) {
 	env := envOf(d)
 	for name, want := range map[string][2]string{
 		"DATABASE_URL": {"main-app", "uri"}, "PGHOST": {"main-app", "host"}, "PGPORT": {"main-app", "port"}, "PGDATABASE": {"main-app", "dbname"},
-		"PGUSER": {"main-app", "user"}, "PGPASSWORD": {"main-app", "password"}, "CACHE_REDIS_URL": {"cache-redis", "url"},
+		"PGUSER": {"main-app", "user"}, "PGPASSWORD": {"main-app", "password"}, "PGSSLMODE": {"main-app", "sslmode"}, "CACHE_REDIS_URL": {"cache-redis", "url"},
 	} {
 		ref := env[name].ValueFrom
 		if ref == nil || ref.SecretKeyRef.Name != want[0] || ref.SecretKeyRef.Key != want[1] || env[name].Value != "" {
 			t.Errorf("%s: %+v", name, env[name])
+			continue
+		}
+		// An optional variable (CloudNativePG writes no sslmode) is left
+		// unset when the Secret lacks it; any other must be there.
+		if optional := ref.SecretKeyRef.Optional != nil && *ref.SecretKeyRef.Optional; optional != (name == "PGSSLMODE") {
+			t.Errorf("%s optional=%v", name, optional)
 		}
 	}
 	if env["FILES_DIR"].Value != resourcekind.MountPath("docs") || env["A"].Value != "1" {

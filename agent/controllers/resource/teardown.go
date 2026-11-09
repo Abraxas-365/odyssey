@@ -76,9 +76,9 @@ func (r *Reconciler) remove(ctx context.Context, o *v1alpha1.OdysseyResource) er
 	return nil
 }
 
-// deleteChildren deletes everything o made (whatever its kind: a spec
-// cannot change kind) and says whether nothing is left. Objects o does not
-// control are never touched.
+// deleteChildren deletes everything o made (by the engine that made it: a
+// spec changes neither its kind nor between built-in and existing) and says
+// whether nothing is left. Objects o does not control are never touched.
 func (r *Reconciler) deleteChildren(ctx context.Context, o *v1alpha1.OdysseyResource) (bool, error) {
 	gone := true
 	del := func(obj client.Object) error {
@@ -97,9 +97,9 @@ func (r *Reconciler) deleteChildren(ctx context.Context, o *v1alpha1.OdysseyReso
 		}
 		return client.IgnoreNotFound(r.Client.Delete(ctx, obj, client.PropagationPolicy(metav1.DeletePropagationBackground)))
 	}
-	e, ok := engines[o.Spec.Kind]
+	e, ok := engineOf(o)
 	if !ok {
-		return gone, nil // an unknown kind made nothing
+		return gone, nil // an engine this agent lacks made nothing
 	}
 	pending, err := e.remove(r, ctx, o, del)
 	if err != nil {

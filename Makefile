@@ -1,4 +1,4 @@
-.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-addons cluster-down test-kube test-kube-k3d test-build test-cnpg test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
+.PHONY: access-key build run worker gateway agent agent-image agent-enroll cluster cluster-addons cluster-down test-kube test-kube-k3d test-build test-cnpg test-eso test test-db vet fmt tidy gen check setup up dev down reset logs seed iam-sync iam-provision token smoke web web-install web-check api-types github-app
 
 # The Railpack library's version names the plans the builder writes (the
 # Dockerfile sets it the same way).
@@ -155,9 +155,20 @@ cluster:
 # apply because its CRDs are too big for a client-side annotation.
 CNPG_VERSION ?= 1.27.4
 CNPG_URL     ?= https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v$(CNPG_VERSION)/cnpg-$(CNPG_VERSION).yaml
+# External Secrets Operator: a resource the company already has reads its
+# credentials from TI's secret stores through it (docs/resources.md). Dev
+# only: a customer installs its own; >= the release that serves
+# external-secrets.io/v1, the API the agent speaks.
+ESO_VERSION ?= 2.14.0
+ESO_CHART   ?= oci://ghcr.io/external-secrets/charts/external-secrets
+define install-eso
+	KUBECONFIG=$(1) helm upgrade --install external-secrets $(ESO_CHART) --version $(ESO_VERSION) \
+		--namespace external-secrets --create-namespace --set installCRDs=true --wait --timeout 5m
+endef
 cluster-addons:
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl apply --server-side -f $(CNPG_URL)
 	KUBECONFIG=$(KUBECONFIG_LOCAL) kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
+	$(call install-eso,$(KUBECONFIG_LOCAL))
 
 cluster-down:
 	k3d cluster delete $(K3D_CLUSTER)
@@ -227,6 +238,23 @@ test-cnpg:
 	ODYSSEY_TEST_CNPG_KUBECONFIG=$(CURDIR)/.dev-secrets/kubeconfig-cnpg-test \
 	go test -count=1 -timeout 15m -run '^TestRecipeSettingsOnRealCloudNativePG$$' -v ./agent/controllers/resource/; \
 	s=$$?; k3d cluster delete odyssey-cnpg-test; rm -f .dev-secrets/kubeconfig-cnpg-test; exit $$s
+
+# A connection the company already has, read from a store by a real External
+# Secrets Operator (the dev-only fake provider), in a throwaway k3d cluster
+# (created and deleted here): the webhook takes the agent's ExternalSecret,
+# the template escapes the URL and never runs a written value, a missing key
+# fails in the fixed phrase, deleting removes the Secret.
+test-eso:
+	@mkdir -p .dev-secrets && chmod 700 .dev-secrets
+	-@k3d cluster delete odyssey-eso-test >/dev/null 2>&1
+	k3d cluster create odyssey-eso-test --agents 0 --no-lb --k3s-arg "--disable=traefik@server:0" \
+		--kubeconfig-update-default=false --kubeconfig-switch-context=false --wait && \
+	k3d kubeconfig get odyssey-eso-test > .dev-secrets/kubeconfig-eso-test && chmod 600 .dev-secrets/kubeconfig-eso-test && \
+	KUBECONFIG=.dev-secrets/kubeconfig-eso-test kubectl apply -f agent/install/crd && \
+	$(call install-eso,.dev-secrets/kubeconfig-eso-test) && \
+	ODYSSEY_TEST_ESO_KUBECONFIG=$(CURDIR)/.dev-secrets/kubeconfig-eso-test \
+	go test -count=1 -timeout 10m -run '^TestExistingConnectionOnRealExternalSecrets$$' -v ./agent/controllers/resource/; \
+	s=$$?; k3d cluster delete odyssey-eso-test; rm -f .dev-secrets/kubeconfig-eso-test; exit $$s
 
 # One-time: signing key, fleet CA + .env with random secrets.
 setup:
