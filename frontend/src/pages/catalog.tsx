@@ -209,7 +209,7 @@ function OfferingDialog({ entry, entries, teams, onClose }: { entry: CatalogEntr
             <DialogTitle>{entry.title}</DialogTitle>
             <DialogDescription>Lo que cambies vale para lo que se cree desde ahora. Lo que ya existe se queda como está.</DialogDescription>
           </DialogHeader>
-          <SwitchField title="Se ofrece" description={isOwn(entry) ? 'Apagada, ninguna app puede agregarla (las que ya la usan la conservan).' : 'Apagada, ninguna app puede crearla (las que ya la tienen la conservan).'} checked={form.active} onCheckedChange={active => set({ active })} disabled={update.isPending} />
+          <SwitchField title="Se ofrece" description={form.active ? (isOwn(entry) ? 'Encendida: la pueden agregar las apps de los niveles y equipos de abajo.' : 'Encendida: la pueden crear las apps de los niveles y equipos de abajo.') : isOwn(entry) ? 'Apagada, ninguna app puede agregarla (las que ya la usan la conservan).' : 'Apagada, ninguna app puede crearla (las que ya la tienen la conservan).'} checked={form.active} onCheckedChange={active => set({ active })} disabled={update.isPending} />
           <FieldGroup>
             {versions.length > 1 ? (
               <Field>

@@ -97,6 +97,7 @@ function RecipeForm({ kinds, entries, entry, stores, technical, onClose, onDone 
   const nextVersion = entry ? Math.max(...entry.versions) + 1 : 1
   const id = entry?.recipe ?? recipeIdOf(title, entries.map(e => e.recipe))
   const named = Object.values(rows).some(r => r.source === 'store')
+  const storeCount = new Set(Object.values(rows).filter(r => r.source === 'store' && r.store).map(r => r.store)).size
   const mayStores = can(permissions.secretsExternal)
   const needsStore = givenOf(contract).some(v => v.secret && !v.optional)
   const tProblem = titleProblem(title, description)
@@ -188,7 +189,7 @@ function RecipeForm({ kinds, entries, entry, stores, technical, onClose, onDone 
         <Callout tone="warn" title={`Ningún clúster lee ahora del almacén ${missing.map(s => `«${s}»`).join(', ')}.`}>Elige otro almacén.</Callout>
       ) : (
         named && (readers.clusters.length > 0 ? (
-          <p className="text-xs text-muted-foreground">Lo pueden usar las apps de {readers.clusters.length === 1 ? 'el clúster' : 'los clústeres'} {readers.clusters.join(', ')}: {readers.clusters.length === 1 ? 'es el que lee' : 'son los que leen'} de esos almacenes.</p>
+          <p className="text-xs text-muted-foreground">Lo pueden usar las apps {readers.clusters.length === 1 ? 'del clúster' : 'de los clústeres'} {readers.clusters.join(', ')}: {readers.clusters.length === 1 ? 'es el que lee' : 'son los que leen'} de {storeCount === 1 ? 'ese almacén' : 'esos almacenes'}.</p>
         ) : (
           <Callout tone="warn" title="Ningún clúster lee de todos esos almacenes a la vez.">Ninguna app podría usarlo. Usa almacenes que lea un mismo clúster.</Callout>
         ))

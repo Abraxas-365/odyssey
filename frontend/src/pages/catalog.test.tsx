@@ -205,7 +205,7 @@ describe('a resource the company already has (stage 2)', () => {
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'El usuario' }), 'app')
     await userEvent.type(within(password).getByLabelText('Llave en el almacén'), 'rds/reportes')
     await userEvent.type(within(password).getByLabelText(/Propiedad/), 'password')
-    expect(within(dialog).getByText(/Lo pueden usar las apps de el clúster Lima/)).toBeTruthy()
+    expect(within(dialog).getByText(/Lo pueden usar las apps del clúster Lima: es el que lee de ese almacén/)).toBeTruthy()
     await userEvent.click(within(dialog).getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() => expect(posts()).toHaveLength(1))
@@ -217,8 +217,12 @@ describe('a resource the company already has (stage 2)', () => {
         { variable: 'PGUSER', value: 'app' }, { variable: 'PGPASSWORD', ref: { store: 'vault', key: 'rds/reportes', property: 'password' } },
       ] },
     })
-    // registered switched off: the offering dialog opens to offer it
-    expect(await screen.findByRole('switch', { name: /Se ofrece/ })).toBeTruthy()
+    // registered switched off: the offering dialog opens to offer it, and its
+    // line follows the switch
+    const offered = await screen.findByRole('switch', { name: /Se ofrece/ })
+    expect(screen.getByText(/Apagada, ninguna app puede agregarla/)).toBeTruthy()
+    await userEvent.click(offered)
+    expect(screen.getByText(/Encendida: la pueden agregar las apps/)).toBeTruthy()
   })
 
   it('says what is missing before sending, and nothing is sent', async () => {
