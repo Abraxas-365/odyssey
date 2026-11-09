@@ -3,6 +3,7 @@ package catalogpg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
 	"github.com/Abraxas-365/odyssey/pkg/resourcespec"
+	"github.com/lib/pq"
 )
 
 const versionColumns = `organization_id, recipe, version, kind, title, description, engine, spec, created_by, created_at`
@@ -46,9 +48,13 @@ func (r *Repository) Publish(ctx context.Context, o catalog.OrgRecipe) error {
 		`INSERT INTO catalog.recipe_versions (`+versionColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		o.Organization, o.Recipe, o.Version, string(o.Kind), text.Clean(o.Title), text.Clean(o.Description), o.Engine, spec, o.CreatedBy, o.CreatedAt)
 	if err != nil {
-		return pgerr.MapWith(err, "publish recipe version", pgerr.Messages{
-			Unique: "La versión " + o.Recipe + "@" + strconv.Itoa(o.Version) + " ya existe: una versión publicada no cambia.",
-		})
+		// the recipe@version is taken (two publishers raced): the same 409
+		// on the field `recipe` the service gives when it sees it first
+		if pqErr := (*pq.Error)(nil); errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return errx.Conflict("La versión " + o.Recipe + "@" + strconv.Itoa(o.Version) + " ya existe: una versión publicada no cambia.").
+				WithField("recipe")
+		}
+		return pgerr.Map(err, "publish recipe version")
 	}
 	return nil
 }

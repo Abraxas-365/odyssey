@@ -149,7 +149,8 @@ func (t tools) resolve(ctx context.Context, org identity.OrganizationID, app, en
 type Resource struct {
 	Name      string   `json:"name"`
 	Kind      string   `json:"kind" jsonschema:"postgres, redis o files"`
-	StorageGi int      `json:"storage_gi" jsonschema:"tamaño en GiB"`
+	StorageGi int      `json:"storage_gi" jsonschema:"tamaño en GiB (0 si ya existe en la empresa)"`
+	Existing  bool     `json:"existing,omitempty" jsonschema:"ya existe en la empresa y Odicea solo la conecta: borrarla la desconecta, los datos de la empresa no se tocan"`
 	Status    string   `json:"status" jsonschema:"preparing (se está preparando), ready (lista), failed (falló: mira message) o deleting (se está eliminando)"`
 	Message   string   `json:"message,omitempty" jsonschema:"por qué falló, si falló"`
 	Connected bool     `json:"connected" jsonschema:"si la app recibe sus variables"`
@@ -167,7 +168,7 @@ func view(v resource.View) Resource {
 	case v.Phase == resource.PhaseFailed:
 		status = "failed"
 	}
-	r := Resource{Name: v.Name, Kind: string(v.Kind), StorageGi: v.StorageGi, Status: status, Message: v.Message,
+	r := Resource{Name: v.Name, Kind: string(v.Kind), StorageGi: v.StorageGi, Existing: v.Existing, Status: status, Message: v.Message,
 		Connected: v.Connected, Variables: v.Variables}
 	if len(v.Services) > 0 {
 		r.Services = slices.Clone(v.Services)
@@ -276,16 +277,22 @@ func (t tools) create(ctx context.Context, caller mcpx.Principal, in CreateResou
 	}
 	res := CreateDatabaseOut{App: p.Slug, Resource: view(out.View), ConfigDeployment: out.Deployment, ConsoleURL: console}
 	vars := strings.Join(out.Variables, ", ")
+	// what "preparing" means: a new resource, or a connection to one the
+	// company already has
+	preparing := " se está preparando"
+	if out.Existing {
+		preparing = " ya existe en la empresa: Odicea solo la conecta (no crea nada nuevo; borrarla la desconecta y sus datos no se tocan). Se está conectando"
+	}
 	switch {
 	case !connects:
-		res.NextStep = "Listo: " + name + " se está preparando y no está conectado a la app. Conéctalo desde la consola cuando la app lo necesite; " +
+		res.NextStep = "Listo: " + name + preparing + " y no está conectado a la app. Conéctalo desde la consola cuando la app lo necesite; " +
 			"list_resources dice cuándo está listo."
 	case out.Deployment != nil:
-		res.NextStep = "Listo: " + name + " se está preparando y la app recibirá " + vars + " en la versión nueva que empezó " +
+		res.NextStep = "Listo: " + name + preparing + " y la app recibirá " + vars + " en la versión nueva que empezó " +
 			"(config_deployment_id; get_deployment la sigue). Pásale a la app esas variables por su nombre; los valores nunca se muestran. " +
 			"list_resources dice cuándo está listo."
 	default:
-		res.NextStep = "Listo: " + name + " se está preparando y la app recibirá " + vars + " cuando se publique. " +
+		res.NextStep = "Listo: " + name + preparing + " y la app recibirá " + vars + " cuando se publique. " +
 			"Publica la app (deploy_folder o deploy_image); list_resources dice cuándo está listo."
 	}
 	return res, nil
@@ -352,6 +359,7 @@ type Offer struct {
 	Recipe      string     `json:"recipe" jsonschema:"lo que se pasa en create_resource.recipe"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
+	Existing    bool       `json:"existing,omitempty" jsonschema:"ya existe en la empresa: Odicea solo la conecta a la app (no tiene tamaño, no se crea nada nuevo y borrarla solo la desconecta; los datos de la empresa no se tocan)"`
 	Default     bool       `json:"default" jsonschema:"la que se usa si no se indica recipe"`
 	Params      []Param    `json:"params"`
 	Variables   []Variable `json:"variables" jsonschema:"las variables que la app recibe al conectarla (los valores nunca se muestran)"`
@@ -409,7 +417,7 @@ func (t tools) listCatalog(ctx context.Context, caller mcpx.Principal, in ListCa
 	out := ListCatalogOut{App: p.Slug, Tier: string(o.Tier), Recipes: make([]Offer, 0, len(o.Recipes)),
 		Unavailable: make([]Unavailable, 0, len(o.Unavailable)), ConsoleURL: t.opts.ConsoleURL + "/apps/" + p.ID.String()}
 	for _, r := range o.Recipes {
-		offer := Offer{Kind: string(r.Kind), Recipe: r.Recipe, Title: r.Title, Description: r.Description, Default: r.Default,
+		offer := Offer{Kind: string(r.Kind), Recipe: r.Recipe, Title: r.Title, Description: r.Description, Existing: r.Existing, Default: r.Default,
 			Params: make([]Param, 0, len(r.Params)), Variables: make([]Variable, 0, len(r.Variables)), Approval: approvalOf(r.Verdict)}
 		if len(r.Rules) > 0 {
 			offer.Rules = slices.Clone(r.Rules)

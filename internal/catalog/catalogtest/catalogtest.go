@@ -76,6 +76,18 @@ func (m *Repo) SeedFactory(_ context.Context, offerings []catalog.Offering) (int
 	return added, nil
 }
 
+// AddOffering inserts an offering; one that exists is a conflict.
+func (m *Repo) AddOffering(_ context.Context, o catalog.Offering) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.rows[key(o.Organization, o.Recipe)]; ok {
+		return errx.Conflict("offering exists")
+	}
+	o.Revision, o.UpdatedAt = 1, o.CreatedAt
+	m.rows[key(o.Organization, o.Recipe)] = o
+	return nil
+}
+
 // Publish keeps a version; one that exists is a conflict, as in Postgres.
 func (m *Repo) Publish(_ context.Context, o catalog.OrgRecipe) error {
 	m.mu.Lock()

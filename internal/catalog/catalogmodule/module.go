@@ -6,10 +6,12 @@ import (
 	"io/fs"
 
 	"github.com/Abraxas-365/odyssey/internal/catalog"
+	"github.com/Abraxas-365/odyssey/internal/catalog/adapters/catalogfleet"
 	"github.com/Abraxas-365/odyssey/internal/catalog/adapters/cataloghttp"
 	"github.com/Abraxas-365/odyssey/internal/catalog/adapters/catalogpg"
 	"github.com/Abraxas-365/odyssey/internal/catalog/catalogsvc"
 	"github.com/Abraxas-365/odyssey/internal/event"
+	"github.com/Abraxas-365/odyssey/internal/fleet"
 	"github.com/Abraxas-365/odyssey/internal/txn"
 	"github.com/jmoiron/sqlx"
 )
@@ -26,6 +28,7 @@ type Module struct {
 	Commands catalog.Commands
 	Queries  catalog.Queries
 	HTTP     *cataloghttp.Handler
+	svc      *catalogsvc.Service
 }
 
 func New(deps Deps) Module {
@@ -33,8 +36,12 @@ func New(deps Deps) Module {
 	if deps.Directory != nil {
 		svc.UseDirectory(deps.Directory)
 	}
-	return Module{Commands: svc, Queries: svc, HTTP: cataloghttp.New(svc, svc)}
+	return Module{Commands: svc, Queries: svc, HTTP: cataloghttp.New(svc, svc), svc: svc}
 }
+
+// UseFleet lets the organization's recipes read the secret stores its
+// clusters announce (the fleet is built after the catalog).
+func (m Module) UseFleet(f fleet.Queries) { m.svc.UseFleet(catalogfleet.New(f)) }
 
 // Schema is the module's Postgres schema and migration owner.
 const Schema = catalogpg.Schema

@@ -29,6 +29,7 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/gate"
 	"github.com/Abraxas-365/odyssey/internal/identity"
+	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/text"
 	"github.com/Abraxas-365/odyssey/pkg/resourcekind"
@@ -55,6 +56,9 @@ const (
 	// CodeTeamsUnavailable: an offering names teams but Odicea cannot read
 	// the organization's groups (no IAMKit directory configured). Business 422.
 	CodeTeamsUnavailable = "CATALOG_TEAMS_UNAVAILABLE"
+	// CodeStoreUnknown: a recipe reads from a secret store no cluster of the
+	// organization announces. Business 422 with details.store.
+	CodeStoreUnknown = "CATALOG_STORE_UNKNOWN"
 )
 
 // MaxTeams is how many teams one offering may name.
@@ -108,6 +112,11 @@ type RecipeVersion struct {
 
 // Ref is recipe@version.
 func (v RecipeVersion) Ref() string { return v.Recipe + "@" + strconv.Itoa(v.Version) }
+
+// Owned says Odicea prepares what v fulfils, so deleting the resource
+// deletes its data; false: the company already has it, Odicea only connects
+// it, and deleting the resource only disconnects it.
+func (v RecipeVersion) Owned() bool { return v.Engine != resourcespec.EngineExisting }
 
 // OrgPrefix starts the id of every recipe an organization publishes
 // (OrgRecipe). No factory recipe starts with it, so a later release of
@@ -176,6 +185,88 @@ func (o OrgRecipe) Validate() error {
 		return errx.InvalidField("spec", err.Error())
 	}
 	return nil
+}
+
+// RecipeDraft is what IT writes of a version of its own recipe: a version is
+// a whole snapshot, so a new one repeats the title and description.
+type RecipeDraft struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	// Existing is the connection (resourcespec.Existing): a written value or
+	// a reference to a secret store for each variable of the kind.
+	Existing *resourcespec.Existing `json:"existing"`
+}
+
+// RegisterRecipe is IT registering a resource the company already has: the
+// recipe's version 1, offered to nobody until IT edits its offering.
+type RegisterRecipe struct {
+	// Recipe is its id: OrgPrefix and lowercase words ("org-rds-reportes").
+	Recipe string            `json:"recipe"`
+	Kind   resourcekind.Kind `json:"kind"`
+	RecipeDraft
+	PublishedBy identity.UserID `json:"-"`
+	// MayReadStores says the publisher holds odyssey:secrets:external: a
+	// ClusterSecretStore is readable by any ExternalSecret of the cluster,
+	// so pointing a recipe at one is as much as reading the company's vault.
+	// Only the HTTP adapter sets it, from the caller's token
+	// (TestOnlyHTTPGrantsPermissions).
+	MayReadStores bool `json:"-"`
+}
+
+// PublishVersion is IT publishing the next version of its own recipe: the
+// same kind and engine, a new connection. It is not offered until IT moves
+// the offering to it, and resources stay on the version they have.
+type PublishVersion struct {
+	RecipeDraft
+	PublishedBy identity.UserID `json:"-"`
+	// MayReadStores: as in RegisterRecipe.
+	MayReadStores bool `json:"-"`
+}
+
+// OrgRecipe is version of the organization's recipe as d describes it.
+func (d RecipeDraft) OrgRecipe(org identity.OrganizationID, recipe string, version int, kind resourcekind.Kind, by identity.UserID) OrgRecipe {
+	return OrgRecipe{Organization: org, Recipe: strings.TrimSpace(recipe), Version: version, Kind: kind, Title: d.Title,
+		Description: d.Description, Engine: resourcespec.EngineExisting, Spec: resourcespec.Spec{Existing: d.Existing}, CreatedBy: by}
+}
+
+// StoresForbidden is the 403 for a recipe that reads secret stores,
+// published without odyssey:secrets:external.
+func StoresForbidden(recipe string) error {
+	return errx.Forbidden("«" + recipe + "» lee credenciales del almacén de secretos de la empresa: publicarla necesita también el permiso " +
+		permission.SecretsExternal + ".")
+}
+
+// StoreUnknown is the 422 for a store no cluster of the organization
+// announces (a typo, or one not configured yet).
+func StoreUnknown(store string) error {
+	return errx.Business("Ningún clúster de tu empresa lee del almacén de secretos «"+store+"». Revisa el nombre, "+
+		"o configura ese ClusterSecretStore en el clúster y vuelve a intentarlo.").
+		WithCode(CodeStoreUnknown).WithField("existing").WithDetail("store", store)
+}
+
+// Store is a secret store (a ClusterSecretStore of External Secrets) that
+// clusters of the organization announce, by name, with which ones.
+type Store struct {
+	Name     string         `json:"name"`
+	Clusters []StoreCluster `json:"clusters"`
+}
+
+// StoreCluster is a cluster that reads from a store.
+type StoreCluster struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Redacted is the entry as someone who does not manage the catalog reads
+// it: the connection of a resource the company already has (its host, its
+// stores' keys) is IT's, and so are the stores it reads (the
+// secretstore:<name> it requires); the engine still says it is one.
+func (e Entry) Redacted() Entry {
+	e.Spec.Existing = nil
+	e.Requires = slices.DeleteFunc(slices.Clone(e.Requires), func(r string) bool {
+		return strings.HasPrefix(r, resourcespec.SecretStore(""))
+	})
+	return e
 }
 
 // Param is the version's parameter called name.

@@ -1259,7 +1259,21 @@ export interface paths {
          */
         get: operations["listCatalogRecipes"];
         put?: never;
-        post?: never;
+        /**
+         * Register a resource the company already has
+         * @description IT registers a database, cache or bucket the company already has
+         *     (engine `existing`, docs/catalog.md): version 1 of the organization's
+         *     own recipe, with an offering that is inactive (offered to nobody)
+         *     until IT edits it (PUT …/offering). Odicea never creates, resizes or
+         *     deletes it: an app only gets its connection. A connection that reads
+         *     a secret store also needs odyssey:secrets:external (403 otherwise: a
+         *     ClusterSecretStore is readable by any ExternalSecret of its cluster),
+         *     and each store must be one an active cluster of the organization
+         *     announces (422 `CATALOG_STORE_UNKNOWN`, `details.store`). An id the
+         *     catalog already has is 409 (field `recipe`). Event
+         *     `catalog.recipe_published`.
+         */
+        post: operations["registerCatalogRecipe"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1308,6 +1322,57 @@ export interface paths {
          *     recipe@version and parameters. Event `catalog.offering_updated`.
          */
         put: operations["updateCatalogOffering"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/recipes/{recipe}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recipe: components["parameters"]["Recipe"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish a new version of the organization's own recipe
+         * @description The next version of a recipe the organization registered: the same
+         *     kind and engine, a new title, description and connection (a whole
+         *     snapshot). Versions never change once published. Not retroactive: the
+         *     offering stays on its version until IT moves it (PUT …/offering), and
+         *     resources keep the version they have. Odicea's own recipes get their
+         *     versions with Odicea (422). The stores are checked as in POST
+         *     /catalog/recipes. Event `catalog.recipe_published`.
+         */
+        post: operations["publishCatalogRecipeVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/stores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The secret stores a recipe can read from
+         * @description The ClusterSecretStores (External Secrets) the organization's active
+         *     clusters announce, by name, with which clusters read from each: the
+         *     stores a recipe of a resource the company already has may name. Empty
+         *     when no cluster announces one.
+         */
+        get: operations["listCatalogStores"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2712,6 +2777,12 @@ export interface components {
             services: components["schemas"]["ServiceName"][];
             /** @description The variable names the app reads the resource by (never their values). */
             variables: string[];
+            /**
+             * @description The company already has it and Odicea only connects it (its recipe's
+             *     engine is `existing`): no size, and deleting it removes only its
+             *     connection; the company's data is not touched.
+             */
+            existing: boolean;
         };
         AI: {
             /** @description Whether the AI can be turned on here (the gateway is connected and the cluster can run it). */
@@ -3485,10 +3556,17 @@ export interface components {
             kind: components["schemas"]["ResourceKind"];
             title: string;
             description: string;
-            /** @enum {string} */
-            engine: "builtin";
+            /**
+             * @description builtin (Odicea's cluster prepares it) or existing (the company already has it; Odicea only connects it).
+             * @enum {string}
+             */
+            engine: "builtin" | "existing";
             params: components["schemas"]["CatalogParam"][];
-            /** @description The engine settings the version fixes (empty for the basic resource). */
+            /**
+             * @description The engine settings the version fixes (empty for the basic resource).
+             *     `existing` (the connection of a resource the company already has)
+             *     is shown only to callers with odyssey:catalog:manage.
+             */
             spec: {
                 postgres?: {
                     instances?: number;
@@ -3496,10 +3574,59 @@ export interface components {
                     cpu?: string;
                     memory?: string;
                 };
+                existing?: components["schemas"]["ExistingConnection"];
             };
-            /** @description Capabilities the environment's cluster must announce. */
+            /** @description Capabilities the environment's cluster must announce. The `secretstore:<name>` ones (the stores an existing connection reads) are shown only to callers with odyssey:catalog:manage. */
             requires: string[];
             offering: components["schemas"]["CatalogOffering"];
+        };
+        /**
+         * @description Where each variable of a resource the company already has comes from:
+         *     every variable of its kind's contract once (a derived one, like
+         *     DATABASE_URL, never: the cluster builds it), a written `value` or a
+         *     `ref` to a ClusterSecretStore, and a secret variable only ever a
+         *     `ref` (a credential never passes through Odicea).
+         */
+        ExistingConnection: {
+            values: {
+                /** @description The variable the app receives (PGHOST). */
+                variable: string;
+                /** @description Written in the recipe; never for a secret variable. */
+                value?: string;
+                ref?: {
+                    /** @description The ClusterSecretStore's name (GET /catalog/stores lists them). */
+                    store: string;
+                    /** @description The secret's key in the store (rds/reportes). */
+                    key: string;
+                    /** @description The secret's field; absent, the whole value. */
+                    property?: string;
+                };
+            }[];
+        };
+        /** @description A version of the organization's own recipe (a whole snapshot). */
+        CatalogRecipeDraft: {
+            title: string;
+            description?: string;
+            existing: components["schemas"]["ExistingConnection"];
+        };
+        /** @description Version 1 of a new recipe of the organization (CatalogRecipeDraft plus its id and kind). */
+        CatalogRecipeRegistration: {
+            /** @description The recipe's id: org- and lowercase words (org-rds-reportes). */
+            recipe: string;
+            kind: components["schemas"]["ResourceKind"];
+            title: string;
+            description?: string;
+            existing: components["schemas"]["ExistingConnection"];
+        };
+        /** @description A secret store (ClusterSecretStore) the organization's active clusters announce. */
+        CatalogStore: {
+            name: string;
+            /** @description The clusters that read from it, by name. */
+            clusters: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            }[];
         };
         /** @description What an environment's app can ask for (GET …/catalog, docs/catalog.md). */
         EnvironmentCatalog: {
@@ -3520,6 +3647,8 @@ export interface components {
             recipe_version: number;
             title: string;
             description: string;
+            /** @description The company already has it: Odicea only connects it (no size; deleting it disconnects it, the data stays). */
+            existing: boolean;
             /** @description What a request naming only the kind gets (none when the offering names several). */
             default: boolean;
             params: {
@@ -5953,6 +6082,40 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    registerCatalogRecipe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogRecipeRegistration"];
+            };
+        };
+        responses: {
+            /** @description The recipe with its inactive offering. */
+            201: {
+                headers: {
+                    /** @description /api/v1/catalog/recipes/{recipe} */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogEntry"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
     getCatalogRecipe: {
         parameters: {
             query?: never;
@@ -6010,6 +6173,68 @@ export interface operations {
             413: components["responses"]["Validation"];
             415: components["responses"]["Validation"];
             422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    publishCatalogRecipeVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recipe: components["parameters"]["Recipe"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogRecipeDraft"];
+            };
+        };
+        responses: {
+            /** @description The recipe as offered, with the new version among its versions. */
+            201: {
+                headers: {
+                    /** @description /api/v1/catalog/recipes/{recipe} */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogEntry"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["Validation"];
+            415: components["responses"]["Validation"];
+            422: components["responses"]["Business"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listCatalogStores: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stores. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["CatalogStore"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
         };
     };

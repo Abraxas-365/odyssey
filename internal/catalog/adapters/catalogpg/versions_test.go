@@ -70,6 +70,8 @@ func TestPublishedVersionsNeverChange(t *testing.T) {
 	again.Title = "Otra"
 	if err := repo.Publish(ctx, again); !errx.IsType(err, errx.TypeConflict) {
 		t.Fatalf("republish: %v", err)
+	} else if e := (*errx.Error)(nil); !errx.As(err, &e) || e.Details["field"] != "recipe" {
+		t.Fatalf("republish names no field: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE catalog.recipe_versions SET title = 'x' WHERE organization_id = $1`, org); err == nil {
 		t.Fatal("a published version was updated")

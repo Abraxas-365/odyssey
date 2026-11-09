@@ -111,7 +111,7 @@ describe('what a builder sees when creating', () => {
   })
 
   it('starts each kind at its default, or its first option', () => {
-    const offer = (recipe: string, kind: 'postgres' | 'redis', isDefault: boolean) => ({ kind, recipe, recipe_version: 1, title: recipe, description: '', default: isDefault, params: [], variables: [], verdict: 'allow' as const, rules: [], rules_verdict: 'allow' as const })
+    const offer = (recipe: string, kind: 'postgres' | 'redis', isDefault: boolean) => ({ kind, recipe, recipe_version: 1, title: recipe, description: '', existing: false, default: isDefault, params: [], variables: [], verdict: 'allow' as const, rules: [], rules_verdict: 'allow' as const })
     const c: Pick<EnvironmentCatalog, 'recipes'> = { recipes: [offer('postgres-produccion', 'postgres', false), offer('postgres-basico', 'postgres', true), offer('redis-basico', 'redis', false)] }
     expect(offeredKinds(c)).toEqual(['postgres', 'redis'])
     expect(offersOf(c, 'postgres').map(o => o.recipe)).toEqual(['postgres-produccion', 'postgres-basico'])

@@ -98,6 +98,7 @@ Si la app necesita saber **quién** es el usuario (para mostrar su nombre o, sob
 - La base tarda un momento en prepararse: `list_resources` dice `preparing`, `ready` o `failed` (con el motivo). No la publiques como lista hasta que diga `ready`.
 - Para tener varias bases (por ejemplo una de analítica) usa `prefix` en MAYÚSCULAS (`ANALYTICS` → `ANALYTICS_DATABASE_URL`).
 - Si falla con `CATALOG_UNAVAILABLE` («Tu empresa no ofrece … todavía») o «El clúster no puede crear …», es de TI; díselo al usuario. Con `CATALOG_OUT_OF_LIMITS` el valor está fuera de los límites: no pruebes otro sin preguntarle. Eliminar una base borra sus datos: eso lo hace una persona desde la consola, no tú.
+- Una receta con `existing: true` es una base que **la empresa ya tiene** (por ejemplo su base de reportes): Odicea no crea nada, solo la conecta a la app con las credenciales que TI guardó en el almacén de la empresa (nunca las ves). No tiene tamaño (sin `params`). Si la app necesita esos datos, úsala en vez de crear una base nueva. Eliminarla desde la consola solo la desconecta: la base de la empresa no se toca. Las recetas las registra TI, no tú.
 - Los datos viven en el clúster de la app; si TI mueve la app a otro clúster, la base se prepara vacía allí.
 
 ## IA en la app

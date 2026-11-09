@@ -881,8 +881,11 @@ pre-approved up to 50 GiB, not the default).
 |---|---|---|---|
 | `GET` | `/api/v1/catalog/recipes` | any user | 200 `{items}` (every recipe at its offered version, with `versions` — every version IT can offer — and its offering) |
 | `GET` | `/api/v1/catalog/recipes/:recipe` | any user | 200 entry |
+| `POST` | `/api/v1/catalog/recipes` | `catalog:manage` (+ `secrets:external` when it reads a store) | **201** + `Location`, entry — registers a resource the company already has as `org-…@1`, with an inactive offering |
+| `POST` | `/api/v1/catalog/recipes/:recipe/versions` | `catalog:manage` (+ `secrets:external` when it reads a store) | **201** + `Location`, entry — publishes the next version of an `org-…` recipe (not offered until IT moves the offering) |
 | `PUT` | `/api/v1/catalog/recipes/:recipe/offering` | `catalog:manage` | 200 entry (replaces the offering) |
 | `GET` | `/api/v1/catalog/teams` | `catalog:manage` | 200 `{available, items[{id, name, members, directory}]}` — the organization's IAMKit groups an offering can be limited to (`available` false: no IAMKit directory); 502 when IAMKit fails |
+| `GET` | `/api/v1/catalog/stores` | `catalog:manage` | 200 `{items[{name, clusters[{id, name}]}]}` — the secret stores (External Secrets `ClusterSecretStore`) the organization's active clusters announce, and on which clusters each is |
 
 ```json
 {"recipe":"postgres-produccion","version":1,"kind":"postgres","title":"PostgreSQL de producción",
@@ -920,6 +923,23 @@ pre-approved up to 50 GiB, not the default).
   teams have different defaults: `details.recipes`), `CATALOG_RECIPE_CHANGED`
   (a pinned version no longer offered).
 - Event: `catalog.offering_updated` (with `teams`).
+- **The organization's own recipes** (stage 2, docs/catalog.md): `POST
+  /catalog/recipes` takes `{recipe, kind, title, description?, existing}` —
+  `recipe` is `org-` plus lowercase words (≤ 48), `existing` the connection
+  (`resourcespec.Existing`: per variable a written `value` or a `ref
+  {store, key, property?}`; a credential is only ever a `ref`). `…/versions`
+  takes `{title, description?, existing}`, same kind and engine. Refused:
+  400 with `details.field` (an invalid id, connection or host), 409 with field
+  `recipe` (the id is taken: publish a version), 422 on a factory recipe's
+  versions, 404 an unknown recipe, **403** when the connection reads a store
+  and the caller lacks `secrets:external`, 422 `CATALOG_STORE_UNKNOWN`
+  (`details.store`) when no active cluster of the organization announces a
+  store it reads. Whoever reads the catalog without `catalog:manage` sees
+  the recipe but not its connection (`spec.existing` and the
+  `secretstore:<name>` in `requires` left out). A resource of
+  such a recipe is `existing: true` (no size); deleting it removes only its
+  connection. Event: `catalog.recipe_published` (recipe, version, kind,
+  title, engine, stores — never the connection).
 
 ### Approvals (`GET/POST /api/v1/approvals…`; `docs/approvals.md`)
 

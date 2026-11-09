@@ -16,6 +16,17 @@ type Commands interface {
 	// the kind is already the default is 409 CATALOG_DEFAULT_TAKEN. It is
 	// not retroactive: resources keep their recipe@version and parameters.
 	UpdateOffering(ctx context.Context, organization identity.OrganizationID, recipe string, input UpdateOffering) (Entry, error)
+	// RegisterRecipe publishes version 1 of a recipe of the organization's
+	// own (a resource the company already has) with an inactive offering:
+	// nobody can create it until IT offers it. An id already taken is 409.
+	// A connection that reads secret stores needs input.MayReadStores (403)
+	// and stores some cluster of the organization announces (422
+	// CATALOG_STORE_UNKNOWN).
+	RegisterRecipe(ctx context.Context, organization identity.OrganizationID, input RegisterRecipe) (Entry, error)
+	// PublishVersion publishes the next version of the organization's recipe
+	// (same kind and engine; the stores as in RegisterRecipe). It is not
+	// retroactive and not offered until IT moves the offering to it.
+	PublishVersion(ctx context.Context, organization identity.OrganizationID, recipe string, input PublishVersion) (Entry, error)
 }
 
 // Queries read the catalog. The first read of an organization seeds the
@@ -57,6 +68,10 @@ type Queries interface {
 	// version or one it published (false: neither). It is how a resource's
 	// pinned version is read; another organization's recipe is never found.
 	Version(ctx context.Context, organization identity.OrganizationID, recipe string, version int) (RecipeVersion, bool, error)
+	// Stores are the secret stores the organization's clusters announce
+	// (active clusters only), by name, with which clusters read each: what
+	// a recipe of its own may read from. Empty without a Fleet.
+	Stores(ctx context.Context, organization identity.OrganizationID) ([]Store, error)
 }
 
 // Repository is the persistence contract of catalog.offerings and
@@ -79,6 +94,16 @@ type Repository interface {
 	Publish(ctx context.Context, recipe OrgRecipe) error
 	// Published are the organization's versions, by recipe then version.
 	Published(ctx context.Context, organization identity.OrganizationID) ([]OrgRecipe, error)
+	// AddOffering inserts the offering of a recipe the organization just
+	// registered; one that exists is a conflict.
+	AddOffering(ctx context.Context, offering Offering) error
+}
+
+// Fleet is what the catalog asks of the organization's clusters (the
+// catalogfleet adapter; catalog never imports fleet): the secret stores they
+// read from. Optional: without it no recipe can read a store.
+type Fleet interface {
+	SecretStores(ctx context.Context, organization identity.OrganizationID) ([]Store, error)
 }
 
 // Directory is the organization's teams (IAMKit groups), read by the

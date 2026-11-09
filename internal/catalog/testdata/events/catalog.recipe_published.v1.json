@@ -1,0 +1,10 @@
+{
+  "recipe": "org-rds-reportes",
+  "version": 1,
+  "kind": "postgres",
+  "title": "Base de reportes",
+  "engine": "existing",
+  "stores": [
+    "vault"
+  ]
+}

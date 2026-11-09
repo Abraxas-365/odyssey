@@ -42,11 +42,35 @@ as the factory's: a published version never changes (the table only takes
 inserts; triggers refuse updates, deletes and truncation) and a new connection
 is a new version. Their ids start with `org-`, which no factory recipe does
 (`TestFactoryVersionsAreSound`), so a later Odicea release never takes one.
-They have no parameters and no factory offering. Stage 2 lands in cuts: so
-far they are stored and read (the catalog lists one, inactive), their
-connection is validated, and the agent's `existing` engine writes it in the
-cluster (docs/resources.md, "A resource the company already has");
-publishing them (API, permission) and offering them come next.
+They have no parameters and no factory offering. Stage 2 lands in cuts: they
+are stored and read, their connection is validated, the agent's `existing`
+engine writes it in the cluster (docs/resources.md, "A resource the company
+already has"), and IT publishes them over the API (below); the console's
+screens for it come next.
+
+**Publishing** (docs/api.md §11 "Resource catalog"). `POST /catalog/recipes`
+(`catalog:manage`) registers version 1 together with an **inactive**
+offering, so nobody can create it until IT offers it (the usual `PUT
+…/offering`); `POST /catalog/recipes/:recipe/versions` adds the next version
+(same kind and engine) and, like any version, is not retroactive: the
+offering stays on its version until IT moves it, and resources keep theirs.
+A connection that reads a secret store needs, besides `catalog:manage`,
+`secrets:external` (the same permission that lets an app read the company's
+vault), and each store must be one an active cluster of the organization
+announces (`GET /catalog/stores` lists them with their clusters), so a typo
+is caught when registering and not as a `failed` resource later. The
+catalog reaches the fleet only through its own port `catalog.Fleet`
+(adapter `catalogfleet`). Registering writes the version, the offering and
+the event `catalog.recipe_published` (recipe@version, kind, title, engine and
+the stores it reads, never the connection) in one transaction. Whoever reads
+the catalog without `catalog:manage` sees the recipe but not its connection
+nor the stores it reads.
+Still to come: moving resources to a newer version, archiving a recipe.
+
+A resource of such a recipe is marked `existing` (in the API, the MCP's
+`list_catalog` and `list_resources`): it has no size and deleting it removes
+only its connection — the trail says "Desconectó … (ya existía en la
+empresa: sus datos no se tocan)".
 
 **The connection** (`resourcespec.Existing`) lists where each variable of the
 type's contract comes from: a value written in the recipe, or a reference

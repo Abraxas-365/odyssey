@@ -28,6 +28,9 @@ type Offer struct {
 	Version     int               `json:"recipe_version"`
 	Title       string            `json:"title"`
 	Description string            `json:"description"`
+	// Existing: the company already has it and Odicea only connects it (no
+	// size; deleting the resource disconnects it, the data stays).
+	Existing bool `json:"existing"`
 	// Default says it is what a request naming only the kind gets.
 	Default   bool            `json:"default"`
 	Params    []OfferParam    `json:"params"`
@@ -83,7 +86,7 @@ type UnavailableKind struct {
 // with defaults (its parameters' defaults): v all of it, rules IT's rules
 // alone.
 func NewOffer(e catalog.Entry, tier project.Tier, v, rules gate.Verdict) Offer {
-	o := Offer{Kind: e.Kind, Recipe: e.Recipe, Version: e.Version, Title: e.Title, Description: e.Description,
+	o := Offer{Kind: e.Kind, Recipe: e.Recipe, Version: e.Version, Title: e.Title, Description: e.Description, Existing: !e.Owned(),
 		Default: e.Offering.DefaultIn(tier), Params: make([]OfferParam, 0, len(e.Params)), Variables: []OfferVariable{},
 		Verdict: v.Effect, Rules: []string{}, RulesVerdict: rules.Effect}
 	if o.Verdict == "" {

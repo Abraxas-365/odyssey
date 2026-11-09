@@ -1963,6 +1963,44 @@ paths:
         "500": { $ref: "#/components/responses/Internal" }
 
   /api/v1/catalog/recipes:
+    post:
+      tags: [catalog]
+      operationId: registerCatalogRecipe
+      summary: Register a resource the company already has
+      description: |
+        IT registers a database, cache or bucket the company already has
+        (engine `existing`, docs/catalog.md): version 1 of the organization's
+        own recipe, with an offering that is inactive (offered to nobody)
+        until IT edits it (PUT …/offering). Odicea never creates, resizes or
+        deletes it: an app only gets its connection. A connection that reads
+        a secret store also needs odyssey:secrets:external (403 otherwise: a
+        ClusterSecretStore is readable by any ExternalSecret of its cluster),
+        and each store must be one an active cluster of the organization
+        announces (422 `CATALOG_STORE_UNKNOWN`, `details.store`). An id the
+        catalog already has is 409 (field `recipe`). Event
+        `catalog.recipe_published`.
+      x-permissions: [odyssey:catalog:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogRecipeRegistration" }
+      responses:
+        "201":
+          description: The recipe with its inactive offering.
+          headers:
+            Location: { schema: { type: string }, description: "/api/v1/catalog/recipes/{recipe}" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogEntry" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
     get:
       tags: [catalog]
       operationId: listCatalogRecipes
@@ -2045,6 +2083,73 @@ paths:
         "413": { $ref: "#/components/responses/Validation" }
         "415": { $ref: "#/components/responses/Validation" }
         "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/catalog/recipes/{recipe}/versions:
+    parameters:
+      - $ref: "#/components/parameters/Recipe"
+    post:
+      tags: [catalog]
+      operationId: publishCatalogRecipeVersion
+      summary: Publish a new version of the organization's own recipe
+      description: |
+        The next version of a recipe the organization registered: the same
+        kind and engine, a new title, description and connection (a whole
+        snapshot). Versions never change once published. Not retroactive: the
+        offering stays on its version until IT moves it (PUT …/offering), and
+        resources keep the version they have. Odicea's own recipes get their
+        versions with Odicea (422). The stores are checked as in POST
+        /catalog/recipes. Event `catalog.recipe_published`.
+      x-permissions: [odyssey:catalog:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogRecipeDraft" }
+      responses:
+        "201":
+          description: The recipe as offered, with the new version among its versions.
+          headers:
+            Location: { schema: { type: string }, description: "/api/v1/catalog/recipes/{recipe}" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogEntry" }
+        "400": { $ref: "#/components/responses/Validation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/Validation" }
+        "415": { $ref: "#/components/responses/Validation" }
+        "422": { $ref: "#/components/responses/Business" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/catalog/stores:
+    get:
+      tags: [catalog]
+      operationId: listCatalogStores
+      summary: The secret stores a recipe can read from
+      description: |
+        The ClusterSecretStores (External Secrets) the organization's active
+        clusters announce, by name, with which clusters read from each: the
+        stores a recipe of a resource the company already has may name. Empty
+        when no cluster announces one.
+      x-permissions: [odyssey:catalog:manage]
+      responses:
+        "200":
+          description: The stores.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogStore" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/Internal" }
 
   /api/v1/catalog/teams:
@@ -4124,7 +4229,7 @@ components:
         services: { $ref: "#/components/schemas/ServiceScope" }
     Resource:
       type: object
-      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, recipe, recipe_version, params, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, services, variables]
+      required: [id, organization_id, project_id, environment_id, name, kind, storage_gi, recipe, recipe_version, params, generation, status, created_by, created_at, updated_at, phase, message, connected, prefix, services, variables, existing]
       properties:
         id: { type: string, format: uuid }
         organization_id: { type: string, format: uuid }
@@ -4162,6 +4267,12 @@ components:
           type: array
           description: The variable names the app reads the resource by (never their values).
           items: { type: string }
+        existing:
+          type: boolean
+          description: |
+            The company already has it and Odicea only connects it (its recipe's
+            engine is `existing`): no size, and deleting it removes only its
+            connection; the company's data is not touched.
     AI:
       type: object
       required: [available, enabled, status, base_url, variables, enabled_by, enabled_at, services, scoped_settings]
@@ -5131,11 +5242,17 @@ components:
         kind: { $ref: "#/components/schemas/ResourceKind" }
         title: { type: string }
         description: { type: string }
-        engine: { type: string, enum: [builtin] }
+        engine:
+          type: string
+          enum: [builtin, existing]
+          description: builtin (Odicea's cluster prepares it) or existing (the company already has it; Odicea only connects it).
         params: { type: array, items: { $ref: "#/components/schemas/CatalogParam" } }
         spec:
           type: object
-          description: The engine settings the version fixes (empty for the basic resource).
+          description: |
+            The engine settings the version fixes (empty for the basic resource).
+            `existing` (the connection of a resource the company already has)
+            is shown only to callers with odyssey:catalog:manage.
           additionalProperties: false
           properties:
             postgres:
@@ -5146,11 +5263,81 @@ components:
                 major: { type: integer }
                 cpu: { type: string }
                 memory: { type: string }
+            existing: { $ref: "#/components/schemas/ExistingConnection" }
         requires:
           type: array
-          description: Capabilities the environment's cluster must announce.
+          description: "Capabilities the environment's cluster must announce. The `secretstore:<name>` ones (the stores an existing connection reads) are shown only to callers with odyssey:catalog:manage."
           items: { type: string }
         offering: { $ref: "#/components/schemas/CatalogOffering" }
+
+    ExistingConnection:
+      type: object
+      additionalProperties: false
+      description: |
+        Where each variable of a resource the company already has comes from:
+        every variable of its kind's contract once (a derived one, like
+        DATABASE_URL, never: the cluster builds it), a written `value` or a
+        `ref` to a ClusterSecretStore, and a secret variable only ever a
+        `ref` (a credential never passes through Odicea).
+      required: [values]
+      properties:
+        values:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [variable]
+            properties:
+              variable: { type: string, description: "The variable the app receives (PGHOST)." }
+              value: { type: string, description: "Written in the recipe; never for a secret variable." }
+              ref:
+                type: object
+                additionalProperties: false
+                required: [store, key]
+                properties:
+                  store: { type: string, description: "The ClusterSecretStore's name (GET /catalog/stores lists them)." }
+                  key: { type: string, description: "The secret's key in the store (rds/reportes)." }
+                  property: { type: string, description: "The secret's field; absent, the whole value." }
+
+    CatalogRecipeDraft:
+      type: object
+      additionalProperties: false
+      description: A version of the organization's own recipe (a whole snapshot).
+      required: [title, existing]
+      properties:
+        title: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        existing: { $ref: "#/components/schemas/ExistingConnection" }
+
+    CatalogRecipeRegistration:
+      type: object
+      additionalProperties: false
+      description: Version 1 of a new recipe of the organization (CatalogRecipeDraft plus its id and kind).
+      required: [recipe, kind, title, existing]
+      properties:
+        recipe: { type: string, maxLength: 48, pattern: "^org-[a-z0-9]+(-[a-z0-9]+)*$", description: "The recipe's id: org- and lowercase words (org-rds-reportes)." }
+        kind: { $ref: "#/components/schemas/ResourceKind" }
+        title: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        existing: { $ref: "#/components/schemas/ExistingConnection" }
+
+    CatalogStore:
+      type: object
+      additionalProperties: false
+      description: A secret store (ClusterSecretStore) the organization's active clusters announce.
+      required: [name, clusters]
+      properties:
+        name: { type: string }
+        clusters:
+          type: array
+          description: The clusters that read from it, by name.
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
 
     EnvironmentCatalog:
       type: object
@@ -5178,13 +5365,14 @@ components:
       type: object
       additionalProperties: false
       description: One recipe that can be created in the environment.
-      required: [kind, recipe, recipe_version, title, description, default, params, variables, verdict, rules, rules_verdict]
+      required: [kind, recipe, recipe_version, title, description, existing, default, params, variables, verdict, rules, rules_verdict]
       properties:
         kind: { $ref: "#/components/schemas/ResourceKind" }
         recipe: { type: string }
         recipe_version: { type: integer }
         title: { type: string }
         description: { type: string }
+        existing: { type: boolean, description: "The company already has it: Odicea only connects it (no size; deleting it disconnects it, the data stays)." }
         default: { type: boolean, description: What a request naming only the kind gets (none when the offering names several). }
         params:
           type: array

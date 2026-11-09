@@ -193,3 +193,26 @@ func (r *Repository) SeedFactory(ctx context.Context, offerings []catalog.Offeri
 	}
 	return added, nil
 }
+
+// AddOffering inserts the first offering of a recipe the organization just
+// registered (revision 1, by its publisher).
+func (r *Repository) AddOffering(ctx context.Context, o catalog.Offering) error {
+	limits, err := ranges(o.Limits)
+	if err != nil {
+		return pgerr.Map(err, "encode catalog limits")
+	}
+	pre, err := ranges(o.Preapproved)
+	if err != nil {
+		return pgerr.Map(err, "encode catalog pre-approved range")
+	}
+	_, err = txn.Q(ctx, r.db).ExecContext(ctx,
+		`INSERT INTO catalog.offerings (organization_id, recipe, version, active, tiers, defaults, limits, preapproved,
+		                                teams, revision, updated_by, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, $11, $11)`,
+		o.Organization, o.Recipe, o.Version, o.Active, pq.Array(strs(o.Tiers)), pq.Array(strs(o.Defaults)), limits, pre,
+		pq.Array(teams(o.Teams)), o.UpdatedBy, o.CreatedAt)
+	if err != nil {
+		return pgerr.MapWith(err, "add catalog offering", pgerr.Messages{Unique: "El catálogo ya tiene una receta " + o.Recipe + "."})
+	}
+	return nil
+}

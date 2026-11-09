@@ -9,6 +9,7 @@ import (
 // fields freely, rename or remove one only in a new version.
 const (
 	EventOfferingUpdated = "catalog.offering_updated"
+	EventRecipePublished = "catalog.recipe_published"
 )
 
 // SubjectKind prefixes the offering's event subjects ("catalog_recipe/<recipe>").
@@ -45,6 +46,33 @@ func NewOfferingUpdated(org identity.OrganizationID, actor identity.UserID, titl
 	return event.New(EventOfferingUpdated, 1, org, actor, event.Subject(SubjectKind, recipeName(o.Recipe)), summary,
 		OfferingUpdated{Recipe: o.Recipe, Version: o.Version, Active: o.Active, Tiers: tierNames(o.Tiers), Defaults: tierNames(o.Defaults),
 			Limits: o.Limits, Preapproved: o.Preapproved, Revision: o.Revision, Teams: teams})
+}
+
+// RecipePublished v1: a version of the organization's own recipe (version 1
+// registers it, with an inactive offering). It names the secret stores the
+// connection reads from (who pointed a recipe at the company's vault is in
+// the trail), never the connection itself: no host, no key, no value.
+type RecipePublished struct {
+	Recipe  string   `json:"recipe"`
+	Version int      `json:"version"`
+	Kind    string   `json:"kind"`
+	Title   string   `json:"title"`
+	Engine  string   `json:"engine"`
+	Stores  []string `json:"stores"`
+}
+
+// NewRecipePublished is the event of recipe@version, just published; stores
+// are the stores its connection reads from.
+func NewRecipePublished(org identity.OrganizationID, actor identity.UserID, recipe, title, kind, engine string, version int, stores []string) event.Event {
+	summary := "Registró «" + title + "», un recurso que ya existe en la empresa, en el catálogo"
+	if version > 1 {
+		summary = "Publicó una versión nueva de «" + title + "» en el catálogo"
+	}
+	if stores == nil {
+		stores = []string{}
+	}
+	return event.New(EventRecipePublished, 1, org, actor, event.Subject(SubjectKind, recipeName(recipe)), summary,
+		RecipePublished{Recipe: recipe, Version: version, Kind: kind, Title: title, Engine: engine, Stores: stores})
 }
 
 func tierNames[T ~string](ts []T) []string {

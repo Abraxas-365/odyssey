@@ -60,7 +60,10 @@ allow it say so in their contract (`resourcekind.Contract.Existing`):
 agent dispatches on the spec: `spec.existing` → `existing`, otherwise the
 kind's built-in engine; deletion uses the same dispatch, so deleting such a
 resource removes only the connection the agent wrote, **never the company's
-data**.
+data**. The control plane marks it `existing` (API, MCP) and its
+`resource.deleted` / `resource.removed` summaries say it was disconnected
+and its data not touched. IT registers such recipes through the catalog
+(docs/catalog.md, "Publishing").
 
 - **Values.** One per variable of the kind (`resourcespec.Existing`): written
   (`PGHOST`, `S3_BUCKET`, …) or read from a store (`{store, key, property}`, a

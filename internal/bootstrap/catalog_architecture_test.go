@@ -536,3 +536,83 @@ func TestMachineTokenRuleCatchesViolations(t *testing.T) {
 		"catalog/adapters/catalogiam/directory.go: only release/adapters/releaseiam calls MachineToken",
 	)
 }
+
+// permissionFlagViolations: a May* field (MayReadStores, MayChangeExternal)
+// says the caller holds a permission. Only an inbound adapter (…http,
+// …mcp) knows the caller's token, so only it sets one, and from a check (a
+// call: httpx.Can, the principal's Can), never a constant: a service, a
+// worker or another adapter writing it, or `MayX: true`, would grant a
+// permission nobody checked. Writing it is a key in a composite literal or
+// an assignment's left side; reading it is free.
+func permissionFlagViolations(files []goFile) []string {
+	may := func(name string) bool {
+		return len(name) > 3 && strings.HasPrefix(name, "May") && name[3] >= 'A' && name[3] <= 'Z'
+	}
+	var out []string
+	for _, f := range files {
+		if strings.HasSuffix(f.rel, "_test.go") {
+			continue
+		}
+		pkg := path.Base(path.Dir(f.rel))
+		inbound := strings.HasSuffix(pkg, "http") || strings.HasSuffix(pkg, "mcp")
+		check := func(pos token.Pos, name string, value ast.Expr) {
+			switch {
+			case !inbound:
+				out = append(out, f.fset.Position(pos).String()+": only an inbound adapter (http, mcp) sets "+name+", from the caller's token")
+			case value != nil:
+				if _, ok := value.(*ast.CallExpr); !ok {
+					out = append(out, f.fset.Position(pos).String()+": "+name+" is set from a permission check (httpx.Can), never a constant")
+				}
+			}
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.KeyValueExpr:
+				if k, ok := x.Key.(*ast.Ident); ok && may(k.Name) {
+					check(k.Pos(), k.Name, x.Value)
+				}
+			case *ast.AssignStmt:
+				for i, l := range x.Lhs {
+					sel, ok := l.(*ast.SelectorExpr)
+					if !ok || !may(sel.Sel.Name) {
+						continue
+					}
+					var value ast.Expr
+					if len(x.Rhs) == len(x.Lhs) {
+						value = x.Rhs[i]
+					}
+					check(sel.Pos(), sel.Sel.Name, value)
+				}
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestOnlyHTTPGrantsPermissions(t *testing.T) {
+	report(t, permissionFlagViolations(sources(t, false)))
+}
+
+func TestPermissionFlagRuleCatchesViolations(t *testing.T) {
+	files := parseFixtures(t, map[string]string{
+		"catalog/adapters/cataloghttp/h.go": `package cataloghttp; func f() { in.MayReadStores = httpx.Can(c, p) }`,
+		"widget/adapters/widgetmcp/t.go":    `package widgetmcp; var in = widget.Do{MayDecide: caller.Can(p)}`,
+		"catalog/catalogsvc/s.go":           `package catalogsvc; func f() bool { if !in.MayReadStores { return false }; Mayor = 1; return true }`,
+	})
+	if v := permissionFlagViolations(files); len(v) != 0 {
+		t.Fatalf("correct code was flagged:\n%s", strings.Join(v, "\n"))
+	}
+	files = parseFixtures(t, map[string]string{
+		"catalog/catalogsvc/s.go":            `package catalogsvc; func f() { in.MayReadStores = true }`,
+		"release/adapters/releasefleet/a.go": `package releasefleet; var in = release.Load{MayChangeExternal: true}`,
+		"widget/adapters/widgethttp/h.go":    `package widgethttp; func f() { in.MayDecide = true; x := widget.Do{MayAsk: allowed} }`,
+	})
+	expectViolations(t, permissionFlagViolations(files),
+		"catalog/catalogsvc/s.go: only an inbound adapter (http, mcp) sets MayReadStores",
+		"release/adapters/releasefleet/a.go: only an inbound adapter (http, mcp) sets MayChangeExternal",
+		"widget/adapters/widgethttp/h.go: MayDecide is set from a permission check",
+		"widget/adapters/widgethttp/h.go: MayAsk is set from a permission check",
+	)
+}

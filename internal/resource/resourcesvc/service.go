@@ -137,7 +137,24 @@ func (s *Service) view(ctx context.Context, r resource.Resource, connected []res
 			conn = &connected[i]
 		}
 	}
-	return resource.NewView(r, o, conn), nil
+	v := resource.NewView(r, o, conn)
+	owned, err := s.owned(ctx, r)
+	if err != nil {
+		return resource.View{}, err
+	}
+	v.Existing = !owned
+	return v, nil
+}
+
+// owned says Odicea prepared r (deleting it deletes its data), read from its
+// pinned recipe version (a factory pin costs no query). A version its
+// organization no longer knows counts as owned: the stronger warning.
+func (s *Service) owned(ctx context.Context, r resource.Resource) (bool, error) {
+	pinned, ok, err := s.catalog.Version(ctx, r.Organization, r.Recipe, r.RecipeVersion)
+	if err != nil {
+		return false, err
+	}
+	return !ok || pinned.Owned(), nil
 }
 
 func (s *Service) viewOf(ctx context.Context, p project.Project, r resource.Resource) (resource.View, error) {
@@ -379,9 +396,16 @@ func (s *Service) Delete(ctx context.Context, org identity.OrganizationID, id pr
 	if err != nil {
 		return resource.View{}, err
 	}
+	owned, err := s.owned(ctx, found)
+	if err != nil {
+		return resource.View{}, err
+	}
+	summary := "Eliminar " + string(found.Kind) + " «" + name + "» de " + where(p, e) + " y todos sus datos"
+	if !owned {
+		summary = "Desconectar " + string(found.Kind) + " «" + name + "» de " + where(p, e) + " (ya existe en la empresa: sus datos no se tocan)"
+	}
 	pending, err := s.authorize(ctx, p, e, gate.Request{Action: gate.ActionDeleteResource, ResourceKind: string(found.Kind)}, gate.Hold{
-		Summary: "Eliminar " + string(found.Kind) + " «" + name + "» de " + where(p, e) + " y todos sus datos",
-		Payload: resource.DeleteApproval{Op: resource.OpDelete, Name: name}})
+		Summary: summary, Payload: resource.DeleteApproval{Op: resource.OpDelete, Name: name}})
 	if err != nil {
 		return resource.View{}, err
 	}
@@ -414,7 +438,7 @@ func (s *Service) Delete(ctx context.Context, org identity.OrganizationID, id pr
 		if err := s.apply(ctx, r); err != nil {
 			return err
 		}
-		return s.events.Publish(ctx, resource.NewDeleted(org, input.RequestedBy, r, names(p, e)))
+		return s.events.Publish(ctx, resource.NewDeleted(org, input.RequestedBy, r, names(p, e), owned))
 	})
 	if err != nil {
 		return resource.View{}, err
@@ -518,7 +542,11 @@ func (s *Service) Forget(ctx context.Context, org identity.OrganizationID, env p
 		if err != nil || !ok {
 			return err
 		}
-		return s.events.Publish(ctx, resource.NewRemoved(org, r))
+		owned, err := s.owned(ctx, r)
+		if err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, resource.NewRemoved(org, r, owned))
 	})
 }
 

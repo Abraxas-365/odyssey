@@ -113,3 +113,35 @@ func TestUpdate(t *testing.T) {
 		t.Fatal("default outside tiers stored")
 	}
 }
+
+// A registered recipe's offering is inserted inactive, by its publisher; a
+// second one for the same recipe is a conflict; another organization may
+// use the same id and sees only its own.
+func TestAddOfferingAndTenantIsolation(t *testing.T) {
+	repo, _, ctx := setup(t)
+	org, other := identity.NewOrganizationID(), identity.NewOrganizationID()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	o := catalog.Offering{Organization: org, Recipe: "org-reportes", OfferingDraft: catalog.OfferingDraft{Version: 1}.Normalize(),
+		UpdatedBy: user, CreatedAt: now}
+	if err := repo.AddOffering(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Find(ctx, org, "org-reportes")
+	if err != nil || got.Active || got.Version != 1 || got.Revision != 1 || got.UpdatedBy != user || !got.UpdatedAt.Equal(now) ||
+		got.Tiers == nil || len(got.Tiers) != 0 || got.Teams == nil {
+		t.Fatalf("added: %+v %v", got, err)
+	}
+	if err := repo.AddOffering(ctx, o); !errx.IsType(err, errx.TypeConflict) {
+		t.Fatalf("added twice: %v", err)
+	}
+	if _, err := repo.Find(ctx, other, "org-reportes"); !errx.IsType(err, errx.TypeNotFound) {
+		t.Fatalf("cross-tenant find: %v", err)
+	}
+	o.Organization = other
+	if err := repo.AddOffering(ctx, o); err != nil {
+		t.Fatalf("same id in another organization: %v", err)
+	}
+	if list, _ := repo.List(ctx, org); len(list) != 1 {
+		t.Fatalf("org sees %d offerings", len(list))
+	}
+}

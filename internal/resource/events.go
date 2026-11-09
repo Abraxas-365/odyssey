@@ -85,15 +85,24 @@ func NewResized(org identity.OrganizationID, actor identity.UserID, r Resource, 
 			Params: r.Params})
 }
 
-func NewDeleted(org identity.OrganizationID, actor identity.UserID, r Resource, n Names) event.Event {
-	return event.New(EventDeleted, 1, org, actor, event.Subject(SubjectKind, r.ID),
-		"Eliminó "+withArticle(r)+" "+r.Name+" de "+n.where()+" y sus datos",
+// NewDeleted is r on its way out; owned false (one the company already has)
+// deletes only its connection: the company's data is not touched.
+func NewDeleted(org identity.OrganizationID, actor identity.UserID, r Resource, n Names, owned bool) event.Event {
+	summary := "Eliminó " + withArticle(r) + " " + r.Name + " de " + n.where() + " y sus datos"
+	if !owned {
+		summary = "Desconectó " + withArticle(r) + " " + r.Name + " de " + n.where() + " (ya existía en la empresa: sus datos no se tocan)"
+	}
+	return event.New(EventDeleted, 1, org, actor, event.Subject(SubjectKind, r.ID), summary,
 		Deleted{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind)})
 }
 
-func NewRemoved(org identity.OrganizationID, r Resource) event.Event {
-	return event.New(EventRemoved, 1, org, identity.UserID{}, event.Subject(SubjectKind, r.ID),
-		"El clúster borró los datos de "+r.Name,
+// NewRemoved is r gone from the cluster (owned: as in NewDeleted).
+func NewRemoved(org identity.OrganizationID, r Resource, owned bool) event.Event {
+	summary := "El clúster borró los datos de " + r.Name
+	if !owned {
+		summary = "El clúster quitó la conexión de " + r.Name
+	}
+	return event.New(EventRemoved, 1, org, identity.UserID{}, event.Subject(SubjectKind, r.ID), summary,
 		Removed{Resource: r.ID, Project: r.Project.String(), Environment: r.Environment.String(), Name: r.Name, Kind: string(r.Kind)})
 }
 

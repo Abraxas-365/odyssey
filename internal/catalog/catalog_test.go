@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,12 +173,17 @@ func TestEventContracts(t *testing.T) {
 	v, _ := catalog.Factory().Version(catalog.PostgresProduction, 1)
 	o := catalog.Offering{Recipe: v.Recipe, OfferingDraft: v.Factory.Normalize(), Revision: 3}
 	o.Teams = []string{"grp_datos"}
-	for _, e := range []event.Event{catalog.NewOfferingUpdated(org, user, v.Title, o)} {
+	for _, e := range []event.Event{catalog.NewOfferingUpdated(org, user, v.Title, o),
+		catalog.NewRecipePublished(org, user, "org-rds-reportes", "Base de reportes", "postgres", resourcespec.EngineExisting, 1, []string{"vault"})} {
 		eventtest.Golden(t, e)
 	}
 	o.Active = false
 	if e := catalog.NewOfferingUpdated(org, user, v.Title, o); e.Summary != "Dejó de ofrecer «PostgreSQL de producción» en el catálogo" {
 		t.Fatalf("summary %q", e.Summary)
+	}
+	if e := catalog.NewRecipePublished(org, user, "org-rds-reportes", "Base de reportes", "postgres", resourcespec.EngineExisting, 2, nil); e.Summary != "Publicó una versión nueva de «Base de reportes» en el catálogo" ||
+		!strings.Contains(string(e.Payload), `"stores":[]`) {
+		t.Fatalf("v2: %q %s", e.Summary, e.Payload)
 	}
 }
 
@@ -208,5 +214,25 @@ func TestOrgRecipeValidate(t *testing.T) {
 		if err := o.Validate(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestEntryRedacted: who does not manage the catalog sees that a recipe
+// connects something the company has, not where nor through which stores;
+// the entry it came from is untouched.
+func TestEntryRedacted(t *testing.T) {
+	o := catalog.OrgRecipe{Organization: identity.NewOrganizationID(), Recipe: "org-rds-reportes", Version: 1,
+		Kind: resourcekind.Postgres, Title: "Reportes", Engine: resourcespec.EngineExisting, Spec: resourcespec.ExamplePostgres("vault")}
+	e := catalog.Entry{RecipeVersion: o.RecipeVersion()}
+	if !slices.Contains(e.Requires, resourcespec.SecretStore("vault")) {
+		t.Fatalf("requires %v", e.Requires)
+	}
+	r := e.Redacted()
+	if r.Spec.Existing != nil || slices.ContainsFunc(r.Requires, func(s string) bool { return strings.HasPrefix(s, resourcespec.SecretStore("")) }) ||
+		!slices.Contains(r.Requires, resourcespec.ConnectExisting) || r.Engine != resourcespec.EngineExisting {
+		t.Fatalf("redacted %+v", r)
+	}
+	if e.Spec.Existing == nil || !slices.Contains(e.Requires, resourcespec.SecretStore("vault")) {
+		t.Fatal("redacting changed the original")
 	}
 }

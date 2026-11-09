@@ -315,6 +315,10 @@
                 "description": "si la app recibe sus variables",
                 "type": "boolean"
               },
+              "existing": {
+                "description": "ya existe en la empresa y Odicea solo la conecta: borrarla la desconecta, los datos de la empresa no se tocan",
+                "type": "boolean"
+              },
               "kind": {
                 "description": "postgres, redis o files",
                 "type": "string"
@@ -341,7 +345,7 @@
                 "type": "string"
               },
               "storage_gi": {
-                "description": "tamaño en GiB",
+                "description": "tamaño en GiB (0 si ya existe en la empresa)",
                 "type": "integer"
               },
               "variables": {
@@ -480,6 +484,10 @@
                 "description": "si la app recibe sus variables",
                 "type": "boolean"
               },
+              "existing": {
+                "description": "ya existe en la empresa y Odicea solo la conecta: borrarla la desconecta, los datos de la empresa no se tocan",
+                "type": "boolean"
+              },
               "kind": {
                 "description": "postgres, redis o files",
                 "type": "string"
@@ -506,7 +514,7 @@
                 "type": "string"
               },
               "storage_gi": {
-                "description": "tamaño en GiB",
+                "description": "tamaño en GiB (0 si ya existe en la empresa)",
                 "type": "integer"
               },
               "variables": {
@@ -2521,6 +2529,10 @@
                 "description": {
                   "type": "string"
                 },
+                "existing": {
+                  "description": "ya existe en la empresa: Odicea solo la conecta a la app (no tiene tamaño, no se crea nada nuevo y borrarla solo la desconecta; los datos de la empresa no se tocan)",
+                  "type": "boolean"
+                },
                 "kind": {
                   "description": "postgres, redis o files",
                   "type": "string"
@@ -2967,6 +2979,10 @@
                   "description": "si la app recibe sus variables",
                   "type": "boolean"
                 },
+                "existing": {
+                  "description": "ya existe en la empresa y Odicea solo la conecta: borrarla la desconecta, los datos de la empresa no se tocan",
+                  "type": "boolean"
+                },
                 "kind": {
                   "description": "postgres, redis o files",
                   "type": "string"
@@ -2993,7 +3009,7 @@
                   "type": "string"
                 },
                 "storage_gi": {
-                  "description": "tamaño en GiB",
+                  "description": "tamaño en GiB (0 si ya existe en la empresa)",
                   "type": "integer"
                 },
                 "variables": {

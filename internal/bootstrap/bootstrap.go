@@ -437,6 +437,8 @@ func Assemble(ctx context.Context, db *sqlx.DB, opts Options) (*Platform, error)
 		CertificateTTL: opts.CertificateTTL})
 	// project is built before the fleet, so it learns of its clusters after.
 	projects.UseFleet(fleets.Dispatch)
+	// so does the catalog (the secret stores an organization's recipe reads).
+	catalogs.UseFleet(fleets.Queries)
 	if opts.Blobs == nil {
 		mem, err := gocloudblob.Open(ctx, "mem://")
 		if err != nil {

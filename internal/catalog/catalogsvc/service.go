@@ -28,6 +28,9 @@ type Service struct {
 	// directory reads the organization's teams (nil: offerings cannot name
 	// teams, and one that does is nobody's).
 	directory catalog.Directory
+	// fleet reads the secret stores the organization's clusters announce
+	// (nil: no recipe can read a store).
+	fleet catalog.Fleet
 
 	// seeded remembers the organizations whose factory offerings this
 	// process already ensured (a restart forgets it: seeding is idempotent).
@@ -40,6 +43,10 @@ func New(repo catalog.Repository, tx txn.Runner, events event.Publisher) *Servic
 
 // UseDirectory lets offerings name teams (IAMKit groups), read from d.
 func (s *Service) UseDirectory(d catalog.Directory) { s.directory = d }
+
+// UseFleet lets recipes of the organization read secret stores its
+// clusters announce, read from f.
+func (s *Service) UseFleet(f catalog.Fleet) { s.fleet = f }
 
 var (
 	_ catalog.Commands = (*Service)(nil)
@@ -412,6 +419,119 @@ func (s *Service) UpdateOffering(ctx context.Context, org identity.OrganizationI
 		return catalog.Entry{}, err
 	}
 	return entry(known, v, saved), nil
+}
+
+// RegisterRecipe and PublishVersion write a version of the organization's
+// own recipe (OrgRecipe.Validate), its stores checked first (outside the
+// transaction: the fleet is not waited for while writing).
+func (s *Service) RegisterRecipe(ctx context.Context, org identity.OrganizationID, input catalog.RegisterRecipe) (catalog.Entry, error) {
+	if input.PublishedBy.IsZero() {
+		return catalog.Entry{}, errx.Validation("publisher is required")
+	}
+	if err := catalog.CheckRecipeID(strings.TrimSpace(input.Recipe)); err != nil {
+		return catalog.Entry{}, err
+	}
+	known, err := s.known(ctx, org)
+	if err != nil {
+		return catalog.Entry{}, err
+	}
+	o := input.RecipeDraft.OrgRecipe(org, input.Recipe, 1, input.Kind, input.PublishedBy)
+	o.CreatedAt = time.Now().UTC()
+	if len(known.VersionsOf(o.Recipe)) > 0 {
+		return catalog.Entry{}, errx.Conflict("El catálogo ya tiene una receta " + o.Recipe + ": para cambiar su conexión publica una versión nueva.").
+			WithField("recipe")
+	}
+	if err := s.publishable(ctx, o, input.MayReadStores); err != nil {
+		return catalog.Entry{}, err
+	}
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.Publish(ctx, o); err != nil {
+			return err
+		}
+		// offered to nobody until IT says where (UpdateOffering)
+		if err := s.repo.AddOffering(ctx, catalog.Offering{Organization: org, Recipe: o.Recipe,
+			OfferingDraft: catalog.OfferingDraft{Version: 1}.Normalize(), UpdatedBy: o.CreatedBy, CreatedAt: o.CreatedAt}); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, published(o))
+	})
+	if err != nil {
+		return catalog.Entry{}, err
+	}
+	return s.Find(ctx, org, o.Recipe)
+}
+
+func (s *Service) PublishVersion(ctx context.Context, org identity.OrganizationID, recipe string, input catalog.PublishVersion) (catalog.Entry, error) {
+	if input.PublishedBy.IsZero() {
+		return catalog.Entry{}, errx.Validation("publisher is required")
+	}
+	known, err := s.known(ctx, org)
+	if err != nil {
+		return catalog.Entry{}, err
+	}
+	versions := known.VersionsOf(recipe)
+	if len(versions) == 0 {
+		return catalog.Entry{}, catalog.NotFound(recipe)
+	}
+	if !strings.HasPrefix(recipe, catalog.OrgPrefix) {
+		return catalog.Entry{}, errx.Business("«" + recipe + "» es una receta de Odicea: sus versiones llegan con Odicea. Las de tu organización empiezan con «" +
+			catalog.OrgPrefix + "».")
+	}
+	last, _ := known.Version(recipe, versions[len(versions)-1])
+	o := input.RecipeDraft.OrgRecipe(org, recipe, last.Version+1, last.Kind, input.PublishedBy)
+	o.CreatedAt = time.Now().UTC()
+	if err := s.publishable(ctx, o, input.MayReadStores); err != nil {
+		return catalog.Entry{}, err
+	}
+	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.repo.Publish(ctx, o); err != nil {
+			return err
+		}
+		return s.events.Publish(ctx, published(o))
+	})
+	if err != nil {
+		return catalog.Entry{}, err
+	}
+	return s.Find(ctx, org, recipe)
+}
+
+// publishable validates o and its stores: reading one
+// needs odyssey:secrets:external (mayRead), and each must be one a cluster
+// of the organization announces, so a typo is caught here and not as a
+// resource that never connects.
+func (s *Service) publishable(ctx context.Context, o catalog.OrgRecipe, mayRead bool) error {
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	stores := o.Spec.Existing.Stores()
+	if len(stores) == 0 {
+		return nil
+	}
+	if !mayRead {
+		return catalog.StoresForbidden(o.Title)
+	}
+	announced, err := s.Stores(ctx, o.Organization)
+	if err != nil {
+		return err
+	}
+	for _, name := range stores {
+		if !slices.ContainsFunc(announced, func(a catalog.Store) bool { return a.Name == name }) {
+			return catalog.StoreUnknown(name)
+		}
+	}
+	return nil
+}
+
+func published(o catalog.OrgRecipe) event.Event {
+	return catalog.NewRecipePublished(o.Organization, o.CreatedBy, o.Recipe, o.Title, string(o.Kind), o.Engine, o.Version,
+		o.Spec.Existing.Stores())
+}
+
+func (s *Service) Stores(ctx context.Context, org identity.OrganizationID) ([]catalog.Store, error) {
+	if s.fleet == nil {
+		return []catalog.Store{}, nil
+	}
+	return s.fleet.SecretStores(ctx, org)
 }
 
 // teamsExist checks the teams the edit adds are groups of the organization.

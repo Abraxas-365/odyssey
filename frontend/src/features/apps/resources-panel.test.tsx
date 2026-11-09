@@ -14,7 +14,7 @@ import { ResourcesPanel } from './resources-panel'
 
 const size = { name: 'storage_gi', label: 'Tamaño', unit: 'GiB', min: 1, max: 50, default: 1, preapproved_min: 1, preapproved_max: 10, mutability: 'grows' as const }
 const offer = (over: Partial<CatalogOffer> = {}): CatalogOffer => ({
-  kind: 'postgres', recipe: 'postgres-basico', recipe_version: 1, title: 'PostgreSQL básico', description: 'Una base de datos para empezar.', default: true,
+  kind: 'postgres', recipe: 'postgres-basico', recipe_version: 1, title: 'PostgreSQL básico', description: 'Una base de datos para empezar.', existing: false, default: true,
   params: [size], variables: [{ name: 'DATABASE_URL', secret: true, meaning: 'cómo conectarse' }], verdict: 'allow', rules: [], rules_verdict: 'allow', ...over,
 })
 

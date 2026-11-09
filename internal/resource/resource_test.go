@@ -28,10 +28,24 @@ func TestEventContracts(t *testing.T) {
 	for _, e := range []event.Event{
 		resource.NewCreated(org, user, r, n),
 		resource.NewResized(org, user, r, 1, n),
-		resource.NewDeleted(org, user, r, n),
-		resource.NewRemoved(org, r),
+		resource.NewDeleted(org, user, r, n, true),
+		resource.NewRemoved(org, r, true),
 	} {
 		eventtest.Golden(t, e)
+	}
+}
+
+// Deleting one the company already has says what happened: it was
+// disconnected, its data untouched (the payload is the same).
+func TestDeletingAnExistingResourceSaysItIsDisconnected(t *testing.T) {
+	org, user := identity.NewOrganizationID(), identity.MustParseUserID("00000000-0000-4000-8000-0000000000c1")
+	r := resource.Resource{ID: resource.NewID(), Organization: org, Name: "reportes", Kind: resourcekind.Postgres}
+	n := resource.Names{Project: "Visitas", Environment: "production"}
+	if s := resource.NewDeleted(org, user, r, n, false).Summary; !strings.HasPrefix(s, "Desconectó") || !strings.Contains(s, "no se tocan") {
+		t.Fatalf("deleted: %q", s)
+	}
+	if s := resource.NewRemoved(org, r, false).Summary; strings.Contains(s, "datos") {
+		t.Fatalf("removed: %q", s)
 	}
 }
 
