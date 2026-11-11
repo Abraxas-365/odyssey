@@ -227,7 +227,7 @@ Protected apps receive `ODICEA_AUTH_JWKS_URL`, `ODICEA_AUTH_ISSUER`, `ODICEA_AUT
 | :--- | :--- | :--- |
 | `POSTGRES_PASSWORD` | random from `make setup` | Password of the shared Postgres (the API's and IAMKit's databases). |
 | `DB_PORT` | `5438` | Host port of Postgres. |
-| `IAMKIT_SRC` | a path in `.env.example`; set it to your own checkout | Checkout IAMKit is built from. |
+| `IAMKIT_SRC` | `../iamkit` | Checkout IAMKit is built from (a clone next to this repository). |
 | `IAMKIT_PORT` | `8085` | Host port of IAMKit. |
 | `OIDC_HMAC_SECRET`, `IAMKIT_ENCRYPTION_KEY` | random from `make setup` | IAMKit's own secrets. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5178` | IAMKit's allowed origins (not the API's `CORS_ORIGINS`). |

@@ -4,8 +4,8 @@
 #   make up      # build and start everything
 #   make seed    # provision IAMKit from iam/permissions.json -> .env
 #
-# IAMKit is built from its source checkout (IAMKIT_SRC, default
-# ~/Desktop/Proyectos/iam). Ports avoid the other local stacks
+# IAMKit is built from its source checkout (IAMKIT_SRC, default ../iamkit,
+# a clone next to this repository). Ports avoid the other local stacks
 # (5433-5437, 8080-8084, 8090-8094).
 
 services:
@@ -27,7 +27,7 @@ services:
 
   iamkit:
     build:
-      context: ${IAMKIT_SRC:-../../Desktop/Proyectos/iam}
+      context: ${IAMKIT_SRC:-../iamkit}
     image: iamkit:odyssey-dev
     ports:
       - "127.0.0.1:${IAMKIT_PORT:-8085}:8080"

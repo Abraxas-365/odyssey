@@ -7,7 +7,7 @@ For a production setup see [Install Odicea](install.md). Every Make target is li
 ## Requirements
 
 - Go (the version in `go.mod`), Docker, Node with `npx`, `jq` and `openssl`.
-- A checkout of [IAMKit](https://github.com/Abraxas-365/iamkit). `IAMKIT_SRC` in `.env` points at it; the default is `../../Desktop/Proyectos/iam`, so set your own path. Compose builds IAMKit from it.
+- A checkout of [IAMKit](https://github.com/Abraxas-365/iamkit). `IAMKIT_SRC` in `.env` points at it; the default is `../iamkit`, a clone next to this repository; set another path if yours is elsewhere. Compose builds IAMKit from it.
 - For a real cluster, also `k3d`, `kubectl` and `helm` (`helm` installs External Secrets in the cluster).
 
 ## First run

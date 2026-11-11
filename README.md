@@ -83,7 +83,7 @@ The local stack runs Postgres and IAMKit in Docker, and the API, the worker and 
 
 ### 1. Requirements
 
-Go (version in `go.mod`), Docker, Node with `npx`, `jq`, `openssl`, and an [IAMKit](https://github.com/Abraxas-365/iamkit) checkout (`IAMKIT_SRC` in `.env`, default `../../Desktop/Proyectos/iam`). For real clusters also `k3d`, `kubectl` and `helm`.
+Go (version in `go.mod`), Docker, Node with `npx`, `jq`, `openssl`, and an [IAMKit](https://github.com/Abraxas-365/iamkit) checkout (`IAMKIT_SRC` in `.env`, default `../iamkit`, a clone next to this repository). For real clusters also `k3d`, `kubectl` and `helm`.
 
 ### 2. First run
 

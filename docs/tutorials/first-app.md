@@ -7,7 +7,7 @@ You will end with an app called Portal de proveedores that has three versions in
 ## Before you start
 
 - Go (the version in `go.mod`), Docker, Node with `npx`, `jq` and `openssl`.
-- A checkout of this repository and of [IAMKit](https://github.com/Abraxas-365/iamkit) (the sign-in service). `IAMKIT_SRC` in `.env` points at it; the default is `../../Desktop/Proyectos/iam`.
+- A checkout of this repository and of [IAMKit](https://github.com/Abraxas-365/iamkit) (the sign-in service). `IAMKIT_SRC` in `.env` points at it; the default is `../iamkit`, a clone next to this repository.
 - Three free terminals (or tmux windows) for the API, the worker and the console.
 - A browser. The console is in Spanish; this tutorial quotes its labels exactly.
 
