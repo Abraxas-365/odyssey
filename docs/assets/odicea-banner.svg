@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title description">
+  <title id="title">Odicea — Your people ship apps. IT keeps the keys.</title>
+  <desc id="description">A dark banner with the Odicea mark and wordmark, and an illustrative assistant session: a coding assistant publishes a folder through Odicea's MCP, IT's rule asks for an approval, and the app comes online behind the company sign-in. The session is an illustration, not an application screenshot.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#2a2a24" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7b9bae" stop-opacity="0"/>
+      <stop offset="1" stop-color="#7b9bae" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="400" rx="18" fill="#0c0c0a"/>
+  <rect width="1200" height="400" rx="18" fill="url(#grid)" opacity="0.45"/>
+  <path d="M0 300h1200v82a18 18 0 0 1-18 18H18A18 18 0 0 1 0 382z" fill="url(#glow)"/>
+
+  <g transform="translate(48 52) scale(0.625)">
+    <path fill="#d4d0c8" fill-rule="evenodd" d="M14 0H50A14 14 0 0 1 64 14V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0ZM32 14L50 24V40L32 50L14 40V24ZM32 22L21 28V36L32 42L43 36V28Z"/>
+  </g>
+  <text x="104" y="79" font-family="Inter, Arial, Helvetica, sans-serif" font-size="12" font-weight="700" letter-spacing="3" fill="#8a8678">A GOVERNED PLATFORM FOR INTERNAL APPS</text>
+  <text x="48" y="196" font-family="Inter, Arial, Helvetica, sans-serif" font-size="100" font-weight="700" letter-spacing="-4" fill="#ece8df">odicea<tspan fill="#7b9bae">.</tspan></text>
+  <text x="56" y="246" font-family="Inter, Arial, Helvetica, sans-serif" font-size="25" font-weight="600" fill="#ece8df">Your people ship apps. IT keeps the keys.</text>
+  <text x="56" y="282" font-family="Inter, Arial, Helvetica, sans-serif" font-size="16" fill="#8a8678">From an assistant or a repo to the company's own clusters — under IT's rules.</text>
+  <text x="56" y="318" font-family="monospace" font-size="12" letter-spacing="1" fill="#6f6b60">APPS <tspan fill="#3d3b34">/</tspan> RESOURCES <tspan fill="#3d3b34">/</tspan> IT RULES <tspan fill="#3d3b34">/</tspan> YOUR CLUSTERS</text>
+
+  <rect x="650" y="54" width="494" height="270" rx="12" fill="#141412" stroke="#2a2a24"/>
+  <path d="M662 54h470a12 12 0 0 1 12 12v30H650V66a12 12 0 0 1 12-12" fill="#1a1a16"/>
+  <circle cx="672" cy="75" r="5" fill="#c97a6d"/>
+  <circle cx="690" cy="75" r="5" fill="#c9b06d"/>
+  <circle cx="708" cy="75" r="5" fill="#7fae8a"/>
+  <text x="1123" y="80" text-anchor="end" font-family="monospace" font-size="12" fill="#8a8678">assistant · mcp: odicea</text>
+
+  <g font-family="monospace" font-size="13">
+    <text x="674" y="128" fill="#8a8678">&gt; <tspan fill="#ece8df">publica esta carpeta como «Gastos»</tspan></text>
+    <text x="674" y="160" fill="#a294b4">● create_app <tspan fill="#8a8678">gastos</tspan></text>
+    <text x="674" y="184" fill="#a294b4">● create_database <tspan fill="#8a8678">postgres · lista</tspan></text>
+    <text x="674" y="208" fill="#a294b4">● deploy_folder <tspan fill="#8a8678">build · scan · ok</tspan></text>
+    <text x="674" y="236" fill="#c9b06d">◆ regla de TI <tspan fill="#8a8678">producción → aprobación</tspan></text>
+    <text x="674" y="260" fill="#7fae8a">✓ aprobada <tspan fill="#8a8678">por TI</tspan></text>
+    <text x="674" y="292" fill="#7fae8a">● En línea <tspan fill="#7b9bae">gastos.apps.empresa.com</tspan></text>
+    <text x="1123" y="292" text-anchor="end" fill="#6f6b60">solo tu equipo</text>
+  </g>
+</svg>
