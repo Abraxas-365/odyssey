@@ -22,7 +22,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
-	"github.com/gofiber/fiber/v2"
 )
 
 const (
@@ -117,7 +116,7 @@ func iamConfig(f *fakeIAM) config.IAM {
 
 // mcpApp mounts MCPAuth like server.New, in front of a handler that records
 // what reached it.
-func mcpApp(t *testing.T, f *fakeIAM) (*fiber.App, *atomic.Pointer[mcpx.Principal], *atomic.Pointer[event.Meta]) {
+func mcpApp(t *testing.T, f *fakeIAM) (*httpx.Router, *atomic.Pointer[mcpx.Principal], *atomic.Pointer[event.Meta]) {
 	t.Helper()
 	auth, err := httpx.NewMCPAuth(iamConfig(f), config.MCP{IntrospectionClientID: "rs-client", IntrospectionClientSecret: "rs-secret"},
 		[]string{"odyssey:projects:read"})
@@ -139,16 +138,19 @@ func mcpApp(t *testing.T, f *fakeIAM) (*fiber.App, *atomic.Pointer[mcpx.Principa
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
 	})
-	app := fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler})
+	app := httpx.NewRouter()
 	app.Use(httpx.RequestID)
 	for _, p := range auth.MetadataPaths() {
-		app.All(p, auth.Metadata())
+		app.Get(p, auth.Metadata())
+		app.Options(p, auth.Metadata())
 	}
-	app.All(httpx.MCPPath, auth.Protect(next))
+	for _, m := range []string{http.MethodPost, http.MethodGet, http.MethodDelete} {
+		app.Handle(m, httpx.MCPPath, auth.Protect(next))
+	}
 	return app, &seen, &meta
 }
 
-func call(t *testing.T, app *fiber.App, method, path, token string) *http.Response {
+func call(t *testing.T, app http.Handler, method, path, token string) *http.Response {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -156,11 +158,9 @@ func call(t *testing.T, app *fiber.App, method, path, token string) *http.Respon
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	res, err := app.Test(req, 5000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return res
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	return rec.Result()
 }
 
 func TestMCPAuthAdmitsTheResourcesTokens(t *testing.T) {
@@ -294,8 +294,8 @@ func TestRESTRefusesMCPTokens(t *testing.T) {
 	f := newFakeIAM(t)
 	b := iamConfig(f)
 	b.WebClientID = webClient
-	app := fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler})
-	app.Get("/x", httpx.Authenticate(introspector{}, b), func(c *fiber.Ctx) error { return c.SendStatus(http.StatusNoContent) })
+	app := httpx.NewRouter()
+	app.With(httpx.Authenticate(introspector{}, b)).Get("/x", func(w http.ResponseWriter, _ *http.Request) error { return httpx.Status(w, http.StatusNoContent) })
 	console := func(c map[string]any) {
 		delete(c, "resource")
 		c["oauth_client_id"], c["client_id"] = webClient, webClient
@@ -318,8 +318,8 @@ func TestRESTRefusesMCPTokens(t *testing.T) {
 	}
 	// Without a configured console client only direct sign-ins pass.
 	b.WebClientID = ""
-	app = fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler})
-	app.Get("/x", httpx.Authenticate(introspector{}, b), func(c *fiber.Ctx) error { return c.SendStatus(http.StatusNoContent) })
+	app = httpx.NewRouter()
+	app.With(httpx.Authenticate(introspector{}, b)).Get("/x", func(w http.ResponseWriter, _ *http.Request) error { return httpx.Status(w, http.StatusNoContent) })
 	if res := call(t, app, http.MethodGet, "/x", f.token(t, console)); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("unconfigured console client: %d", res.StatusCode)
 	}

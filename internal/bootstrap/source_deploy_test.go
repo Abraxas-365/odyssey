@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
 	"github.com/Abraxas-365/odyssey/internal/audit"
@@ -72,7 +71,7 @@ type part struct {
 
 // upload posts a multipart form and validates the response against the
 // documented operation, like checked.
-func upload(t *testing.T, app *fiber.App, path, token string, parts ...part) httpxtest.Response {
+func upload(t *testing.T, app http.Handler, path, token string, parts ...part) httpxtest.Response {
 	t.Helper()
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
@@ -97,13 +96,7 @@ func upload(t *testing.T, app *fiber.App, path, token string, parts ...part) htt
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body.Bytes()))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	res, err := app.Test(req, 30000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	out, _ := io.ReadAll(res.Body)
-	r := httpxtest.Response{Status: res.StatusCode, Header: res.Header, Body: out}
+	r := httpxtest.Serve(app, req)
 	validate(t, http.MethodPost, path, r)
 	return r
 }

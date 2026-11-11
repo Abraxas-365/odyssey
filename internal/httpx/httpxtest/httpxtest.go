@@ -1,5 +1,5 @@
 // Package httpxtest runs handlers in tests the way the server does: behind
-// httpx.ErrorHandler, the request-id/headers middleware and a fake
+// httpx.WriteError, the request-id/headers/body middleware and a fake
 // authentication whose bearer token carries the organization and permissions.
 package httpxtest
 
@@ -16,24 +16,23 @@ import (
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
-	"github.com/gofiber/fiber/v2"
 )
 
 // User is the subject of every fake token.
 const User = "6f1c2a52-8f0e-4a8e-9d2c-0b7d1f3e4a55"
 
-// App is a Fiber app with the production error handler, headers and a fake
-// auth. Mount handlers on App.Group(prefix).
-func App() *fiber.App {
-	app := fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler, BodyLimit: httpx.MaxJSONBody, DisableStartupMessage: true})
-	app.Use(httpx.RequestID, httpx.Headers, Auth())
+// App is a router with the production error answer, headers, body limit and
+// a fake auth. Mount handlers on App().Group(prefix).
+func App() *httpx.Router {
+	app := httpx.NewRouter()
+	app.Use(httpx.RequestID, httpx.Headers, httpx.LimitBody, Auth())
 	return app
 }
 
 // Auth is a fake authentication whose bearer token (see Token) carries the
 // organization and permissions; the subject is always User. Pass it to
 // bootstrap.NewServer to exercise the real wiring without an IAMKit.
-func Auth() fiber.Handler {
+func Auth() httpx.Middleware {
 	return httpx.AuthenticateWith(func(_ context.Context, token string) (*authclient.Claims, error) {
 		parts := strings.SplitN(token, "|", 3)
 		c := &authclient.Claims{Purpose: "application", OrganizationID: parts[0]}
@@ -67,13 +66,13 @@ type Response struct {
 
 // Do sends body (a string, []byte or a value to marshal as JSON; nil for
 // none) with a JSON content type.
-func Do(t testing.TB, app *fiber.App, method, path, token string, body any) Response {
+func Do(t testing.TB, app http.Handler, method, path, token string, body any) Response {
 	t.Helper()
 	return DoWithHeaders(t, app, method, path, token, body, nil)
 }
 
 // DoWithHeaders is Do with extra request headers.
-func DoWithHeaders(t testing.TB, app *fiber.App, method, path, token string, body any, headers map[string]string) Response {
+func DoWithHeaders(t testing.TB, app http.Handler, method, path, token string, body any, headers map[string]string) Response {
 	t.Helper()
 	var raw []byte
 	switch b := body.(type) {
@@ -96,10 +95,14 @@ func DoWithHeaders(t testing.TB, app *fiber.App, method, path, token string, bod
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	res, err := app.Test(req, 30000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return Serve(app, req)
+}
+
+// Serve runs req through app and returns the finished response.
+func Serve(app http.Handler, req *http.Request) Response {
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	res := rec.Result()
 	defer res.Body.Close()
 	out, _ := io.ReadAll(res.Body)
 	return Response{Status: res.StatusCode, Header: res.Header, Body: out}

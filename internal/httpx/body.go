@@ -2,126 +2,137 @@ package httpx
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net/http"
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
-	"github.com/gofiber/fiber/v2"
-	"github.com/valyala/fasthttp"
 )
 
 // MaxUploadBody is the largest multipart request any route takes (an upload
 // route may take less): the source archive limit plus room for its form.
 const MaxUploadBody = 101 << 20
 
-// The server streams request bodies (fiber StreamRequestBody) so an upload
-// is never held in memory. Streaming also lifts fasthttp's own body limit and
-// its guarantee that a body is read whole before the next request on the
-// connection, so LimitBody (installed globally, first) restores both:
-//   - a body that is neither multipart nor a raw upload is read whole here, at
-//     most MaxJSONBody (413 beyond, by Content-Length before reading or by
-//     counting if chunked), so handlers see a buffered body as before;
-//   - a multipart body, or a raw one (Content-Type application/gzip or
-//     application/octet-stream: PUT /uploads/{ticket}), over MaxUploadBody by
-//     Content-Length is a 413; under it, it stays a stream that only
-//     NewUpload / StreamBody read, with its own cap, and the connection
-//     closes after the response (its body may be unread).
-//
-// DecodeJSON refuses a streamed body before touching it.
-func LimitBody(c *fiber.Ctx) error {
-	req := c.Request()
-	n := req.Header.ContentLength()
-	if isStreamed(c) {
-		c.Context().SetConnectionClose()
-		if n > MaxUploadBody {
-			return tooLarge(c, MaxUploadBody)
-		}
-		return c.Next()
-	}
-	if n > MaxJSONBody {
-		return tooLarge(c, MaxJSONBody)
-	}
-	if stream := c.Context().RequestBodyStream(); stream != nil {
-		body, err := io.ReadAll(io.LimitReader(stream, MaxJSONBody+1))
-		if err != nil {
-			c.Context().SetConnectionClose()
-			return errx.Validation("could not read the request body")
-		}
-		if len(body) > MaxJSONBody {
-			return tooLarge(c, MaxJSONBody)
-		}
-		req.SetBodyRaw(body)
-	}
-	return c.Next()
-}
-
 // UploadReadTimeout is how long a streamed upload (multipart or raw) may take
 // to arrive (the server's ReadTimeout is for everything else).
 const UploadReadTimeout = 15 * time.Minute
 
-// HeaderReceived gives streamed uploads (multipart or raw) UploadReadTimeout;
-// install it as the fasthttp server's HeaderReceived.
-func HeaderReceived(h *fasthttp.RequestHeader) fasthttp.RequestConfig {
-	mt, _, err := mime.ParseMediaType(string(h.ContentType()))
-	if err == nil && streamedType(mt) {
-		return fasthttp.RequestConfig{ReadTimeout: UploadReadTimeout}
+// LimitBody (installed globally, before any handler) bounds every request
+// body:
+//   - a body that is neither multipart nor a raw upload is read whole here, at
+//     most MaxJSONBody (413 beyond, by Content-Length before reading or by
+//     counting if chunked), so handlers see a buffered body (Body);
+//   - a multipart body, or a raw one (Content-Type application/gzip or
+//     application/octet-stream: PUT /uploads/{ticket}), over MaxUploadBody by
+//     Content-Length is a 413; under it, it stays a stream that only
+//     NewUpload / StreamBody read, with its own cap, it may take
+//     UploadReadTimeout to arrive, and the connection closes after the
+//     response (its body may be unread).
+//
+// DecodeJSON refuses a streamed body before touching it.
+func LimitBody(next Handler) Handler {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		if isStreamed(r) {
+			w.Header().Set("Connection", "close")
+			if r.ContentLength > MaxUploadBody {
+				return tooLarge(w, MaxUploadBody)
+			}
+			// the server's Read/WriteTimeout are for small bodies; an upload may be slow
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(UploadReadTimeout))
+			_ = rc.SetWriteDeadline(time.Now().Add(UploadReadTimeout + time.Minute))
+			return next(w, r)
+		}
+		if r.ContentLength > MaxJSONBody {
+			return tooLarge(w, MaxJSONBody)
+		}
+		var body []byte
+		if r.Body != nil && r.Body != http.NoBody {
+			var err error
+			body, err = io.ReadAll(io.LimitReader(r.Body, MaxJSONBody+1))
+			if err != nil {
+				w.Header().Set("Connection", "close")
+				return errx.Validation("could not read the request body")
+			}
+			if len(body) > MaxJSONBody {
+				return tooLarge(w, MaxJSONBody)
+			}
+		}
+		r = r.WithContext(context.WithValue(r.Context(), bodyKey{}, body))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		return next(w, r)
 	}
-	return fasthttp.RequestConfig{}
+}
+
+type bodyKey struct{}
+
+// Body is the request's buffered body (read by LimitBody; empty for a
+// streamed upload, which only NewUpload / StreamBody read). Without
+// LimitBody (a test router) it reads the body, at most MaxJSONBody.
+func Body(r *http.Request) ([]byte, error) {
+	if b, ok := r.Context().Value(bodyKey{}).([]byte); ok {
+		return b, nil
+	}
+	if isStreamed(r) || r.Body == nil {
+		return nil, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, MaxJSONBody+1))
+	if err != nil {
+		return nil, errx.Validation("could not read the request body")
+	}
+	if len(b) > MaxJSONBody {
+		return nil, errx.PayloadTooLarge("request body is too large (max 1 MiB)")
+	}
+	*r = *r.WithContext(context.WithValue(r.Context(), bodyKey{}, b))
+	return b, nil
 }
 
 // tooLarge answers 413 and closes the connection: the unread rest of the
-// body would otherwise be parsed as the next request.
-func tooLarge(c *fiber.Ctx, limit int64) error {
-	c.Context().SetConnectionClose()
+// body would otherwise have to be drained.
+func tooLarge(w http.ResponseWriter, limit int64) error {
+	w.Header().Set("Connection", "close")
 	return errx.PayloadTooLarge("request body is too large (max " + mib(limit) + ")")
 }
 
 func mib(n int64) string { return itoa(n>>20) + " MiB" }
 
-func isMultipart(c *fiber.Ctx) bool {
-	mt, _, err := mime.ParseMediaType(c.Get(fiber.HeaderContentType))
-	return err == nil && mt == fiber.MIMEMultipartForm
+func isMultipart(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "multipart/form-data"
 }
 
 // Raw upload bodies: an archive sent as is (curl -T -).
 const (
 	mimeGzip   = "application/gzip"
-	mimeStream = fiber.MIMEOctetStream
+	mimeStream = "application/octet-stream"
 )
 
-func streamedType(mt string) bool {
-	return mt == fiber.MIMEMultipartForm || mt == mimeGzip || mt == mimeStream
-}
-
 // isRaw reports an application/gzip or application/octet-stream Content-Type.
-func isRaw(c *fiber.Ctx) bool {
-	mt, _, err := mime.ParseMediaType(c.Get(fiber.HeaderContentType))
+func isRaw(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	return err == nil && (mt == mimeGzip || mt == mimeStream)
 }
 
 // isStreamed reports a body LimitBody leaves as a stream.
-func isStreamed(c *fiber.Ctx) bool { return isMultipart(c) || isRaw(c) }
+func isStreamed(r *http.Request) bool { return isMultipart(r) || isRaw(r) }
 
 // StreamBody is the request's raw body (application/gzip or
 // application/octet-stream), at most limit bytes: a 415 for another
 // Content-Type, a 413 by Content-Length up front or, when chunked, once the
 // reader counts past limit (the error the reader returns). The body is never
-// buffered; the response closes the connection unless it is read to its end.
-func StreamBody(c *fiber.Ctx, limit int64) (io.Reader, error) {
-	if !isRaw(c) {
+// buffered; the response closes the connection.
+func StreamBody(w http.ResponseWriter, r *http.Request, limit int64) (io.Reader, error) {
+	if !isRaw(r) {
 		return nil, errx.UnsupportedMediaType("Content-Type must be application/gzip")
 	}
-	if n := int64(c.Request().Header.ContentLength()); n > limit {
-		return nil, tooLarge(c, limit)
+	if r.ContentLength > limit {
+		return nil, tooLarge(w, limit)
 	}
-	var src io.Reader = c.Context().RequestBodyStream()
-	if src == nil { // not streamed (a body without length, or a test app)
-		src = bytes.NewReader(c.Request().Body())
-	}
-	return rawBody{r: &capped{r: src, left: limit, limit: limit}}, nil
+	return rawBody{r: &capped{r: r.Body, left: limit, limit: limit}}, nil
 }
 
 // rawBody words a broken stream; the cap's own verdict (a typed error) passes.
@@ -145,24 +156,20 @@ type Upload struct {
 }
 
 // NewUpload opens the request's multipart body, at most limit bytes in all.
-// The response closes the connection unless the body is read to its end.
-func NewUpload(c *fiber.Ctx, limit int64) (*Upload, error) {
-	if !isMultipart(c) {
+// The response closes the connection.
+func NewUpload(w http.ResponseWriter, r *http.Request, limit int64) (*Upload, error) {
+	if !isMultipart(r) {
 		return nil, errx.UnsupportedMediaType("Content-Type must be multipart/form-data")
 	}
-	_, params, _ := mime.ParseMediaType(c.Get(fiber.HeaderContentType))
+	_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	boundary := params["boundary"]
 	if boundary == "" {
 		return nil, errx.Validation("multipart body has no boundary")
 	}
-	if n := int64(c.Request().Header.ContentLength()); n > limit {
-		return nil, tooLarge(c, limit)
+	if r.ContentLength > limit {
+		return nil, tooLarge(w, limit)
 	}
-	var src io.Reader = c.Context().RequestBodyStream()
-	if src == nil { // not streamed (a body without length, or a test app)
-		src = bytes.NewReader(c.Request().Body())
-	}
-	body := &capped{r: src, left: limit, limit: limit}
+	body := &capped{r: r.Body, left: limit, limit: limit}
 	return &Upload{reader: multipart.NewReader(body, boundary), body: body}, nil
 }
 

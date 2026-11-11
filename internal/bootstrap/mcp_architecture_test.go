@@ -12,8 +12,8 @@ package bootstrap_test
 //     other adapters out), like the *http adapters.
 //  3. Only mcpx imports the MCP SDK (tests may use its client): tools never
 //     see it, so it changes in one place.
-//  4. mcpx imports neither IAMKit nor Fiber: httpx.MCPAuth authenticates and
-//     hands it a neutral Principal over net/http.
+//  4. mcpx imports neither IAMKit nor an HTTP framework: httpx.MCPAuth
+//     authenticates and hands it a neutral Principal over net/http.
 
 import (
 	"go/ast"

@@ -28,7 +28,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/httpx/httpxtest"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
-	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/pb33f/libopenapi"
 	validator "github.com/pb33f/libopenapi-validator"
@@ -38,7 +37,7 @@ import (
 )
 
 type operation struct {
-	method, path string // path in Fiber syntax (/projects/:id)
+	method, path string // path as in the spec and the router (/projects/{id})
 	permissions  []string
 	// anyUser: `x-permissions: []` written out on purpose: any authenticated
 	// token may call it and the service decides per record (approvals: your
@@ -95,13 +94,8 @@ func operations(t *testing.T) []operation {
 	globalSecured := len(model.Security) > 0
 	var out []operation
 	for path, item := range model.Paths.PathItems.FromOldest() {
-		fiberPath := path
-		for strings.Contains(fiberPath, "{") {
-			start, end := strings.Index(fiberPath, "{"), strings.Index(fiberPath, "}")
-			fiberPath = fiberPath[:start] + ":" + fiberPath[start+1:end] + fiberPath[end+1:]
-		}
 		for method, op := range item.GetOperations().FromOldest() {
-			o := operation{method: strings.ToUpper(method), path: fiberPath}
+			o := operation{method: strings.ToUpper(method), path: path}
 			o.public = op.Security != nil && len(op.Security) == 0 || !globalSecured
 			for _, req := range op.Security {
 				if _, ok := req.Requirements.Get("mcp"); ok {
@@ -122,7 +116,7 @@ func operations(t *testing.T) []operation {
 
 // routeApp is the real server over an unreachable database: enough to list
 // the routes and probe authorization (which runs before any handler).
-func routeApp(t *testing.T) *fiber.App {
+func routeApp(t *testing.T) *httpx.Router {
 	t.Helper()
 	db, err := sqlx.Open("postgres", "postgres://127.0.0.1:1/none?sslmode=disable&connect_timeout=1")
 	if err != nil {
@@ -156,10 +150,7 @@ func TestRoutesMatchTheOpenAPISpec(t *testing.T) {
 		documented[o.method+" "+o.path] = true
 	}
 	mounted := map[string]bool{}
-	for _, r := range routeApp(t).GetRoutes(true) {
-		if r.Method == fiber.MethodHead { // Fiber adds HEAD to every GET
-			continue
-		}
+	for _, r := range routeApp(t).Routes() {
 		path := r.Path
 		if len(path) > 1 {
 			path = strings.TrimRight(path, "/")
@@ -219,24 +210,17 @@ func TestOperationPermissionsMatchTheRoutes(t *testing.T) {
 	org := identity.NewOrganizationID()
 	probe := func(o operation, token string) int {
 		path := o.path
-		for strings.Contains(path, ":") {
-			start := strings.Index(path, ":")
-			end := strings.IndexByte(path[start:], '/')
-			if end < 0 {
-				end = len(path) - start
-			}
-			path = path[:start] + identity.NewOrganizationID().String() + path[start+end:]
+		for strings.Contains(path, "{") {
+			start, end := strings.Index(path, "{"), strings.Index(path, "}")
+			path = path[:start] + identity.NewOrganizationID().String() + path[end+1:]
 		}
 		req := httptest.NewRequest(o.method, path, nil)
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
-		res, err := app.Test(req, 5000)
-		if err != nil {
-			t.Fatal(err)
-		}
-		res.Body.Close()
-		return res.StatusCode
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		return rec.Code
 	}
 	for _, o := range operations(t) {
 		name := o.method + " " + o.path
@@ -296,7 +280,7 @@ func TestOperationPermissionsMatchTheRoutes(t *testing.T) {
 
 // checked sends a request like httpxtest.Do and fails the test unless the
 // response validates against the documented operation.
-func checked(t *testing.T, app *fiber.App, method, path, token string, body any) httpxtest.Response {
+func checked(t *testing.T, app http.Handler, method, path, token string, body any) httpxtest.Response {
 	t.Helper()
 	res := httpxtest.Do(t, app, method, path, token, body)
 	validate(t, method, path, res)

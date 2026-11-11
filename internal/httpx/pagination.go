@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -8,30 +9,30 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/query"
 	"github.com/Abraxas-365/odyssey/internal/text"
-	"github.com/gofiber/fiber/v2"
 )
 
 // Pagination reads ?limit=, ?offset= and ?search= (docs/api.md §4). Absent
 // values use the defaults; a limit above query.MaxLimit is clamped; a
 // non-numeric or non-positive limit, a negative or non-numeric offset, an
 // offset above query.MaxOffset or an invalid search are 400s.
-func Pagination(c *fiber.Ctx) (query.Pagination, error) {
+func Pagination(r *http.Request) (query.Pagination, error) {
 	p := query.Pagination{}
-	if raw := c.Query("limit"); raw != "" {
+	q := r.URL.Query()
+	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
 			return p, errx.InvalidField("limit", "limit must be an integer of at least 1")
 		}
 		p.Limit = n
 	}
-	if raw := c.Query("offset"); raw != "" {
+	if raw := q.Get("offset"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 || n > query.MaxOffset {
 			return p, errx.InvalidField("offset", "offset must be an integer between 0 and "+strconv.Itoa(query.MaxOffset))
 		}
 		p.Offset = n
 	}
-	if raw := strings.TrimSpace(c.Query("search")); raw != "" {
+	if raw := strings.TrimSpace(q.Get("search")); raw != "" {
 		if err := text.Optional("search", raw, text.MaxSearch); err != nil {
 			return p, err
 		}
@@ -42,10 +43,10 @@ func Pagination(c *fiber.Ctx) (query.Pagination, error) {
 
 // QueryValues returns every value of a repeated query parameter
 // (?status=a&status=b), without empty entries. Repeated values mean OR.
-func QueryValues(c *fiber.Ctx, name string) []string {
+func QueryValues(r *http.Request, name string) []string {
 	var out []string
-	for _, v := range c.Context().QueryArgs().PeekMulti(name) {
-		if s := strings.TrimSpace(string(v)); s != "" {
+	for _, v := range r.URL.Query()[name] {
+		if s := strings.TrimSpace(v); s != "" {
 			out = append(out, s)
 		}
 	}
@@ -54,9 +55,9 @@ func QueryValues(c *fiber.Ctx, name string) []string {
 
 // EnumFilter reads a repeated enum query parameter and checks each value
 // with valid; msg is the 400 text for a value outside the set.
-func EnumFilter[T ~string](c *fiber.Ctx, name string, valid func(T) bool, msg string) ([]T, error) {
+func EnumFilter[T ~string](r *http.Request, name string, valid func(T) bool, msg string) ([]T, error) {
 	var out []T
-	for _, raw := range QueryValues(c, name) {
+	for _, raw := range QueryValues(r, name) {
 		v := T(raw)
 		if !valid(v) {
 			return nil, errx.InvalidField(name, msg)
@@ -70,12 +71,12 @@ func EnumFilter[T ~string](c *fiber.Ctx, name string, valid func(T) bool, msg st
 // each value is a date "2026-10-11" (a day in loc; to includes the whole
 // day) or an RFC 3339 instant. Absent values are zero. A to that is not
 // after from is a 400.
-func TimeRange(c *fiber.Ctx, from, to string, loc *time.Location) (time.Time, time.Time, error) {
-	start, _, err := instant(c, from, loc)
+func TimeRange(r *http.Request, from, to string, loc *time.Location) (time.Time, time.Time, error) {
+	start, _, err := instant(r, from, loc)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	end, day, err := instant(c, to, loc)
+	end, day, err := instant(r, to, loc)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
@@ -89,8 +90,8 @@ func TimeRange(c *fiber.Ctx, from, to string, loc *time.Location) (time.Time, ti
 }
 
 // instant parses one TimeRange value; day reports a plain date.
-func instant(c *fiber.Ctx, name string, loc *time.Location) (t time.Time, day bool, err error) {
-	raw := strings.TrimSpace(c.Query(name))
+func instant(r *http.Request, name string, loc *time.Location) (t time.Time, day bool, err error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
 	if raw == "" {
 		return time.Time{}, false, nil
 	}
@@ -108,12 +109,12 @@ func instant(c *fiber.Ctx, name string, loc *time.Location) (t time.Time, day bo
 // was sent to ("<id>", "2/download"): Location is always the full request
 // path (as mounted, e.g. /api/v1/core/risks) plus "/"+rel, so it never
 // depends on where the router was mounted.
-func Created(c *fiber.Ctx, rel string, body any) error {
-	SetLocation(c, rel)
-	return c.Status(fiber.StatusCreated).JSON(body)
+func Created(w http.ResponseWriter, r *http.Request, rel string, body any) error {
+	SetLocation(w, r, rel)
+	return JSONStatus(w, http.StatusCreated, body)
 }
 
 // SetLocation sets Location to the request path plus "/"+rel (see Created).
-func SetLocation(c *fiber.Ctx, rel string) {
-	c.Set(fiber.HeaderLocation, strings.TrimRight(c.Path(), "/")+"/"+strings.TrimLeft(rel, "/"))
+func SetLocation(w http.ResponseWriter, r *http.Request, rel string) {
+	w.Header().Set("Location", strings.TrimRight(r.URL.Path, "/")+"/"+strings.TrimLeft(rel, "/"))
 }

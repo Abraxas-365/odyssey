@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
-
 	"github.com/Abraxas-365/odyssey/internal/access"
 	"github.com/Abraxas-365/odyssey/internal/access/adapters/accesshttp"
 	"github.com/Abraxas-365/odyssey/internal/errx"
@@ -35,22 +33,21 @@ func (f *fake) Keys() []access.Key {
 	return []access.Key{{ID: "kid1", Public: []byte("0123456789abcdef0123456789abcdef")}}
 }
 
-func app(h *accesshttp.Handler) *fiber.App {
-	a := fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler})
+func app(h *accesshttp.Handler) *httpx.Router {
+	a := httpx.NewRouter()
 	h.RegisterPublic(a)
 	return a
 }
 
-func get(t *testing.T, a *fiber.App, path string, cookie string) (*http.Response, string) {
+func get(t *testing.T, a *httpx.Router, path string, cookie string) (*http.Response, string) {
 	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
 	if cookie != "" {
 		req.Header.Set("Cookie", access.FlowCookie+"="+cookie)
 	}
-	res, err := a.Test(req, 5000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rec := httptest.NewRecorder()
+	a.ServeHTTP(rec, req)
+	res := rec.Result()
 	defer res.Body.Close()
 	b, _ := io.ReadAll(res.Body)
 	return res, string(b)

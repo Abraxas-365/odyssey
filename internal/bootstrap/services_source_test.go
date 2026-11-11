@@ -32,7 +32,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/source"
 	"github.com/Abraxas-365/odyssey/internal/source/sourcesvc"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
-	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -72,7 +71,7 @@ type servicesApp struct {
 	platform *bootstrap.Platform
 	cluster  *releasefake.Cluster
 	runner   *buildfake.Runner
-	app      *fiber.App
+	app      http.Handler
 	org      identity.OrganizationID
 	user     identity.UserID
 	token    string

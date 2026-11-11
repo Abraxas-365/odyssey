@@ -3,10 +3,11 @@
 package cataloghttp
 
 import (
+	"net/http"
+
 	"github.com/Abraxas-365/odyssey/internal/catalog"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/permission"
-	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
@@ -24,145 +25,145 @@ func New(commands catalog.Commands, queries catalog.Queries) *Handler {
 // already has (its host and its vault's keys are IT's); editing an offering
 // and publishing the organization's recipes is IT's: odyssey:catalog:manage,
 // and a recipe that reads secret stores also odyssey:secrets:external.
-func (h *Handler) Register(r fiber.Router) {
+func (h *Handler) Register(r *httpx.Router) {
 	g := r.Group("/catalog")
 	g.Get("/recipes", h.list)
-	g.Post("/recipes", httpx.RequirePermissions(permission.CatalogManage), h.register)
-	g.Get("/recipes/:recipe", h.get)
-	g.Post("/recipes/:recipe/versions", httpx.RequirePermissions(permission.CatalogManage), h.publish)
-	g.Put("/recipes/:recipe/offering", httpx.RequirePermissions(permission.CatalogManage), h.update)
-	g.Get("/teams", httpx.RequirePermissions(permission.CatalogManage), h.teams)
-	g.Get("/stores", httpx.RequirePermissions(permission.CatalogManage), h.stores)
+	g.With(httpx.RequirePermissions(permission.CatalogManage)).Post("/recipes", h.register)
+	g.Get("/recipes/{recipe}", h.get)
+	g.With(httpx.RequirePermissions(permission.CatalogManage)).Post("/recipes/{recipe}/versions", h.publish)
+	g.With(httpx.RequirePermissions(permission.CatalogManage)).Put("/recipes/{recipe}/offering", h.update)
+	g.With(httpx.RequirePermissions(permission.CatalogManage)).Get("/teams", h.teams)
+	g.With(httpx.RequirePermissions(permission.CatalogManage)).Get("/stores", h.stores)
 	g.Get("/kinds", h.kinds)
 }
 
 // kinds are the kinds' contracts: what an app receives of each, the same
 // for everyone (no organization's data).
-func (h *Handler) kinds(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{"items": catalog.Kinds()})
+func (h *Handler) kinds(w http.ResponseWriter, r *http.Request) error {
+	return httpx.JSON(w, httpx.Map{"items": catalog.Kinds()})
 }
 
 // shown is e as the caller may read it.
-func shown(c *fiber.Ctx, e catalog.Entry) catalog.Entry {
-	if httpx.Can(c, permission.CatalogManage) {
+func shown(r *http.Request, e catalog.Entry) catalog.Entry {
+	if httpx.Can(r, permission.CatalogManage) {
 		return e
 	}
 	return e.Redacted()
 }
 
 // stores are the secret stores the organization's clusters announce.
-func (h *Handler) stores(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) stores(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.Stores(c.UserContext(), org)
+	out, err := h.queries.Stores(r.Context(), org)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"items": out})
+	return httpx.JSON(w, httpx.Map{"items": out})
 }
 
-func (h *Handler) register(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) register(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
 	var in catalog.RegisterRecipe
-	if err := httpx.DecodeJSON(c, &in); err != nil {
+	if err := httpx.DecodeJSON(r, &in); err != nil {
 		return err
 	}
-	in.PublishedBy, in.MayReadStores = user, httpx.Can(c, permission.SecretsExternal)
-	e, err := h.commands.RegisterRecipe(c.UserContext(), org, in)
+	in.PublishedBy, in.MayReadStores = user, httpx.Can(r, permission.SecretsExternal)
+	e, err := h.commands.RegisterRecipe(r.Context(), org, in)
 	if err != nil {
 		return err
 	}
-	c.Location("/api/v1/catalog/recipes/" + e.Recipe)
-	return c.Status(fiber.StatusCreated).JSON(e)
+	w.Header().Set("Location", "/api/v1/catalog/recipes/"+e.Recipe)
+	return httpx.JSONStatus(w, http.StatusCreated, e)
 }
 
-func (h *Handler) publish(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) publish(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
 	var in catalog.PublishVersion
-	if err := httpx.DecodeJSON(c, &in); err != nil {
+	if err := httpx.DecodeJSON(r, &in); err != nil {
 		return err
 	}
-	in.PublishedBy, in.MayReadStores = user, httpx.Can(c, permission.SecretsExternal)
-	e, err := h.commands.PublishVersion(c.UserContext(), org, c.Params("recipe"), in)
+	in.PublishedBy, in.MayReadStores = user, httpx.Can(r, permission.SecretsExternal)
+	e, err := h.commands.PublishVersion(r.Context(), org, r.PathValue("recipe"), in)
 	if err != nil {
 		return err
 	}
-	c.Location("/api/v1/catalog/recipes/" + e.Recipe)
-	return c.Status(fiber.StatusCreated).JSON(e)
+	w.Header().Set("Location", "/api/v1/catalog/recipes/"+e.Recipe)
+	return httpx.JSONStatus(w, http.StatusCreated, e)
 }
 
 // teams are the organization's teams IT can limit an offering to.
-func (h *Handler) teams(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) teams(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.Teams(c.UserContext(), org)
+	out, err := h.queries.Teams(r.Context(), org)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
-func (h *Handler) list(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	entries, err := h.queries.List(c.UserContext(), org)
+	entries, err := h.queries.List(r.Context(), org)
 	if err != nil {
 		return err
 	}
 	for i := range entries {
-		entries[i] = shown(c, entries[i])
+		entries[i] = shown(r, entries[i])
 	}
-	return c.JSON(fiber.Map{"items": entries})
+	return httpx.JSON(w, httpx.Map{"items": entries})
 }
 
-func (h *Handler) get(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	e, err := h.queries.Find(c.UserContext(), org, c.Params("recipe"))
+	e, err := h.queries.Find(r.Context(), org, r.PathValue("recipe"))
 	if err != nil {
 		return err
 	}
-	return c.JSON(shown(c, e))
+	return httpx.JSON(w, shown(r, e))
 }
 
-func (h *Handler) update(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
 	var draft catalog.OfferingDraft
-	if err := httpx.DecodeJSON(c, &draft); err != nil {
+	if err := httpx.DecodeJSON(r, &draft); err != nil {
 		return err
 	}
-	e, err := h.commands.UpdateOffering(c.UserContext(), org, c.Params("recipe"), catalog.UpdateOffering{OfferingDraft: draft, UpdatedBy: user})
+	e, err := h.commands.UpdateOffering(r.Context(), org, r.PathValue("recipe"), catalog.UpdateOffering{OfferingDraft: draft, UpdatedBy: user})
 	if err != nil {
 		return err
 	}
-	return c.JSON(e)
+	return httpx.JSON(w, e)
 }

@@ -1,14 +1,15 @@
 // Package resourcehttp exposes an environment's resources over HTTP
-// (docs/api.md §11): /projects/:id/environments/:environment/resources.
+// (docs/api.md §11): /projects/{id}/environments/{environment}/resources.
 package resourcehttp
 
 import (
+	"net/http"
+
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/resource"
-	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
@@ -23,17 +24,17 @@ func New(commands resource.Commands, queries resource.Queries) *Handler {
 // Register mounts the routes on an already-authenticated router. Reading
 // takes projects:read; every change projects:write (like the rest of an
 // app's settings), and deleting, which erases data, its own permission.
-func (h *Handler) Register(r fiber.Router) {
+func (h *Handler) Register(r *httpx.Router) {
 	// what can be asked for here: the catalog as this environment sees it
-	r.Get("/projects/:id/environments/:environment/catalog", httpx.RequirePermissions(permission.ProjectsRead), h.offered)
-	g := r.Group("/projects/:id/environments/:environment/resources")
-	g.Get("/", httpx.RequirePermissions(permission.ProjectsRead), h.list)
-	g.Post("/", httpx.RequirePermissions(permission.ProjectsWrite), h.create)
-	g.Get("/:name", httpx.RequirePermissions(permission.ProjectsRead), h.find)
-	g.Patch("/:name", httpx.RequirePermissions(permission.ProjectsWrite), h.change)
-	g.Delete("/:name", httpx.RequirePermissions(permission.ResourcesDelete), h.delete)
-	g.Put("/:name/connection", httpx.RequirePermissions(permission.ProjectsWrite), h.connect)
-	g.Delete("/:name/connection", httpx.RequirePermissions(permission.ProjectsWrite), h.disconnect)
+	r.With(httpx.RequirePermissions(permission.ProjectsRead)).Get("/projects/{id}/environments/{environment}/catalog", h.offered)
+	g := r.Group("/projects/{id}/environments/{environment}/resources")
+	g.With(httpx.RequirePermissions(permission.ProjectsRead)).Get("/", h.list)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Post("/", h.create)
+	g.With(httpx.RequirePermissions(permission.ProjectsRead)).Get("/{name}", h.find)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Patch("/{name}", h.change)
+	g.With(httpx.RequirePermissions(permission.ResourcesDelete)).Delete("/{name}", h.delete)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Put("/{name}/connection", h.connect)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Delete("/{name}/connection", h.disconnect)
 }
 
 type place struct {
@@ -43,158 +44,162 @@ type place struct {
 	environment project.EnvironmentID
 }
 
-func parse(c *fiber.Ctx) (place, error) {
-	org, err := httpx.Organization(c)
+func parse(r *http.Request) (place, error) {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return place{}, err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return place{}, err
 	}
-	p, err := project.ParseID(c.Params("id"))
+	p, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return place{}, err
 	}
-	e, err := project.ParseEnvironmentID(c.Params("environment"))
+	e, err := project.ParseEnvironmentID(r.PathValue("environment"))
 	if err != nil {
 		return place{}, err
 	}
 	return place{org: org, user: user, project: p, environment: e}, nil
 }
 
-func (h *Handler) list(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.List(c.UserContext(), at.org, at.project, at.environment)
+	out, err := h.queries.List(r.Context(), at.org, at.project, at.environment)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
 // offered answers what the environment's app can ask for (the recipes its
 // tier is offered and its cluster honours) and how: at once, with IT's
 // approval or not at all, for the caller (docs/catalog.md).
-func (h *Handler) offered(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) offered(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.Offered(c.UserContext(), at.org, at.project, at.environment, at.user)
+	out, err := h.queries.Offered(r.Context(), at.org, at.project, at.environment, at.user)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
-func (h *Handler) find(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) find(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.Get(c.UserContext(), at.org, at.project, at.environment, c.Params("name"))
+	out, err := h.queries.Get(r.Context(), at.org, at.project, at.environment, r.PathValue("name"))
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
 // create answers 201 with the resource; when it was connected, the config
 // deployment (if one started) is in deployment_id and Location points at the
 // resource.
-func (h *Handler) create(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
 	var in resource.Create
-	if err := httpx.DecodeJSON(c, &in); err != nil {
+	if err := httpx.DecodeJSON(r, &in); err != nil {
 		return err
 	}
 	in.RequestedBy = at.user
-	out, err := h.commands.Create(c.UserContext(), at.org, at.project, at.environment, in)
+	out, err := h.commands.Create(r.Context(), at.org, at.project, at.environment, in)
 	if err != nil {
 		return err
 	}
-	if done, err := httpx.Held(c, out.Outcome); done {
+	if done, err := httpx.Held(w, out.Outcome); done {
 		return err
 	}
-	return httpx.Created(c, out.Name, out)
+	return httpx.Created(w, r, out.Name, out)
 }
 
 // change answers 200 with the resource, or 202 when IT must approve it.
-func (h *Handler) change(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) change(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
 	var in resource.Change
-	if err := httpx.DecodeJSON(c, &in); err != nil {
+	if err := httpx.DecodeJSON(r, &in); err != nil {
 		return err
 	}
 	in.RequestedBy = at.user
-	out, err := h.commands.Change(c.UserContext(), at.org, at.project, at.environment, c.Params("name"), in)
+	out, err := h.commands.Change(r.Context(), at.org, at.project, at.environment, r.PathValue("name"), in)
 	if err != nil {
 		return err
 	}
-	if done, err := httpx.Held(c, out.Outcome); done {
+	if done, err := httpx.Held(w, out.Outcome); done {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
 // delete answers 202: the cluster erases the data in its own time and the
 // resource shows as deleting until it does.
-func (h *Handler) delete(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.commands.Delete(c.UserContext(), at.org, at.project, at.environment, c.Params("name"), resource.Delete{RequestedBy: at.user})
+	out, err := h.commands.Delete(r.Context(), at.org, at.project, at.environment, r.PathValue("name"), resource.Delete{RequestedBy: at.user})
 	if err != nil {
 		return err
 	}
-	if done, err := httpx.Held(c, out.Outcome); done {
+	if done, err := httpx.Held(w, out.Outcome); done {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }
 
 // connect answers 202 like every settings change: the config deployment (if
 // one starts) runs in the worker.
-func (h *Handler) connect(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) connect(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
 	var in resource.Connect
-	if len(c.Body()) > 0 {
-		if err := httpx.DecodeJSON(c, &in); err != nil {
+	body, err := httpx.Body(r)
+	if err != nil {
+		return err
+	}
+	if len(body) > 0 {
+		if err := httpx.DecodeJSON(r, &in); err != nil {
 			return err
 		}
 	}
-	in.Name, in.RequestedBy = c.Params("name"), at.user
-	out, err := h.commands.Connect(c.UserContext(), at.org, at.project, at.environment, in)
+	in.Name, in.RequestedBy = r.PathValue("name"), at.user
+	out, err := h.commands.Connect(r.Context(), at.org, at.project, at.environment, in)
 	if err != nil {
 		return err
 	}
-	if done, err := httpx.Held(c, out.Outcome); done {
+	if done, err := httpx.Held(w, out.Outcome); done {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }
 
-func (h *Handler) disconnect(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) disconnect(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.commands.Disconnect(c.UserContext(), at.org, at.project, at.environment, c.Params("name"), at.user)
+	out, err := h.commands.Disconnect(r.Context(), at.org, at.project, at.environment, r.PathValue("name"), at.user)
 	if err != nil {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }

@@ -6,12 +6,12 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net/http"
 	"reflect"
 	"slices"
 	"strings"
 
 	"github.com/Abraxas-365/odyssey/internal/errx"
-	"github.com/gofiber/fiber/v2"
 )
 
 // MaxJSONBody is the default body limit (docs/api.md §9); the server rejects
@@ -23,15 +23,18 @@ const MaxJSONBody = 1 << 20
 //   - at most MaxJSONBody bytes (413);
 //   - unknown fields are an error naming the field (400);
 //   - exactly one JSON value, nothing after it (400).
-func DecodeJSON(c *fiber.Ctx, into any) error {
-	if isStreamed(c) { // a stream up to MaxUploadBody: never buffer it here
+func DecodeJSON(r *http.Request, into any) error {
+	if isStreamed(r) { // a stream up to MaxUploadBody: never buffer it here
 		return errx.UnsupportedMediaType("Content-Type must be application/json")
 	}
-	body := c.Body()
+	body, err := Body(r)
+	if err != nil {
+		return err
+	}
 	if len(body) == 0 {
 		return errx.Validation("request body is required")
 	}
-	if !IsJSON(c) {
+	if !IsJSON(r) {
 		return errx.UnsupportedMediaType("Content-Type must be application/json")
 	}
 	if len(body) > MaxJSONBody {
@@ -44,12 +47,16 @@ func DecodeJSON(c *fiber.Ctx, into any) error {
 // nullable (JSON paths, "treatment.due_date" for nested ones) accept an
 // explicit null, which clears them; null on any other field is a 400 instead
 // of being read as "absent" (docs/api.md §6).
-func DecodePatch(c *fiber.Ctx, into any, nullable ...string) error {
-	if err := DecodeJSON(c, into); err != nil {
+func DecodePatch(r *http.Request, into any, nullable ...string) error {
+	if err := DecodeJSON(r, into); err != nil {
+		return err
+	}
+	body, err := Body(r)
+	if err != nil {
 		return err
 	}
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(c.Body(), &top); err != nil || top == nil {
+	if err := json.Unmarshal(body, &top); err != nil || top == nil {
 		return errx.Validation("request body must be a JSON object") // array, string, number or null
 	}
 	return rejectNulls(top, "", nullable)
@@ -77,17 +84,17 @@ func rejectNulls(object map[string]json.RawMessage, prefix string, nullable []st
 }
 
 // IsJSON reports an application/json Content-Type (any charset parameter).
-func IsJSON(c *fiber.Ctx) bool {
-	mt, _, err := mime.ParseMediaType(c.Get(fiber.HeaderContentType))
-	return err == nil && mt == fiber.MIMEApplicationJSON
+func IsJSON(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "application/json"
 }
 
 // IsMultipart reports a multipart/form-data Content-Type.
-func IsMultipart(c *fiber.Ctx) bool { return isMultipart(c) }
+func IsMultipart(r *http.Request) bool { return isMultipart(r) }
 
 // HasBody reports whether the request carries a body (an optional JSON body
-// is decoded only when present). It never reads the body.
-func HasBody(c *fiber.Ctx) bool { return c.Request().Header.ContentLength() != 0 }
+// is decoded only when present): a Content-Length other than 0, or chunked.
+func HasBody(r *http.Request) bool { return r.ContentLength != 0 }
 
 // DecodeStrict reads a JSON value already in hand (a multipart form field)
 // with DecodeJSON's rules: unknown fields and trailing data are 400s.

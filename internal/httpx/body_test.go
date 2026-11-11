@@ -8,32 +8,13 @@ import (
 	"testing"
 
 	"github.com/Abraxas-365/odyssey/internal/httpx"
-	"github.com/gofiber/fiber/v2"
-	"github.com/valyala/fasthttp"
 )
 
-func TestHeaderReceivedGivesRawUploadsTheLongTimeout(t *testing.T) {
-	for ct, long := range map[string]bool{
-		"application/gzip":                  true,
-		"application/octet-stream":          true,
-		"multipart/form-data; boundary=abc": true,
-		"application/json":                  false,
-		"text/plain":                        false,
-		"":                                  false,
-	} {
-		var h fasthttp.RequestHeader
-		h.SetContentType(ct)
-		got := httpx.HeaderReceived(&h).ReadTimeout == httpx.UploadReadTimeout
-		if got != long {
-			t.Errorf("Content-Type %q: long timeout %v, want %v", ct, got, long)
-		}
-	}
-}
-
 func TestStreamBodyAndDecodeJSON(t *testing.T) {
-	app := fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler})
-	app.Put("/raw", func(c *fiber.Ctx) error {
-		body, err := httpx.StreamBody(c, 10)
+	app := httpx.NewRouter()
+	app.Use(httpx.LimitBody)
+	app.Put("/raw", func(w http.ResponseWriter, r *http.Request) error {
+		body, err := httpx.StreamBody(w, r, 10)
 		if err != nil {
 			return err
 		}
@@ -41,26 +22,22 @@ func TestStreamBodyAndDecodeJSON(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return c.SendString(string(b))
+		return httpx.Send(w, b)
 	})
-	app.Put("/json", func(c *fiber.Ctx) error {
+	app.Put("/json", func(w http.ResponseWriter, r *http.Request) error {
 		var v map[string]any
-		if err := httpx.DecodeJSON(c, &v); err != nil {
+		if err := httpx.DecodeJSON(r, &v); err != nil {
 			return err
 		}
-		return c.SendStatus(http.StatusNoContent)
+		return httpx.Status(w, http.StatusNoContent)
 	})
 	do := func(path, ct, body string) (int, string) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", ct)
-		res, err := app.Test(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer res.Body.Close()
-		out, _ := io.ReadAll(res.Body)
-		return res.StatusCode, string(out)
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
 	}
 	if code, body := do("/raw", "application/gzip", "0123456789"); code != 200 || body != "0123456789" {
 		t.Fatalf("exactly at the limit: %d %q", code, body)

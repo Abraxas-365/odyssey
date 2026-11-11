@@ -75,7 +75,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/workflow"
 	"github.com/Abraxas-365/odyssey/internal/workflow/adapters/workflowpg"
 	"github.com/Abraxas-365/odyssey/skills"
-	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
@@ -96,16 +95,23 @@ func Run() error {
 	defer app.Close()
 
 	errc := make(chan error, 1)
+	srv := server.HTTP(":"+cfg.Port, app.HTTP)
 	go func() {
 		slog.Info("listening", "port", cfg.Port)
-		errc <- app.HTTP.Listen(":" + cfg.Port)
+		errc <- srv.ListenAndServe()
 	}()
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
 		slog.Info("shutting down")
-		return app.HTTP.ShutdownWithTimeout(10 * time.Second)
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdown); err != nil {
+			_ = srv.Close() // past the timeout: drop the connections still open
+			return err
+		}
+		return nil
 	}
 }
 
@@ -257,7 +263,7 @@ func serveHealth(ctx context.Context, p *Platform, port string) error {
 
 // App is the running control plane.
 type App struct {
-	HTTP    *fiber.App
+	HTTP    *httpx.Router
 	closers []func() error
 }
 
@@ -636,7 +642,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 // NewServer assembles the modules behind auth. Tests call it with a fake
 // authenticator; production passes httpx.Authenticate. mcpAuth nil leaves
 // /mcp unmounted.
-func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *httpx.MCPAuth) *fiber.App {
+func NewServer(p *Platform, cfg config.Config, auth httpx.Middleware, mcpAuth *httpx.MCPAuth) *httpx.Router {
 	skill := skills.Default()
 	assistantRoutes := server.Assistant{
 		Info:    assistant.Build(cfg.MCP.Enabled(), cfg.IAM.Audience, PublicAPIURL(cfg)+"/skills/"+skills.Name+".tar.gz", skill.Version, cfg.MCP.TemplateClients, cfg.MCP.Clients),
@@ -651,7 +657,7 @@ func NewServer(p *Platform, cfg config.Config, auth fiber.Handler, mcpAuth *http
 		func() error { return p.DB.Ping() },
 		server.PublicConfig{IAMURL: cfg.IAM.PublicURL, ClientID: cfg.IAM.WebClientID, Environment: cfg.IAM.Environment},
 		opts,
-		[]fiber.Handler{auth},
+		[]httpx.Middleware{auth},
 		p.Projects.HTTP,
 		p.Releases.HTTP,
 		p.Builds.HTTP,

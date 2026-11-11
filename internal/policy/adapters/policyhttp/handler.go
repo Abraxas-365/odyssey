@@ -2,10 +2,11 @@
 package policyhttp
 
 import (
+	"net/http"
+
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/policy"
-	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
@@ -20,91 +21,91 @@ func New(commands policy.Commands, queries policy.Queries, evaluator policy.Eval
 
 // Register mounts the routes on an already-authenticated router. All of them
 // are IT's: odyssey:policy:manage.
-func (h *Handler) Register(r fiber.Router) {
+func (h *Handler) Register(r *httpx.Router) {
 	g := r.Group("/policy", httpx.RequirePermissions(permission.PolicyManage))
 	g.Get("/rules", h.list)
 	g.Post("/rules", h.create)
-	g.Put("/rules/:id", h.replace)
-	g.Delete("/rules/:id", h.delete)
+	g.Put("/rules/{id}", h.replace)
+	g.Delete("/rules/{id}", h.delete)
 	g.Post("/evaluate", h.evaluate)
 }
 
-func (h *Handler) list(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	rules, err := h.queries.List(c.UserContext(), org)
+	rules, err := h.queries.List(r.Context(), org)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"items": rules})
+	return httpx.JSON(w, httpx.Map{"items": rules})
 }
 
-func (h *Handler) create(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
 	var draft policy.Draft
-	if err := httpx.DecodeJSON(c, &draft); err != nil {
+	if err := httpx.DecodeJSON(r, &draft); err != nil {
 		return err
 	}
-	rule, err := h.commands.Create(c.UserContext(), org, policy.Create{Draft: draft, CreatedBy: user})
+	rule, err := h.commands.Create(r.Context(), org, policy.Create{Draft: draft, CreatedBy: user})
 	if err != nil {
 		return err
 	}
-	c.Location("/api/v1/policy/rules/" + rule.ID.String())
-	return c.Status(fiber.StatusCreated).JSON(rule)
+	w.Header().Set("Location", "/api/v1/policy/rules/"+rule.ID.String())
+	return httpx.JSONStatus(w, http.StatusCreated, rule)
 }
 
 // replace is a PUT: the whole rule. A built-in rule only takes its `enabled`
 // switch (422 POLICY_BUILTIN otherwise).
-func (h *Handler) replace(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) replace(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	id, err := policy.ParseRuleID(c.Params("id"))
+	id, err := policy.ParseRuleID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
 	var draft policy.Draft
-	if err := httpx.DecodeJSON(c, &draft); err != nil {
+	if err := httpx.DecodeJSON(r, &draft); err != nil {
 		return err
 	}
-	rule, err := h.commands.Replace(c.UserContext(), org, id, policy.Replace{Draft: draft, UpdatedBy: user})
+	rule, err := h.commands.Replace(r.Context(), org, id, policy.Replace{Draft: draft, UpdatedBy: user})
 	if err != nil {
 		return err
 	}
-	return c.JSON(rule)
+	return httpx.JSON(w, rule)
 }
 
-func (h *Handler) delete(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	id, err := policy.ParseRuleID(c.Params("id"))
+	id, err := policy.ParseRuleID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
-	if err := h.commands.Delete(c.UserContext(), org, id, policy.Delete{DeletedBy: user}); err != nil {
+	if err := h.commands.Delete(r.Context(), org, id, policy.Delete{DeletedBy: user}); err != nil {
 		return err
 	}
-	return c.SendStatus(fiber.StatusNoContent)
+	return httpx.Status(w, http.StatusNoContent)
 }
 
 // evaluate is the dry run: the body is an Input (what the action would look
@@ -113,21 +114,21 @@ func (h *Handler) delete(c *fiber.Ctx) error {
 // editing. The answer is the decision plus what each rule said. It decides
 // nothing and changes nothing; a `rule` that does not compile is 422
 // POLICY_INVALID.
-func (h *Handler) evaluate(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
 	var dry policy.Dry
-	if err := httpx.DecodeJSON(c, &dry); err != nil {
+	if err := httpx.DecodeJSON(r, &dry); err != nil {
 		return err
 	}
 	if err := dry.Input.Validate(); err != nil {
 		return err
 	}
-	result, err := h.evaluator.Explain(c.UserContext(), org, dry.Input, dry.Candidate())
+	result, err := h.evaluator.Explain(r.Context(), org, dry.Input, dry.Candidate())
 	if err != nil {
 		return err
 	}
-	return c.JSON(result)
+	return httpx.JSON(w, result)
 }

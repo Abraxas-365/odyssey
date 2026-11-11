@@ -4,6 +4,7 @@
 package buildhttp
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/Abraxas-365/odyssey/internal/build"
@@ -12,7 +13,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
-	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
@@ -22,26 +22,26 @@ type Handler struct {
 func New(queries build.Queries) *Handler { return &Handler{queries: queries} }
 
 // Register mounts the routes on an already-authenticated router.
-func (h *Handler) Register(r fiber.Router) {
-	r.Get("/projects/:id/builds/:build", httpx.RequirePermissions(permission.DeploymentsRead), h.find)
-	r.Get("/projects/:id/builds/:build/logs", httpx.RequirePermissions(permission.DeploymentsRead), h.logs)
+func (h *Handler) Register(r *httpx.Router) {
+	r.With(httpx.RequirePermissions(permission.DeploymentsRead)).Get("/projects/{id}/builds/{build}", h.find)
+	r.With(httpx.RequirePermissions(permission.DeploymentsRead)).Get("/projects/{id}/builds/{build}/logs", h.logs)
 }
 
 // load finds the build of the path's project (another project's is NotFound).
-func (h *Handler) load(c *fiber.Ctx) (identity.OrganizationID, build.Build, error) {
-	org, err := httpx.Organization(c)
+func (h *Handler) load(r *http.Request) (identity.OrganizationID, build.Build, error) {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return identity.OrganizationID{}, build.Build{}, err
 	}
-	p, err := project.ParseID(c.Params("id"))
+	p, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return org, build.Build{}, err
 	}
-	id, err := build.ParseID(c.Params("build"))
+	id, err := build.ParseID(r.PathValue("build"))
 	if err != nil {
 		return org, build.Build{}, err
 	}
-	b, err := h.queries.Find(c.UserContext(), org, id)
+	b, err := h.queries.Find(r.Context(), org, id)
 	if err != nil {
 		return org, build.Build{}, err
 	}
@@ -51,39 +51,39 @@ func (h *Handler) load(c *fiber.Ctx) (identity.OrganizationID, build.Build, erro
 	return org, b, nil
 }
 
-func (h *Handler) find(c *fiber.Ctx) error {
-	_, b, err := h.load(c)
+func (h *Handler) find(w http.ResponseWriter, r *http.Request) error {
+	_, b, err := h.load(r)
 	if err != nil {
 		return err
 	}
-	return c.JSON(b)
+	return httpx.JSON(w, b)
 }
 
 // logs pages the log: ?after=<seq>&limit=<n>. Poll with after=next until
 // finished.
-func (h *Handler) logs(c *fiber.Ctx) error {
-	org, b, err := h.load(c)
+func (h *Handler) logs(w http.ResponseWriter, r *http.Request) error {
+	org, b, err := h.load(r)
 	if err != nil {
 		return err
 	}
 	var q build.LogQuery
-	if q.After, err = intParam(c, "after"); err != nil {
+	if q.After, err = intParam(r, "after"); err != nil {
 		return err
 	}
-	limit, err := intParam(c, "limit")
+	limit, err := intParam(r, "limit")
 	if err != nil {
 		return err
 	}
 	q.Limit = int(min(limit, build.MaxLogPage))
-	page, err := h.queries.Logs(c.UserContext(), org, b.ID, q)
+	page, err := h.queries.Logs(r.Context(), org, b.ID, q)
 	if err != nil {
 		return err
 	}
-	return c.JSON(page)
+	return httpx.JSON(w, page)
 }
 
-func intParam(c *fiber.Ctx, name string) (int64, error) {
-	raw := c.Query(name)
+func intParam(r *http.Request, name string) (int64, error) {
+	raw := r.URL.Query().Get(name)
 	if raw == "" {
 		return 0, nil
 	}

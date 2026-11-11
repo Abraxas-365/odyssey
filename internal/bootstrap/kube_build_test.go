@@ -31,7 +31,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -340,7 +339,7 @@ func anyLine(lines []string, want string) bool {
 type kubeBuild struct {
 	t     *testing.T
 	ctx   context.Context
-	app   *fiber.App
+	app   http.Handler
 	token string
 	port  int
 	org   identity.OrganizationID

@@ -1,14 +1,15 @@
 // Package aihttp exposes an environment's AI over HTTP (docs/api.md §11):
-// /projects/:id/environments/:environment/ai.
+// /projects/{id}/environments/{environment}/ai.
 package aihttp
 
 import (
+	"net/http"
+
 	"github.com/Abraxas-365/odyssey/internal/ai"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/permission"
 	"github.com/Abraxas-365/odyssey/internal/project"
-	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
@@ -23,12 +24,12 @@ func New(commands ai.Commands, queries ai.Queries) *Handler {
 // Register mounts the routes on an already-authenticated router. Reading
 // takes projects:read; every change projects:write (like the rest of an app's
 // settings).
-func (h *Handler) Register(r fiber.Router) {
-	g := r.Group("/projects/:id/environments/:environment/ai")
-	g.Get("/", httpx.RequirePermissions(permission.ProjectsRead), h.get)
-	g.Put("/", httpx.RequirePermissions(permission.ProjectsWrite), h.enable)
-	g.Delete("/", httpx.RequirePermissions(permission.ProjectsWrite), h.disable)
-	g.Post("/rotate", httpx.RequirePermissions(permission.ProjectsWrite), h.rotate)
+func (h *Handler) Register(r *httpx.Router) {
+	g := r.Group("/projects/{id}/environments/{environment}/ai")
+	g.With(httpx.RequirePermissions(permission.ProjectsRead)).Get("/", h.get)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Put("/", h.enable)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Delete("/", h.disable)
+	g.With(httpx.RequirePermissions(permission.ProjectsWrite)).Post("/rotate", h.rotate)
 }
 
 type place struct {
@@ -38,36 +39,36 @@ type place struct {
 	environment project.EnvironmentID
 }
 
-func parse(c *fiber.Ctx) (place, error) {
-	org, err := httpx.Organization(c)
+func parse(r *http.Request) (place, error) {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return place{}, err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return place{}, err
 	}
-	p, err := project.ParseID(c.Params("id"))
+	p, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return place{}, err
 	}
-	e, err := project.ParseEnvironmentID(c.Params("environment"))
+	e, err := project.ParseEnvironmentID(r.PathValue("environment"))
 	if err != nil {
 		return place{}, err
 	}
 	return place{org: org, user: user, project: p, environment: e}, nil
 }
 
-func (h *Handler) get(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.Get(c.UserContext(), at.org, at.project, at.environment)
+	out, err := h.queries.Get(r.Context(), at.org, at.project, at.environment)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
 // enable answers 202: the key is made and delivered by the worker, and the
@@ -75,51 +76,51 @@ func (h *Handler) get(c *fiber.Ctx) error {
 // optional: {"services": [...]} gives the AI to those services only ([]:
 // the whole app; absent: as it is, the whole app when it is off). With the
 // AI on, other services move it there (same key).
-func (h *Handler) enable(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) enable(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
 	in := ai.Enable{RequestedBy: at.user}
-	if httpx.HasBody(c) {
+	if httpx.HasBody(r) {
 		var body struct {
 			Services *[]string `json:"services"`
 		}
-		if err := httpx.DecodeJSON(c, &body); err != nil {
+		if err := httpx.DecodeJSON(r, &body); err != nil {
 			return err
 		}
 		in.Services = body.Services
 	}
-	out, err := h.commands.Enable(c.UserContext(), at.org, at.project, at.environment, in)
+	out, err := h.commands.Enable(r.Context(), at.org, at.project, at.environment, in)
 	if err != nil {
 		return err
 	}
-	if done, err := httpx.Held(c, out.Outcome); done {
+	if done, err := httpx.Held(w, out.Outcome); done {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }
 
-func (h *Handler) rotate(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.commands.Rotate(c.UserContext(), at.org, at.project, at.environment, ai.Rotate{RequestedBy: at.user})
+	out, err := h.commands.Rotate(r.Context(), at.org, at.project, at.environment, ai.Rotate{RequestedBy: at.user})
 	if err != nil {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }
 
-func (h *Handler) disable(c *fiber.Ctx) error {
-	at, err := parse(c)
+func (h *Handler) disable(w http.ResponseWriter, r *http.Request) error {
+	at, err := parse(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.commands.Disable(c.UserContext(), at.org, at.project, at.environment, ai.Disable{RequestedBy: at.user})
+	out, err := h.commands.Disable(r.Context(), at.org, at.project, at.environment, ai.Disable{RequestedBy: at.user})
 	if err != nil {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }

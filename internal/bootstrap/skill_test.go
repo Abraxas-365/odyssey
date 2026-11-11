@@ -117,10 +117,9 @@ func TestAssistantAndSkillRoutes(t *testing.T) {
 		if inm != "" {
 			req.Header.Set("If-None-Match", inm)
 		}
-		r, err := app.Test(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		r := rec.Result()
 		t.Cleanup(func() { r.Body.Close() })
 		return r
 	}

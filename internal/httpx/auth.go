@@ -5,18 +5,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/Abraxas-365/iamkit/sdk/authclient"
-	"github.com/Abraxas-365/iamkit/sdk/authclient/fiberauth"
+	"github.com/Abraxas-365/iamkit/sdk/authclient/httpauth"
 	"github.com/Abraxas-365/odyssey/internal/actor"
 	"github.com/Abraxas-365/odyssey/internal/config"
 	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
-	"github.com/gofiber/fiber/v2"
 )
 
 // Introspector is the IAMKit call used to validate access tokens online
@@ -30,7 +30,7 @@ type Introspector interface {
 //
 // The SDK middleware writes its own error JSON; its responses are replaced by
 // the one error shape of docs/api.md §3 (401 UNAUTHORIZED).
-func Authenticate(iam Introspector, b config.IAM) fiber.Handler {
+func Authenticate(iam Introspector, b config.IAM) Middleware {
 	return AuthenticateWith(func(ctx context.Context, token string) (*authclient.Claims, error) {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -84,41 +84,44 @@ func resourceBound(token string) bool {
 // AuthenticateWith authenticates bearer tokens with verify, answering
 // failures with the standard error body (docs/api.md §3). Authenticate uses
 // it with IAMKit; tests use it with a fake verifier.
-func AuthenticateWith(verify func(ctx context.Context, token string) (*authclient.Claims, error)) fiber.Handler {
-	return typed(fiberauth.Authenticate(verify))
+func AuthenticateWith(verify func(ctx context.Context, token string) (*authclient.Claims, error)) Middleware {
+	return typed(func(next http.Handler) http.Handler { return httpauth.Authenticate(verify, next) })
 }
 
 // RequirePermissions rejects requests whose token lacks any permission.
 // Pass permission.X constants, never string literals.
-func RequirePermissions(permissions ...string) fiber.Handler {
-	return typed(fiberauth.RequirePermissions(permissions...))
+func RequirePermissions(permissions ...string) Middleware {
+	return typed(httpauth.RequirePermissionsMiddleware(permissions...))
 }
 
-// typed runs an SDK middleware and, when it answered with its own error body
-// instead of passing the request on, replaces that response with an errx
-// error. A handler never writes a 401/403 itself (it returns an error), so a
-// nil return with such a status on the response means the SDK wrote it.
-func typed(next fiber.Handler) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		if err := next(c); err != nil {
-			return err
+// typed runs an IAMKit SDK middleware (authclient/httpauth). When it passes
+// the request on, the route runs with the SDK's request (its claims on the
+// context); when it answers with its own error body, that answer is dropped
+// and replaced by an errx error (the one error shape).
+func typed(sdk func(http.Handler) http.Handler) Middleware {
+	return func(next Handler) Handler {
+		return func(w http.ResponseWriter, r *http.Request) error {
+			var err error
+			passed := false
+			refusal := &capture{header: http.Header{}}
+			sdk(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				passed = true
+				err = next(w, r)
+			})).ServeHTTP(refusal, r)
+			if passed {
+				return err
+			}
+			var body struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			_ = json.Unmarshal(refusal.body, &body)
+			if refusal.status == http.StatusForbidden {
+				return errx.Forbidden(or(body.Error.Message, "insufficient permissions"))
+			}
+			return errx.Unauthorized(or(body.Error.Message, "missing or invalid bearer token"))
 		}
-		status := c.Response().StatusCode()
-		if status != fiber.StatusUnauthorized && status != fiber.StatusForbidden {
-			return nil
-		}
-		var sdk struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(c.Response().Body(), &sdk)
-		c.Response().ResetBody()
-		c.Response().Header.Del(fiber.HeaderCacheControl)
-		if status == fiber.StatusUnauthorized {
-			return errx.Unauthorized(or(sdk.Error.Message, "missing or invalid bearer token"))
-		}
-		return errx.Forbidden(or(sdk.Error.Message, "insufficient permissions"))
 	}
 }
 
@@ -131,8 +134,8 @@ func or(s, fallback string) string {
 
 // Organization returns the tenant of the authenticated user. Every tenant
 // query must be constrained by this value — never by a request parameter.
-func Organization(c *fiber.Ctx) (identity.OrganizationID, error) {
-	claims := fiberauth.Claims(c)
+func Organization(r *http.Request) (identity.OrganizationID, error) {
+	claims := httpauth.Claims(r)
 	if claims == nil {
 		return identity.OrganizationID{}, errx.Unauthorized("missing or invalid bearer token")
 	}
@@ -148,14 +151,14 @@ func Organization(c *fiber.Ctx) (identity.OrganizationID, error) {
 
 // Can reports whether the authenticated token holds the permission (for
 // a rule that depends on the request, which RequirePermissions cannot say).
-func Can(c *fiber.Ctx, permission string) bool {
-	claims := fiberauth.Claims(c)
+func Can(r *http.Request, permission string) bool {
+	claims := httpauth.Claims(r)
 	return claims != nil && claims.HasPermission(permission)
 }
 
 // User returns the authenticated IAMKit user (the token subject).
-func User(c *fiber.Ctx) (identity.UserID, error) {
-	claims := fiberauth.Claims(c)
+func User(r *http.Request) (identity.UserID, error) {
+	claims := httpauth.Claims(r)
 	if claims == nil || claims.Subject == "" {
 		return identity.UserID{}, errx.Unauthorized("missing or invalid bearer token")
 	}
@@ -167,8 +170,8 @@ func User(c *fiber.Ctx) (identity.UserID, error) {
 }
 
 // Permissions are the authenticated token's permissions (nil without one).
-func Permissions(c *fiber.Ctx) []string {
-	if claims := fiberauth.Claims(c); claims != nil {
+func Permissions(r *http.Request) []string {
+	if claims := httpauth.Claims(r); claims != nil {
 		return slices.Clone(claims.Permissions)
 	}
 	return nil
@@ -176,8 +179,8 @@ func Permissions(c *fiber.Ctx) []string {
 
 // BearerToken is the request's bearer token, already authenticated (only
 // for calling IAMKit on the user's behalf: it never leaves for anyone else).
-func BearerToken(c *fiber.Ctx) string {
-	scheme, token, ok := strings.Cut(c.Get(fiber.HeaderAuthorization), " ")
+func BearerToken(r *http.Request) string {
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return ""
 	}
@@ -187,10 +190,16 @@ func BearerToken(c *fiber.Ctx) string {
 // Provenance puts the request's event provenance in the user context (after
 // Authenticate): every event a handler publishes correlates to the
 // X-Request-ID and names the OAuth client used (console, an MCP agent).
-func Provenance(c *fiber.Ctx) error {
-	meta := event.Meta{CorrelationID: ensureRequestID(c)}
-	ctx := c.UserContext()
-	if claims := fiberauth.Claims(c); claims != nil {
+func Provenance(next Handler) Handler {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		return next(w, r.WithContext(provenance(w, r)))
+	}
+}
+
+func provenance(w http.ResponseWriter, r *http.Request) context.Context {
+	meta := event.Meta{CorrelationID: ensureRequestID(w, r)}
+	ctx := r.Context()
+	if claims := httpauth.Claims(r); claims != nil {
 		// the console's OAuth client (Authenticate admits no other), or
 		// ClientAPI for a token that names none: never empty, which would
 		// read as "not recorded"
@@ -204,13 +213,12 @@ func Provenance(c *fiber.Ctx) error {
 			ctx = actor.With(ctx, actor.Actor{User: user, Permissions: claims.Permissions})
 		}
 	}
-	c.SetUserContext(event.WithMeta(ctx, meta))
-	return c.Next()
+	return event.WithMeta(ctx, meta)
 }
 
 // PublicContext is the user context of a route that has no authenticated
 // caller (a webhook, an upload ticket): events published under it correlate
 // to the X-Request-ID and name no OAuth client.
-func PublicContext(c *fiber.Ctx) context.Context {
-	return event.WithMeta(c.UserContext(), event.Meta{CorrelationID: ensureRequestID(c)})
+func PublicContext(w http.ResponseWriter, r *http.Request) context.Context {
+	return event.WithMeta(r.Context(), event.Meta{CorrelationID: ensureRequestID(w, r)})
 }

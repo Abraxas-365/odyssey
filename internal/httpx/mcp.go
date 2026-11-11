@@ -16,8 +16,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/event"
 	"github.com/Abraxas-365/odyssey/internal/identity"
 	"github.com/Abraxas-365/odyssey/internal/mcpx"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/adaptor"
 )
 
 // MCPPath is where coding agents connect.
@@ -84,7 +82,7 @@ func (a *MCPAuth) MetadataPaths() []string { return a.server.MetadataPaths() }
 
 // Metadata serves the protected resource metadata (public, CORS *: agents
 // read it to find IAMKit).
-func (a *MCPAuth) Metadata() fiber.Handler { return adaptor.HTTPHandler(a.server.MetadataHandler()) }
+func (a *MCPAuth) Metadata() Handler { return Std(a.server.MetadataHandler()) }
 
 // Protect serves next (mcpx.NewHandler) to authenticated agents: the
 // Principal and the request's provenance (X-Request-ID, "mcp:<client_id>")
@@ -92,16 +90,17 @@ func (a *MCPAuth) Metadata() fiber.Handler { return adaptor.HTTPHandler(a.server
 // the WWW-Authenticate challenge that starts the agent's OAuth flow, 503
 // with Retry-After when IAMKit cannot be asked); the agent's client needs
 // that shape, not the REST error body.
-func (a *MCPAuth) Protect(next http.Handler) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		requestID := ensureRequestID(c)
-		if c.Method() != fiber.MethodPost {
+func (a *MCPAuth) Protect(next http.Handler) Handler {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		requestID := ensureRequestID(w, r)
+		if r.Method != http.MethodPost {
 			// Stateless: no GET stream, no session to DELETE.
-			c.Set(fiber.HeaderAllow, fiber.MethodPost)
-			return c.SendStatus(fiber.StatusMethodNotAllowed)
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return nil
 		}
-		ctx, cancel := context.WithTimeout(c.UserContext(), 5*time.Second)
-		claims, err := a.server.Verify(ctx, resourceserver.Bearer(c.Get(fiber.HeaderAuthorization)))
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		claims, err := a.server.Verify(ctx, resourceserver.Bearer(r.Header.Get("Authorization")))
 		cancel()
 		var caller mcpx.Principal
 		if err == nil {
@@ -111,16 +110,17 @@ func (a *MCPAuth) Protect(next http.Handler) fiber.Handler {
 			if errors.Is(err, resourceserver.ErrUnavailable) {
 				slog.Warn("mcp: IAMKit could not check a token", "request_id", requestID)
 			}
-			return adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, _ *http.Request) { a.server.Deny(w, err, nil) })(c)
+			a.server.Deny(w, err, nil)
+			return nil
 		}
 		meta := event.Meta{CorrelationID: requestID, Client: assistant.MCPClientPrefix + caller.Client}
-		ctx = event.WithMeta(mcpx.WithPrincipal(c.UserContext(), caller), meta)
-		return adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// The agent's token is never passed on (tools see the request's
-			// headers): mcpx needs only that a bearer is present.
-			r.Header.Set("Authorization", "Bearer "+mcpx.VerifiedBearer)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})(c)
+		r = r.WithContext(event.WithMeta(mcpx.WithPrincipal(r.Context(), caller), meta))
+		// The agent's token is never passed on (tools see the request's
+		// headers): mcpx needs only that a bearer is present.
+		r.Header = r.Header.Clone()
+		r.Header.Set("Authorization", "Bearer "+mcpx.VerifiedBearer)
+		next.ServeHTTP(w, r)
+		return nil
 	}
 }
 

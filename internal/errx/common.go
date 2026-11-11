@@ -61,7 +61,7 @@ func Business(message string) *Error { return New(message, TypeBusiness) }
 func External(message string) *Error { return New(message, TypeExternal) }
 
 // FromStatus builds the error for an HTTP status that did not come from the
-// domain (Fiber's own 404/405/413/..., fasthttp read errors), so every
+// domain (the router's own 404/405, body read errors), so every
 // response uses the one error shape.
 func FromStatus(status int, message string) *Error {
 	switch status {

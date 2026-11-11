@@ -11,28 +11,29 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Abraxas-365/odyssey/internal/errx"
 	"github.com/Abraxas-365/odyssey/internal/httpx"
 	"github.com/Abraxas-365/odyssey/internal/server"
-	"github.com/gofiber/fiber/v2"
 )
 
 // routes echo what a JSON route decoded and what an upload route streamed.
 type routes struct{}
 
-func (routes) Register(r fiber.Router) {
-	r.Post("/json", func(c *fiber.Ctx) error {
+func (routes) Register(r *httpx.Router) {
+	r.Post("/json", func(w http.ResponseWriter, r *http.Request) error {
 		var v map[string]any
-		if err := httpx.DecodeJSON(c, &v); err != nil {
+		if err := httpx.DecodeJSON(r, &v); err != nil {
 			return err
 		}
-		return c.JSON(fiber.Map{"keys": len(v)})
+		return httpx.JSON(w, httpx.Map{"keys": len(v)})
 	})
-	r.Put("/raw", func(c *fiber.Ctx) error {
-		body, err := httpx.StreamBody(c, 2<<20)
+	r.Put("/raw", func(w http.ResponseWriter, r *http.Request) error {
+		body, err := httpx.StreamBody(w, r, 2<<20)
 		if err != nil {
 			return err
 		}
@@ -40,10 +41,10 @@ func (routes) Register(r fiber.Router) {
 		if err != nil {
 			return err
 		}
-		return c.JSON(fiber.Map{"bytes": n})
+		return httpx.JSON(w, httpx.Map{"bytes": n})
 	})
-	r.Put("/raw-sum", func(c *fiber.Ctx) error {
-		body, err := httpx.StreamBody(c, 2<<20)
+	r.Put("/raw-sum", func(w http.ResponseWriter, r *http.Request) error {
+		body, err := httpx.StreamBody(w, r, 2<<20)
 		if err != nil {
 			return err
 		}
@@ -51,10 +52,10 @@ func (routes) Register(r fiber.Router) {
 		if _, err := io.Copy(h, body); err != nil {
 			return err
 		}
-		return c.JSON(fiber.Map{"sha256": hex.EncodeToString(h.Sum(nil))})
+		return httpx.JSON(w, httpx.Map{"sha256": hex.EncodeToString(h.Sum(nil))})
 	})
-	r.Post("/upload", func(c *fiber.Ctx) error {
-		u, err := httpx.NewUpload(c, 2<<20)
+	r.Post("/upload", func(w http.ResponseWriter, r *http.Request) error {
+		u, err := httpx.NewUpload(w, r, 2<<20)
 		if err != nil {
 			return err
 		}
@@ -73,12 +74,12 @@ func (routes) Register(r fiber.Router) {
 				return u.Failure(err)
 			}
 		}
-		return c.JSON(fiber.Map{"bytes": total})
+		return httpx.JSON(w, httpx.Map{"bytes": total})
 	})
 }
 
-// listen serves the production app on a real socket (app.Test does not
-// stream bodies the same way).
+// listen serves the production app on a real socket (bodies stream as in
+// production).
 func listen(t *testing.T) string {
 	t.Helper()
 	app := server.New(func() error { return nil }, server.PublicConfig{}, server.Options{}, nil, routes{})
@@ -86,8 +87,8 @@ func listen(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = app.Listener(ln) }()
-	t.Cleanup(func() { _ = app.Shutdown() })
+	srv := server.Serve(ln, app)
+	t.Cleanup(func() { _ = srv.Close() })
 	return "http://" + ln.Addr().String() + "/api/v1"
 }
 
@@ -172,7 +173,7 @@ func TestBodies(t *testing.T) {
 	if code, body := post(t, base+"/json", "application/json", strings.NewReader(small), -1); code != 200 || !strings.Contains(body, `"keys":2`) {
 		t.Fatalf("chunked json: %d %s", code, body)
 	}
-	medium := `{"a":"` + strings.Repeat("x", 600<<10) + `"}` // past fasthttp's 8 KiB prefetch
+	medium := `{"a":"` + strings.Repeat("x", 600<<10) + `"}` // well past one read buffer
 	if code, body := post(t, base+"/json", "application/json", strings.NewReader(medium), int64(len(medium))); code != 200 || !strings.Contains(body, `"keys":1`) {
 		t.Fatalf("medium json: %d %s", code, body)
 	}
@@ -250,7 +251,7 @@ func TestRawBodies(t *testing.T) {
 }
 
 // TestRawBodiesArriveIntact: the handler reads exactly the bytes sent (a
-// small archive fits fasthttp's prefetch; a big one streams), by length and
+// small archive fits one read; a big one streams), by length and
 // chunked (curl -T - sends chunked).
 func TestRawBodiesArriveIntact(t *testing.T) {
 	base := listen(t)
@@ -291,5 +292,51 @@ func TestKeepAliveAfterAnUnreadUpload(t *testing.T) {
 	}
 	if res.StatusCode != 415 || !res.Close {
 		t.Fatalf("status %d, close %v", res.StatusCode, res.Close)
+	}
+}
+
+// TestCORS: with CORS_ORIGINS set, a listed origin's preflight is answered
+// before authentication (a browser sends no token on it) and its requests
+// carry Access-Control-Allow-Origin; another origin gets no Access-Control-*
+// header. Unset, CORS stays closed.
+func TestCORS(t *testing.T) {
+	deny := func(httpx.Handler) httpx.Handler {
+		return func(http.ResponseWriter, *http.Request) error { return errx.Unauthorized("no token") }
+	}
+	open := server.New(func() error { return nil }, server.PublicConfig{}, server.Options{CORSOrigins: []string{"https://console.example"}}, []httpx.Middleware{deny}, routes{})
+	closed := server.New(func() error { return nil }, server.PublicConfig{}, server.Options{}, []httpx.Middleware{deny}, routes{})
+	do := func(app http.Handler, method, path, origin string, preflight bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Origin", origin)
+		if preflight {
+			req.Header.Set("Access-Control-Request-Method", "POST")
+			req.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+		}
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(open, http.MethodOptions, "/api/v1/json", "https://Console.example", true)
+	h := rec.Header()
+	if rec.Code != 204 || h.Get("Access-Control-Allow-Origin") != "https://console.example" ||
+		!strings.Contains(h.Get("Access-Control-Allow-Headers"), "Authorization") ||
+		!strings.Contains(h.Get("Access-Control-Allow-Methods"), "PATCH") || h.Get("Access-Control-Max-Age") != "600" {
+		t.Fatalf("preflight: %d %v", rec.Code, h)
+	}
+	rec = do(open, http.MethodGet, "/api/v1/json", "https://console.example", false)
+	if rec.Code != 401 || rec.Header().Get("Access-Control-Allow-Origin") != "https://console.example" ||
+		!strings.Contains(rec.Header().Get("Access-Control-Expose-Headers"), "WWW-Authenticate") {
+		t.Fatalf("request: %d %v", rec.Code, rec.Header())
+	}
+	rec = do(open, http.MethodOptions, "/api/v1/json", "https://evil.example", true)
+	if rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("other origin's preflight allowed: %v", rec.Header())
+	}
+	rec = do(closed, http.MethodOptions, "/api/v1/json", "https://console.example", true)
+	for k := range rec.Header() {
+		if strings.HasPrefix(k, "Access-Control-") {
+			t.Fatalf("CORS closed but sent %s", k)
+		}
 	}
 }

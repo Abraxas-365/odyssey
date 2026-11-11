@@ -3,7 +3,7 @@
 // official Go SDK, whose tools each domain declares in its <domain>mcp
 // adapter on top of the same Commands/Queries as the REST API.
 //
-// mcpx knows neither IAMKit nor Fiber: httpx.MCPAuth authenticates the
+// mcpx knows neither IAMKit nor an HTTP framework: httpx.MCPAuth authenticates the
 // request and puts the caller's Principal on its context; Handler lists and
 // runs only the tools that Principal may use. Only this package imports the
 // SDK (architecture rule), so tools never see it.

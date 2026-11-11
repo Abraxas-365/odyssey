@@ -69,7 +69,7 @@ internal/project/
 ├── projectsvc/              orchestration: validate, IDs, transactions
 ├── adapters/
 │   ├── projectpg/           SQL, migrations/NNN_*.up.sql, its own Postgres schema
-│   ├── projecthttp/         Fiber routes, permission per route
+│   ├── projecthttp/         net/http routes (httpx.Router), permission per route
 │   └── projectmcp/          MCP tools
 └── projectmodule/           New(Deps) → Module: wires it all
 ```

@@ -3,14 +3,11 @@ package bootstrap_test
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gofiber/fiber/v2"
 
 	"github.com/Abraxas-365/odyssey/internal/audit"
 	"github.com/Abraxas-365/odyssey/internal/bootstrap"
@@ -174,17 +171,11 @@ func TestServerRoundTrip(t *testing.T) {
 
 // uploadRaw PUTs a raw body (no Authorization) and validates the response
 // against the documented operation.
-func uploadRaw(t *testing.T, app *fiber.App, path, contentType string, body []byte) httpxtest.Response {
+func uploadRaw(t *testing.T, app http.Handler, path, contentType string, body []byte) httpxtest.Response {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
-	res, err := app.Test(req, 30000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	out, _ := io.ReadAll(res.Body)
-	r := httpxtest.Response{Status: res.StatusCode, Header: res.Header, Body: out}
+	r := httpxtest.Serve(app, req)
 	validate(t, http.MethodPut, path, r)
 	return r
 }

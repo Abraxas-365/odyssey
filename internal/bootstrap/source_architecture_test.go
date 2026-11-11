@@ -63,7 +63,7 @@ var publicRoutes = map[string]map[string]bool{
 		"POST /webhooks/github": true,
 	},
 	releaseHTTPAdapter: {
-		"PUT /uploads/:ticket": true,
+		"PUT /uploads/{ticket}": true,
 	},
 	// the access sign-in of protected apps: the key set the gates verify
 	// tickets with and the two browser steps (the OAuth flow is the proof)
@@ -353,15 +353,15 @@ func TestSourceRulesCatchViolations(t *testing.T) {
 		// correct
 		"source/adapters/sourcegithub/p.go": `package sourcegithub; import (_ "github.com/google/go-github/v93/github"; _ "github.com/golang-jwt/jwt/v5")`,
 		"source/adapters/sourcehttp/h.go": `package sourcehttp
-func (h *Handler) RegisterPublic(r fiber.Router) { r.Get("/github/setup", h.setup); r.Post("/webhooks/github", h.hook) }`,
+func (h *Handler) RegisterPublic(r *httpx.Router) { r.Get("/github/setup", h.setup); r.Post("/webhooks/github", h.hook) }`,
 		"release/adapters/releasehttp/h.go": `package releasehttp
-func (h *Handler) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", h.upload) }`,
+func (h *Handler) RegisterPublic(r *httpx.Router) { r.Put("/uploads/{ticket}", h.upload) }`,
 		"access/adapters/accesshttp/h.go": `package accesshttp
-func (h *Handler) RegisterPublic(r fiber.Router) { r.Get("/.well-known/odicea-access-keys", h.keys); r.Get("/access/authorize", h.a); r.Get("/access/callback", h.c) }`,
+func (h *Handler) RegisterPublic(r *httpx.Router) { r.Get("/.well-known/odicea-access-keys", h.keys); r.Get("/access/authorize", h.a); r.Get("/access/callback", h.c) }`,
 		"access/adapters/accessjwt/s.go": `package accessjwt; import _ "github.com/golang-jwt/jwt/v5"`,
 		"server/assistant.go": `package server
-func (a Assistant) RegisterPublic(r fiber.Router) { r.Get("/skills/odicea.tar.gz", a.skill) }`,
-		"server/server.go":                   `package server; func New(p PublicRoutes, app *fiber.App) { p.RegisterPublic(app) }`,
+func (a Assistant) RegisterPublic(r *httpx.Router) { r.Get("/skills/odicea.tar.gz", a.skill) }`,
+		"server/server.go":                   `package server; func New(p PublicRoutes, app *httpx.Router) { p.RegisterPublic(app) }`,
 		"source/adapters/sourcerelease/d.go": `package sourcerelease; import "` + m + `release"; type D struct{ c release.Commands }`,
 		"source/sourcemodule/m.go":           `package sourcemodule; import "` + m + `release"; type Deps struct{ R release.Commands }`,
 		"source/sourcesvc/s.go":              `package sourcesvc; import "` + m + `release"; var _ release.DeployUploaded`,
@@ -371,36 +371,36 @@ func (a Assistant) RegisterPublic(r fiber.Router) { r.Get("/skills/odicea.tar.gz
 		"build/adapters/buildgit/g.go": `package buildgit; import _ "github.com/google/go-github/v93/github"`,
 		"source/sourcesvc/jwt.go":      `package sourcesvc; import _ "github.com/golang-jwt/jwt/v5"`,
 		"build/adapters/buildhttp/h.go": `package buildhttp
-func (h *Handler) RegisterPublic(r fiber.Router) { r.Get("/hook", h.hook) }`,
+func (h *Handler) RegisterPublic(r *httpx.Router) { r.Get("/hook", h.hook) }`,
 		"source/adapters/sourcehttp/more.go": `package sourcehttp
-func (x *Other) RegisterPublic(r fiber.Router) { r.Get("/github/debug", x.d) }`,
+func (x *Other) RegisterPublic(r *httpx.Router) { r.Get("/github/debug", x.d) }`,
 		"source/adapters/sourcehttp/use.go": `package sourcehttp
-func (x *Use) RegisterPublic(r fiber.Router) { r.Use(x.mw) }`,
+func (x *Use) RegisterPublic(r *httpx.Router) { r.Use(x.mw) }`,
 		"source/adapters/sourcehttp/computed.go": `package sourcehttp
-func (x *Computed) RegisterPublic(r fiber.Router) { r.Post(prefix+"/x", x.d) }`,
+func (x *Computed) RegisterPublic(r *httpx.Router) { r.Post(prefix+"/x", x.d) }`,
 		"source/adapters/sourcehttp/helper.go": `package sourcehttp
-func (x *Helper) RegisterPublic(r fiber.Router) { r.Get("/github/setup", x.setup); x.mount(r) }`,
+func (x *Helper) RegisterPublic(r *httpx.Router) { r.Get("/github/setup", x.setup); x.mount(r) }`,
 		"source/adapters/sourcehttp/loop.go": `package sourcehttp
-func (x *Loop) RegisterPublic(r fiber.Router) { for _, p := range paths { r.Get(p, x.d) } }`,
+func (x *Loop) RegisterPublic(r *httpx.Router) { for _, p := range paths { r.Get(p, x.d) } }`,
 		"source/adapters/sourcehttp/chain.go": `package sourcehttp
-func (x *Chain) RegisterPublic(r fiber.Router) { r.Group("/x").Get("/github/setup", x.d) }`,
+func (x *Chain) RegisterPublic(r *httpx.Router) { r.Group("/x").Get("/github/setup", x.d) }`,
 		"source/adapters/sourcehttp/all.go": `package sourcehttp
-func (x *All) RegisterPublic(r fiber.Router) { r.All("/github/setup", x.d) }`,
+func (x *All) RegisterPublic(r *httpx.Router) { r.All("/github/setup", x.d) }`,
 		"release/adapters/releasehttp/more.go": `package releasehttp
-func (x *More) RegisterPublic(r fiber.Router) { r.Get("/uploads/:ticket", x.d) }`,
+func (x *More) RegisterPublic(r *httpx.Router) { r.Get("/uploads/{ticket}", x.d) }`,
 		"release/adapters/releasehttp/webhook.go": `package releasehttp
-func (x *Hook) RegisterPublic(r fiber.Router) { r.Post("/webhooks/github", x.d) }`,
+func (x *Hook) RegisterPublic(r *httpx.Router) { r.Post("/webhooks/github", x.d) }`,
 		"source/adapters/sourcehttp/upload.go": `package sourcehttp
-func (x *Upload) RegisterPublic(r fiber.Router) { r.Put("/uploads/:ticket", x.d) }`,
+func (x *Upload) RegisterPublic(r *httpx.Router) { r.Put("/uploads/{ticket}", x.d) }`,
 		"release/adapters/releasehttp/group.go": `package releasehttp
-func (x *Group) RegisterPublic(r fiber.Router) { r.Group("/uploads").Put("/:ticket", x.d) }`,
+func (x *Group) RegisterPublic(r *httpx.Router) { r.Group("/uploads").Put("/{ticket}", x.d) }`,
 		"access/adapters/accesshttp/more.go": `package accesshttp
-func (x *More) RegisterPublic(r fiber.Router) { r.Post("/access/callback", x.d) }`,
+func (x *More) RegisterPublic(r *httpx.Router) { r.Post("/access/callback", x.d) }`,
 		"access/adapters/accessiam/jwt.go": `package accessiam; import _ "github.com/golang-jwt/jwt/v5"`,
 		"access/accesssvc/gh.go":           `package accesssvc; import _ "github.com/google/go-github/v93/github"`,
 		"server/extra.go": `package server
-func (a Extra) RegisterPublic(r fiber.Router) { r.Get("/skills/other.tar.gz", a.skill) }`,
-		"bootstrap/b.go":                  `package bootstrap; func wire(h *sourcehttp.Handler, app *fiber.App) { h.RegisterPublic(app) }`,
+func (a Extra) RegisterPublic(r *httpx.Router) { r.Get("/skills/other.tar.gz", a.skill) }`,
+		"bootstrap/b.go":                  `package bootstrap; func wire(h *sourcehttp.Handler, app *httpx.Router) { h.RegisterPublic(app) }`,
 		"release/releasesvc/s.go":         `package releasesvc; import _ "` + m + `source"`,
 		"source/sourcesvc/cross.go":       `package sourcesvc; import rel "` + m + `release"; type S struct{ r rel.Commands }`,
 		"source/sourcesvc/dot.go":         `package sourcesvc; import . "` + m + `release"; type S struct{ r Commands }`,
@@ -444,9 +444,9 @@ func (m M) peek(ctx C) { m.repo.ListConnectionsToReconcile(ctx, t, 1) }`,
 		"source/adapters/sourcehttp/chain.go: RegisterPublic may only register literal routes",
 		"source/adapters/sourcehttp/all.go: RegisterPublic mounts ALL /github/setup",
 		"access/adapters/accesshttp/more.go: RegisterPublic mounts POST /access/callback",
-		"release/adapters/releasehttp/more.go: RegisterPublic mounts GET /uploads/:ticket",
+		"release/adapters/releasehttp/more.go: RegisterPublic mounts GET /uploads/{ticket}",
 		"release/adapters/releasehttp/webhook.go: RegisterPublic mounts POST /webhooks/github",
-		"source/adapters/sourcehttp/upload.go: RegisterPublic mounts PUT /uploads/:ticket",
+		"source/adapters/sourcehttp/upload.go: RegisterPublic mounts PUT /uploads/{ticket}",
 		"release/adapters/releasehttp/group.go: RegisterPublic may only register literal routes",
 		"server/extra.go: RegisterPublic mounts GET /skills/other.tar.gz",
 		"bootstrap/b.go: bootstrap calls RegisterPublic",

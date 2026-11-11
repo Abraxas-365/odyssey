@@ -8,6 +8,7 @@ package sourcehttp
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -18,7 +19,6 @@ import (
 	"github.com/Abraxas-365/odyssey/internal/project"
 	"github.com/Abraxas-365/odyssey/internal/release"
 	"github.com/Abraxas-365/odyssey/internal/source"
-	"github.com/gofiber/fiber/v2"
 )
 
 // PublicRoutes are the unauthenticated routes (the provider calls them, or
@@ -38,27 +38,27 @@ func New(commands source.Commands, queries source.Queries, console string) *Hand
 }
 
 // Register mounts the routes on an already-authenticated router.
-func (h *Handler) Register(r fiber.Router) {
+func (h *Handler) Register(r *httpx.Router) {
 	gh := r.Group("/github")
-	gh.Get("", httpx.RequirePermissions(permission.ProjectsRead), h.info)
-	gh.Get("/install", httpx.RequirePermissions(permission.IntegrationsManage), h.installURL)
-	gh.Get("/installations", httpx.RequirePermissions(permission.ProjectsRead), h.installations)
-	gh.Post("/installations", httpx.RequirePermissions(permission.IntegrationsManage), h.claim)
-	gh.Delete("/installations/:installation", httpx.RequirePermissions(permission.IntegrationsManage), h.unlink)
-	gh.Get("/repositories", httpx.RequirePermissions(permission.ProjectsWrite), h.repositories)
-	gh.Get("/installations/:installation/repositories/:repository/branches", httpx.RequirePermissions(permission.ProjectsWrite), h.branches)
-	gh.Get("/installations/:installation/repositories/:repository/services", httpx.RequirePermissions(permission.ProjectsWrite), h.services)
+	gh.With(httpx.RequirePermissions(permission.ProjectsRead)).Get("/", h.info)
+	gh.With(httpx.RequirePermissions(permission.IntegrationsManage)).Get("/install", h.installURL)
+	gh.With(httpx.RequirePermissions(permission.ProjectsRead)).Get("/installations", h.installations)
+	gh.With(httpx.RequirePermissions(permission.IntegrationsManage)).Post("/installations", h.claim)
+	gh.With(httpx.RequirePermissions(permission.IntegrationsManage)).Delete("/installations/{installation}", h.unlink)
+	gh.With(httpx.RequirePermissions(permission.ProjectsWrite)).Get("/repositories", h.repositories)
+	gh.With(httpx.RequirePermissions(permission.ProjectsWrite)).Get("/installations/{installation}/repositories/{repository}/branches", h.branches)
+	gh.With(httpx.RequirePermissions(permission.ProjectsWrite)).Get("/installations/{installation}/repositories/{repository}/services", h.services)
 
-	repo := r.Group("/projects/:id/repository")
-	repo.Get("", httpx.RequirePermissions(permission.DeploymentsRead), h.connection)
-	repo.Put("", httpx.RequirePermissions(permission.ProjectsWrite, permission.DeploymentsCreate), h.connect)
-	repo.Delete("", httpx.RequirePermissions(permission.ProjectsWrite), h.disconnect)
-	repo.Post("/publish", httpx.RequirePermissions(permission.DeploymentsCreate), h.publish)
-	repo.Get("/pushes", httpx.RequirePermissions(permission.DeploymentsRead), h.pushes)
+	repo := r.Group("/projects/{id}/repository")
+	repo.With(httpx.RequirePermissions(permission.DeploymentsRead)).Get("/", h.connection)
+	repo.With(httpx.RequirePermissions(permission.ProjectsWrite, permission.DeploymentsCreate)).Put("/", h.connect)
+	repo.With(httpx.RequirePermissions(permission.ProjectsWrite)).Delete("/", h.disconnect)
+	repo.With(httpx.RequirePermissions(permission.DeploymentsCreate)).Post("/publish", h.publish)
+	repo.With(httpx.RequirePermissions(permission.DeploymentsRead)).Get("/pushes", h.pushes)
 }
 
 // RegisterPublic mounts PublicRoutes on the app's root, outside auth.
-func (h *Handler) RegisterPublic(r fiber.Router) {
+func (h *Handler) RegisterPublic(r *httpx.Router) {
 	r.Get("/github/setup", h.setup)
 	r.Post("/webhooks/github", h.webhook)
 }
@@ -66,151 +66,157 @@ func (h *Handler) RegisterPublic(r fiber.Router) {
 // webhook receives GitHub's deliveries. The signature over the exact body is
 // the only proof (checked by the service before anything else); a delivery
 // seen before is accepted too, so GitHub does not redeliver it.
-func (h *Handler) webhook(c *fiber.Ctx) error {
-	err := h.commands.Receive(c.UserContext(), source.Webhook{
-		Delivery:  c.Get("X-GitHub-Delivery"),
-		Event:     c.Get("X-GitHub-Event"),
-		Signature: c.Get("X-Hub-Signature-256"),
-		Payload:   c.Body(),
+func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) error {
+	// the exact buffered body: the signature is computed over these bytes
+	payload, err := httpx.Body(r)
+	if err != nil {
+		return err
+	}
+	err = h.commands.Receive(r.Context(), source.Webhook{
+		Delivery:  r.Header.Get("X-GitHub-Delivery"),
+		Event:     r.Header.Get("X-GitHub-Event"),
+		Signature: r.Header.Get("X-Hub-Signature-256"),
+		Payload:   payload,
 	})
 	if err != nil {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "accepted"})
+	return httpx.JSONStatus(w, http.StatusAccepted, httpx.Map{"status": "accepted"})
 }
 
 // ---- installations ----
 
-func (h *Handler) info(c *fiber.Ctx) error {
-	return c.JSON(h.queries.Info(c.UserContext()))
+func (h *Handler) info(w http.ResponseWriter, r *http.Request) error {
+	return httpx.JSON(w, h.queries.Info(r.Context()))
 }
 
-func (h *Handler) installURL(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) installURL(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
-	u, err := h.commands.InstallURL(c.UserContext(), org, user, c.Query("return_to"))
+	u, err := h.commands.InstallURL(r.Context(), org, user, r.URL.Query().Get("return_to"))
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"url": u})
+	return httpx.JSON(w, httpx.Map{"url": u})
 }
 
-func (h *Handler) installations(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) installations(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	items, err := h.queries.ListInstallations(c.UserContext(), org)
+	items, err := h.queries.ListInstallations(r.Context(), org)
 	if err != nil {
 		return err
 	}
 	if items == nil {
 		items = []source.Installation{}
 	}
-	return c.JSON(fiber.Map{"items": items})
+	return httpx.JSON(w, httpx.Map{"items": items})
 }
 
-func (h *Handler) claim(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) claim(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
 	var body source.ClaimInstallation
-	if err := httpx.DecodeJSON(c, &body); err != nil {
+	if err := httpx.DecodeJSON(r, &body); err != nil {
 		return err
 	}
-	out, err := h.commands.Claim(c.UserContext(), org, user, body)
+	out, err := h.commands.Claim(r.Context(), org, user, body)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
-func (h *Handler) unlink(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
-	id, err := source.ParseInstallationID(c.Params("installation"))
+	id, err := source.ParseInstallationID(r.PathValue("installation"))
 	if err != nil {
 		return err
 	}
-	if err := h.commands.Unlink(c.UserContext(), org, id, source.Unlink{UnlinkedBy: user}); err != nil {
+	if err := h.commands.Unlink(r.Context(), org, id, source.Unlink{UnlinkedBy: user}); err != nil {
 		return err
 	}
-	return c.SendStatus(fiber.StatusNoContent)
+	return httpx.Status(w, http.StatusNoContent)
 }
 
-func (h *Handler) repositories(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) repositories(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	page, err := httpx.Pagination(c)
+	page, err := httpx.Pagination(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.ListRepositories(c.UserContext(), org, page)
+	out, err := h.queries.ListRepositories(r.Context(), org, page)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
-func (h *Handler) branches(c *fiber.Ctx) error {
-	org, id, repo, err := repositoryParams(c)
+func (h *Handler) branches(w http.ResponseWriter, r *http.Request) error {
+	org, id, repo, err := repositoryParams(r)
 	if err != nil {
 		return err
 	}
-	items, err := h.queries.ListBranches(c.UserContext(), org, id, repo)
+	items, err := h.queries.ListBranches(r.Context(), org, id, repo)
 	if err != nil {
 		return err
 	}
 	if items == nil {
 		items = []source.Branch{}
 	}
-	return c.JSON(fiber.Map{"items": items})
+	return httpx.JSON(w, httpx.Map{"items": items})
 }
 
 // services proposes the services of a repository's branch (MS-5).
-func (h *Handler) services(c *fiber.Ctx) error {
-	org, id, repo, err := repositoryParams(c)
+func (h *Handler) services(w http.ResponseWriter, r *http.Request) error {
+	org, id, repo, err := repositoryParams(r)
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.DetectServices(c.UserContext(), org, id, repo, c.Query("branch"), c.Query("root"))
+	q := r.URL.Query()
+	out, err := h.queries.DetectServices(r.Context(), org, id, repo, q.Get("branch"), q.Get("root"))
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
 // repositoryParams are the organization (from the token) and the
 // installation and repository of a /github/installations/... path.
-func repositoryParams(c *fiber.Ctx) (identity.OrganizationID, source.InstallationID, int64, error) {
-	org, err := httpx.Organization(c)
+func repositoryParams(r *http.Request) (identity.OrganizationID, source.InstallationID, int64, error) {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return identity.OrganizationID{}, source.InstallationID{}, 0, err
 	}
-	id, err := source.ParseInstallationID(c.Params("installation"))
+	id, err := source.ParseInstallationID(r.PathValue("installation"))
 	if err != nil {
 		return identity.OrganizationID{}, source.InstallationID{}, 0, err
 	}
-	repo, err := strconv.ParseInt(c.Params("repository"), 10, 64)
+	repo, err := strconv.ParseInt(r.PathValue("repository"), 10, 64)
 	if err != nil || repo <= 0 {
 		return identity.OrganizationID{}, source.InstallationID{}, 0, errx.InvalidField("repository", "repository must be GitHub's numeric repository id")
 	}
@@ -219,20 +225,21 @@ func repositoryParams(c *fiber.Ctx) (identity.OrganizationID, source.Installatio
 
 // setup is where GitHub sends the browser after installing the App. It
 // always redirects to the console: the outcome travels in the query.
-func (h *Handler) setup(c *fiber.Ctx) error {
+func (h *Handler) setup(w http.ResponseWriter, r *http.Request) error {
+	q := r.URL.Query()
 	settings := h.console + source.SettingsPage
-	if c.Query("setup_action") == "request" && c.Query("installation_id") == "" {
+	if q.Get("setup_action") == "request" && q.Get("installation_id") == "" {
 		// an organization owner on GitHub must approve the installation first
-		return c.Redirect(settings+"?github=requested", fiber.StatusFound)
+		return httpx.Redirect(w, settings+"?github=requested", http.StatusFound)
 	}
-	ext, _ := strconv.ParseInt(c.Query("installation_id"), 10, 64)
-	out, err := h.commands.Setup(c.UserContext(), c.Query("state"), source.Link{ExternalID: ext, Code: c.Query("code")})
+	ext, _ := strconv.ParseInt(q.Get("installation_id"), 10, 64)
+	out, err := h.commands.Setup(r.Context(), q.Get("state"), source.Link{ExternalID: ext, Code: q.Get("code")})
 	if err != nil {
-		return c.Redirect(settings+"?github_error="+url.QueryEscape(setupCode(err)), fiber.StatusFound)
+		return httpx.Redirect(w, settings+"?github_error="+url.QueryEscape(setupCode(err)), http.StatusFound)
 	}
 	// The callback is public: it links nothing. The console page posts the
 	// claim (logged in) and the return path travels inside it.
-	return c.Redirect(settings+"?github_claim="+url.QueryEscape(out.Claim), fiber.StatusFound)
+	return httpx.Redirect(w, settings+"?github_claim="+url.QueryEscape(out.Claim), http.StatusFound)
 }
 
 // setupCode is the code the console explains (internal ones stay "INTERNAL").
@@ -251,23 +258,23 @@ func setupCode(err error) string {
 
 // ---- connections ----
 
-func (h *Handler) connection(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) connection(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	id, err := project.ParseID(c.Params("id"))
+	id, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.FindConnection(c.UserContext(), org, id)
+	out, err := h.queries.FindConnection(r.Context(), org, id)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
-// connectBody is the body of PUT /projects/:id/repository (the release
+// connectBody is the body of PUT /projects/{id}/repository (the release
 // configuration inline, as in a deployment).
 type connectBody struct {
 	Installation source.InstallationID `json:"installation_id"`
@@ -277,97 +284,101 @@ type connectBody struct {
 	release.Config
 }
 
-func (h *Handler) connect(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) connect(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
-	id, err := project.ParseID(c.Params("id"))
+	id, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
 	var body connectBody
-	if err := httpx.DecodeJSON(c, &body); err != nil {
+	if err := httpx.DecodeJSON(r, &body); err != nil {
 		return err
 	}
-	out, err := h.commands.Connect(c.UserContext(), org, id, source.Connect{Installation: body.Installation,
+	out, err := h.commands.Connect(r.Context(), org, id, source.Connect{Installation: body.Installation,
 		RepositoryID: body.RepositoryID, Branch: body.Branch, Root: body.Root, Config: body.Config, ConnectedBy: user})
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }
 
-func (h *Handler) disconnect(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) disconnect(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
-	id, err := project.ParseID(c.Params("id"))
+	id, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
-	if err := h.commands.Disconnect(c.UserContext(), org, id, source.Disconnect{DisconnectedBy: user}); err != nil {
+	if err := h.commands.Disconnect(r.Context(), org, id, source.Disconnect{DisconnectedBy: user}); err != nil {
 		return err
 	}
-	return c.SendStatus(fiber.StatusNoContent)
+	return httpx.Status(w, http.StatusNoContent)
 }
 
-func (h *Handler) publish(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) publish(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	user, err := httpx.User(c)
+	user, err := httpx.User(r)
 	if err != nil {
 		return err
 	}
-	id, err := project.ParseID(c.Params("id"))
+	id, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
 	var body source.Publish
-	if len(c.Body()) > 0 {
-		if err := httpx.DecodeJSON(c, &body); err != nil {
+	raw, err := httpx.Body(r)
+	if err != nil {
+		return err
+	}
+	if len(raw) > 0 {
+		if err := httpx.DecodeJSON(r, &body); err != nil {
 			return err
 		}
 	}
-	out, err := h.commands.Publish(c.UserContext(), org, id, source.Publish{Rebuild: body.Rebuild, RequestedBy: user})
+	out, err := h.commands.Publish(r.Context(), org, id, source.Publish{Rebuild: body.Rebuild, RequestedBy: user})
 	if err != nil {
 		return err
 	}
-	return c.Status(fiber.StatusAccepted).JSON(out)
+	return httpx.JSONStatus(w, http.StatusAccepted, out)
 }
 
-func (h *Handler) pushes(c *fiber.Ctx) error {
-	org, err := httpx.Organization(c)
+func (h *Handler) pushes(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpx.Organization(r)
 	if err != nil {
 		return err
 	}
-	id, err := project.ParseID(c.Params("id"))
+	id, err := project.ParseID(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
-	page, err := httpx.Pagination(c)
+	page, err := httpx.Pagination(r)
 	if err != nil {
 		return err
 	}
-	status, err := httpx.EnumFilter(c, "status", source.PushStatus.Valid,
+	status, err := httpx.EnumFilter(r, "status", source.PushStatus.Valid,
 		"status must be queued, importing, deployed, failed or skipped")
 	if err != nil {
 		return err
 	}
-	out, err := h.queries.ListPushes(c.UserContext(), org, id, source.PushFilter{Status: status}, page)
+	out, err := h.queries.ListPushes(r.Context(), org, id, source.PushFilter{Status: status}, page)
 	if err != nil {
 		return err
 	}
-	return c.JSON(out)
+	return httpx.JSON(w, out)
 }

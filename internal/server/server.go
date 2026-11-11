@@ -1,27 +1,25 @@
-// Package server builds the Fiber app: middleware, health and route groups.
+// Package server builds the API's HTTP handler: middleware, health, the
+// public routes, MCP and the /api/v1 group.
 package server
 
 import (
+	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Abraxas-365/odyssey/internal/httpx"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
 // Routes is implemented by every domain's HTTP handler.
 type Routes interface {
-	Register(r fiber.Router)
+	Register(r *httpx.Router)
 }
 
 // PublicRoutes is implemented by the handlers that also mount
 // unauthenticated routes (a provider's callbacks, each checking its own
 // proof). Architecture tests confine them to sourcehttp, releasehttp, accesshttp and the server's Assistant.
 type PublicRoutes interface {
-	RegisterPublic(r fiber.Router)
+	RegisterPublic(r *httpx.Router)
 }
 
 // Health reports readiness of a dependency (database).
@@ -54,41 +52,28 @@ type MCP struct {
 	Handler http.Handler
 }
 
-// New returns the app. Every domain route sits under /api/v1 behind the auth chain.
-func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler, routes ...Routes) *fiber.App {
-	app := fiber.New(fiber.Config{
-		AppName:      "odyssey-api",
-		ErrorHandler: httpx.ErrorHandler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
-		// Bodies are streamed so uploads never sit in memory; httpx.LimitBody
-		// buffers every other body (≤ 1 MiB) before any handler runs.
-		BodyLimit:                    httpx.MaxJSONBody,
-		StreamRequestBody:            true,
-		DisablePreParseMultipartForm: true,
-		DisableStartupMessage:        true,
-	})
-	app.Server().HeaderReceived = httpx.HeaderReceived
-	app.Use(recover.New(recover.Config{EnableStackTrace: true}), httpx.RequestID, httpx.Headers, httpx.RejectContentEncoding, httpx.LimitBody)
+// New returns the API's router. Every domain route sits under /api/v1 behind the auth chain.
+func New(health Health, public PublicConfig, opts Options, auth []httpx.Middleware, routes ...Routes) *httpx.Router {
+	app := httpx.NewRouter()
+	app.Use(httpx.Recover, httpx.RequestID, httpx.Headers, httpx.RejectContentEncoding, httpx.LimitBody)
 	if len(opts.CORSOrigins) > 0 {
-		app.Use(cors.New(cors.Config{
-			AllowOrigins:  strings.Join(opts.CORSOrigins, ","),
-			AllowMethods:  "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-			AllowHeaders:  "Authorization,Content-Type,X-Request-ID,Mcp-Protocol-Version,Mcp-Session-Id",
-			ExposeHeaders: "Location,X-Request-ID,WWW-Authenticate",
-			MaxAge:        600,
-		}))
+		app.Use(httpx.CORS{
+			Origins: opts.CORSOrigins,
+			Methods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+			Headers: []string{"Authorization", "Content-Type", "X-Request-ID", "Mcp-Protocol-Version", "Mcp-Session-Id"},
+			Expose:  []string{"Location", "X-Request-ID", "WWW-Authenticate"},
+			MaxAge:  600,
+		}.Middleware)
 	}
 
-	app.Get("/health", func(c *fiber.Ctx) error {
+	app.Get("/health", func(w http.ResponseWriter, _ *http.Request) error {
 		if err := health(); err != nil {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unavailable"})
+			return httpx.JSONStatus(w, http.StatusServiceUnavailable, httpx.Map{"status": "unavailable"})
 		}
-		return c.JSON(fiber.Map{"status": "ok"})
+		return httpx.JSON(w, httpx.Map{"status": "ok"})
 	})
-	app.Get("/api/config", func(c *fiber.Ctx) error {
-		return c.JSON(public)
+	app.Get("/api/config", func(w http.ResponseWriter, _ *http.Request) error {
+		return httpx.JSON(w, public)
 	})
 	for _, p := range opts.Public {
 		p.RegisterPublic(app)
@@ -105,9 +90,30 @@ func New(health Health, public PublicConfig, opts Options, auth []fiber.Handler,
 		app.Delete(httpx.MCPPath, m.Auth.Protect(m.Handler))
 	}
 
-	api := app.Group("/api/v1", append(append([]fiber.Handler{}, auth...), httpx.Provenance)...)
+	api := app.Group("/api/v1", append(append([]httpx.Middleware{}, auth...), httpx.Provenance)...)
 	for _, r := range routes {
 		r.Register(api)
 	}
 	return app
+}
+
+// HTTP is the server for h: bodies other than uploads must arrive within
+// ReadTimeout (httpx.LimitBody gives uploads httpx.UploadReadTimeout).
+func HTTP(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
+}
+
+// Serve serves h on ln (tests).
+func Serve(ln net.Listener, h http.Handler) *http.Server {
+	srv := HTTP(ln.Addr().String(), h)
+	go func() { _ = srv.Serve(ln) }()
+	return srv
 }
