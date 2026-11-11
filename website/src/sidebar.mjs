@@ -1,0 +1,73 @@
+import { page, group } from '../scripts/docs.mjs'
+
+// Curated reading order. Add every new document here: docs.test.mjs fails otherwise.
+export const sidebar = [
+  page('README', 'Documentation home'),
+  group('Start here', [
+    page('tutorials/first-app'),
+    page('tutorials/first-app-with-an-assistant'),
+    page('tutorials/first-real-cluster'),
+    page('guides/console-tour'),
+  ], false),
+  group('Concepts', [
+    page('explanation/concepts'),
+    page('explanation/life-of-a-version'),
+    page('explanation/security-model'),
+  ], false),
+  group('Build apps', [
+    page('guides/publish'),
+    page('guides/github'),
+    page('guides/several-parts'),
+    page('guides/versions'),
+    page('guides/storage'),
+    page('guides/variables-and-secrets'),
+    page('guides/who-can-open-it'),
+    page('guides/identity-in-your-app'),
+    page('guides/ai-for-apps'),
+    page('guides/connect-an-assistant'),
+  ], false),
+  group('For IT', [
+    page('guides/it/clusters'),
+    page('guides/it/github-app'),
+    page('guides/it/people-and-roles'),
+    page('guides/it/rules'),
+    page('guides/it/approvals'),
+    page('guides/it/catalog'),
+    page('guides/it/egress'),
+    page('guides/it/inventory-and-audit'),
+  ], false),
+  group('Operations', [
+    page('guides/operations/install'),
+    page('guides/operations/local-development'),
+  ]),
+  group('Reference', [
+    page('reference/configuration'),
+    page('reference/make-targets'),
+    page('reference/mcp-tools'),
+    page('reference/permissions'),
+    page('reference/rule-input'),
+    page('reference/capabilities'),
+    page('reference/crds'),
+    page('reference/limits'),
+    page('reference/errors'),
+    page('api', 'HTTP API'),
+  ]),
+  group('Design contracts', [
+    page('access'),
+    page('secrets'),
+    page('resources'),
+    page('catalog'),
+    page('ai'),
+    page('egress'),
+    page('policy'),
+    page('approvals'),
+    page('scan'),
+    page('inventory'),
+  ]),
+  group('Project', [
+    page('architecture', 'Architecture'),
+    page('project/known-limitations'),
+    page('contributing/README', 'Contributing'),
+    page('contributing/documentation'),
+  ]),
+]

@@ -1,0 +1,47 @@
+/* Odicea tokens shared by the landing page and the documentation (the console's palette, frontend/src/theme.css). */
+:root {
+  --font-body-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-code-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+  --background: #0c0c0a;
+  --foreground: #d4d0c8;
+  --card: #131311;
+  --secondary-foreground: #a8a49a;
+  --muted: #1a1a16;
+  --muted-foreground: #888377;
+  --primary: #7b9bae;
+  --primary-foreground: #0c0c0a;
+  --inset: #0a0a08;
+  --accent-green: #82a86f;
+  --accent-blue: #7b9bae;
+  --accent-orange: #b8a06a;
+  --accent-red: #c69186;
+  --accent-purple: #a294b4;
+  --border: #222220;
+  --border-strong: #33332e;
+  --ring: #7b9bae;
+  --sidebar: #0a0a08;
+  --glow: #7b9bae;
+  --radius: 0.5rem;
+}
+
+:root[data-theme='light'] {
+  --background: #f2efe8;
+  --foreground: #1a1a16;
+  --card: #faf8f4;
+  --secondary-foreground: #2a2a24;
+  --muted: #e8e4dc;
+  --muted-foreground: #68645c;
+  --primary: #495f6d;
+  --primary-foreground: #faf8f4;
+  --inset: #ebe7df;
+  --accent-green: #435f34;
+  --accent-blue: #495f6d;
+  --accent-orange: #695b36;
+  --accent-red: #874337;
+  --accent-purple: #5e5072;
+  --border: #dcd7cc;
+  --border-strong: #c9c3b6;
+  --ring: #495f6d;
+  --sidebar: #ebe7df;
+  --glow: #495f6d;
+}
